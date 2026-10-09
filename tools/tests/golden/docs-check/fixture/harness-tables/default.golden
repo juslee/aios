@@ -21,7 +21,7 @@ docs-check: 4 findings across 15 checks - 1 new, 3 baselined (1 accepted false p
 New drift since baseline:
 
 [harness-tables]
- + CLAUDE.md: CLAUDE.md skills-table lists skill ghost, which is not in .claude/
+ + .claude/CLAUDE.md: CLAUDE.md skills-table lists skill ghost, which is not in .claude/
 
 2 baselined finding(s) no longer occur or occur less often; prune them with `just docs-check --update-baseline`:
   - anchors|docs/kernel/alpha.md|#gone

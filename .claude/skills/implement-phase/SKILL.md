@@ -27,9 +27,9 @@ When plan mode is active, you can only read files and write to the system-assign
 
 1. Read `docs/phases/` and find the doc matching phase $ARGUMENTS (glob for `$ARGUMENTS-*.md` or `0$ARGUMENTS-*.md`)
 2. Read all Architecture References listed in the phase doc
-3. Read CLAUDE.md Code Conventions (`.claude/rules/`) and Quality Gates
+3. Read `.claude/rules/` (01-code-conventions, 02-quality-gates, 06-unsafe-documentation)
 4. Search the knowledge hive for relevant lessons and decisions:
-    - Use Obsidian MCP search_notes with keywords from the phase doc
+    - Grep `docs/knowledge/` (lessons, decisions) for keywords from the phase doc
     - Review any matching `docs/knowledge/lessons/` and `docs/knowledge/decisions/`
     - Factor known pitfalls into implementation approach
 5. Read `docs/knowledge/plans/_template.md` — use its structure as the skeleton for the plan
@@ -79,7 +79,7 @@ Commit `Cargo.lock` and `rust-toolchain.toml` to `main` only if changed (toolcha
 git checkout main && git pull origin main
 
 # Create worktree with a new branch
-# Branch name: claude/phase-$ARGUMENTS-MK-<short-description> (matches CLAUDE.md convention)
+# Branch name: claude/phase-$ARGUMENTS-MK-<short-description> (convention in .claude/rules/03-git-workflow.md)
 # Worktree path: .claude/worktrees/phase-$ARGUMENTS
 git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-MK-<short-description> main
 ```
@@ -94,7 +94,7 @@ cd .claude/worktrees/phase-$ARGUMENTS
 
 ### Phase 3: Planning
 
-Check whether a **plan already exists from a prior plan-mode session**. Look for the system plan file (the path from the earlier plan mode session, typically `~/.claude/plans/*.md`). Also check if context from the Planning Path is available in the current conversation.
+Check whether a **plan already exists from a prior plan-mode session**. Look for the system plan file (the path from the earlier plan mode session, typically `${CLAUDE_CONFIG_DIR:-~/.claude}/plans/*.md`). Also check if context from the Planning Path is available in the current conversation.
 
 **If a plan exists from plan mode:**
 
@@ -106,9 +106,9 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
 
 4. Read `docs/phases/` and find the doc matching phase $ARGUMENTS (glob for `$ARGUMENTS-*.md` or `0$ARGUMENTS-*.md`)
 5. Read all Architecture References listed in the phase doc
-6. Read CLAUDE.md Code Conventions and Quality Gates
+6. Read `.claude/rules/` (01-code-conventions, 02-quality-gates, 06-unsafe-documentation)
 7. Search the knowledge hive for relevant lessons and decisions:
-    - Use Obsidian MCP search_notes with keywords from the phase doc
+    - Grep `docs/knowledge/` (lessons, decisions) for keywords from the phase doc
     - Review any matching docs/knowledge/lessons/ and docs/knowledge/decisions/
     - Factor known pitfalls into implementation approach
 8. Write a working plan doc using the Write tool, based on the existing template:
@@ -145,7 +145,7 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
     g. Mark the TodoWrite item as completed
     h. **Update the working plan doc**: record any issues encountered, decisions made, or lessons learned in the corresponding sections — do this as you go, not at the end
     After all steps in milestone complete:
-    i. Update CLAUDE.md, README.md, developer guide, phase doc (check off completed tasks)
+    i. Update `.claude/CLAUDE.md`, `docs/project/doc-map.md` (new or moved architecture docs), README.md, developer guide, phase doc (check off completed tasks)
     j. Dead code cleanup: Grep for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. Remove the item if truly unused, or remove just the attribute if now used.
     k. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) until 0 issues. Fix all issues found.
     l. Commit and push: `Phase $ARGUMENTS MN: update docs`
@@ -197,5 +197,5 @@ EOF
 20. Run `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
 21. Hand off and stop. Merging is user-only (`/merge-and-cleanup` has `disable-model-invocation: true`; see `.claude/rules/03-git-workflow.md`):
     - Report the PR URL and the output of `gh pr checks <number>`
-    - Ask the user to run `/merge-and-cleanup` once they approve; it squash merges, deletes the branches, removes the worktree and fast-forwards main
+    - Ask the user to run `/merge-and-cleanup` once they approve; it preserves soak results and agent memory, squash merges, deletes the branches, removes the worktree and fast-forwards main
     - Do not merge, push to `main`, or repeat those steps another way

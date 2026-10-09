@@ -1304,6 +1304,8 @@ fn translate_munmap(addr: *mut c_void, length: usize) -> Result<()> {
 }
 ```
 
+**Current `MemoryMap` limits:** as implemented (see [ipc.md](../kernel/ipc.md) §4.7), `MemoryMap` allocates one physically contiguous block of at most 64 pages (256 KiB), and `MemoryUnmap` frees only a whole allocation at the exact address `MemoryMap` returned. The 2 MiB default pthread stack (§7.6), anonymous and private file-backed (`MAP_PRIVATE`) mappings above 256 KiB, which `translate_mmap` above sends to `MemoryMap`, and a partial `munmap` of a `MemoryMap` allocation therefore fail with `EINVAL` until `MemoryMap` can allocate more than one block and defines what a partial unmap does. A `munmap` range inside a `MAP_SHARED` mapping (an address in the shared memory window) does not fail: `MemoryUnmap` ignores `size` and the offset there and unmaps the whole region.
+
 **Demand paging:** Private file-backed mappings use demand paging — pages are not loaded from the Space Service until first accessed. The page fault handler (see [memory/virtual.md](../kernel/memory/virtual.md) §7.2) catches the fault, fetches the content block from the Space Service, and maps the page. Subsequent accesses hit the local page with no IPC overhead.
 
 **W^X enforcement:** `mmap(PROT_WRITE | PROT_EXEC)` is rejected — AIOS enforces W^X at the page table level (see [memory/hardening.md](../kernel/memory/hardening.md) §9). Programs that need JIT compilation must use `mprotect()` to toggle between writable and executable states, never both simultaneously.

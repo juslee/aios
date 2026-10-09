@@ -164,7 +164,7 @@ Apart from that gate, all loop behaviour, prompts, config and evals are unchange
 
 **Documentation and rules, updated in the PR that changes them:**
 
-- **`CLAUDE.md` workspace layout:** add `tools/`. R1 also fixes the stale `scripts/setup-dev-env.sh` entry, which now lives in `.claude/hooks/`.
+- **`.claude/CLAUDE.md` workspace layout:** add `tools/`. R1 also fixes the stale `scripts/setup-dev-env.sh` entry, which now lives in `.claude/hooks/`.
 - **Build-command tables:** README and the developer guide.
 - **`docs/project/agent-loop.md`.**
 - **Rule 05 (file placement):** add `tools/`.

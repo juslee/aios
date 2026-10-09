@@ -591,7 +591,7 @@ pub enum AppError {
     SubscriptionLimitReached,
 
     // Message loop
-    IpcError(aios_ipc::IpcError),
+    IpcError(aios_ipc::IpcKitError),
     HandlerPanicked(String),
     TimerLimitReached,
 

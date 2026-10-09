@@ -37,7 +37,7 @@ use regex::Regex;
 use super::Check;
 use crate::cmd::docs_check::markdown::{milestone_tokens, prose_lines, section_body, table_rows};
 use crate::cmd::docs_check::model::{Finding, Skip};
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::pystr::{int_str, is_ascii_digits, parse_uint, splitlines, strip};
 
 const MILESTONE_STATUS: &str = "milestone-status";
@@ -45,7 +45,6 @@ const PHASE_COUNT: &str = "phase-count";
 const PLAN: &str = "docs/project/development-plan.md";
 const README: &str = "README.md";
 const RULE_07: &str = ".claude/rules/07-milestone-numbering.md";
-const CLAUDE_MD: &str = "CLAUDE.md";
 
 /// check.py L940.
 static STATUS_RE: LazyLock<Regex> =

@@ -832,7 +832,7 @@ code is exercised by host-side `just test`. Total test count:
 **What:** Update all project documentation to reflect Phase 7 changes.
 
 **Tasks:**
-- [ ] Update CLAUDE.md: Workspace Layout (new compositor/* and input/* modules, ~20 new files), Key Technical Facts (new constants: VirtIO-input device ID=18, MAX_SURFACES=32, MAX_INPUT_DEVICES=4, compositor ProcessId=10, etc.), Architecture Doc Map (new entries), lock ordering
+- [ ] Update `.claude/CLAUDE.md`: Workspace Layout (new compositor/* and input/* modules, ~20 new files), Key Technical Facts (new constants: VirtIO-input device ID=18, MAX_SURFACES=32, MAX_INPUT_DEVICES=4, compositor ProcessId=10, etc.), lock ordering; `docs/project/doc-map.md` (new entries)
 - [ ] Update README.md: Project Structure, new QEMU targets, Phase 7 status
 - [ ] Update `docs/project/developer-guide.md`: new modules, test counts, file sizes, patterns
 - [ ] Check off Phase 7 tasks in phase doc

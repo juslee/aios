@@ -8,7 +8,7 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use super::{ThreadId, ThreadState, MAX_THREADS, THREAD_TABLE};
+use super::{ThreadId, ThreadState, THREAD_TABLE};
 use crate::cap::CapabilityTable;
 use crate::mm::uspace::UserAddressSpace;
 use crate::syscall::IpcError;
@@ -142,47 +142,19 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
         }
     }
 
-    // 2. Walk channel table: destroy channels owned by threads of this process.
-    //    Wake any blocked threads with EPIPE.
-    //    Lock ordering: THREAD_TABLE before CHANNEL_TABLE; release CHANNEL_TABLE
-    //    before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler).
-    //    Build a thread→pid lookup first, then scan channels, collect wakeups,
-    //    release lock, then deliver EPIPE wakeups.
+    // 2. Walk channel table: mark Dead every channel with an endpoint owned
+    //    by this process, and collect the threads blocked on it. Endpoint
+    //    owners are recorded as pids when the channel is created or its peer
+    //    is set, so channels that kernel services create for label tids
+    //    (0x700, 0x201, ...) match too.
+    //    Release CHANNEL_TABLE before calling wake_with_error (which acquires
+    //    WAKEUP_ERRORS + scheduler locks).
     let mut epipe_wakeups: [Option<ThreadId>; 16] = [None; 16];
     let mut epipe_count = 0usize;
     {
-        // Snapshot thread ownership under THREAD_TABLE lock (released before CHANNEL_TABLE).
-        let thread_pids: [Option<ProcessId>; MAX_THREADS] = {
-            let table = THREAD_TABLE.lock();
-            let mut pids = [None; MAX_THREADS];
-            for (i, slot) in table.iter().enumerate() {
-                if let Some(t) = slot {
-                    pids[i] = t.owner_pid;
-                }
-            }
-            pids
-        };
-
         let mut channels = crate::ipc::CHANNEL_TABLE.lock();
         for ch in channels.iter_mut().flatten() {
-            let owner_a_pid = {
-                let idx = ch.owner_a.0 as usize;
-                if idx < thread_pids.len() {
-                    thread_pids[idx]
-                } else {
-                    None
-                }
-            };
-            let owner_b_pid = ch.owner_b.and_then(|tid| {
-                let idx = tid.0 as usize;
-                if idx < thread_pids.len() {
-                    thread_pids[idx]
-                } else {
-                    None
-                }
-            });
-
-            if owner_a_pid == Some(pid) || owner_b_pid == Some(pid) {
+            if ch.owner_a == pid || ch.owner_b == Some(pid) {
                 // Mark channel as destroyed by setting endpoints to Dead.
                 ch.state_a = shared::EndpointState::Dead;
                 ch.state_b = shared::EndpointState::Dead;

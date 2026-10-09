@@ -37,7 +37,7 @@ Detailed per-step breakdown with sub-tasks. Each step maps to a step in the phas
   - [ ] (N+M-2)c: Verify: `just check` + `just test` + `just run`
 - [ ] Step N+M-1: End-to-end validation and quality gates
   - [ ] (N+M-1)a: Add end-to-end test to self-tests
-  - [ ] (N+M-1)b: Update CLAUDE.md, phase doc, developer-guide.md
+  - [ ] (N+M-1)b: Update `.claude/CLAUDE.md`, `docs/project/doc-map.md`, phase doc, developer-guide.md
   - [ ] (N+M-1)c: Run full audit loop
   - [ ] (N+M-1)d: Verify all gates
 - [ ] Step N+M: Shared crate refactoring
