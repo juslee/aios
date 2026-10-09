@@ -97,7 +97,8 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
 
-    // Log messages are cut at 48 bytes, so keep them short.
+    // A log message keeps at most 96 bytes (two ring entries); longer text
+    // is cut and marked with `~`, so keep these lines short.
     if at_max == einval
         && at_u32_max == einval
         && past_u32 == einval

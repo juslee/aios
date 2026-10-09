@@ -16,6 +16,7 @@ mod tests;
 mod timeout;
 
 use crate::syscall::IpcError;
+use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use spin::Mutex;
 
@@ -95,10 +96,14 @@ pub(crate) struct Channel {
     pub(crate) id: ChannelId,
     pub(crate) state_a: EndpointState,
     pub(crate) state_b: EndpointState,
-    /// Owner thread of endpoint A (creator).
-    pub(crate) owner_a: ThreadId,
-    /// Owner thread of endpoint B (peer).
-    pub(crate) owner_b: Option<ThreadId>,
+    /// Process that owns endpoint A (creator), recorded at creation.
+    /// `process_exit` matches endpoints on this. A process, not a thread:
+    /// kernel services create channels before their threads exist, for
+    /// label tids (0x700, 0x201, ...) that name no thread-table slot, so a
+    /// thread id could not be mapped back to its process at exit.
+    pub(crate) owner_a: ProcessId,
+    /// Process that owns endpoint B (peer), recorded by `channel_set_peer`.
+    pub(crate) owner_b: Option<ProcessId>,
     /// Message ring buffer (requests and async sends).
     pub(crate) ring: MessageRing,
     /// Thread currently blocked in ipc_recv() on this channel, if any.
@@ -112,7 +117,7 @@ pub(crate) struct Channel {
 }
 
 impl Channel {
-    fn new(id: ChannelId, owner_a: ThreadId) -> Self {
+    fn new(id: ChannelId, owner_a: ProcessId) -> Self {
         Self {
             id,
             state_a: EndpointState::Active,
@@ -170,8 +175,8 @@ fn channel_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Channel, 
 
 /// Create a new IPC channel. Returns channel_id.
 ///
-/// The creator thread owns endpoint A. Endpoint B can be assigned to
-/// another thread via `channel_set_peer()`.
+/// The creator thread's process owns endpoint A. Endpoint B can be assigned
+/// to a process via `channel_set_peer()`.
 ///
 /// Requires `Capability::ChannelCreate` on the creator's process.
 pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
@@ -189,15 +194,15 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
     };
 
     let id = ChannelId(idx as u32);
-    let mut ch = Channel::new(id, creator);
+    let mut ch = Channel::new(id, pid);
     ch.creation_cap = Some(auth_token);
     table[idx] = Some(ch);
     crate::kinfo!(Ipc, "Channel {} created by thread {}", idx, creator.0);
     Ok(id)
 }
 
-/// Set the peer (endpoint B) owner of a channel.
-pub fn channel_set_peer(channel: ChannelId, peer: ThreadId) -> Result<(), i64> {
+/// Set the process that owns the peer endpoint (B) of a channel.
+pub fn channel_set_peer(channel: ChannelId, peer: ProcessId) -> Result<(), i64> {
     let mut table = CHANNEL_TABLE.lock();
     let ch = channel_mut(&mut table, channel)?;
     ch.owner_b = Some(peer);

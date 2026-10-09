@@ -52,9 +52,9 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<(ChannelId, ChannelId)
         }
     };
 
-    let owned_a = channel_create_unchecked(my_tid);
-    let owned_b = channel_create_unchecked(my_tid);
-    let denied = channel_create_unchecked(my_tid);
+    let owned_a = channel_create_unchecked(pid);
+    let owned_b = channel_create_unchecked(pid);
+    let denied = channel_create_unchecked(pid);
     for ch in [owned_a, owned_b] {
         if crate::cap::grant_to_process(pid, Capability::ChannelAccess(ch), false).is_err() {
             crate::kwarn!(Ipc, "Select-cap test: grant failed");

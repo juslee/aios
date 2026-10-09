@@ -204,7 +204,8 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
         .enumerate()
         .filter(|(_, ok)| !**ok)
         .fold(0u64, |mask, (i, _)| mask | 1 << i);
-    // Log messages are cut at 48 bytes, so keep them short.
+    // A log message keeps at most 96 bytes (two ring entries); longer text
+    // is cut and marked with `~`, so keep these lines short.
     if failed == 0 {
         crate::kinfo!(Ipc, "Syscall-arg test: errnos as expected");
     } else {

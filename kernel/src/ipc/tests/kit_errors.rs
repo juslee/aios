@@ -169,7 +169,8 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
         .enumerate()
         .filter(|(_, ok)| !**ok)
         .fold(0u32, |mask, (i, _)| mask | 1 << i);
-    // Log messages are cut at 48 bytes, so keep them short.
+    // A log message keeps at most 96 bytes (two ring entries); longer text
+    // is cut and marked with `~`, so keep these lines short.
     if failed == 0 {
         crate::kinfo!(Ipc, "Kit-error test: variants as expected");
     } else {
