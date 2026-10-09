@@ -60,7 +60,7 @@ Phase 0 has three internal milestones. Each builds on the previous and produces 
 - [X] Add components: `rust-src`, `llvm-tools`, `clippy`, `rustfmt`
 - [X] Verify `cargo build --target aarch64-unknown-none` produces an empty binary
 
-**Note:** `aarch64-unknown-none` uses the hard-float ABI — the compiler emits NEON/FP instructions freely. This is correct for AIOS (needed for GGML/NEON in later phases) but requires enabling the FPU in boot assembly before any Rust code executes (see Step 3). The alternative `aarch64-unknown-none-softfloat` avoids the FPU constraint but is not used here because it cannot run NEON-optimized inference code.
+**Note:** `aarch64-unknown-none` uses the hard-float ABI — the compiler emits NEON/FP instructions freely. This is correct for AIOS (needed for candle/NEON in later phases) but requires enabling the FPU in boot assembly before any Rust code executes (see Step 3). The alternative `aarch64-unknown-none-softfloat` avoids the FPU constraint but is not used here because it cannot run NEON-optimized inference code.
 
 **Acceptance:** `rustup show` displays the pinned nightly with aarch64-unknown-none. `cargo build` succeeds (even if the binary does nothing).
 

@@ -200,7 +200,8 @@ aios/
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
 │                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook programs),
 │                         src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
-├── scripts/              agent/ (brief, checkpoint),
+├── scripts/              soak-matrix.sh (interleaved multi-revision soak; CI: soak-matrix.yml),
+│                         agent/ (brief, checkpoint),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```

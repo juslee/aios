@@ -85,3 +85,7 @@ When implementing the next compositor milestone (M25):
 2. Resolve `ELR` via `cargo objdump --bin kernel -- --disassemble | rg`
    to find the offending function.
 3. Once root-caused, flip the flag. Add the M25 IPC dispatch on top.
+
+## Amendment, 2026-09-29 (#184)
+
+"M27 Gate 2 benchmarks" above means Phase 7's compositor performance benchmarks (Step 33 of [the Phase 7 doc](../../phases/07-window-compositor-and-shell.md)), not Gate 2 of [the development plan](../../project/development-plan.md) §5, which is AI Viability after Phase 12. The phase doc now calls them compositor performance benchmarks. The decision is unchanged.

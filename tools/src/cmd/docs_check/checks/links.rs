@@ -13,9 +13,10 @@
 //! they agree with check.py's character offsets. Findings are returned in
 //! check.py's production order; `model::collate` merges and sorts them.
 //!
-//! Accepted divergences from check.py (Unicode edge cases that no tracked file exercises):
-//! the shared link regexes and the hub marker `Part of:\s*[...]` use Rust's `\s`, which
-//! lacks U+001C..U+001F, and `[0-9]` where Python's `\d` also accepts non-ASCII digits.
+//! The shared link regexes and the hub marker `Part of:\s*[...]` are compiled with
+//! `crate::pyre::compile`, so their `\s` and `\d` are Python's classes.
+//!
+//! Accepted divergence from check.py (a Unicode edge case that no tracked file exercises):
 //! `anchors`' fragment and `wiki-links`' note keys, vault names and vault paths are
 //! lowercased with `str::to_lowercase`, which reads Rust std's Unicode 18.0 case tables
 //! (CPython 3.14: 16.0), so they match across a case pair assigned after Unicode 16 (for
@@ -24,8 +25,6 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use regex::Regex;
-
 use super::Check;
 use crate::cmd::docs_check::markdown::{
     heading_number, is_escaped, is_placeholder, mask_prose, prose_lines, split_target,
@@ -33,7 +32,7 @@ use crate::cmd::docs_check::markdown::{
 };
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::Repo;
-use crate::{paths, pystr};
+use crate::{paths, pyre, pystr};
 
 /// Inline links and reference definitions outside code (check.py `iter_links`, L549-558):
 /// `(line number, raw target)`, a line's inline links first, then its reference definition.
@@ -80,7 +79,7 @@ pub fn heading_numbers(repo: &Repo, rel: &str) -> BTreeSet<String> {
 pub fn hub_members(repo: &Repo, hub: &str) -> Vec<String> {
     let (stem, _) = paths::splitext(hub);
     let hub_dir = paths::dirname(hub);
-    let marker = Regex::new(&format!(
+    let marker = pyre::compile(&format!(
         r"Part of:\s*\[{}\]",
         regex::escape(paths::basename(hub))
     ))

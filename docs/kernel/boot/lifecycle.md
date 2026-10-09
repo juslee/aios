@@ -136,7 +136,7 @@ Phase 8: Input, Terminal, Networking (Weeks 31-34)
   - Phase 2 fully operational
 
 Phase 10: AIRS Inference Engine (Weeks 35-39)
-  - GGML integration, model loading
+  - candle integration, model loading
   - Phase 3 boot sequence operational
 
 (Phases 11-21 and 23-34 are defined in development-plan.md)

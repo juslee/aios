@@ -154,10 +154,10 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 - [x] In `kernel/src/mm/frame.rs`: import `shared::kits::memory::{self as memory_kit, PhysFrame, PoolStats, MemoryError}`
 - [x] Create `KernelFrameAllocator` unit struct in `kernel/src/mm/frame.rs` that wraps the existing global `FRAME_ALLOC` state
 - [x] Implement `memory_kit::FrameAllocator` for `KernelFrameAllocator`:
-  - `alloc_frame()` delegates to existing `alloc_page()` / `alloc_user_page()` / `alloc_dma_page()` (pool-dispatched), wraps result in `PhysFrame`
-  - `free_frame()` delegates to existing `buddy::free_page()` (unsafe, kernel wraps safely)
+  - `alloc_frame(pool)` calls `alloc_page(pool)` on the global `FRAME_ALLOC` (pool-dispatched) and wraps the result in `PhysFrame`
+  - `free_frame(frame)` calls the unsafe `free_pages(addr, 0)` on the global `FRAME_ALLOC`. The trait method is safe, so it relies on callers passing only frames that `alloc_frame` returned, and nothing enforces this: `PhysFrame`'s fields are public, so any code can build one for any address, a kernel-pool page included. Nothing calls `free_frame` yet
   - `pool_pressure(pool)` computes pressure for the given pool from per-pool free/total data (using `pool_free_pages(pool)` and pool size), rather than delegating to the global `FrameAllocator::pressure()` which only covers the user pool
-  - `pool_stats()` computes free/total from existing pool data
+  - `pool_stats(pool)` computes free/total for the given pool from existing pool data
 - [x] Implement `MemoryPressureMonitor` for `KernelFrameAllocator`:
   - `current_level()` returns worst pressure across all pools
 - [x] Verify existing kernel boot sequence unaffected — all existing code continues using the module-level functions; Kit trait is an additional API layer

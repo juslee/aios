@@ -148,7 +148,7 @@ pub struct EmbeddingResult {
 |---|---|---|
 | Model size | ~100 MB | Fits in AIRS model pool alongside primary LLM |
 | Dimensions | 384 | Good accuracy-to-size ratio for on-device search |
-| Format | GGUF (quantized) | Native GGML runtime support |
+| Format | GGUF (quantized) | Read natively by the candle runtime |
 | Input limit | ~512 tokens (~4 KB text) | Matches companion model context window |
 | Residency | Always loaded (companion model) | Never evicted; reserved in model pool budget |
 | Inference | Batch of 16, ~200ms on Cortex-A72 | NEON SIMD acceleration |
