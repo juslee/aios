@@ -29,6 +29,7 @@ const STALE_NO_BUILD: &str =
 const UNCOMMITTED: &str = "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; revert or remove them (merge any you need through a PR first), then run just tools";
 const HIDDEN: &str = "aios tools were built while assume-unchanged or skip-worktree flags in the main checkout's index hid input files from git status; clear the flags (git ls-files -v shows them as lowercase tags or S), then run just tools";
 const DIRTY: &str = "aios tools were built from input commits in the main checkout that are not on origin/main; once they have merged through a PR, or if they are not wanted, reset the main checkout onto origin/main (git reset --keep origin/main), then run just tools";
+const LINK_FAILED: &str = "aios shim cannot hard-link the binary into target/tools to check and run it; check that target/tools is writable, then retry";
 const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not a non-empty regular executable file";
 const NO_ORIGIN: &str = "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools";
 const NO_OWN_DIR: &str =
@@ -64,7 +65,8 @@ fn ask_json(reason: &str) -> String {
 /// large binary, and creates `FAKE_CARGO_MARK` once the half is written.
 /// `FAKE_CARGO_PIDS` names a file to write the recipe's pid and its own to.
 /// `FAKE_CARGO_EXCLUSIVE` logs `overlap` to overlap.log when another build is
-/// running at the same time.
+/// running at the same time. `FAKE_CARGO_REMOVE` names a file to remove during
+/// the build, as a build script that deletes itself would.
 const FAKE_CARGO: &str = r#"#!/bin/sh
 set -u
 if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
@@ -73,6 +75,7 @@ if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
 fi
 echo "fake cargo: building the aios binary"
 printf 'build\n' >> cargo.log
+[ -z "${FAKE_CARGO_REMOVE:-}" ] || rm -f "$FAKE_CARGO_REMOVE"
 [ -z "${FAKE_CARGO_PIDS:-}" ] || echo "$PPID $$" > "$FAKE_CARGO_PIDS"
 if [ -n "${FAKE_CARGO_EXCLUSIVE:-}" ]; then
     mkdir target/tools/.fake-cargo-busy 2>/dev/null || printf 'overlap\n' >> overlap.log
@@ -643,7 +646,7 @@ fn a_stale_guard_without_just_or_a_lock_tool_starts_no_build() {
     let sandbox = Sandbox::new("shim-no-just");
     sandbox.install_bin(false);
     let shim_needs = [
-        "dirname", "git", "find", "head", "cat", "sed", "mkdir", "rmdir",
+        "dirname", "git", "find", "head", "cat", "sed", "mkdir", "rmdir", "mktemp", "ln", "rm",
     ];
     let no_just = only_commands(
         "shim-no-just-path",
@@ -799,6 +802,47 @@ fn guard_passes_on_only_the_binarys_own_0_and_2() {
         assert_eq!(code(&out), 0);
         assert_eq!(stdout(&out), want, "binary exit {status}");
     }
+}
+
+/// The entries under target/tools that the guard branch's per-call link
+/// directories use.
+fn guard_link_dirs(sandbox: &Sandbox) -> Vec<String> {
+    std::fs::read_dir(sandbox.repo.path().join("target/tools"))
+        .expect("list target/tools")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".guard."))
+        .collect()
+}
+
+// #203 path 4, run side: guard checks and runs one file, a hard link to the
+// binary named aios in a directory made for the call, so a `just tools` rename
+// between the check and the run cannot swap in an unchecked binary. The link
+// goes once the binary exits, and a link that cannot be made is an ask.
+#[test]
+fn guard_checks_and_runs_a_hard_link_to_the_binary() {
+    let sandbox = Sandbox::new("shim-guard-link");
+    sandbox.install(Some("#!/bin/sh\nprintf '%s\\n' \"$0\"\n"), true);
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let ran = stdout(&out);
+    let tools = sandbox.repo.path().join("target/tools/.guard.");
+    let tools = tools.to_str().expect("a UTF-8 path");
+    assert!(
+        ran.contains("/target/tools/.guard.") && ran.ends_with("/aios\n"),
+        "ran {ran}, not a link under {tools}"
+    );
+    assert!(guard_link_dirs(&sandbox).is_empty(), "the link is removed");
+
+    // An `ln` that fails, as it would across file systems or without write
+    // access to target/tools: an ask, and the call's directory is removed.
+    let fakes = TestRepo::adopt(unique_dir("shim-guard-link-fakes"));
+    write_executable(&fakes.path().join("ln"), "#!/bin/sh\nexit 1\n");
+    let path = format!("{}:{}", fakes.path().display(), sandbox.path_env());
+    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("PATH", &path)]);
+    assert_asks(&out, LINK_FAILED);
+    assert!(guard_link_dirs(&sandbox).is_empty());
+    assert!(sandbox.no_build_started());
 }
 
 // #203 path 2, build side: `just tools` never leaves the binary missing or
@@ -1305,6 +1349,46 @@ fn a_build_with_ignored_input_files_is_dirty() {
     assert!(sandbox.no_build_started());
 }
 
+// An ignored input file the build reads and then removes, as a build script
+// that deletes itself would, still makes the build dirty: the recipe runs its
+// dirty test before the build as well as after it. The shim's repeat of the
+// test then finds the file gone, so guard never runs that binary: it asks and
+// rebuilds, and the rebuild, made without the file, is clean.
+#[test]
+fn an_input_file_removed_during_the_build_still_makes_it_dirty() {
+    let sandbox = Sandbox::new("shim-self-removing-build-script");
+    sandbox
+        .repo
+        .write(".gitignore", "target/\n*.log\n/tools/build.rs\n");
+    sandbox.repo.commit("Ignore tools/build.rs");
+    sandbox.merge();
+    sandbox
+        .repo
+        .write("tools/build.rs", "fn main() { /* any code */ }\n");
+    let source = sandbox.bin_dir.path().join("aios-source");
+    std::fs::write(
+        &source,
+        "#!/bin/sh\nprintf 'built-with-build-rs:%s\\n' \"$*\"\n",
+    )
+    .expect("write the binary source");
+    let out = sandbox.just_tools(&[
+        ("FAKE_CARGO_SOURCE", source.to_str().expect("a UTF-8 path")),
+        ("FAKE_CARGO_REMOVE", "tools/build.rs"),
+    ]);
+    assert!(out.status.success(), "just tools failed: {}", stderr(&out));
+    assert!(!sandbox.repo.path().join("tools/build.rs").exists());
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
+}
+
 // OS and editor files that no build reads (Finder's .DS_Store, editor swap and
 // backup files) do not make a build dirty, ignored or untracked, nor stale
 // when written after it (nor do the directories they change), so one left
@@ -1526,6 +1610,49 @@ fn a_build_from_inputs_not_on_origin_main_is_dirty() {
     );
 }
 
+// Replace refs and a grafts file, plain files under .git, change the commits
+// git sees. Each can make origin/main look as if it held an unmerged input
+// commit, without moving refs/remotes/origin/main; the recipe and the shim's
+// repeat of its test turn both off.
+#[test]
+fn replace_refs_and_grafts_do_not_make_unmerged_inputs_look_merged() {
+    for (label, grafts) in [("shim-replace-ref", false), ("shim-grafts", true)] {
+        let sandbox = Sandbox::new(label);
+        let path = sandbox.repo.path();
+        let merged = common::git(path, &["rev-parse", "refs/remotes/origin/main"]);
+        let merged = merged.trim();
+        sandbox
+            .repo
+            .write("tools/src/lib.rs", "// a local, unmerged commit\n");
+        sandbox.repo.commit("Unmerged change");
+        let head = common::git(path, &["rev-parse", "HEAD"]);
+        let head = head.trim();
+        // A parentless commit with HEAD's tree.
+        let fake = common::git(path, &["commit-tree", "HEAD^{tree}", "-m", "fake"]);
+        let fake = fake.trim();
+        if grafts {
+            // Both HEAD and origin/main descend from the fake commit, which
+            // becomes their merge base.
+            sandbox.repo.write(
+                ".git/info/grafts",
+                &format!("{head} {fake}\n{merged} {fake}\n"),
+            );
+        } else {
+            // origin/main's commit shows as the fake one.
+            sandbox
+                .repo
+                .write(&format!(".git/refs/replace/{merged}"), &format!("{fake}\n"));
+        }
+        sandbox.install_bin(true);
+        assert!(
+            read(&sandbox.stamp()).ends_with("\nsource dirty\n"),
+            "{label}"
+        );
+        assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+        assert!(sandbox.no_build_started(), "{label}");
+    }
+}
+
 #[test]
 fn an_override_replaces_the_main_checkouts_binary() {
     let sandbox = Sandbox::new("shim-override");
@@ -1647,16 +1774,17 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
 
     // The main checkout's own shim keeps the fallback, since its .git is a
     // directory, but without git it cannot check the stamp: guard asks, and
-    // the other subcommands' rebuild fails (the recipe needs git too), so they
-    // warn and run the unverified binary.
+    // the other subcommands' rebuild fails (the recipe runs its dirty test
+    // before cargo, so it stops there), so they warn and run the unverified
+    // binary.
     let out = sandbox.run_at(
         &sandbox.shim(),
         &["guard", "PreToolUse"],
         &[("PATH", &path)],
     );
     assert_asks(&out, STALE);
-    sandbox.wait_for_background_build();
-    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+    wait_for("the build lock to be released", || !sandbox.lock().exists());
+    assert!(!sandbox.built(), "the recipe stops at git, before cargo");
     let out = sandbox.run_at(&sandbox.shim(), &["docs-check"], &[("PATH", &path)]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check\n");

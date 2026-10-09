@@ -167,9 +167,12 @@ test:
 # uncommitted changes (untracked and gitignored files count: an ignored
 # tools/build.rs or .cargo/config still changes the build; the exclude
 # pathspecs, anchored under tools/ and .cargo/ for the reason the shim gives,
-# leave out OS and editor files no build reads), when the index marks an input
-# file assume-unchanged or skip-worktree (git status skips it; `git ls-files
-# -v` tags every other file H), when HEAD has input
+# leave out OS and editor files no build reads), or when the index marks an
+# input file assume-unchanged or skip-worktree (git status skips it; `git
+# ls-files -v` tags every other file H), before the build or after it: a file
+# the build read and then removed, such as an ignored tools/build.rs that
+# deletes itself, still counts, though one that appears and goes again only
+# while the build runs is not seen. It is also dirty when HEAD has input
 # changes that origin/main (refs/remotes/origin/main) lacks, or when there is
 # no origin/main, so only inputs merged through a PR stamp "source clean". The
 # test runs git status without optional locks, so a background build never
@@ -178,6 +181,9 @@ test:
 # config that lets git status skip reading files turned off (core.fsmonitor,
 # core.untrackedCache, core.checkStat, core.trustctime); a clean filter set
 # in the config still hides an edit (the shim's header lists what it trusts).
+# Every git call runs with replace refs and the grafts file off, as the shim's
+# do, so a file under .git/refs/replace/ or .git/info/grafts cannot make an
+# unmerged input commit look merged.
 # The shim treats a missing or mismatched stamp as stale, and repeats the dirty
 # test on a dirty stamp; the inputs list, the dirty test and the format must
 # match the shim's.
@@ -207,20 +213,29 @@ tools:
         echo "just tools: waiting for another just tools to finish (lock $lock)" >&2
         take_lock
     fi
-    start=$(mktemp target/tools/.build-start.XXXXXX)
-    cargo build --release -p aios-tools --target-dir target/tools 9>&-
+    GIT_NO_REPLACE_OBJECTS=1
+    GIT_GRAFT_FILE=/dev/null/no-grafts
+    export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
     inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
+    # Print the input files git status lists (or a failure aborts the recipe)
+    # and those the index flags hide from it.
+    uncommitted() {
+        git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false \
+            -c core.checkStat=default -c core.trustctime=true --work-tree="$PWD" \
+            status --porcelain --untracked-files=all --ignored=matching -- $inputs \
+            ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
+            ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
+            ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
+            ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk' || return 1
+        flags=$(git --work-tree="$PWD" ls-files -v -- $inputs) || return 1
+        printf '%s\n' "$flags" | sed '/^H /d;/^$/d'
+    }
+    start=$(mktemp target/tools/.build-start.XXXXXX)
+    before=$(uncommitted)
+    cargo build --release -p aios-tools --target-dir target/tools 9>&-
     src=$(git ls-tree HEAD -- $inputs)
-    changes=$(git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false \
-        -c core.checkStat=default -c core.trustctime=true --work-tree="$PWD" \
-        status --porcelain --untracked-files=all --ignored=matching -- $inputs \
-        ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
-        ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
-        ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
-        ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk')
-    flags=$(git --work-tree="$PWD" ls-files -v -- $inputs)
-    hidden=$(printf '%s\n' "$flags" | sed '/^H /d;/^$/d')
-    if [ -n "$changes" ] || [ -n "$hidden" ]; then
+    after=$(uncommitted)
+    if [ -n "$before" ] || [ -n "$after" ]; then
         state=dirty
     elif ! base=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
         ! git diff-tree --quiet -r "$base" HEAD -- $inputs; then

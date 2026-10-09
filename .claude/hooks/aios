@@ -11,10 +11,12 @@
 # one, .cargo/, and the justfile, whose recipe writes the stamp), the git hash
 # of the installed binary, and whether those inputs were dirty: changed but not
 # committed (untracked and gitignored files included, except the OS and editor
-# files no build reads: .DS_Store, *.swp, *.swo, *~ and *.rs.bk, and tracked
-# files the index marks assume-unchanged or skip-worktree), or committed
-# on HEAD but not on origin/main (refs/remotes/origin/main, which a plain fetch
-# moves only to what was merged on GitHub), or origin/main is missing. This
+# files no build reads: .DS_Store, *.swp, *.swo, *~ and *.rs.bk), or tracked
+# input files the index marks assume-unchanged or skip-worktree (these two
+# tested before the build and after it, so a file the build read and then
+# removed still counts), or committed on HEAD but not on origin/main
+# (refs/remotes/origin/main, which a plain fetch moves only to what was merged
+# on GitHub), or origin/main is missing. This
 # repository squash-merges, so a commit made in the main checkout never reaches
 # origin/main itself: once its change has merged, resetting the main checkout
 # onto origin/main clears it. The shim recomputes the entries and the hash from
@@ -41,7 +43,10 @@
 #            still dirty.
 #   fresh    matches, built from inputs merged on origin/main, nothing newer.
 #
-#   aios guard ...    PreToolUse hook. Runs a fresh binary as a child: its own
+#   aios guard ...    PreToolUse hook. Checks and runs one file: a hard link
+#                     to the binary made for the call, which a `just tools`
+#                     rename in between cannot swap. Runs a fresh binary as a
+#                     child: its own
 #                     exit 0 (decision on stdout) and 2 (block) pass through,
 #                     any other exit becomes "ask". Claude Code runs the tool on
 #                     a hook exit other than 0 or 2, so every path that does not
@@ -53,7 +58,8 @@
 #                     cause the dirty test finds now: uncommitted, untracked or
 #                     ignored input files, input files index flags hide from
 #                     git status, input commits origin/main lacks, or no
-#                     origin/main), an override that is not a runnable
+#                     origin/main), a hard link that cannot be made, an
+#                     override that is not a runnable
 #                     file, and a shim that cannot find its own directory or
 #                     the main checkout. A runnable override is the
 #                     exception: it runs as a child like a fresh binary, with
@@ -88,11 +94,24 @@
 # way: it pins the work tree, turns off the config that lets git status skip
 # reading files, and reads the index flags, but a clean filter (a
 # filter.<driver>.clean command in the config, given to input files by an
-# attributes file) still makes git status see the committed content.
+# attributes file) still makes git status see the committed content. Every git
+# call here and in the recipe runs with replace refs and the grafts file off
+# (GIT_NO_REPLACE_OBJECTS, GIT_GRAFT_FILE), which plain file writes under .git
+# could otherwise use to show an unmerged commit as merged; the object store
+# itself (a rewritten object file or commit-graph) is trusted like the rest.
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
 # never to stdout, so JSON on stdout stays parseable.
 
 set -u
+
+# Replace refs (a file under .git/refs/replace/) and a grafts file
+# (.git/info/grafts) change the commits git sees: one naming origin/main's
+# commit can make an unmerged input commit look merged. Turn both off for every
+# git call, the recipe's included (it sets the same). A grafts file under
+# /dev/null cannot exist, so git reads none and gives no warning.
+GIT_NO_REPLACE_OBJECTS=1
+GIT_GRAFT_FILE=/dev/null/no-grafts
+export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
 
 sub=${1:-}
 
@@ -219,24 +238,27 @@ dirty_cause() {
     fi
 }
 
-# Print fresh, stale, or dirty-<cause> (see dirty_cause) for a runnable $bin
-# (see the header). The mtime test skips directories and the OS and editor
+# Print fresh, stale, or dirty-<cause> (see dirty_cause) for the runnable
+# installed binary $1, $bin or a hard link to it (see the header). The mtime
+# test skips directories and the OS and editor
 # files the dirty test leaves out: Finder or an editor rewrites them (a swap
 # file every few seconds), and creating one moves its directory's mtime, so
 # either would start rebuild after rebuild. A file removed since the build
-# changes no mtime it reads: uncommitted, the removal leaves a clean build
-# valid (and a dirty one is tested again below), and committed, it changes
-# HEAD's entries in the stamp.
+# changes no mtime it reads. Uncommitted, the removal leaves a clean build
+# valid, since the recipe runs its dirty test before the build as well as
+# after it, so a clean stamp means the build started without the file (a
+# dirty one is tested again below). Committed, it changes HEAD's entries in
+# the stamp.
 verdict() {
     # shellcheck disable=SC2086 # $inputs is a list of plain relative paths.
     if [ -n "$(cd "$main" && find $inputs ! -type d ! -name .DS_Store ! -name '*.swp' ! -name '*.swo' \
-        ! -name '*~' ! -name '*.rs.bk' -newer "$bin" -print 2>/dev/null | head -n 1)" ]; then
+        ! -name '*~' ! -name '*.rs.bk' -newer "$1" -print 2>/dev/null | head -n 1)" ]; then
         echo stale
         return
     fi
     # shellcheck disable=SC2086
     if ! src=$(git -C "$main" ls-tree HEAD -- $inputs 2>/dev/null) ||
-        ! sum=$(git -C "$main" hash-object --no-filters -- "$bin" 2>/dev/null) ||
+        ! sum=$(git -C "$main" hash-object --no-filters -- "$1" 2>/dev/null) ||
         ! have=$(cat -- "$stamp" 2>/dev/null); then
         echo stale
         return
@@ -337,15 +359,27 @@ fi
 
 case $sub in
 --prebuild)
-    if ! runnable "$bin" || [ "$(verdict)" = stale ]; then
+    if ! runnable "$bin" || [ "$(verdict "$bin")" = stale ]; then
         build_bg
     fi
     exit 0
     ;;
 guard)
     runnable "$bin" || ask "aios tools not built; run just tools"
-    case $(verdict) in
-    fresh) run_guard "aios guard" "run just tools" "$bin" "$@" ;;
+    # Check and run one file: a hard link to the binary, named aios (clap takes
+    # the program name from it) in a directory made for this call. A `just
+    # tools` rename after the check replaces only the directory entry at $bin,
+    # so it cannot swap in a binary that was never checked.
+    run_dir=
+    trap 'if [ -n "$run_dir" ]; then rm -f "$run_dir/aios"; rmdir "$run_dir"; fi 2>/dev/null' EXIT
+    trap 'exit 1' HUP INT TERM
+    if ! run_dir=$(mktemp -d "$main/target/tools/.guard.XXXXXX" 2>/dev/null) ||
+        ! ln "$bin" "$run_dir/aios" 2>/dev/null; then
+        ask "aios shim cannot hard-link the binary into target/tools to check and run it; check that target/tools is writable, then retry"
+    fi
+    runnable "$run_dir/aios" || ask "aios tools not built; run just tools"
+    case $(verdict "$run_dir/aios") in
+    fresh) run_guard "aios guard" "run just tools" "$run_dir/aios" "$@" ;;
     dirty-changes)
         ask "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; revert or remove them (merge any you need through a PR first), then run just tools"
         ;;
@@ -373,7 +407,7 @@ if ! runnable "$bin"; then
         echo "aios: $bin is missing and the build failed; run: just tools" >&2
         exit 3
     fi
-elif [ "$(verdict)" = stale ]; then
+elif [ "$(verdict "$bin")" = stale ]; then
     build_fg || echo "aios: rebuilding $bin failed; running the stale binary (run: just tools)" >&2
 fi
 exec "$bin" "$@"
