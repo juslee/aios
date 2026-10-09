@@ -191,8 +191,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
 /// `ttbr0_idmap` is 1 when `TTBR0_EL1`'s table base is the boot identity map
 /// ([`ttbr0_l0_addr`](crate::arch::aarch64::mmu::ttbr0_l0_addr)).
 ///
-/// A direct UART line, not `kinfo!`, which cuts messages to 48 bytes. A
-/// secondary prints it inside its `PRINT_TURN` window; CPU 0 prints its own
+/// A direct UART line, not `kinfo!`, whose messages carry at most 96 bytes
+/// (a head entry and one continuation) and reach the UART only at the next
+/// log drain. A secondary prints it inside its `PRINT_TURN` window; CPU 0 prints its own
 /// after the boot address-space switch test, from `kernel_main`. It runs at
 /// thread level during boot only, never on the IRQ path.
 pub fn print_cpu_line(cpu: usize) {
