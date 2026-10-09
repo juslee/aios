@@ -57,21 +57,24 @@ interleaved under QEMU: RUNS rounds, one boot per arm per round, the arm
 order rotated by one every round (round 1: A B C, round 2: B C A, round 3:
 C A B, ...), so every arm sees the same host conditions. A REF is a commit
 SHA or a branch name; a name that does not resolve locally is looked up as
-origin/NAME. A REF of 4-40 hex digits, or such a name before a suffix
-like ~1 or ^, must resolve to a commit whose SHA starts with it: a branch
-or tag of that name that points elsewhere is refused (pass the full SHA,
-or name the ref as origin/NAME for a branch, refs/heads/NAME for a
-local-only branch or refs/tags/NAME for a tag). The same ref given twice
-is an A/A control: it shows how far two identical arms drift apart by
-chance.
+origin/NAME. A REF of 4-39 hex digits, or such a name before a suffix
+like ~1 or ^, is read only as an abbreviated SHA: it is refused when it
+is also the name of a branch or tag (here or as origin/NAME), since git
+would take the ref, or when more than one commit or tag object starts
+with it. A REF of 40 hex digits is always that commit. To name a branch
+or tag that looks like a SHA, give origin/NAME for a branch,
+refs/heads/NAME for a local-only branch or refs/tags/NAME for a tag. The
+same ref given twice is an A/A control: it shows how far two identical
+arms drift apart by chance.
 
 Options:
   --runs N          rounds, i.e. boots per arm, 1-1000 (default 30)
   --secs T          wall-clock seconds per boot, 16-3600 (default 90); must
                     be more than 15, the harness's --stall-secs
   --mode text|gpu   QEMU device set, as soak-qemu.sh --mode (default text)
-  --out DIR         output directory; must be new or empty
-                    (default target/soak-matrix/<timestamp>-<mode>)
+  --out DIR         output directory; must be new or empty (default
+                    target/soak-matrix/<timestamp>-<mode> in the main
+                    checkout, see below)
   --worktrees DIR   create the arm worktrees as DIR/arm-A, DIR/arm-B, ...;
                     none of them may exist yet, and DIR must not be --out
                     (default: a new directory under ${TMPDIR:-/tmp})
@@ -104,13 +107,19 @@ anyway and marks the summary. A rust-toolchain.toml channel that cannot be
 read counts as a mismatch. A firmware mismatch is always refused, and so is
 firmware that is not an absolute path (each arm's harness would resolve it
 inside that arm's worktree) or does not exist; all are checked before any
-build.
+build. Every boot must then run the QEMU (qemu-system-aarch64 --version)
+and the firmware (by sha256) that the soak read after the builds: an
+upgrade mid-soak stops it, and the boot that saw it is not counted.
 
 Every boot runs, from inside the arm's worktree:
   scripts/soak-qemu.sh --no-build --runs 1 --secs T --mode M --report-only
                        --out OUT/arm-X/rNN
 
-Output directory:
+Output directory: by default target/soak-matrix/<timestamp>-<mode> in the
+main checkout (the first entry of `git worktree list`), whichever worktree
+runs the script. /merge-and-cleanup copies only target/soak/ out of a pull
+request's worktree before the merge deletes it, so keep an --out outside
+such a worktree too.
   summary.md     settings, the arms, per-arm class counts, CLEAN rate with a
                  95% Wilson interval over conclusive boots, IPC round-trip
                  medians, pairwise Fisher exact tests of CLEAN vs not CLEAN
@@ -138,12 +147,12 @@ builds with its own toolchain pin into its own target/.
 Exit status: 0 when every round ran, whatever the boot classes (report
 only); 2 on a usage or setup error (a ref that does not resolve, an arm
 without #196, mixed toolchains or firmware, a failed build, a harness error
-on an arm's first boot, or 3 harness errors in a row); 129, 130, 131 and
-143 on SIGHUP, SIGINT, SIGQUIT and SIGTERM. A signal stops the running
-build or boot at once (the boot's harness stops QEMU and removes its
-scratch files), as does any other early exit; once the boots have started,
-it also marks summary.md "stopped". A soak stopped before then leaves no
-summary.md, only the build logs.
+on an arm's first boot, 3 harness errors in a row, or a QEMU or firmware
+change mid-soak); 129, 130, 131 and 143 on SIGHUP, SIGINT, SIGQUIT and
+SIGTERM. A signal stops the running build or boot at once (the boot's
+harness stops QEMU and removes its scratch files), as does any other early
+exit; once the boots have started, it also marks summary.md "stopped". A
+soak stopped before then leaves no summary.md, only the build logs.
 EOF
 }
 
@@ -241,18 +250,56 @@ commit_of() {
         git -C "$REPO_ROOT" rev-parse --verify --quiet "origin/$1^{commit}"
 }
 
+# main_checkout -- print the main working tree of this repository, the first
+# entry of `git worktree list` (nothing if the repository is bare).
+main_checkout() {
+    git -C "$REPO_ROOT" worktree list --porcelain | awk '
+        NR == 1 && /^worktree / { p = substr($0, 10) }
+        !done && $0 == "bare" { p = "" }
+        $0 == "" { done = 1 }
+        END { if (p != "") print p }
+    '
+}
+
 # resolve_ref REF -- print the full commit SHA of REF, or of origin/REF.
 # Returns 1 if neither names a commit, and 3 if REF's leading name (all of
 # REF, or the part before its first ~ ^ @ : or {, as in 43fc8d5~1) looks
-# like a short SHA (4-40 hex digits) but resolves to a commit whose SHA does
-# not start with it: git tries ref names before abbreviated object names, so
-# a branch or tag named like a short SHA would silently stand in for that
-# commit.
+# like a SHA (4-40 hex digits) but may not name the commit it abbreviates.
+# git tries ref names before abbreviated object names, so a branch or tag
+# named like a short SHA, pointing at a commit crafted to share that prefix,
+# would silently stand in for the commit. A name of 4-39 hex digits is
+# therefore refused when it is also a ref, here or as origin/NAME, or when
+# more than one commit or tag object starts with it. git reads 40 hex digits
+# as an object name whatever refs exist; for those, and as a last check for
+# every hex name, the commit found must start with the name.
 resolve_ref() {
-    local sha base bsha
+    local sha base lbase bsha full o n
     case "$1" in -*) return 1 ;; esac
-    sha=$(commit_of "$1") || return 1
     base=${1%%[~^@:\{]*}
+    lbase=$(printf '%s' "$base" | tr 'A-F' 'a-f')
+    case "$base" in
+    '' | *[!0-9a-fA-F]* | ? | ?? | ???) ;;
+    *)
+        if [ "${#base}" -lt 40 ]; then
+            # rev-parse echoes a name it cannot resolve, with a nonzero status.
+            if full=$(git -C "$REPO_ROOT" rev-parse --symbolic-full-name "$base" 2>/dev/null) &&
+                [ -n "$full" ]; then
+                return 3
+            fi
+            if git -C "$REPO_ROOT" rev-parse --verify --quiet "origin/$base" >/dev/null; then
+                return 3
+            fi
+            n=0
+            for o in $(git -C "$REPO_ROOT" rev-parse --disambiguate="$lbase" 2>/dev/null); do
+                case $(git -C "$REPO_ROOT" cat-file -t "$o" 2>/dev/null) in
+                commit | tag) n=$((n + 1)) ;;
+                esac
+            done
+            [ "$n" -le 1 ] || return 3
+        fi
+        ;;
+    esac
+    sha=$(commit_of "$1") || return 1
     case "$base" in
     '' | *[!0-9a-fA-F]* | ? | ?? | ???) ;;
     *)
@@ -260,7 +307,7 @@ resolve_ref() {
             bsha=$sha
             [ "$base" = "$1" ] || bsha=$(commit_of "$base") || return 3
             case "$bsha" in
-            "$(printf '%s' "$base" | tr 'A-F' 'a-f')"*) ;;
+            "$lbase"*) ;;
             *) return 3 ;;
             esac
         fi
@@ -476,7 +523,7 @@ write_summary() {
         echo "| Toolchain | $TOOLCHAIN_NOTE |"
         echo "| Host | $(uname -srm), $(host_cpus) CPUs |"
         echo "| QEMU | $QEMU_VER |"
-        echo "| Firmware | \`$FW\` (all arms) |"
+        echo "| Firmware | \`$FW\` (all arms; sha256 \`${FW_SHA:0:16}\`) |"
         echo "| Started | $STARTED |"
         echo "| Output | \`$OUT\` |"
         echo
@@ -493,8 +540,8 @@ write_summary() {
 # Worktrees and builds
 # ---------------------------------------------------------------------------
 # Arm worktrees created or being created: ARM_WT[0 .. CREATED_WT-1]. A path
-# is recorded before `git worktree add` starts, so a signal during the add
-# still removes it.
+# is recorded once this run has created its directory and before `git
+# worktree add` starts, so a signal during the add still removes it.
 CREATED_WT=0
 WT_DIR_CREATED=0
 SUMMARY_READY=0 # set once write_summary has everything it needs
@@ -519,9 +566,12 @@ cleanup() {
         return 0
     fi
     while [ "$i" -lt "$CREATED_WT" ]; do
-        # A path that does not exist is one whose `git worktree add` failed.
+        # Every recorded path is a directory this run created (prepare_arm).
+        # It is gone if a failed `git worktree add` removed it, and still
+        # empty if the add never ran or failed before filling it.
         if [ -e "${ARM_WT[$i]}" ]; then
             git -C "$REPO_ROOT" worktree remove --force "${ARM_WT[$i]}" >/dev/null 2>&1 ||
+                rmdir -- "${ARM_WT[$i]}" 2>/dev/null ||
                 warn "could not remove worktree ${ARM_WT[$i]}; run: git worktree remove --force ${ARM_WT[$i]}"
         fi
         i=$((i + 1))
@@ -585,7 +635,12 @@ prepare_arm() {
     local i=$1 wt label h msg
     label=${ARM_LABEL[$i]}
     wt="$WT_DIR/arm-$label"
-    [ ! -e "$wt" ] || die "$wt already exists; pass another --worktrees directory or remove it"
+    # Claimed with a plain mkdir, which fails if the path exists, so a path
+    # another run created in the meantime is never recorded here, and never
+    # removed by this run's cleanup. `git worktree add` fills the empty
+    # directory.
+    mkdir -- "$wt" 2>/dev/null ||
+        die "cannot create $wt (does it already exist?); pass another --worktrees directory or remove it"
     ARM_WT[i]=$wt
     CREATED_WT=$((CREATED_WT + 1))
     msg=$(git -C "$REPO_ROOT" worktree add --detach "$wt" "${ARM_SHA[$i]}" 2>&1) ||
@@ -661,6 +716,29 @@ build_arm() {
 # ---------------------------------------------------------------------------
 ERROR_STREAK=0
 
+# check_instrument LABEL RR DIR -- stop the soak if the boot just run in DIR
+# used another QEMU or firmware than the soak started with: an upgrade
+# mid-soak (rule 04's `brew upgrade qemu`, say, from another session on a
+# shared host) would mix instruments, while summary.md names one QEMU and
+# one firmware for every boot. That boot is not counted; the boots before it
+# stay in summary.md, marked "stopped".
+check_instrument() {
+    local label=$1 rr=$2 dir=$3 qv="" fws
+    # The QEMU the boot's harness ran, from the summary.md it writes when it
+    # finishes; without one, the QEMU installed now.
+    [ ! -f "$dir/summary.md" ] || qv=$(sed -n 's/^| QEMU | \(.*\) |$/\1/p' "$dir/summary.md" | sed -n 1p)
+    [ -n "$qv" ] || qv=$(qemu-system-aarch64 --version 2>/dev/null | sed -n 1p) || qv=""
+    [ "$qv" = "$QEMU_VER" ] ||
+        die "arm $label round $rr ran QEMU '${qv:-(none found)}', but the soak started with '$QEMU_VER'" \
+            "(upgraded mid-soak?); that boot is not counted, the boots before it are in summary.md ($dir)"
+    fws=$(sha256_of "$FW" 2>/dev/null) || fws=""
+    if [ "$fws" != "$FW_SHA" ]; then
+        [ -n "$fws" ] || fws=unreadable
+        die "the firmware $FW changed during the soak (sha256 ${FW_SHA:0:16} at the start, now" \
+            "${fws:0:16}); arm $label round $rr is not counted, the boots before it are in summary.md ($dir)"
+    fi
+}
+
 # boot_arm I ROUND POS -- boot arm I once and append its row to boots.tsv.
 boot_arm() {
     local i=$1 r=$2 pos=$3 label wt rr dir out rc=0 load1 class tick elapsed qrc detail
@@ -681,6 +759,7 @@ boot_arm() {
             exit "$rc"
             ;;
     esac
+    check_instrument "$label" "$rr" "$dir"
 
     class=""
     tick="-"
@@ -704,11 +783,15 @@ boot_arm() {
             tail -n 20 "$out" >&2
             die "arm $label: soak-qemu.sh failed on the arm's first boot (exit $rc); see $out"
         fi
-        if [ -f "$dir/run-01.log" ]; then
-            # It booted and then stopped: with --runs 1 every boot is the
-            # harness's first, so a boot on which the UEFI stub never ran is
-            # a setup error there. Later in a soak it is INCONCLUSIVE, which
-            # --classify reports.
+        # A run-01.log means it booted and then stopped: with --runs 1 every
+        # boot is the harness's first, so a boot on which the UEFI stub never
+        # ran is a setup error there. Later in a soak it is INCONCLUSIVE, which
+        # --classify reports. The harness appends the "[soak] meta" footer
+        # once QEMU has exited, before that check. A log without it is from
+        # a harness that died mid-boot (a SIGKILL from the OOM killer, say):
+        # classified from its content alone, a boot cut short reads as a
+        # WEDGE, so it stays ERROR and never counts as a conclusive boot.
+        if [ -f "$dir/run-01.log" ] && grep -a -q '^\[soak\] meta ' "$dir/run-01.log"; then
             class=$(cd -- "$dir" && bash "$wt/scripts/soak-qemu.sh" --report-only --classify run-01.log 2>/dev/null |
                 awk 'NR == 1 { print $2 }') || class=""
         fi
@@ -844,9 +927,10 @@ while [ "$i" -lt "$N" ]; do
     rc=0
     ARM_SHA[i]=$(resolve_ref "${ARM_REF[$i]}") || rc=$?
     [ "$rc" -ne 3 ] ||
-        die "ref '${ARM_REF[$i]}' is or starts with what looks like a short SHA, but that name is a branch" \
-            "or tag that points at another commit; pass the full SHA, or name the ref as origin/NAME (a branch)," \
-            "refs/heads/NAME (a local-only branch) or refs/tags/NAME (a tag)"
+        die "ref '${ARM_REF[$i]}' is or starts with what looks like a SHA, but that name is also a branch" \
+            "or tag (git would take the ref, not the commit), or more than one commit or tag object starts with it;" \
+            "pass the full 40-digit SHA, or name the ref as origin/NAME (a branch), refs/heads/NAME" \
+            "(a local-only branch) or refs/tags/NAME (a tag)"
     [ "$rc" -eq 0 ] ||
         die "ref '${ARM_REF[$i]}' does not name a commit (tried it and origin/${ARM_REF[$i]}; is the history fetched?)"
     git -C "$REPO_ROOT" merge-base --is-ancestor "$MIN_ARM_BASE" "${ARM_SHA[$i]}" ||
@@ -858,7 +942,17 @@ done
 
 # OUT must be new or empty, like soak-qemu.sh's --out: this script never
 # overwrites or deletes anything it did not create.
-[ -n "$OUT" ] || OUT="$REPO_ROOT/target/soak-matrix/$(date +%Y%m%d-%H%M%S)-$MODE"
+if [ -z "$OUT" ]; then
+    # The results belong to no worktree (each arm builds in its own), so they
+    # go to the main checkout, where removing the worktree that ran the soak
+    # (as /merge-and-cleanup does) cannot delete them. A plain mkdir claims
+    # the directory, so two soaks started in the same second never share it.
+    MAIN_CHECKOUT=$(main_checkout) || MAIN_CHECKOUT=""
+    [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || MAIN_CHECKOUT=$REPO_ROOT
+    OUT="$MAIN_CHECKOUT/target/soak-matrix/$(date +%Y%m%d-%H%M%S)-$MODE"
+    { mkdir -p -- "$(dirname -- "$OUT")" && mkdir -- "$OUT"; } 2>/dev/null ||
+        die "cannot create output directory $OUT (another soak started this second?); retry, or pass --out"
+fi
 if [ -e "$OUT" ] && [ ! -d "$OUT" ]; then
     die "--out $OUT exists and is not a directory"
 fi
@@ -918,7 +1012,6 @@ while [ "$i" -lt "$N" ]; do
 done
 
 FW=${ARM_FW[0]}
-QEMU_VER=$(qemu-system-aarch64 --version | sed -n 1p)
 HARNESS_NOTE="identical in all arms (sha256 \`${ARM_HSHA[0]:0:16}\`)"
 TC_LIST=""
 mixed_tc=0
@@ -989,6 +1082,10 @@ fi
 # ---------------------------------------------------------------------------
 RW=${#RUNS}
 [ "$RW" -ge 2 ] || RW=2
+# The instrument every boot must run (check_instrument), read after the
+# builds, so an upgrade while they ran costs nothing.
+QEMU_VER=$(qemu-system-aarch64 --version | sed -n 1p)
+FW_SHA=$(sha256_of "$FW") || die "cannot read the UEFI firmware $FW"
 SEQ=0
 BOOTS_DONE=0
 ROUNDS_DONE=0
