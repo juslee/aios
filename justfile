@@ -138,7 +138,7 @@ run-direct: build
 [no-cd]
 [positional-arguments]
 soak *args: tools
-    {{ quote(justfile_directory() / "target" / "tools" / "release" / "aios") }} soak "$@"
+    {{ quote(justfile_directory() / "target" / "tools" / "installed" / "aios") }} soak "$@"
 
 # kernel is no_std and excluded; the tools crate is excluded too and tested
 # separately with `cargo test -p aios-tools` in CI's Tools (host) job, which has

@@ -146,7 +146,7 @@ Every `aios guard` path that runs neither a fresh binary nor a runnable `AIOS_TO
 
 **R1 deviation (Missing, other subcommands).** The original design exited non-zero, naming `just tools`, without a build. R1's shim builds instead, which the final review accepted because it is friendlier. The cost: a caller such as `scripts/agent/brief.sh` blocks on a full release build on a fresh checkout. SessionStart's `aios --prebuild` (below) is the mitigation.
 
-**R4 deviation (`just soak`).** `just soak` does not go through the shim: it depends on `just tools` and runs the checkout's own `target/tools/release/aios`, so from a PR worktree the harness that classifies the boots comes from the same commit as the kernel, and the commit in `summary.md` names both. A failed tools build stops the soak. Every other recipe, hook and skill still goes through the shim.
+**R4 deviation (`just soak`).** `just soak` does not go through the shim: it depends on `just tools` and runs the checkout's own `target/tools/installed/aios` (the copy `just tools` installs, never cargo's `release/aios`, which a concurrent build can be rewriting), so from a PR worktree the harness that classifies the boots comes from the same commit as the kernel, and the commit in `summary.md` names both. A failed tools build stops the soak. Every other recipe, hook and skill still goes through the shim.
 
 **Other build and CI hooks:**
 
