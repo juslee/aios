@@ -13,7 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The PreToolUse decision the shim prints when the binary is missing, as R1
 /// shipped it.
@@ -22,9 +22,13 @@ const ASK_JSON: &str = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","p
 /// The guard branch's ask reasons, one per path.
 const NOT_BUILT: &str = "aios tools not built; run just tools";
 const STALE: &str = "aios tools are stale or unverified; rebuilding in the background (just tools)";
-const UNCOMMITTED: &str = "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; remove them, or commit them and merge them through a PR, then run just tools";
-const DIRTY: &str = "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools";
-const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not an executable file";
+const STALE_RUNNING: &str =
+    "aios tools are stale or unverified; a background build (just tools) is already running";
+const STALE_NO_BUILD: &str =
+    "aios tools are stale or unverified, and a background build could not start; run just tools";
+const UNCOMMITTED: &str = "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; revert or remove them (merge any you need through a PR first), then run just tools";
+const DIRTY: &str = "aios tools were built from input commits in the main checkout that are not on origin/main; once they have merged through a PR, or if they are not wanted, reset the main checkout onto origin/main (git reset --keep origin/main), then run just tools";
+const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not a non-empty regular executable file";
 const NO_ORIGIN: &str = "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools";
 const NO_OWN_DIR: &str =
     "aios shim cannot find its own directory; check that .claude/hooks exists and is accessible";
@@ -175,6 +179,18 @@ fn set_mtime(path: &Path, stamp: &str) {
     );
 }
 
+/// Dates `path`, a file or a directory, `age` before now.
+fn set_age(path: &Path, age: Duration) {
+    std::fs::File::open(path)
+        .and_then(|file| file.set_modified(SystemTime::now() - age))
+        .unwrap_or_else(|err| panic!("set the mtime of {}: {err}", path.display()));
+}
+
+/// Older than the minute or two (`find -mmin +1`) after which the shim takes
+/// a lock directory over, and young enough that a takeover wait of several
+/// minutes fails the test.
+const DEAD_LOCK_AGE: Duration = Duration::from_secs(180);
+
 fn wait_for(label: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -264,7 +280,10 @@ impl Sandbox {
         self.repo.path().join("target/tools/.building")
     }
 
-    /// Moves origin/main to HEAD, as merging HEAD through a PR would.
+    /// Fast-forwards origin/main to HEAD. This stands in for HEAD's changes
+    /// merging through a PR and the main checkout then being reset onto the
+    /// merged origin/main: a squash merge alone leaves HEAD's own commits off
+    /// origin/main, so the dirty test keeps finding them.
     fn merge(&self) {
         common::git(
             self.repo.path(),
@@ -532,6 +551,67 @@ fn a_stale_guard_asks_at_once_and_rebuilds_in_the_background() {
     assert_eq!(stdout(&out), "fake:guard PreToolUse\n", "rebuilt: fresh");
 }
 
+// A background build killed with its subshell leaves the lock directory
+// behind. guard takes it over once it is a minute or two old and no recipe
+// holds the recipe's lock; until then, and while a recipe holds it, the ask
+// says that a build is already running rather than that one started.
+#[test]
+fn a_dead_background_build_lock_is_taken_over() {
+    let sandbox = Sandbox::new("shim-dead-lock");
+    sandbox.install_bin(false);
+    std::fs::create_dir(sandbox.lock()).expect("create the lock directory");
+
+    // A young lock: its build may still be starting.
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE_RUNNING);
+    assert!(sandbox.lock().exists());
+    assert!(!sandbox.built(), "no second build");
+
+    // An old lock while a recipe holds the recipe's lock: still running.
+    set_age(&sandbox.lock(), DEAD_LOCK_AGE);
+    let mut cmd = Command::new("just");
+    isolated(&mut cmd);
+    let mut recipe = cmd
+        .env("PATH", sandbox.path_env())
+        .env("FAKE_CARGO_DELAY", "3")
+        .current_dir(sandbox.repo.path())
+        .arg("tools")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("run just tools");
+    wait_for("the recipe's cargo to start", || sandbox.built());
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE_RUNNING);
+    assert!(sandbox.lock().exists(), "a running recipe's build keeps it");
+    assert!(recipe.wait().expect("wait for just tools").success());
+
+    // An old lock and no recipe: dead, so guard takes it over and builds.
+    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+    set_mtime(&sandbox.bin(), STALE_STAMP);
+    set_age(&sandbox.lock(), DEAD_LOCK_AGE);
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
+}
+
+#[test]
+fn a_stale_guard_says_when_no_background_build_can_start() {
+    let sandbox = Sandbox::new("shim-no-background-build");
+    sandbox.install_bin(false);
+    // A file at the lock path, which neither rmdir nor mkdir replaces: no
+    // background build can start.
+    std::fs::write(sandbox.lock(), "").expect("write a file at the lock path");
+    set_age(&sandbox.lock(), DEAD_LOCK_AGE);
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE_NO_BUILD);
+    assert!(!sandbox.built());
+    let out = sandbox.run(&["--prebuild"]);
+    assert_eq!(code(&out), 0);
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+}
+
 #[test]
 fn prebuild_returns_at_once_and_builds_in_the_background() {
     let sandbox = Sandbox::new("shim-prebuild");
@@ -571,7 +651,7 @@ fn a_directory_or_an_empty_file_is_not_a_binary() {
         assert_eq!(code(&out), 3);
         assert!(stdout(&out).is_empty(), "{}", stdout(&out));
         assert!(
-            stderr(&out).contains("is not an executable file"),
+            stderr(&out).contains("is not a non-empty regular executable file"),
             "{}",
             stderr(&out)
         );
@@ -1119,9 +1199,10 @@ fn a_build_from_uncommitted_changes_is_dirty() {
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
     assert!(sandbox.no_build_started());
 
-    // Merged and fetched (origin/main now holds the commit), which rewrites
-    // no input file: the dirty stamp's cause is gone, so guard treats the
-    // binary as stale and rebuilds it, and the rebuild is clean.
+    // origin/main fast-forwarded to HEAD (standing in for a merge through a
+    // PR and a reset of the main checkout onto the merged origin/main), which
+    // rewrites no input file: the dirty stamp's cause is gone, so guard treats
+    // the binary as stale and rebuilds it, and the rebuild is clean.
     sandbox.merge();
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
     sandbox.wait_for_background_build();
@@ -1159,6 +1240,54 @@ fn a_build_with_ignored_input_files_is_dirty() {
     assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), UNCOMMITTED);
     assert!(sandbox.no_build_started());
+}
+
+// OS and editor files that no build reads (Finder's .DS_Store, editor swap and
+// backup files) do not make a build dirty, ignored or untracked, so one left
+// in the main checkout never holds guard at a dirty ask that starts no build.
+#[test]
+fn os_and_editor_files_under_the_inputs_keep_a_build_clean() {
+    let sandbox = Sandbox::new("shim-inert-files");
+    sandbox
+        .repo
+        .write(".gitignore", "target/\n*.log\n.DS_Store\n*.swp\n");
+    sandbox.repo.commit("Ignore OS and editor files");
+    sandbox.merge();
+    for file in [
+        "tools/.DS_Store",
+        "tools/src/.DS_Store",
+        "tools/src/.lib.rs.swp",
+        "tools/src/lib.rs~",
+        "tools/src/lib.rs.bk",
+        ".cargo/.config.toml.swo",
+    ] {
+        sandbox.repo.write(file, "not a build input\n");
+    }
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
+    assert!(sandbox.no_build_started());
+
+    // The shim's repeat of the dirty test leaves them out too: once a local
+    // commit's cause is gone, the dirty stamp is stale and the rebuild clean.
+    sandbox
+        .repo
+        .write("tools/src/lib.rs", "// a local commit\n");
+    common::git(sandbox.repo.path(), &["commit", "-qam", "Local change"]);
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+    sandbox.merge();
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
 }
 
 // A directory at either install path fails the recipe with a message, rather
@@ -1226,7 +1355,7 @@ fn a_build_from_inputs_not_on_origin_main_is_dirty() {
     );
 
     // Without origin/main nothing proves the inputs were merged: dirty, with
-    // its own reason, since no revert or merge can fix that.
+    // its own reason, since no reset onto origin/main can fix that.
     common::git(
         sandbox.repo.path(),
         &["update-ref", "-d", "refs/remotes/origin/main"],
@@ -1272,7 +1401,7 @@ fn a_missing_override_fails_closed() {
     let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", missing)]);
     assert_eq!(code(&out), 3);
     assert!(
-        stderr(&out).contains("is not an executable file"),
+        stderr(&out).contains("is not a non-empty regular executable file"),
         "{}",
         stderr(&out)
     );
@@ -1407,7 +1536,7 @@ fn a_bare_override_names_a_file_in_the_current_directory() {
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "cwd:docs-check\n");
 
-    // A bare name found only on PATH is not an executable file here.
+    // A bare name found only on PATH is not a runnable file here.
     write_executable(
         &sandbox.bin_dir.path().join("path-only-aios"),
         "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n",
