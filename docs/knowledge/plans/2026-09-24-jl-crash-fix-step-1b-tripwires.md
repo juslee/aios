@@ -171,7 +171,7 @@ loop:
 **Re-entry panics in every context; the context is a label.** The label comes from `IRQ_CTX[cpu]` (§2.3) and DAIF.I: `irq`, `irq-exit`, `thread-off` or `thread`. H3 evidence is `ctx ∈ {irq, irq-exit}` **and** `holder_irqs=on`. The ADR rule "≥3 WEDGE-STUCK and 0 PANIC-LOCK refutes H3" becomes "0 PANIC-LOCK with ctx ≠ thread*, and no `kind=self` event or `lkself` > 0 with ctx ≠ thread*" (§5).
 
 **Panic message:** one line, at most 160 characters, lowercase keys, `?` for missing fields. The writer is `shared::tripwire::write_reentry_msg`, so the worst-case length is host-tested:
-```
+```text
 lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=kernel/src/ipc/timeout.rs:118 holder_irqs=on tid=12 gen=4711
 ```
 `holder_site` is normalised before it is stored (§2.11).
@@ -300,7 +300,7 @@ Only a skipped wake that leaves **no timeout** is a wedge precursor: the waker's
 **Printer:** `putc` only, with no `core::fmt`, no locks, no local arrays or struct copies, and a closure-pull writer (`shared::tripwire::write_line(sink, mode, ncpu, |key, idx| value)`). All new IRQ-path helpers are `#[inline(never)]`, so V1 can attribute them per symbol.
 
 **Format**, schema `v=1`, keys lowercase, values `^[0-9,]+$` (except `src`), keys in fixed order:
-```
+```text
 [tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 irqsw=812,799,801,790 ... twc=812345 twn=12 twmax=94000 n=31
 ```
 
@@ -336,7 +336,7 @@ Only a skipped wake that leaves **no timeout** is a wedge precursor: the waker's
 3. **Panic** and 4. **exception:** §2.7.
 
 **Event line** (lock slow path only):
-```
+```text
 [tripwire-ev] kind=ph|stuck|self cpu=N lock=<name> idx=I ctx=N owner_cpu=K owner_gen=G holder_tid=T|? cur_tid=T|? holder_running=K|none|? holder=<file:line>|?
 ```
 It is not sent through `kinfo!`.
@@ -435,7 +435,7 @@ It takes no lock, makes no allocation and calls no `klog!`. The `fmt` in step 3 
 #### 2.9 "Core N online" line
 
 - In `secondary_main`, inside the `PRINT_TURN` window after `smp.rs:205`, print directly to the UART:
-  ```
+  ```text
   [smp] cpu=1 vbar=0x0000000040081000 ttbr0=0x… vbar_kva=0 ttbr0_idmap=1
   ```
 - For CPU 0, print the same line after `main.rs:271`.

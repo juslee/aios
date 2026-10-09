@@ -55,8 +55,9 @@ mod registry_tests {
     use crate::cmd::docs_check::model::CHECK_ORDER;
     use crate::cmd::docs_check::output::render_list_checks;
 
-    /// `python3 scripts/docs/check.py --list-checks` output (check.py L1597-1600), byte for
-    /// byte, from check.py at 56c4bf4 (its `lock-order` line names `IrqSpinLock` statics).
+    /// `python3 scripts/docs/check.py --list-checks` output (check.py L1597-1600; L1598-1601
+    /// at 56c4bf4), byte for byte, as check.py at 56c4bf4 prints it (its `lock-order` line
+    /// names `IrqSpinLock` statics).
     const CHECK_PY_LIST_CHECKS: &str = "\
 md-links           relative [text](path) links resolve to a tracked file or directory
 section-refs       [x.md](path) §N resolves to a numbered heading (hub subfolders included)

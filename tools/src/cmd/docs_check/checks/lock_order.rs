@@ -3,7 +3,8 @@
 //! lock table of `docs/kernel/deadlock-prevention.md` sections 3.3-3.4, the
 //! `Lock ordering` chain in [`CLAUDE_MD`], and `lock ordering` comment blocks in kernel
 //! code. The `IrqSpinLock` match is check.py's crash-fix step 1b change (56c4bf4), made
-//! after the R1 snapshot (33c6b3d) whose line numbers are cited here.
+//! after the R1 snapshot (33c6b3d). Line numbers are the snapshot's unless a citation
+//! names 56c4bf4, whose added comment line moves everything after L830 down by one.
 //!
 //! `split_outside_braces` replaces check.py's `re.split(r">(?![^{]*})", ...)` (the regex
 //! crate has no lookaround). The patterns are check.py's, compiled with
@@ -84,9 +85,10 @@ pub fn split_outside_braces(s: &str) -> Vec<&str> {
 }
 
 /// Production `Mutex` and `IrqSpinLock` statics in `kernel/src`: name -> (file, 1-based
-/// line) of the first definition in file order (check.py `code_mutex_statics`, L817-834). Files named
-/// `tests.rs` or under a `tests/` directory are skipped, and a `#[cfg(test)]` line whose
-/// next non-blank line opens a module ends the scan of that file.
+/// line) of the first definition in file order (check.py `code_mutex_statics`, L817-833;
+/// L817-834 at 56c4bf4). Files named `tests.rs` or under a `tests/` directory are
+/// skipped, and a `#[cfg(test)]` line whose next non-blank line opens a module ends the
+/// scan of that file.
 pub fn code_mutex_statics(repo: &Repo) -> BTreeMap<String, (String, usize)> {
     let mut statics = BTreeMap::new();
     for f in repo.files() {

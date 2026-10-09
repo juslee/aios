@@ -413,7 +413,8 @@ fn halt() -> ! {
 /// its own entry, with IRQs masked, so no atomic read-modify-write is needed.
 static PANICKING: [AtomicBool; smp::MAX_CORES] = [const { AtomicBool::new(false) }; smp::MAX_CORES];
 
-/// The panic handler (crash-fix step 1b, Design §2.7), in this order:
+/// The panic handler (crash-fix step 1b; observability.md §6.5), in this
+/// order:
 ///
 /// 1. Mask IRQs for good, remembering whether they were on. No tick runs on
 ///    this CPU after a panic, so nothing preempts the report or runs on top

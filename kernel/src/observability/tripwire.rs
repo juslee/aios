@@ -29,9 +29,9 @@
 //!   the kernel text (`pcnull`, `pcphys`, `pcother`) or a saved SP outside
 //!   the thread's stack (`spbad`) before each `restore_context`, against the
 //!   text bounds `kernel_main` captured ([`capture_text_layout`]).
-//! - Heartbeat scans (Design §2.6), right before each `src=hb` line: scan A
-//!   holds every run queue and THREAD_TABLE (`sched::scan_snapshot`) and
-//!   finds orphans (Runnable, not queued, not current), starved threads
+//! - Heartbeat scans (observability.md §6.5), right before each `src=hb`
+//!   line: scan A holds every run queue and THREAD_TABLE
+//!   (`sched::scan_snapshot`) and finds orphans (Runnable, not queued, not current), starved threads
 //!   (queued, not run for over 1000 ticks, by class) and the `dupq`,
 //!   `dupcur` and `qbad` checks; scan B try-locks each waker table alone
 //!   (`ipc::scan_wakers`) and splits threads blocked with no waker into
@@ -76,6 +76,7 @@
 //! private scan drivers) run in CPU 0's timer IRQ too; their masks are
 //! static accumulators, and the thread counts use `count_tids`, never
 //! `count_ones` (NEON `cnt`).
+//!
 //! The counters use `Relaxed` load and store only: each CPU writes only its
 //! own row, with IRQs masked, so no atomic read-modify-write is needed. The
 //! flags, the per-CPU dispatch state and the per-thread stamps are plain
@@ -342,7 +343,7 @@ fn put_tid_or_unknown(out: &mut UartSink, tid: u32) {
 /// - `irq_elr`, only in `irq` or `irq-exit` context: ELR_EL1, which still
 ///   holds the PC the IRQ interrupted, because no EL1 exception returns in
 ///   between (the synchronous handler halts). It names the holder's PC when
-///   an IRQ re-entered a lock its stream held (Design §2.7).
+///   an IRQ re-entered a lock its stream held (observability.md §6.5).
 ///
 /// The caller has masked IRQs for good. `putc` only; lowercase keys, and
 /// never `PANIC: `, which the soak harness keys on.
@@ -676,7 +677,7 @@ pub fn note_scan_hold2(spent: u64) {
 }
 
 /// The heartbeat scans, CPU 0's timer IRQ, right before the `src=hb` line
-/// (Design §2.6). Scan A (orphans, starvation and the queue and current-thread
+/// (observability.md §6.5). Scan A (orphans, starvation and the queue and current-thread
 /// checks) runs first; scan B (no-waker threads) needs scan A's thread states
 /// and runs only after scan A completed in the same heartbeat.
 #[inline(never)]
@@ -1061,8 +1062,8 @@ pub fn note_repick(tid: ThreadId) {
 
 /// Reset the per-thread stamps of thread slot `slot` for a new thread:
 /// `LAST_CPU` never, `LAST_RUN` now, no wake in flight, no call or receive
-/// phase. `allocate_thread`
-/// calls it with THREAD_TABLE held, before it fills the slot.
+/// phase. `allocate_thread` calls it with THREAD_TABLE held, before it fills
+/// the slot.
 pub fn reset_thread_stamps(slot: usize) {
     if let Some(last_cpu) = LAST_CPU.get(slot) {
         last_cpu.store(LAST_CPU_NEVER, Ordering::Relaxed);
@@ -1114,8 +1115,8 @@ extern "C" {
 /// `adrp`-based symbol addresses are VAs (as in `kmap`). The restore sites
 /// must not compute them: on CPUs 1-3 the IRQ path, and with it
 /// `schedule()`, runs at physical-alias PCs, where the same symbols give
-/// physical addresses (Design §2.11). The secondaries are started after this
-/// store, so their loads see it.
+/// physical addresses (`.claude/CLAUDE.md`, "IRQ-path address values"). The
+/// secondaries are started after this store, so their loads see it.
 pub fn capture_text_layout() {
     let lo = (&raw const __text_start).addr() as u64;
     let hi = (&raw const __text_end).addr() as u64;

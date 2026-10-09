@@ -78,8 +78,8 @@
 //! The call site is stored as a kernel virtual address. CPUs 1-3 run the
 //! IRQ path at physical-alias PCs, so `Location::caller()` computed there is
 //! a physical address, and [`kva_of`] adds `VIRT_PHYS_OFFSET` to it
-//! (step-1b plan §2.11). Lock and static addresses are only dereferenced, so
-//! they need no such care.
+//! (`.claude/CLAUDE.md`, "IRQ-path address values"). Lock and static
+//! addresses are only dereferenced, so they need no such care.
 //!
 //! # IRQ-path rules
 //!
@@ -285,8 +285,7 @@ impl<T> IrqSpinLock<T> {
     /// QEMU TCG takes a pending IRQ only where a translation block starts,
     /// and every branch or call starts one. Each one inside an IRQs-on hold
     /// widens the window in which the timer IRQ can interrupt the holder,
-    /// which is the re-entry hazard this lock exists to report (step-1b
-    /// plan, K5 decisions).
+    /// which is the re-entry hazard this lock exists to report.
     #[inline(always)]
     fn hold(
         &self,
@@ -461,12 +460,13 @@ fn kva_of(site: &'static Location<'static>) -> *mut Location<'static> {
 /// the CPU id again, from TPIDR_EL1 as in [`KernelView`] (each `asm!` is a
 /// compiler barrier, so the load stays between them). If both CPU reads
 /// agree, the pair is what `read_stamp` would return, so it names the
-/// caller's current generation or one that had already ended. Otherwise `stamp`, which came from `read_stamp` in
-/// [`whoami`], has the same property. That is all the re-entry verdict
-/// needs from a holder's word: an ended generation never matches a waiter
-/// that is still in its own, so a stale word can only hide a re-entry,
-/// never invent one. With IRQs masked nothing can move the caller or bump
-/// its CPU's generation, so the result equals `stamp`.
+/// caller's current generation or one that had already ended. Otherwise
+/// `stamp`, which came from `read_stamp` in [`whoami`], has the same
+/// property. That is all the re-entry verdict needs from a holder's word: an
+/// ended generation never matches a waiter that is still in its own, so a
+/// stale word can only hide a re-entry, never invent one. With IRQs masked
+/// nothing can move the caller or bump its CPU's generation, so the result
+/// equals `stamp`.
 ///
 /// Branch-free, because it runs inside the critical section: the index of
 /// `switch_gen_masked` needs no bounds branch, and the choice is a select.
