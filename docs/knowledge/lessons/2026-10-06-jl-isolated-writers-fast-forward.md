@@ -36,7 +36,7 @@ The kernel-dev agent-memory note `worktree-isolation-push` (2026-09-22, issue #1
 ## Why it happened
 
 - **Isolation confines the agent, and EnterWorktree does not lift it.** On 2.1.292 an isolated agent's writes are limited to its own temporary worktree. `EnterWorktree` is refused for any other path, and is refused to a non-isolated subagent because its working directory is not inside a worktree. D3 as first written was not available.
-- **The confinement covers Bash commands that Claude Code cannot show stay inside the worktree.** Plain git commands in the agent's own worktree run, including `git reset --hard <tip>` and `git switch` (A2b's switch even wrote the common git directory). This lesson's writer (2026-10-10, 2.1.292) had two commands refused by the isolation check, not by a permission rule:
+- **The confinement covers Bash commands that Claude Code cannot show stay inside the worktree.** Plain git commands in the agent's own worktree run, including `git reset --hard <tip>` (A3) and `git switch` (A2b). This lesson's writer (2026-10-10, 2.1.292) had two commands refused by the isolation check, not by a permission rule:
   - a compound command that set a shell variable to a path under `.git/` and read files through it: "this command names git in a form too complex to verify that it stays inside the worktree. ... Split it into plain, separate commands";
   - a `sed -i` whose file argument was an unquoted shell variable: "runs sed with a value computed at runtime (the variable P) where an option may stand ... so what it runs cannot be shown not to be git".
 

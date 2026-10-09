@@ -24,22 +24,22 @@ H7 found two things the design had assumed wrongly:
 - **A `SubagentStop` agent-hook block is discarded for subagents.** The hook ran (Grep, StructuredOutput), and the debug log shows `Agent hook condition was not met: PROBE-GATE-BLOCK ...` followed by `[end-turn] Stop hook block discarded (turn ended by tool result, no model re-invoke)`.
 - **Agent hooks send `model` verbatim.** The hook with `model: "fable"` got `404 not_found_error "model: fable"` and "Agent hook did not return structured output". The hook with `model: "claude-fable-5-1"` ran, and its condition was met.
 
-A second probe also showed that a `PreToolUse` agent hook does block ("Agent hook condition was met").
+Probe 2's hooks returned ok true, so it showed only that the full id runs, not that a block holds. A third probe (probe 3, 2026-10-10, same CLI) did show it: a `PreToolUse` agent hook on Bash with `model: "claude-fable-5-1"`, told to always return ok false, denied the tool call. Its debug log has `dispatching to firstParty model=claude-fable-5-1`, `Hooks: Got structured output: {"ok":false,"reason":"PROBE-PRETOOL-BLOCK do not run this command."}`, `Agent hook condition was not met: ...`, `Hook denied tool use for Bash` and `Bash tool permission denied`, and the command's output file `ran.txt` was never created.
 
 ## Why it happened
 
-- **A subagent ends with a hand-back tool call.** Its turn ends on a tool result, so Claude Code has no model turn to re-invoke with the block, and drops it. An agent's frontmatter `Stop` hook maps to the same event, so it would fail the same way (frontmatter hooks do not run in `-p`, so T2 could not run it).
+- **A subagent ends with a hand-back tool call.** Its turn ends on a tool result, so Claude Code has no model turn to re-invoke with the block, and drops it. Only `SubagentStop` was probed. An agent's frontmatter `Stop` hook maps to the same event and is expected to fail the same way (not probed; frontmatter hooks do not run in `-p`).
 - **Agent hooks do not resolve aliases.** The `model` field of a `type: agent` hook goes to the API as written. Agent frontmatter `model: fable` (and the Agent tool's `model`) is a separate path, which T2 did not check; T16's E8 checks it.
 - **`-p` never reaches ExitPlanMode.** A headless run cannot show the plan-approval flow, so the plan gate's input can only be checked interactively (OWNER-PROBES OP2).
 - **`CLAUDE_CODE_EFFORT_LEVEL` outranks every agent's `effort`.** H6 only reads per-agent values with the variable unset.
 
 ## What we learned
 
-- **No Fable gate can be a `SubagentStop` or frontmatter `Stop` hook** on 2.1.292. The kernel-dev step review is lead-run instead: before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only on the range, and must-fix findings go to a fresh kernel-dev (plan D8, owner 2026-10-09 22:04).
+- **No Fable gate can be a `SubagentStop` hook** on 2.1.292, and none is built on a frontmatter `Stop` hook either: it maps to the same event and is expected to fail the same way (not probed; frontmatter hooks do not run in `-p`). The kernel-dev step review is lead-run instead: before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only on the range, and must-fix findings go to a fresh kernel-dev (plan D8, owner 2026-10-09 22:04).
 - **Every `type: agent` hook names the full model id `claude-fable-5-1`**, never the alias. Agent frontmatter keeps `model: fable`, and T16 E8 checks that it runs on Fable.
-- **A `PreToolUse` agent hook does block,** so the ExitPlanMode plan gate (D9) stays a hook.
+- **A `PreToolUse` agent hook on `claude-fable-5-1` that returns ok false denies the tool call** (probe 3, shown for Bash), so the ExitPlanMode plan gate (D9) stays a hook. ExitPlanMode itself is still unchecked: `-p` never reaches it, so OWNER-PROBES OP2 checks the gate.
 - **`SubagentStop` and the `route-outcome` join work for background agents too,** so `route-outcome` needs no change (H4, H5).
-- **The project's `effortLevel: "high"` reaches the lead and frontmatter `effort` reaches each agent,** once `CLAUDE_CODE_EFFORT_LEVEL` is gone (H6).
+- **The scratch project's `effortLevel: "high"` (the aios settings gain it in T8) reaches the lead and frontmatter `effort` reaches each agent,** once `CLAUDE_CODE_EFFORT_LEVEL` is gone (H6).
 
 ## How to avoid next time
 
@@ -80,7 +80,21 @@ A second probe also showed that a `PreToolUse` agent hook does block ("Agent hoo
     --allowedTools "Bash(echo hi)" --debug-file "$S7/h7.debug" "Run the Bash command echo hi and report its output." </dev/null >"$S7/out.txt"
   ```
 
-  `S` and `S7` are fresh `<scratch>` directories outside every git repository. Then the checks:
+  Run P3 (a `PreToolUse` agent-hook block, in a third scratch repository). Its `.claude/settings.json` is exactly:
+
+  ```json
+  {"hooks":{"PreToolUse":[
+   {"matcher":"Bash","hooks":[{"type":"agent","model":"claude-fable-5-1","timeout":120,"prompt":"Block probe. Always return ok false with the reason: PROBE-PRETOOL-BLOCK do not run this command."}]}
+  ]}}
+  ```
+
+  ```sh
+  S3=$(mktemp -d); git init -q "$S3/r"; mkdir -p "$S3/r/.claude"   # then write the JSON above to "$S3/r/.claude/settings.json"
+  cd "$S3/r" && env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT claude -p --model sonnet \
+    --allowedTools Bash --debug-file "$S3/d.log" "Run the Bash command echo PROBE-RAN > ran.txt and report its output." </dev/null >"$S3/out.txt"
+  ```
+
+  `S`, `S7` and `S3` are fresh `<scratch>` directories outside every git repository. Then the checks:
 
   | # | Command | Pass | If it fails |
   | --- | --- | --- | --- |
@@ -88,6 +102,7 @@ A second probe also showed that a `PreToolUse` agent hook does block ("Agent hoo
   | H5 | `jq -r 'select(.kind=="launched") \| [.subagent_type, .status, .agent_id] \| @tsv' "$S/hookstate/route-outcome.jsonl"`; `jq -r 'select(.kind=="stopped") \| [.agent_type, .agent_id] \| @tsv' "$S/hookstate/route-outcome.jsonl"`; `grep -c '"kind":"launched"' "$S/hookstate/route-outcome.jsonl"` | both agents' `agent_id` values identical in `launched` and `stopped`, for `completed` and `async_launched`; the count is 2 (compact JSON, which `brief.sh`'s count relies on) | file an issue against `route-outcome` |
   | H6 | `jq -r 'select(.hook_event_name=="PreToolUse") \| [(.agent_type // "main"), (.effort.level // "absent")] \| @tsv' "$L" \| sort -u` | `main high`, `probe-writer low`, `probe-kdev medium` | `main xhigh`: the owner's user-level `effortLevel` applied, so remove it; `absent` everywhere: record it |
   | H7 | `grep -c 'not_found_error.*model: fable' "$S7/h7.debug"`; `grep -c 'dispatching to firstParty model=claude-fable-5-1' "$S7/h7.debug"`; `grep -c 'Agent hook condition was met' "$S7/h7.debug"` | 1 or more each | the alias starting to work changes nothing (the full id still works); a 404 on the full id means finding the current Fable id and changing every agent hook |
+  | P3 | `grep -c 'Hook denied tool use' "$S3/d.log"`; `grep -c 'dispatching to firstParty model=claude-fable-5-1' "$S3/d.log"`; `test -e "$S3/r/ran.txt" && echo ran \|\| echo not-run` | 1 or more each; `not-run` | the plan gate (D9) cannot block: it is a design change for the owner before T8 relies on it |
   | H8 | `jq -c 'select(.tool_name=="ExitPlanMode") \| {keys: (.tool_input \| keys), head: ((.tool_input.plan // "") \| .[0:13]), planFilePath: .tool_input.planFilePath}' "$L"` | keys include `plan` and `planFilePath`, `head` is `# Plan: probe`; no record means `-p` still does not reach ExitPlanMode | no record: check the plan gate interactively (OWNER-PROBES OP2) |
 
-  The `SubagentStop` block is not re-checked: no design relies on it. If a later CLI does re-invoke a subagent after such a block, a hook-based step gate becomes possible again, which is a design change for the owner. Teardown: `rm -rf "$S" "$S7"`.
+  The `SubagentStop` block is not re-checked: no design relies on it. If a later CLI does re-invoke a subagent after such a block, a hook-based step gate becomes possible again, which is a design change for the owner. Teardown: `rm -rf "$S" "$S7" "$S3"`.

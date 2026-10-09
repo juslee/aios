@@ -84,7 +84,7 @@ Failure modes the requirements imply but no single feature test exercises. Each 
 | D6 | **Logging hooks exactly as the ADR lists them** (Global Constraints). `route-shadow` gets its own `PreToolUse` entry beside the guard's, so the guard stays synchronous. | ADR. |
 | D7 | **`path-guard` registered once, in `settings.json`**, with a new `--agent-type worker` flag: it decides only for worker, denies a payload with `agent_id` and no `agent_type`, and passes every other caller before any path or `git` work. No frontmatter copy. | Owner 11:28; frontmatter hooks do not run in `-p`, SDK or untrusted sessions (ADR Known limits); two registrations would be legacy. |
 | D8 | **Fable step review: a lead-run gate before the fast-forward** (owner, 2026-10-09 22:04). kernel-dev's report starts with `RESULT: committed <tip>..<head> (<n> commits)`, `BRANCH: worktree-agent-<id>` and `W:` lines. Before fast-forwarding, the lead spawns code-reviewer (frontmatter `model: fable`) read-only in the main checkout with the `rules` and `bugs` lenses on `git -C <W> diff <tip>..worktree-agent-<id>` (for a merge of `origin/main`, on `git -C <W> show --remerge-diff`, the hand resolution; a clean merge needs no review). Must-fix findings go to a **fresh kernel-dev spawn that resets to the reviewed head** (`git reset --hard <head>`) and adds a `(Fable review fixes)` commit on top; the next round reviews `<tip>..<new head>` with the earlier findings and answers. At most three rounds, then the lead decides each open finding or asks the owner, and records the ruling; only an approved range is fast-forwarded. Superseded temporary branches are ancestors of the merged head, so `branch -d` deletes them after the fast-forward. No hook, no patch file, no marker counting; kernel-dev keeps `maxTurns: 300`. | ADR "Fable before done", as amended (T16). T2 H7 on 2.1.292: the `SubagentStop` agent hook ran but its block was discarded ("Stop hook block discarded (turn ended by tool result, no model re-invoke)"), because a subagent ends with a hand-back tool call; a frontmatter `Stop` maps to the same event. Fixing on top of the reviewed head (rather than a new branch from the tip) keeps the reviewed commits, makes round N+1's delta exactly the fix, and needs no `branch -D`: the alternative, redoing from the tip, repeats the whole step and leaves an unmerged branch that only the owner can delete. |
-| D9 | **Fable plan gate**: a `PreToolUse` agent hook on `ExitPlanMode` in `settings.json`, `model: claude-fable-5-1` (agent hooks send `model` verbatim; `fable` returned 404, T2 H7), `timeout: 600`. It reviews only plans whose first heading starts `# Plan:`, with code-reviewer's `plan` lens, at most two blocks per session. Every working plan is written in plan mode (`/implement-phase` and `/justin:team` enter it), and worker commits the reviewed `planFilePath` file unchanged. | Owner 11:28; ADR (ExitPlanMode input carries `plan` and `planFilePath`, E21). Requiring plan mode closes the gap where an optional plan mode would skip the gate; committing the reviewed file means the reviewed plan is the committed one. A `PreToolUse` agent hook does block (T2 probe 2). ExitPlanMode is not reached in `-p` (T2 H8), so OWNER-PROBES OP2 is the gate's only real-run check. |
+| D9 | **Fable plan gate**: a `PreToolUse` agent hook on `ExitPlanMode` in `settings.json`, `model: claude-fable-5-1` (agent hooks send `model` verbatim; `fable` returned 404, T2 H7), `timeout: 600`. It reviews only plans whose first heading starts `# Plan:`, with code-reviewer's `plan` lens, at most two blocks per session. Every working plan is written in plan mode (`/implement-phase` and `/justin:team` enter it), and worker commits the reviewed `planFilePath` file unchanged. | Owner 11:28; ADR (ExitPlanMode input carries `plan` and `planFilePath`, E21). Requiring plan mode closes the gap where an optional plan mode would skip the gate; committing the reviewed file means the reviewed plan is the committed one. A `PreToolUse` agent hook on `claude-fable-5-1` that returns ok false denies the tool call (T2 probe 3, 2026-10-10, shown for Bash; probe 2's hooks returned ok true, so it showed only that the full id runs). ExitPlanMode is not reached in `-p` (T2 H8), so OWNER-PROBES OP2 is the gate's only real-run check. |
 | D10 | **Shim (`.claude/hooks/aios`), `hook` branch, on #203's shim.** Never builds in the foreground; always exits 0; runs a fresh binary through #203's hard-link check. Stale (one background build) and dirty (no build) are treated as missing (Q5 default; the ADR, as amended by #229, leaves this to the owner). Missing, stale, dirty, unusable or failing binary: `path-guard` denies only the agent types its `--agent-type` names (every caller when it names none, and any payload with `agent_id` but no `agent_type`); every other hook prints nothing. | ADR "Shim"; exit 3 (the shim's old failure code) is non-blocking, so `path-guard` would fail open; an unconditional deny would block every edit in CI and on a fresh clone (Review Focus 1). |
 | D11 | **One host QEMU lock for both teams**: `scripts/agent/qemu-lock.sh run --team team-build\|team-fix\|solo --mode boot\|quiet`. Exit 75 held, 76 foreign QEMU, 77 deferred under load (above 30 in `boot`, 3.0 in `quiet` after a settle wait). `status` reports `state=live\|starting\|dead`; `clear-stale` removes only a dead holder's lock with no QEMU running, and logs it. Quiet windows follow `QUIET-REQ`, `QUIET-ACK` or `QUIET-LATER`, owner pause of host load, lease, `QUIET-END`. Among agents only the verifier boots (guard rule 1). R4b's flock lease replaces it later. | Domain split: team-fix soaks too. On 2026-10-06 the contention was host load (load1 about 240), which gave false WEDGEs; the load gate turns those into DEFERRED. Restarts left wrapper processes dead; pid liveness detects that at once. v4: a stop TERMs every process but QEMU first and waits up to 15 s, so `aios soak` (which supervises QEMU in its own process group since R4) ends its boot itself instead of recording a QEMU killed under it. |
 | D12 | **Toolchain.** `RUSTUP_AUTO_INSTALL=0` in the project env; guard rule 2 denies `rustup` installs, updates and removals to agents and asks on the main thread; after a merge that changes `rust-toolchain.toml`, `/merge-and-cleanup` runs `rustup install` once and says so in `MAIN-MOVED`. Open question Q3. | 2026-10-06: two sessions raced an implicit install into `~/.rustup` after #202, and an agent reinstalled the toolchain under the other team's build. E22. |
@@ -191,13 +191,13 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
 
   **Files:** Modify the plan (replace it with `D/PLAN.md.v5`; "Issues Encountered"). Create `docs/knowledge/lessons/2026-10-06-jl-isolated-writers-fast-forward.md`, `docs/knowledge/lessons/2026-10-06-jl-model-routing-wiring-checks.md`. Merge `origin/main` (e430305 or later).
 
-  - [x] Step 1: run `D/probe/HEADLESS.md.v4`, section "T2" (2026-10-09, CLI 2.1.292, scratch `/private/tmp/aios-probe.fH9DJa`), plus the alternative runs A2 and A3 and the model-id probe 2 (`/tmp/aios-probe2.b7zCy9`). Results: `D/T2-results-2026-10-09.md`.
+  - [x] Step 1: run `D/probe/HEADLESS.md.v4`, section "T2" (2026-10-09, CLI 2.1.292, scratch `<scratch>`), plus the alternative runs A2 and A3 and the model-id probe 2 (`<scratch 2>`). Results: `D/T2-results-2026-10-09.md`.
   - [x] Step 2: compare with each "Pass" cell and apply the stated change. Outcome: **H1** pass (clean-up: unchanged temporary worktrees are removed; no probe commits because EnterWorktree failed); **H2** pass (`agent_id`, `agent_type`; `cwd` is the agent's own `.claude/worktrees/agent-<id>`; `$CLAUDE_PROJECT_DIR` stays the repository root); **H3** failed (an isolated agent's EnterWorktree into the branch worktree is refused), so the plan was re-planned: the owner chose isolated + fast-forward (D3), and H3 is **redefined** as that mechanism, which run A3 passed (foreground and background; `git branch -d` needs `-C <W>`); **H4** pass (`SubagentStop` for the foreground and the background agent); **H5** pass (identical `agent_id`, `completed` and `async_launched`); **H6** pass (`main high`, `probe-writer low`, `probe-kdev medium`; T19 Step 3 has nothing to do); **H7** is **redefined** as the agent-hook model-id check, which passed (`fable` 404s, `claude-fable-5-1` runs; a `SubagentStop` block is discarded for subagents, so D8 became the lead-run review); **H8** no record in `-p` (E6 moves to OWNER-PROBES OP2). The v5 procedure for re-runs is `D/probe/HEADLESS.md.v5`, section "T2".
-  - [x] Step 3 (implementer, the first live use of D3 in this repository): replace the working plan and record T2. Prompt as in Execution; task: "`cp "$D/PLAN.md.v5" docs/knowledge/plans/2026-10-06-jl-two-team-harness.md` (it holds every entry the committed copy has). Under 'Issues Encountered', paste every command and output from `D/T2-results-2026-10-09.md` and the files it names (`/private/tmp/aios-probe.fH9DJa/run-a*.json` results, `run-a3.txt`, the debug lines it quotes, probe 2's `d.log` lines), with `claude --version`. Commit `Harness teams: T2 — plan v5 (isolated + fast-forward placement, lead-run Fable review) and T2 results`." Then Placement (Execution). This exercises the reset, the range check, `merge --ff-only`, `git worktree remove` and `git -C "$W" branch -d` on the real repository under `main`'s guard; the controller gives the outputs of its Placement commands to the Step 5 implementer, which adds them under "Issues Encountered" in its commit.
+  - [x] Step 3 (implementer, the first live use of D3 in this repository): replace the working plan and record T2. Prompt as in Execution; task: "`cp "$D/PLAN.md.v5" docs/knowledge/plans/2026-10-06-jl-two-team-harness.md` (it holds every entry the committed copy has). Under 'Issues Encountered', paste every command and output from `D/T2-results-2026-10-09.md` and the files it names (`<scratch>/run-a*.json` results, `run-a3.txt`, the debug lines it quotes, probe 2's `d.log` lines), with `claude --version`. Commit `Harness teams: T2 — plan v5 (isolated + fast-forward placement, lead-run Fable review) and T2 results`." Then Placement (Execution). This exercises the reset, the range check, `merge --ff-only`, `git worktree remove` and `git -C "$W" branch -d` on the real repository under `main`'s guard; the controller gives the outputs of its Placement commands to the Step 5 implementer, which adds them under "Issues Encountered" in its commit.
   - [x] Step 4 (implementer): merge `origin/main` into the branch: "`git fetch origin` and `git merge --no-edit origin/main`; no conflicts are expected (#232 changed `.claude/settings.json`, `Cargo.lock` and the discussion doc, none of which this branch has changed yet); run the docs gate; the merge commit is the commit." Then Placement (a merge range: the range check lists the merge commit as the one first-parent commit). (Step 3's Placement outputs go into Step 5's commit.)
   - [x] Step 5 (implementer): write the two lessons (rule 08 frontmatter, tags `tooling`), following `D/docs/knowledge/lessons/agent-memory-migration.patch-notes.md.v5` §2:
     - `isolated-writers-fast-forward`: from kernel-dev/worktree-isolation-push (main checkout's `.claude/agent-memory/kernel-dev/`, corrected) plus H1–H3, A2a, A2b, A3 and Step 3's Placement outputs. The placement mechanism (tip, reset, commit, range check, `merge --ff-only`, `git worktree remove`, `git -C <W> branch -d`, and why `-C <W>`: from the main checkout, `HEAD` is `main`, which lacks the commits, so `-d` refuses), that a temporary worktree with commits is not removed automatically while an unchanged one is, and why `CARGO_TARGET_DIR` stays per worktree;
-    - `model-routing-wiring-checks`: H4–H8, with the new facts: a `SubagentStop` agent-hook block is discarded for subagents ("Stop hook block discarded (turn ended by tool result, no model re-invoke)"); agent hooks send `model` verbatim, so `fable` 404s and `claude-fable-5-1` works, while agent frontmatter `model: fable` is a separate path that T16 E8 checks; a `PreToolUse` agent hook does block.
+    - `model-routing-wiring-checks`: H4–H8, with the new facts: a `SubagentStop` agent-hook block is discarded for subagents ("Stop hook block discarded (turn ended by tool result, no model re-invoke)"); agent hooks send `model` verbatim, so `fable` 404s and `claude-fable-5-1` works, while agent frontmatter `model: fable` is a separate path that T16 E8 checks; a `PreToolUse` agent hook that returns ok false denies the tool call (probe 3, 2026-10-10).
 
     Each lesson keeps the exact commands (from `D/probe/HEADLESS.md.v5`) so agent-loop's "Re-check after each Claude Code update" can re-run them, and states the CLI version checked (2.1.292). Then Placement.
   - [ ] Acceptance: `git -C "$W" log --first-parent --format=%s -4` shows the lessons commit, the merge of `origin/main`, the plan v5 commit and T1's; `git -C "$W" merge-base --is-ancestor e430305 HEAD && echo merged` prints `merged`; `git -C "$W" show --stat HEAD` lists the two lessons; `git -C "$MAIN" branch --list 'worktree-agent-*'` prints nothing from this task; the docs gate shows only `plans-not-empty`.
@@ -709,8 +709,94 @@ Alternatives probed (run A2):
 
 #### H7 root causes
 1. `SubagentStop` agent-hook blocks are discarded for subagents on 2.1.292: debug `Agent hook condition was not met: PROBE-GATE-BLOCK ...` then `[end-turn] Stop hook block discarded (turn ended by tool result, no model re-invoke)`. Subagents end via a hand-back tool call, so a SubagentStop block never reaches them. → D8 cannot be a hook. Owner (2026-10-09 22:04): the lead runs the Fable step review (code-reviewer, rules+bugs lenses) on the writer's temp-branch range BEFORE fast-forwarding; must-fix → fresh kernel-dev spawn; max 3 rounds, then lead/owner decides.
-2. Agent hooks pass `model` to the API verbatim: `model: "fable"` → `404 not_found_error "model: fable"`, hook returns no structured output. `claude-fable-5-1` works (probe 2, its own `<scratch>`). Every agent hook (D9 plan gate) must use `claude-fable-5-1`. Agent frontmatter / Agent-tool `model: fable` aliases are a separate path: verify in T16.
-3. PreToolUse agent hooks do block (probe2: "Agent hook condition was met"), so D9 (ExitPlanMode PreToolUse gate) stays viable; H8 untestable in -p → OP2.
+2. Agent hooks pass `model` to the API verbatim: `model: "fable"` → `404 not_found_error "model: fable"`, hook returns no structured output. `claude-fable-5-1` works (probe 2, its own `<scratch 2>`). Every agent hook (D9 plan gate) must use `claude-fable-5-1`. Agent frontmatter / Agent-tool `model: fable` aliases are a separate path: verify in T16.
+3. A PreToolUse agent hook on `claude-fable-5-1` that returns ok false denies the tool call (probe 3, 2026-10-10, its own `<scratch 3>`: "Hook denied tool use for Bash", and `ran.txt` was never created; see Raw excerpts). Probe 2 does not show this: its hooks returned ok true. So D9 (ExitPlanMode PreToolUse gate) stays viable; ExitPlanMode itself is untestable in -p (H8) → OP2.
+
+#### Raw excerpts
+
+Decisive lines only. `<scratch>` is the T2 run's scratch directory (runs A, A2, A3), `<scratch 2>` probe 2's, `<scratch 3>` probe 3's.
+
+`claude --version` (`<scratch>/version.txt`):
+
+```text
+2.1.292 (Claude Code)
+```
+
+Run A (`<scratch>/run-a.json`, `result` field): the foreground probe-writer's EnterWorktree refusal (H3), and step 3's count:
+
+```text
+"Entering <scratch>/repo/.claude/worktrees/probe would not give this agent write access there, so the switch was not made. This agent is isolated in the worktree <scratch>/repo/.claude/worktrees/agent-a4e307693b3a5f88c, so its writes are limited to that folder. This path is in a different worktree (<scratch>/repo/.claude/worktrees/probe). ..."
+stops=1
+```
+
+Run A2 (`<scratch>/run-a2.json`, `result` field). A2a, non-isolated:
+
+```text
+"Cannot enter worktree: the current working directory <scratch>/repo is the repository root, not an isolated worktree — switching is only available to sessions whose working directory is inside a worktree of this repository."
+[main 431213f] probe-a2a
+```
+
+A2b, isolated:
+
+```text
+$ git branch --show-current
+worktree-agent-ad917417c34f2a84d
+$ git switch claude/probe2
+Switched to branch 'claude/probe2'
+$ git commit -m probe-a2b
+[claude/probe2 20b11a2] probe-a2b
+ 1 file changed, 1 insertion(+)
+```
+
+Run A3 (`<scratch>/run-a3.json`, the element with `type == "result"`, its `result` field). The foreground writer's reset, then the lead's step 3 from the repository root:
+
+```text
+$ git reset --hard 9c6e3f4d7f5f3b6fa10705cf0b44e31716d98776
+HEAD is now at 9c6e3f4 probe
+[worktree-agent-a2ddd816fd4503b80 f8e1d35] probe-fg
+Updating 9c6e3f4..f8e1d35
+Fast-forward
+error: the branch 'worktree-agent-a2ddd816fd4503b80' is not fully merged
+hint: If you are sure you want to delete it, run 'git branch -D worktree-agent-a2ddd816fd4503b80'
+```
+
+The background writer, then the lead's step 6 fast-forward:
+
+```text
+HEAD is now at f8e1d35 probe-fg
+[worktree-agent-a8f7405866b59f0ba d13127d] probe-bg
+Updating f8e1d35..d13127d
+Fast-forward
+```
+
+`<scratch>/run-a3.debug` (the `SubagentStop` agent-hook block, H7):
+
+```text
+1083: [DEBUG] Hooks: Agent hook condition was not met: PROBE-GATE-BLOCK 1: append the line second-pass to probe-bg.txt, commit it with the message probe-second-pass, then stop.
+1084: [DEBUG] [end-turn] Stop hook block discarded (turn ended by tool result, no model re-invoke): Agent hook condition was not met: PROBE-GATE-BLOCK 1: ...
+```
+
+Probe 2 (`<scratch 2>/d.log`; two `PreToolUse` agent hooks on Bash, `model: "fable"` and `model: "claude-fable-5-1"`, both told to return ok true):
+
+```text
+593: [DEBUG] [API:timing] dispatching to firstParty model=fable
+596: [DEBUG] [API:timing] dispatching to firstParty model=claude-fable-5-1
+601: [ERROR] API error (attempt 1/11): 404 404 {"type":"error","error":{"type":"not_found_error","message":"model: fable"},...}
+612: [DEBUG] Hooks: Agent hook did not return structured output
+628: [DEBUG] Hooks: Agent hook condition was met
+```
+
+Probe 3 (2026-10-10, `<scratch 3>/d.log`; one `PreToolUse` agent hook on Bash, `model: "claude-fable-5-1"`, told to always return ok false; `claude -p --model sonnet --allowedTools Bash`, asked to run `echo PROBE-RAN > ran.txt`):
+
+```text
+594: [DEBUG] [API:timing] dispatching to firstParty model=claude-fable-5-1
+613: [DEBUG] Hooks: Got structured output: {"ok":false,"reason":"PROBE-PRETOOL-BLOCK do not run this command."}
+614: [DEBUG] Hooks: Agent hook condition was not met: PROBE-PRETOOL-BLOCK do not run this command.
+618: [DEBUG] Hook denied tool use for Bash
+619: [DEBUG] Bash tool permission denied
+```
+
+`<scratch 3>/r/ran.txt` was never created.
 
 ### T2 Steps 3–4 placement (2026-10-10, CLI 2.1.292)
 
