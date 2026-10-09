@@ -55,8 +55,8 @@ Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-
 
 ## How to avoid next time
 
-- `just tools` stamps `target/tools/release/aios` with the time the build started (`touch -r` from a per-build `mktemp` stamp file, so overlapping builds do not share one). A no-op build still makes the binary fresh, and a file edited during the build stays newer than the binary, so the next shim call rebuilds.
-- Test a PR's own build with `AIOS_TOOLS_BIN="$PWD/target/tools/release/aios"`.
+- `just tools` gives the installed binary the time the build started (`touch -r` from a `mktemp` start file, created once the recipe holds `target/tools/.install.lock`, so a recipe that waited for another takes its own build's start time). A no-op build still makes the binary fresh, and a file edited during the build stays newer than the binary, so the next shim call rebuilds. Since #203 the binary is a copy at `target/tools/installed/aios`, renamed into place with a provenance stamp beside it, and the shim checks the stamp as well as the mtime.
+- Test a PR's own build with `AIOS_TOOLS_BIN="$PWD/target/tools/installed/aios"`.
 - Add a dependency in the PR that first uses it; `time` is approved but not yet declared.
 - Compile ported patterns with `tools/src/pyre.rs` (`pyre::compile`). `\p{Nd}` and `[\s\x1c-\x1f]` match CPython 3.14's `str`-pattern classes (Unicode 16.0) exactly; R1's `[0-9]` and plain `\s` produced about half of its listed divergences, and #205 replaced them before R2-R5 reuse `pystr` and `markdown`.
 - Later ports with an old tool (R4, R3, R5) follow the same order:
