@@ -31,7 +31,7 @@ $ git -C "$W" push origin claude/harness-teams   -> ok
 
 The writer's `git reset --hard <tip>` ran without a permission prompt in that session (auto mode).
 
-The kernel-dev agent-memory note `worktree-isolation-push` (2026-09-22, issue #171) had described the same confinement from the other side. It said git commands that `cd` into another worktree are refused, and told kernel-dev to push its own `HEAD` with `git push -u origin HEAD:claude/<branch>`. Part of it still holds; the workaround does not (see below).
+A kernel-dev note on worktree isolation (2026-09-22, issue #171) had described the same confinement from the other side. It said git commands that `cd` into another worktree are refused, and told kernel-dev to push its own `HEAD` with `git push -u origin HEAD:claude/<branch>`. Part of it still holds; the workaround does not (see below).
 
 ## Why it happened
 

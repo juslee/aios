@@ -202,11 +202,11 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     Each lesson keeps the exact commands (from `D/probe/HEADLESS.md.v5`) so agent-loop's "Re-check after each Claude Code update" can re-run them, and states the CLI version checked (2.1.292). Then Placement.
   - [ ] Acceptance: `git -C "$W" log --first-parent --format=%s -4` shows the lessons commit, the merge of `origin/main`, the plan v5 commit and T1's; `git -C "$W" merge-base --is-ancestor e430305 HEAD && echo merged` prints `merged`; `git -C "$W" show --stat HEAD` lists the two lessons; `git -C "$MAIN" branch --list 'worktree-agent-*'` prints nothing from this task; the docs gate shows only `plans-not-empty`.
 
-- [ ] **T3: agent-memory lessons**
+- [x] **T3: agent-memory lessons**
 
   **Files:** Create the lessons in `D/docs/knowledge/lessons/agent-memory-migration.patch-notes.md.v5` §2 marked T3 (11, plus `2026-10-06-jl-host-clippy-shared-tests.md` only if its condition holds).
 
-  - [ ] Step 1 (controller, before spawning): copy every store, read-only, as §1 says:
+  - [x] Step 1 (controller, before spawning): copy every store, read-only, as §1 says:
     ```bash
     H=$(git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir)/aios-agent/agent-memory-harvest
     for c in "$MAIN" "$MAIN"/.claude/worktrees/*; do
@@ -215,9 +215,9 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     find "$H" -name '*.md' ! -name MEMORY.md | wc -l
     ```
     Expected: 41 or more notes (17 main, 20 crash-1b, 4 already harvested from #218 and #221; counted 2026-10-09).
-  - [ ] Step 2 (implementer): write each lesson from its sources in `$H`, re-checking every claim against `W` at HEAD, with rule 08 naming and frontmatter (`author: jl + claude`, `date: 2026-10-06`, `tags`, `status: final`).
-  - [ ] Step 3: the host-clippy condition: `(cd "$W" && cargo clippy -p shared --all-targets 2>&1 | tail -n 5)`; write the lesson only if the failures it records still appear.
-  - [ ] Acceptance:
+  - [x] Step 2 (implementer): write each lesson from its sources in `$H`, re-checking every claim against `W` at HEAD, with rule 08 naming and frontmatter (`author: jl + claude`, `date: 2026-10-06`, `tags`, `status: final`). Outcome: 11 lessons written. Claims the code or the tools contradicted were corrected or dropped: the `ArmTrngLib` line is not tied to the CPU model (it stays under `-cpu max`); soak output is not only in the main checkout; log messages are no longer cut at 48 bytes (continuation entries, #219); the docs-check override path is `target/tools/installed/aios`, not `target/tools/release/aios`; the sandbox doc no longer omits `IpcSelect`; `scripts/docs/check.py` and `soak-qemu.sh` are gone (`aios soak`, `--classify`); the bare `grep` binary-file claim depends on the grep build. The step-1b-only code (tripwire counters, `shared::lock`, `IrqSpinLock`) is not on `main`, so those lessons keep the method and mark the branch examples as history. The T2 lesson `isolated-writers-fast-forward` lost its one mention of the retired note store so that the acceptance `rg` is empty.
+  - [x] Step 3: the host-clippy condition: `(cd "$W" && cargo clippy -p shared --all-targets 2>&1 | tail -n 5)`; write the lesson only if the failures it records still appear. Outcome: the failures still appear (`could not compile shared (lib test) due to 1 previous error; 24 warnings emitted`), so `2026-10-06-jl-host-clippy-shared-tests.md` was written.
+  - [x] Acceptance:
     ```bash
     cd "$W" && for f in soak-noise-base-rates reading-soak-output ab-soak-method irq-path-codegen-hazards miri-single-seed \
       llvm-drops-write-only-statics tcg-irqs-at-tb-starts gates-in-worktrees verifying-harness-claims \
