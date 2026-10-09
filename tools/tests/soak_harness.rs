@@ -1,5 +1,5 @@
 //! `aios soak`'s boot loop against a fake QEMU and a fake `just` (see
-//! `common::soak::scenarios`), compared with the deleted `scripts/soak-qemu.sh`.
+//! `common::soak_fake::scenarios`), compared with the deleted `scripts/soak-qemu.sh`.
 //!
 //! - `harness_goldens_match_aios` runs every scenario with aios, in parallel, and
 //!   compares the normalised stdout, stderr, output files and QEMU arguments with
@@ -10,6 +10,8 @@
 //! - `harness_differential_against_oracle` (ignored, about 30 s) runs both.
 //! - `sighup_stops_qemu_and_cleans_up` covers the one signal the script did not
 //!   handle (the port exits 129 instead of leaving QEMU running).
+//! - `an_interrupt_after_the_last_boot_skips_the_summary` covers a signal that
+//!   arrives once no QEMU runs (the script's trap exited 130 at once).
 
 mod common;
 
@@ -169,5 +171,26 @@ fn sighup_stops_qemu_and_cleans_up() {
                 "summary.tsv".to_string()
             ][..]
         )
+    );
+}
+
+#[test]
+fn an_interrupt_after_the_last_boot_skips_the_summary() {
+    let sc = scenarios()
+        .into_iter()
+        .find(|s| s.name == "panic-exit")
+        .expect("the panic-exit scenario");
+    let sc = Scenario {
+        name: "interrupt-after-last-boot",
+        args: &["--no-build", "runs=1", "secs=30", "out=out"],
+        flags: &["uname-interrupts"],
+        ..sc
+    };
+    let o = run_scenario(Tool::Aios, &sc);
+    assert_eq!(o.code, 130, "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(o.alive.is_empty(), "still running: {:?}", o.alive);
+    assert_eq!(
+        o.listing.as_deref(),
+        Some(&["run-01.log".to_string(), "summary.tsv".to_string()][..])
     );
 }

@@ -234,7 +234,8 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                 "runs" => runs = value,
                 "secs" => secs = value,
                 "mode" => mode = value,
-                "out" => out = Some(value),
+                // `[ -n "$OUT" ] || OUT=<default>`: an empty value selects the default.
+                "out" => out = (!value.is_empty()).then_some(value),
                 "stall" => {
                     stall = value;
                     stall_given = true;
@@ -466,6 +467,10 @@ mod tests {
         assert_eq!(b.out, Some(OsString::from("x=y")));
         assert!(b.fresh_data && b.report_only);
         assert!(!soak(&["report_only=1", "report_only="]).report_only);
+        // An empty out= is the default directory, also after an earlier one.
+        assert_eq!(soak(&["out="]).out, None);
+        assert_eq!(soak(&["--out", "o", "--out", ""]).out, None);
+        assert_eq!(soak(&["--out=o", "--out="]).out, None);
     }
 
     #[test]

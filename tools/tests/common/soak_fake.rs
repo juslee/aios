@@ -60,6 +60,14 @@ for last in "$@"; do :; done
 printf 'KERNEL ELF' >"$last"
 "#;
 
+/// Fake `uname`, installed by the `uname-interrupts` flag: the harness runs it
+/// only after the last boot, for summary.md, so it sends the harness SIGINT then.
+const FAKE_UNAME: &str = r#"#!/bin/sh
+kill -INT "$PPID"
+sleep 1
+echo "Fake 1.0 arm64"
+"#;
+
 /// Serial output shared by the boot scripts: the stub, the kernel, tick 0.
 const BOOT_HEAD: &str = r"printf 'UEFI firmware (fake)\r\n'
 printf 'AIOS UEFI stub v0.1.0\r\n'
@@ -108,7 +116,8 @@ pub struct Scenario {
     pub args: &'static [&'static str],
     /// `(0, script)` runs for every boot without its own `(n, script)`.
     pub boots: Vec<(u32, String)>,
-    /// Files created in the fake root: `build-fails`, `mcopy-fails`.
+    /// Files created in the fake root: `build-fails`, `mcopy-fails`;
+    /// `uname-interrupts` also installs [`FAKE_UNAME`].
     pub flags: &'static [&'static str],
     /// A tracked file is modified, so the commit is `<sha>-dirty`.
     pub dirty: bool,
@@ -255,6 +264,13 @@ pub fn scenarios() -> Vec<Scenario> {
     );
     default_out.out = Out::Default;
     v.push(default_out);
+    let mut empty_out = Scenario::new(
+        "default-out-empty",
+        &["--no-build", "runs=1", "secs=30", "out=o", "out="],
+        panic_boot(),
+    );
+    empty_out.out = Out::Default;
+    v.push(empty_out);
     let mut no_qemu = Scenario::new(
         "no-qemu",
         &["--no-build", "runs=1", "secs=30", "out=out"],
@@ -344,6 +360,9 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
     }
     write_exec(&bin.join("just"), FAKE_JUST);
     write_exec(&bin.join("mcopy"), FAKE_MCOPY);
+    if sc.flags.contains(&"uname-interrupts") {
+        write_exec(&bin.join("uname"), FAKE_UNAME);
+    }
     for (n, script) in &sc.boots {
         let name = if *n == 0 {
             "boot.sh".to_string()

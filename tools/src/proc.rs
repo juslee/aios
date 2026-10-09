@@ -29,19 +29,25 @@ pub fn capture(program: &str, args: &[&str], cwd: &Path) -> Result<Output> {
 ///
 /// Dropping a supervisor whose child is still running sends the group SIGTERM
 /// and waits for it (SIGKILL after the grace period), so an error or a panic in
-/// the caller never leaves the child behind.
+/// the caller never leaves the child behind. When the `kill` utility cannot be
+/// run, the supervisor says so on stderr and SIGKILLs the leader directly.
 pub struct Supervisor {
     child: Child,
-    deadline: Instant,
+    /// `None` when the limit is too far ahead for an `Instant`: no limit.
+    deadline: Option<Instant>,
     kill_after: Duration,
     term_sent: Option<Instant>,
     timed_out: bool,
     kill_sent: bool,
     status: Option<ExitStatus>,
+    /// The program [`Supervisor::signal`] runs; tests replace it.
+    kill_program: &'static str,
 }
 
 impl Supervisor {
-    /// Spawn `command` in a new process group with a time limit of `limit`.
+    /// Spawn `command` in a new process group with a time limit of `limit`. A
+    /// limit too large for the clock (such as `--secs` near `i64::MAX`) means no
+    /// limit, so nothing here can panic once the child exists.
     pub fn spawn(
         mut command: Command,
         limit: Duration,
@@ -51,12 +57,13 @@ impl Supervisor {
         let child = command.spawn()?;
         Ok(Supervisor {
             child,
-            deadline: Instant::now() + limit,
+            deadline: Instant::now().checked_add(limit),
             kill_after,
             term_sent: None,
             timed_out: false,
             kill_sent: false,
             status: None,
+            kill_program: "kill",
         })
     }
 
@@ -75,18 +82,40 @@ impl Supervisor {
             return Ok(());
         }
         let now = Instant::now();
-        if self.term_sent.is_none() && now >= self.deadline {
+        if self.term_sent.is_none() && self.deadline.is_some_and(|d| now >= d) {
             self.timed_out = true;
-            signal_group(self.id(), "TERM")?;
+            self.signal("TERM");
             self.term_sent = Some(now);
         }
         if let Some(sent) = self.term_sent {
-            if !self.kill_sent && now >= sent + self.kill_after {
-                signal_group(self.id(), "KILL")?;
+            let due = sent.checked_add(self.kill_after).is_some_and(|t| now >= t);
+            if !self.kill_sent && due && self.signal("KILL") {
                 self.kill_sent = true;
             }
         }
         Ok(())
+    }
+
+    /// Send `signal` to the child's process group. When `kill` cannot run, say so
+    /// on stderr and SIGKILL the leader with [`Child::kill`] instead, so the child
+    /// never runs on without a limit; a failure there is reported too, and the
+    /// next [`Supervisor::service`] tries again. Returns whether a signal went out.
+    fn signal(&mut self, signal: &str) -> bool {
+        let pid = self.id();
+        let Err(e) = signal_group_with(self.kill_program, pid, signal) else {
+            return true;
+        };
+        eprintln!("aios: warning: {e:#}; sending SIGKILL to process {pid} instead");
+        match self.child.kill() {
+            Ok(()) => {
+                self.kill_sent = true;
+                true
+            }
+            Err(e) => {
+                eprintln!("aios: warning: cannot SIGKILL process {pid}: {e}");
+                false
+            }
+        }
     }
 
     /// `timeout`'s exit status once the child has been reaped.
@@ -110,7 +139,7 @@ impl Supervisor {
     pub fn terminate(&mut self) -> Result<()> {
         self.service()?;
         if self.status.is_none() && self.term_sent.is_none() {
-            signal_group(self.id(), "TERM")?;
+            self.signal("TERM");
             self.term_sent = Some(Instant::now());
         }
         Ok(())
@@ -131,8 +160,12 @@ impl Supervisor {
 impl Drop for Supervisor {
     fn drop(&mut self) {
         if self.status.is_none() {
-            let _ = self.terminate();
-            let _ = self.wait();
+            if let Err(e) = self.terminate().and_then(|()| self.wait()) {
+                let pid = self.id();
+                eprintln!("aios: warning: {e:#}; sending SIGKILL to process {pid}");
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
         }
     }
 }
@@ -141,7 +174,12 @@ impl Drop for Supervisor {
 /// `kill` utility: std can only SIGKILL its own child, not a group, and this
 /// crate forbids `unsafe`. A group that has already exited is not an error.
 pub fn signal_group(pgid: u32, signal: &str) -> Result<()> {
-    Command::new("kill")
+    signal_group_with("kill", pgid, signal)
+}
+
+/// [`signal_group`] with `program` standing in for `kill`.
+fn signal_group_with(program: &str, pgid: u32, signal: &str) -> Result<()> {
+    Command::new(program)
         .arg(format!("-{signal}"))
         .arg("--")
         .arg(format!("-{pgid}"))
@@ -149,7 +187,7 @@ pub fn signal_group(pgid: u32, signal: &str) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .with_context(|| format!("cannot run kill -{signal}"))?;
+        .with_context(|| format!("cannot run {program} -{signal} for process group {pgid}"))?;
     Ok(())
 }
 
@@ -215,13 +253,16 @@ mod tests {
     }
 
     fn supervise(script: &str, limit_ms: u64, kill_after_ms: u64) -> (i32, Duration) {
-        let start = Instant::now();
-        let mut s = Supervisor::spawn(
-            sh(script),
+        supervise_for(
+            script,
             Duration::from_millis(limit_ms),
             Duration::from_millis(kill_after_ms),
         )
-        .expect("sh starts");
+    }
+
+    fn supervise_for(script: &str, limit: Duration, kill_after: Duration) -> (i32, Duration) {
+        let start = Instant::now();
+        let mut s = Supervisor::spawn(sh(script), limit, kill_after).expect("sh starts");
         let code = s.wait().expect("wait");
         (code, start.elapsed())
     }
@@ -292,6 +333,46 @@ mod tests {
             Duration::from_secs(5),
         )
         .expect("sh starts");
+        let pid = s.id().to_string();
+        drop(s);
+        assert!(gone(&pid), "child {pid} survived the drop");
+    }
+
+    #[test]
+    fn a_limit_beyond_the_clock_is_no_limit() {
+        for limit in [Duration::from_secs(i64::MAX as u64), Duration::MAX] {
+            assert_eq!(supervise_for("exit 3", limit, Duration::MAX).0, 3);
+        }
+    }
+
+    /// A supervisor whose `kill` utility cannot be run.
+    fn without_kill(script: &str, limit: Duration) -> Supervisor {
+        let mut s =
+            Supervisor::spawn(sh(script), limit, Duration::from_secs(5)).expect("sh starts");
+        s.kill_program = "aios-no-such-program";
+        s
+    }
+
+    #[test]
+    fn without_kill_the_time_limit_sigkills_the_leader() {
+        let start = Instant::now();
+        let mut s = without_kill("exec sleep 30", Duration::from_millis(300));
+        let pid = s.id().to_string();
+        assert_eq!(s.wait().expect("wait"), 137);
+        assert!(
+            start.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            start.elapsed()
+        );
+        assert!(gone(&pid), "child {pid} survived");
+    }
+
+    #[test]
+    fn without_kill_terminate_and_drop_sigkill_the_leader() {
+        let mut s = without_kill("exec sleep 30", Duration::from_secs(60));
+        s.terminate().expect("terminate");
+        assert_eq!(s.wait().expect("wait"), 137);
+        let s = without_kill("exec sleep 30", Duration::from_secs(60));
         let pid = s.id().to_string();
         drop(s);
         assert!(gone(&pid), "child {pid} survived the drop");

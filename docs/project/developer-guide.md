@@ -1774,6 +1774,8 @@ Each boot's QEMU runs in its own process group under the harness, which sends th
 
 Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root. Results in a PR worktree are ignored files that git deletes with the worktree; `/merge-and-cleanup` copies them to the main checkout as `target/soak/pr<number>-<run>` before merging.
 
+From a PR worktree, `just soak` builds and boots that worktree's kernel, but the harness itself is the main checkout's `aios` build: the recipe runs `.claude/hooks/aios`, which executes the main checkout's `target/tools/release/aios` (rebuilt from main's `tools/` when stale), not the worktree's soak code. To soak with a branch's own harness changes, run `just tools` in the worktree, then `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios just soak ...`.
+
 | File | Contents |
 |---|---|
 | `run-NN.log` | Raw serial output of boot NN, plus a trailing `[soak] meta` line with QEMU's exit status (`qemu_rc`), `elapsed` seconds, and the harness timing: seconds into the boot at which the kernel started (`kstart`), the first heartbeat (`hb_first`), the Gate 1 bench header (`bench_start`) and `=== Gate 1 Complete ===` (`g1done`) appeared, and the heartbeat last advanced (`hb_last_advance`); -1 means never. `hb_max_gap` is the longest wait between two heartbeat advances after the bench completed (-1 if it never did) |

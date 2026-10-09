@@ -82,7 +82,7 @@ aios/
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
 ├── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
-└── tools/                # Host tools crate: the aios binary (docs-check), built with just tools
+└── tools/                # Host tools crate: the aios binary (docs-check, hook, soak), built with just tools
 ```
 
 ---

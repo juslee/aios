@@ -2,6 +2,7 @@
 //! `scripts/soak-qemu.sh` (blob at `212df62`: `loadavg`, `sha256_of`,
 //! `host_cpus` at L499-517, and the inline probes in `run_soak`). They run the
 //! same utilities as the script, so `summary.md` reads the same on each host.
+//! Every program `aios soak` runs starts from [`command`], in the C locale.
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -32,6 +33,15 @@ pub fn find_in_path(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// `program`, set to run in the C locale. The script exported `LC_ALL=C`, so
+/// every program it ran used it; without it, macOS `sysctl -n vm.loadavg`
+/// prints comma decimals under a locale such as `de_DE.UTF-8`.
+pub fn command(program: impl AsRef<OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.env("LC_ALL", "C");
+    cmd
+}
+
 /// `s` without its trailing newlines, as `$(...)` gives command output.
 pub fn chomp(s: &[u8]) -> &[u8] {
     let end = s.iter().rposition(|&b| b != b'\n').map_or(0, |p| p + 1);
@@ -45,15 +55,12 @@ pub fn output_of<S: AsRef<OsStr>>(
     args: &[S],
     cwd: Option<&Path>,
 ) -> Option<Vec<u8>> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
+    let mut cmd = command(program);
+    cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
     if let Some(dir) = cwd {
-        command.current_dir(dir);
+        cmd.current_dir(dir);
     }
-    let out = command.output().ok()?;
+    let out = cmd.output().ok()?;
     out.status.success().then(|| chomp(&out.stdout).to_vec())
 }
 
@@ -92,7 +99,7 @@ pub fn loadavg() -> String {
         let cut: Vec<&[u8]> = line.split(|&b| b == b' ').take(3).collect();
         return String::from_utf8_lossy(&cut.join(&b' ')).into_owned();
     }
-    let raw = Command::new("sysctl")
+    let raw = command("sysctl")
         .args(["-n", "vm.loadavg"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -145,14 +152,14 @@ pub fn uname() -> Vec<u8> {
 /// The first 16 hex digits of the SHA-256 of `path` (`sha256_of FILE | cut -c1-16`),
 /// from `sha256sum`, or `shasum -a 256` where there is none.
 pub fn sha256_16(path: &Path) -> Result<String> {
-    let mut command = if find_in_path("sha256sum").is_some() {
-        Command::new("sha256sum")
+    let mut cmd = if find_in_path("sha256sum").is_some() {
+        command("sha256sum")
     } else {
-        let mut c = Command::new("shasum");
+        let mut c = command("shasum");
         c.args(["-a", "256"]);
         c
     };
-    let out = command
+    let out = cmd
         .arg(path)
         .stdin(Stdio::null())
         .output()
@@ -280,6 +287,14 @@ mod tests {
         assert_eq!(
             output_of("aios-no-such-program", &[] as &[&str], None),
             None
+        );
+    }
+
+    #[test]
+    fn helpers_run_in_the_c_locale() {
+        assert_eq!(
+            output_of("sh", &["-c", "printf '%s' \"$LC_ALL\""], None),
+            Some(b"C".to_vec())
         );
     }
 

@@ -21,7 +21,7 @@ use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -341,7 +341,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
         out.flush()?;
         let log = File::create(&build_log)
             .with_context(|| format!("cannot create {}", build_log.display()))?;
-        let status = Command::new("just")
+        let status = host::command("just")
             .arg("disk")
             .current_dir(&root)
             .stdout(log.try_clone()?)
@@ -371,7 +371,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
         .with_context(|| format!("cannot copy {} to {}", disk.display(), esp.display()))?;
     if !cfg.fresh_data && !data.is_file() {
         out.flush()?;
-        let made = Command::new("just")
+        let made = host::command("just")
             .arg("create-data-disk")
             .current_dir(&root)
             .status();
@@ -386,7 +386,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
     let esp_kernel = scratch.path().join("aios.elf");
     out.flush()?;
     let extracted = host::find_in_path("mcopy").is_some()
-        && Command::new("mcopy")
+        && host::command("mcopy")
             .arg("-n")
             .arg("-i")
             .arg(&esp)
@@ -416,7 +416,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
             host::sha256_16(&esp)?
         )
     };
-    let qemu_version = Command::new("qemu-system-aarch64")
+    let qemu_version = host::command("qemu-system-aarch64")
         .arg("--version")
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
@@ -474,7 +474,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
         let log_file =
             File::create(&log).with_context(|| format!("cannot create {}", log.display()))?;
         let start = Instant::now();
-        let mut command = Command::new("qemu-system-aarch64");
+        let mut command = host::command("qemu-system-aarch64");
         // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
         command
             .args(&args)
@@ -579,6 +579,11 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
         out: bytes(&out_dir),
     };
     let head = report::summary_head(&info, &counts, cfg.runs, &load_refs);
+    // A signal after the last boot's QEMU exited: the script's trap exited at
+    // once, so there is no summary.md.
+    if let Some(code) = interrupts.pending() {
+        return Ok(code);
+    }
     let md = out_dir.join("summary.md");
     std::fs::write(&md, &head).with_context(|| format!("cannot write {}", md.display()))?;
     out.write_all(b"\n")?;
@@ -595,6 +600,9 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
         .concat(),
     )?;
 
+    if let Some(code) = interrupts.pending() {
+        return Ok(code);
+    }
     Ok(if non_clean && !cfg.report_only { 1 } else { 0 })
 }
 

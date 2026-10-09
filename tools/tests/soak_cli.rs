@@ -2,7 +2,7 @@
 //! `--classify` output and exit status, and the usage errors, byte for byte
 //! except for the documented `soak-qemu:` -> `soak:` message prefix.
 //!
-//! - `cli_goldens_match_aios` replays every case of `cli_cases()` and compares
+//! - `cli_goldens_match_aios` replays every case of `CASES` and compares
 //!   `exit N`, stdout and stderr with `tests/golden/soak/cli/<case>.golden`.
 //! - `record_cli_goldens_from_oracle` (ignored) records them from the oracle.
 //! - `cli_differential_against_oracle` runs both tools on every case.
@@ -16,7 +16,7 @@ use aios_tools::cmd::soak::USAGE;
 use common::soak::{
     check_golden, golden_dir, rename_prefix, run_oracle, synthetic_cases, write_cases,
 };
-use common::{run_aios, unique_dir, Run};
+use common::{isolated, run_aios, unique_dir, Run};
 use std::path::{Path, PathBuf};
 
 /// The command lines, by golden name. `ALL` stands for every corpus file.
@@ -233,13 +233,42 @@ fn help_prints_the_usage_whatever_came_before() {
 
 #[test]
 fn classify_works_outside_a_git_checkout() {
-    let dir = unique_dir("soak-cli-nogit");
+    // Not unique_dir: that lives under target/, inside this checkout. The ceiling
+    // stops git's search at the directory itself, wherever the temp dir is.
+    let parent = std::env::temp_dir().join(format!("aios-soak-cli-nogit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::create_dir_all(parent.join("logs")).expect("create the temp dir");
+    let parent = std::fs::canonicalize(&parent).expect("canonicalize the temp dir");
+    let dir = parent.join("logs");
     std::fs::write(dir.join("a.log"), "AIOS UEFI stub\n").expect("write a log");
-    let run = run_aios(&dir, &["soak", "--report-only", "--classify", "a.log"]);
-    assert_eq!(run.code, 0, "{}", String::from_utf8_lossy(&run.stderr));
+    let run_in_dir = |program: &str, args: &[&str]| {
+        let mut cmd = std::process::Command::new(program);
+        isolated(&mut cmd)
+            .env("GIT_CEILING_DIRECTORIES", &parent)
+            .current_dir(&dir)
+            .args(args);
+        cmd.output().expect("run a program in the temp dir")
+    };
+    let git = run_in_dir("git", &["rev-parse", "--show-toplevel"]);
     assert!(
-        run.stdout.starts_with(b"a.log  WEDGE "),
-        "{}",
-        String::from_utf8_lossy(&run.stdout)
+        !git.status.success(),
+        "{} is inside a git checkout",
+        dir.display()
     );
+    let out = run_in_dir(
+        env!("CARGO_BIN_EXE_aios"),
+        &["soak", "--report-only", "--classify", "a.log"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.starts_with(b"a.log  WEDGE "),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&parent);
 }
