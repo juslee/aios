@@ -123,7 +123,7 @@ If a check ends with `worktree path not found`, the directory was deleted by han
 
    On `no other ignored files`, continue. A list of `!!` paths: show it and stop until the user says what to keep. Any other ending is a failure: report it and stop. A `.remember/` here is the remember plugin's fallback handoff; its section belongs in the main checkout's `.remember/remember.md`. Soak runs that `out=` wrote elsewhere under `target/` are skipped too: ask the user whether there are any. Runs written outside `target/` show up in check 1 instead.
 
-4. **Soak results.** Copy each entry of the worktree's `target/soak/` (except Finder's `.DS_Store`) to the main checkout as `target/soak/pr<number>-<run>`, the convention of `target/soak/pr209-fix-198`. The block refuses while any run holds a `.scratch.*` directory, which `scripts/soak-qemu.sh` removes when a run ends. An existing copy that matches is skipped; one that differs stops the block:
+4. **Soak results.** Copy each entry of the worktree's `target/soak/` (except Finder's `.DS_Store`) to the main checkout as `target/soak/pr<number>-<run>`, the convention of `target/soak/pr209-fix-198`. The block refuses while any run holds a `.scratch.*` directory, which `aios soak` (`just soak`) removes when a run ends. An existing copy that matches is skipped; one that differs stops the block:
 
    ```bash
    set -o pipefail

@@ -1,0 +1,5 @@
+exit 2
+--- stdout
+cases/clean-text.txt  CLEAN        tick=2000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
+--- stderr
+soak: error: no such log file: --report-only

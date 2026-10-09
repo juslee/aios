@@ -1,0 +1,7 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --out <ROOT>/repo/out is not empty; choose a new or empty directory
+--- out: keep
+--- file keep
+x--- still running: -

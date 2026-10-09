@@ -129,14 +129,16 @@ run-direct: build
         -kernel {{kernel_elf}}
 
 #   just soak                                  10 text boots x 75 s, logs under target/soak/
-#   just soak runs=20 secs=90 mode=gpu         key=value or --flags go to scripts/soak-qemu.sh
+#   just soak runs=20 secs=90 mode=gpu         key=value or --flags go to aios soak
 #   just soak report_only=1                    exit 0 even if some boots are not CLEAN
 # Runs in the invocation directory ([no-cd]): relative out= and log paths resolve there.
+# The harness is this checkout's own tools build, not the main checkout's (.claude/hooks/aios),
+# so the commit summary.md records names the classifier as well as the kernel.
 # Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN
 [no-cd]
 [positional-arguments]
-soak *args:
-    bash {{ quote(justfile_directory() / "scripts" / "soak-qemu.sh") }} "$@"
+soak *args: tools
+    {{ quote(justfile_directory() / "target" / "tools" / "installed" / "aios") }} soak "$@"
 
 # kernel is no_std and excluded; the tools crate is excluded too and tested
 # separately with `cargo test -p aios-tools` in CI's Tools (host) job, which has

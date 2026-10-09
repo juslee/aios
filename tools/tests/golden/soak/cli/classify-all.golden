@@ -1,0 +1,455 @@
+exit 1
+--- stdout
+cases/clean-text.txt  CLEAN        tick=2000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
+cases/clean-text-log-only.txt  CLEAN        tick=1000   stall=-     [EL1,BOOT,G1PASS,G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+cases/clean-gpu.txt  CLEAN        tick=1000   stall=5s    [EL1,BOOT,G1DONE,GPU,INPUT,HANDOFF]
+cases/gpu-markers-missing.txt  WEDGE        tick=1000   stall=5s    [EL1,BOOT,G1DONE,GPU]  lb_last=no  gpu markers missing: InputReady,display handoff
+    first fatal: -
+    last INFO:   -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+                 [   0.300000] [0] INFO  Gpu   GpuReady
+cases/gpu-markers-missing-log-only.txt  CLEAN        tick=1000   stall=-     [G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+cases/pczero-elr-inline.txt  PCZERO       tick=1000   stall=72s   [-]  lb_last=no  EXCEPTION[CPU 1]: Synchronous ESR=0x86000006 EC=0x21 FAR=0x0000000000000000 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 1]: Synchronous ESR=0x86000006 EC=0x21 FAR=0x0000000000000000 ELR=0x0000000000000000
+    last INFO:   -
+                 -
+                 [   3.000000] [1] INFO  Sched switch to tid 9
+cases/pczero-split-elr.txt  PCZERO       tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 2]: Synchronous exception / ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 2]: Synchronous exception / ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+    last INFO:   -
+                 -
+                 -
+cases/pczero-ec20-far0.txt  PCZERO       tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 0]: Synchronous ESR=0x82000006 EC=0x20 FAR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 0]: Synchronous ESR=0x82000006 EC=0x20 FAR=0x0000000000000000
+    last INFO:   -
+                 -
+                 -
+cases/pczero-inst-abort-line.txt  PCZERO       tick=1000   stall=-     [-]  lb_last=-  Instruction Abort at 0x0000000000000000
+    first fatal: Instruction Abort at 0x0000000000000000
+    last INFO:   -
+                 -
+                 -
+cases/pczero-window-inst-abort.txt  PCZERO       tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 3]: Synchronous / Instruction Abort at 0x0000000000000000
+    first fatal: EXCEPTION[CPU 3]: Synchronous / Instruction Abort at 0x0000000000000000
+    last INFO:   -
+                 -
+                 -
+cases/exception-window-elr-nonzero.txt  EXCEPTION    tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 3]: Synchronous exception / ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    first fatal: EXCEPTION[CPU 3]: Synchronous exception / ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    last INFO:   -
+                 -
+                 -
+cases/panic-with-message.txt  PANIC        tick=1000   stall=-     [-]  lb_last=no  PANIC: panicked at kernel/src/sched/mod.rs:120:9: / assertion failed: thread.state == Ready
+    first fatal: PANIC: panicked at kernel/src/sched/mod.rs:120:9: / assertion failed: thread.state == Ready
+    last INFO:   -
+                 -
+                 [   2.000000] [0] INFO  Mm    frame allocator ready
+cases/panic-last-line.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/mm/slab.rs:40:5:
+    first fatal: PANIC: panicked at kernel/src/mm/slab.rs:40:5:
+    last INFO:   -
+                 -
+                 -
+cases/panic-then-meta.txt  PANIC        tick=0      stall=74s   [-]  lb_last=-  PANIC: panicked at kernel/src/ipc/mod.rs:88:13:
+    first fatal: PANIC: panicked at kernel/src/ipc/mod.rs:88:13:
+    last INFO:   -
+                 -
+                 -
+cases/exception-el1.txt  EXCEPTION    tick=0      stall=-     [EL1]  lb_last=no  EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    first fatal: EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    last INFO:   -
+                 -
+                 [   6.600000] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+cases/exception-el0-data.txt  EXCEPTION    tick=0      stall=-     [-]  lb_last=-  DATA ABORT (EL0): FAR=0x0000000000001000 ELR=0x0000000000400100
+    first fatal: DATA ABORT (EL0): FAR=0x0000000000001000 ELR=0x0000000000400100
+    last INFO:   -
+                 -
+                 -
+cases/exception-el0-inst.txt  EXCEPTION    tick=-      stall=-     [-]  lb_last=-  INST ABORT (EL0): FAR=0x0000000000000040
+    first fatal: INST ABORT (EL0): FAR=0x0000000000000040
+    last INFO:   -
+                 -
+                 -
+cases/exception-el0-unknown.txt  EXCEPTION    tick=1000   stall=-     [-]  lb_last=-  UNKNOWN EXCEPTION (EL0) EC=0x3f
+    first fatal: UNKNOWN EXCEPTION (EL0) EC=0x3f
+    last INFO:   -
+                 -
+                 -
+cases/edk2-after-stub.txt  EXCEPTION    tick=-      stall=-     [-]  lb_last=-  Synchronous Exception at 0x00000000BF7A1234
+    first fatal: Synchronous Exception at 0x00000000BF7A1234
+    last INFO:   -
+                 -
+                 -
+cases/edk2-before-stub.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result; edk2-format report from the firmware
+    first fatal: Synchronous Exception at 0x00000000BFE01234
+    last INFO:   -
+                 -
+                 -
+cases/split-prefix-fields.txt  EXCEPTION    tick=1000   stall=-     [-]  lb_last=-  cpu0 noise ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff0000000812a4
+    first fatal: cpu0 noise ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff0000000812a4
+    last INFO:   -
+                 -
+                 -
+cases/el0-fields-only.txt  EXCEPTION    tick=0      stall=-     [-]  lb_last=-  garbled (EL0): FAR=0x0000000000001234
+    first fatal: garbled (EL0): FAR=0x0000000000001234
+    last INFO:   -
+                 -
+                 -
+cases/data-abort-no-report.txt  EXCEPTION    tick=1000   stall=-     [-]  lb_last=no  Data Abort at 0x0000000000000519
+    first fatal: Data Abort at 0x0000000000000519
+    last INFO:   -
+                 [   3.000000] [0] INFO  Ipc   one
+                 [   3.100000] [0] INFO  Ipc   two
+cases/data-abort-after-report.txt  EXCEPTION    tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    first fatal: EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    last INFO:   -
+                 -
+                 -
+cases/multiple-fatal.txt  PANIC        tick=1000   stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/cap/mod.rs:39:5: / lock re-entry
+    first fatal: PANIC: panicked at kernel/src/cap/mod.rs:39:5: / lock re-entry
+    last INFO:   -
+                 -
+                 -
+cases/fatal-before-heartbeat.txt  EXCEPTION    tick=-      stall=-     [-]  lb_last=-  EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    first fatal: EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    last INFO:   -
+                 -
+                 -
+cases/stub-never-ran-rc0.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result; qemu exited before the time limit (rc=1)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/stub-never-ran-empty.txt  INCONCLUSIVE tick=-      stall=-     [-]  UEFI stub never ran, not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/signaled.txt  INCONCLUSIVE tick=1000   stall=46s   [-]  QEMU killed by signal 11 after 30s (rc=139), not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/rc137-before-limit.txt  INCONCLUSIVE tick=0      stall=74s   [-]  QEMU killed by signal 9 after 40s (rc=137), not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/rc137-at-limit-clean.txt  CLEAN        tick=1000   stall=1s    [G1DONE]
+cases/early-exit-rc1.txt  WEDGE        tick=1000   stall=36s   [G1DONE]  lb_last=-  heartbeat stopped at tick 1000, silent 36s before the end (limit 15s); qemu exited before the time limit (rc=1)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/early-exit-rc0-clean.txt  CLEAN        tick=1000   stall=6s    [G1DONE]  qemu exited before the time limit (rc=0)
+cases/nohb-boot-complete.txt  WEDGE        tick=-      stall=74s   [EL1,BOOT]  lb_last=no  no heartbeat after boot sequence complete
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+cases/nohb-boot-incomplete.txt  WEDGE        tick=-      stall=74s   [-]  lb_last=no  no heartbeat; boot sequence incomplete
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   0.100000] [0] INFO  Mm    frame allocator ready
+cases/nohb-kernel-never-started.txt  WEDGE        tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/nohb-cut-short-kstart.txt  INCONCLUSIVE tick=-      stall=5s    [-]  cut short: no heartbeat; boot sequence incomplete, only 5s since the kernel started (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/nohb-cut-short-qemu-start.txt  INCONCLUSIVE tick=-      stall=10s   [-]  cut short: no heartbeat; kernel never started, only 10s since QEMU started (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/nohb-log-only.txt  WEDGE        tick=-      stall=-     [-]  lb_last=-  no heartbeat; boot sequence incomplete
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/tick0-after-bench.txt  WEDGE        tick=0      stall=69s   [EL1,BOOT]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
+    first fatal: -
+    last INFO:   -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+                 [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+cases/tick0-never-advanced.txt  WEDGE        tick=0      stall=74s   [-]  lb_last=-  heartbeat never advanced past tick 0
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/tick0-cut-short.txt  INCONCLUSIVE tick=0      stall=9s    [-]  cut short: heartbeat never advanced past tick 0, only 9s before the end (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/tick0-log-only-lb-yes.txt  WEDGE        tick=0      stall=-     [-]  lb_last=yes  heartbeat never advanced past tick 0
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   5.901378] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
+cases/hb-stopped.txt  WEDGE        tick=2000   stall=35s   [G1DONE]  lb_last=no  heartbeat stopped at tick 2000, silent 35s before the end (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   9.000000] [0] INFO  Sched idle
+cases/bench-never-completed.txt  WEDGE        tick=2000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/bench-never-started.txt  WEDGE        tick=1000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/bench-cut-short.txt  INCONCLUSIVE tick=1000   stall=1s    [-]  cut short: heartbeat alive but the Gate 1 bench never completed, only 10s since the bench header (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/bench-never-started-cut-short.txt  INCONCLUSIVE tick=1000   stall=1s    [-]  cut short: heartbeat alive but the Gate 1 bench never started, only 5s since the first heartbeat (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/bench-never-completed-log-only.txt  WEDGE        tick=1000   stall=-     [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/hb-max-gap-note.txt  CLEAN        tick=1000   stall=1s    [G1DONE]  heartbeat paused 20s after the bench completed
+cases/booted-twice.txt  CLEAN        tick=1000   stall=1s    [G1DONE]  guest booted 2 times
+cases/wedge-lb-no.txt  WEDGE        tick=0      stall=69s   [-]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   6.613322] [0] INFO  Ipc   Channel 6 created (unchecked) by thread 18
+cases/exception-no-info.txt  EXCEPTION    tick=-      stall=-     [-]  lb_last=-  EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    first fatal: EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+    last INFO:   -
+                 -
+                 -
+cases/info-frozen-at-fatal.txt  PANIC        tick=0      stall=-     [-]  lb_last=yes  PANIC: panicked at kernel/src/sched/mod.rs:1:1: / boom
+    first fatal: PANIC: panicked at kernel/src/sched/mod.rs:1:1: / boom
+    last INFO:   [   2.000000] [0] INFO  Mm    two
+                 [   3.000000] [0] INFO  Mm    three
+                 [   4.000000] [0] INFO  Sched Load balance: migrated tid=4 from CPU 0 to CPU 2
+cases/ansi-escapes.txt  CLEAN        tick=1000   stall=-     [G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+cases/nul-cr-bytes.txt  CLEAN        tick=1000   stall=-     [G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+cases/clip-first-200.txt  EXCEPTION    tick=-      stall=-     [-]  lb_last=-  EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+    first fatal: EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+    last INFO:   -
+                 -
+                 -
+cases/clip-multibyte.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa√...
+    first fatal: PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa√...
+    last INFO:   -
+                 -
+                 -
+cases/clip-info-160.txt  WEDGE        tick=0      stall=-     [-]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   1.000000] [0] INFO  Mm    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
+cases/tabs-in-fatal.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/y.rs:2:2: with tabs
+    first fatal: PANIC: panicked at kernel/src/y.rs:2:2: with tabs
+    last INFO:   -
+                 -
+                 -
+cases/stall-override-wedge.txt  WEDGE        tick=1000   stall=10s   [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/stall-override-default.txt  WEDGE        tick=1000   stall=10s   [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/older-footer.txt  WEDGE        tick=1000   stall=-     [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/footer-odd-fields.txt  CLEAN        tick=1000   stall=1s    [G1DONE]
+cases/heartbeat-inline.txt  CLEAN        tick=12345  stall=-     [G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+cases/window-priority.txt  PCZERO       tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 1]: Synchronous exception / ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 1]: Synchronous exception / ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+    last INFO:   -
+                 -
+                 -
+cases/rc-empty.txt  CLEAN        tick=1000   stall=1s    [G1DONE]
+cases/elapsed-over-secs.txt  CLEAN        tick=1000   stall=0s    [G1DONE]
+cases/boot-el-spacing.txt  WEDGE        tick=-      stall=-     [EL1]  lb_last=-  no heartbeat; boot sequence incomplete
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/gate1-pass-spacing.txt  WEDGE        tick=-      stall=-     [G1PASS]  lb_last=-  no heartbeat; kernel never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n01-nostub-rc124.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n02-nostub-rc137.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n03-nostub-rc0-early.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result; qemu exited before the time limit (rc=0)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n04-nostub-edk2-exc.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result; edk2-format report from the firmware
+    first fatal: Synchronous Exception at 0x00000000BF5A1234
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n05-nostub-logonly.txt  INCONCLUSIVE tick=-      stall=-     [-]  UEFI stub never ran, not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n06-stub-no-kernel.txt  WEDGE        tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n07-stub-panic.txt  WEDGE        tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n08-stub-edk2-exc.txt  EXCEPTION    tick=-      stall=75s   [-]  lb_last=-  Synchronous Exception at 0x00000000BF5A1234
+    first fatal: Synchronous Exception at 0x00000000BF5A1234
+    last INFO:   -
+                 -
+                 -
+cases/pr168-n09-killafter-stall5.txt  CLEAN        tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]
+cases/pr168-n10-stall-eq-limit.txt  CLEAN        tick=3000   stall=15s   [EL1,BOOT,G1PASS,G1DONE]
+cases/pr168-n11-stall-over-limit.txt  WEDGE        tick=3000   stall=16s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  heartbeat stopped at tick 3000, silent 16s before the end (limit 15s)
+    first fatal: -
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n12-adv-after-secs.txt  CLEAN        tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]
+cases/pr168-n13-rc137-early.txt  INCONCLUSIVE tick=3000   stall=35s   [EL1,BOOT,G1PASS,G1DONE]  QEMU killed by signal 9 after 40s (rc=137), not a boot result
+    first fatal: -
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n14-rc134-abort.txt  INCONCLUSIVE tick=3000   stall=45s   [EL1,BOOT,G1PASS,G1DONE]  QEMU killed by signal 6 after 30s (rc=134), not a boot result
+    first fatal: -
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n15-rc139-after-exc.txt  EXCEPTION    tick=0      stall=69s   [EL1,BOOT]  lb_last=no  EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    first fatal: EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n16-rc1-early-kernel.txt  WEDGE        tick=3000   stall=45s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  heartbeat stopped at tick 3000, silent 45s before the end (limit 15s); qemu exited before the time limit (rc=1)
+    first fatal: -
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n17-rc124-short-elapsed.txt  CLEAN        tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]
+cases/pr168-n18-split-prefix-pc0.txt  PCZERO       tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  TION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+    first fatal: TION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n19-split-mid-esr.txt  EXCEPTION    tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  EXCEPTION[CPU 2]: ES[heartbeat] tick=1000 / R=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    first fatal: EXCEPTION[CPU 2]: ES[heartbeat] tick=1000 / R=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n20-orphan-iabort-pc0.txt  PCZERO       tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  lb_last=yes  Instruction Abort at 0x0000000000000000
+    first fatal: Instruction Abort at 0x0000000000000000
+    last INFO:   [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+                 [   8.1] [0] INFO  Sched  Load balance: migrated 1
+cases/pr168-n21-orphan-dabort.txt  EXCEPTION    tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  Data Abort at 0x0000000000000519
+    first fatal: Data Abort at 0x0000000000000519
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n22-full-report-single.txt  EXCEPTION    tick=1000   stall=68s   [EL1,BOOT]  lb_last=no  EXCEPTION[CPU 0]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    first fatal: EXCEPTION[CPU 0]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n23-prefix-cut-tail-next.txt  PCZERO       tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  EXCEPTION[CPU 1]: [heartbeat] tick=1000 / ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 1]: [heartbeat] tick=1000 / ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n24-el0-split.txt  EXCEPTION    tick=4000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  ORT (EL0): FAR=0x0000000000001000 ELR=0x0000000000400123
+    first fatal: ORT (EL0): FAR=0x0000000000001000 ELR=0x0000000000400123
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n25-two-cpus-interleaved.txt  EXCEPTION    tick=0      stall=69s   [EL1,BOOT]  lb_last=no  EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    first fatal: EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+    last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.6] [0] INFO  Boot  EL: 1
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-n26-midrun-gap.txt  CLEAN        tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]  heartbeat paused 40s after the bench completed
+cases/pr168-n27-small-gap.txt  CLEAN        tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]
+cases/pr168-n28-two-heads-first-window.txt  PCZERO       tick=1000   stall=67s   [BOOT]  lb_last=no  EXCEPTION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FA[heartbeat] tick=1000 / R=0x0000000000000000 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FA[heartbeat] tick=1000 / R=0x0000000000000000 ELR=0x0000000000000000
+    last INFO:   -
+                 [   5.6] [0] INFO  Boot  AIOS kernel booting...
+                 [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-s01-interleaved-pc0.txt  PCZERO       tick=3000   stall=-     [EL1,BOOT,G1DONE]  lb_last=no  EXCEPTION[CPU 2]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000[heartbeat] tick=2000 / ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 2]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000[heartbeat] tick=2000 / ELR=0x0000000000000000
+    last INFO:   -
+                 [   1.0] [0] INFO  Boot  EL: 1
+                 [   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-s02-ansi.txt  PCZERO       tick=1000   stall=-     [EL1,BOOT,G1DONE]  lb_last=no  EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+    last INFO:   -
+                 [   1.0] [0] INFO  Boot  EL: 1
+                 [   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-s03-panic-footer.txt  PANIC        tick=1000   stall=67s   [EL1,BOOT,G1DONE]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1:
+    first fatal: PANIC: panicked at kernel/src/x.rs:1:1:
+    last INFO:   -
+                 [   1.0] [0] INFO  Boot  EL: 1
+                 [   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-s04-killed-before-kernel.txt  INCONCLUSIVE tick=-      stall=10s   [-]  UEFI stub never ran, not a boot result
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/pr168-s05-edk2-exception.txt  INCONCLUSIVE tick=-      stall=75s   [-]  UEFI stub never ran, not a boot result; edk2-format report from the firmware
+    first fatal: Synchronous Exception at 0x00000000BF5A1234
+    last INFO:   -
+                 -
+                 -
+cases/pr168-s06-nul.txt  EXCEPTION    tick=100    stall=-     [EL1,BOOT,G1DONE]  lb_last=no  EXCEPTION[CPU 1]: ESR=0x96000006 EC=0x25 FAR=0x320 ELR=0xffff00000009e0dc
+    first fatal: EXCEPTION[CPU 1]: ESR=0x96000006 EC=0x25 FAR=0x320 ELR=0xffff00000009e0dc
+    last INFO:   -
+                 [   1.0] [0] INFO  Boot  EL: 1
+                 [   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-s07-stall-boundary.txt  CLEAN        tick=1000   stall=14s   [EL1,BOOT,G1DONE]
+cases/pr168-s08-silent-nofooter.txt  CLEAN        tick=2000   stall=-     [EL1,BOOT,G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+cases/pr168-s09-late-start-tick0.txt  INCONCLUSIVE tick=0      stall=2s    [BOOT]  cut short: heartbeat stuck at tick 0 after the Gate 1 bench started, only 2s before the end (limit 15s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/pr168-s10-late-start-nohb.txt  WEDGE        tick=-      stall=75s   [EL1]  lb_last=no  no heartbeat; boot sequence incomplete
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   1.0] [0] INFO  Boot  EL: 1
+--- stderr

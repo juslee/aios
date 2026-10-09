@@ -58,7 +58,8 @@ jobs:
     # Host-only crate tools/ (package aios-tools, binary aios): fmt, clippy and
     # tests, including the docs-check parity goldens. The real-repository goldens
     # replay a pinned main commit, so the checkout needs full history. The same
-    # history holds the deleted scripts/docs/check.py, which the differential
+    # history holds two deleted oracles: scripts/soak-qemu.sh at 212df62, which
+    # the soak parity tests read, and scripts/docs/check.py, which the differential
     # test runs with CPython 3.14 from setup-python, whatever the image's own
     # python3 is: the test accepts only an interpreter on Unicode 16.0.0, the
     # version aios's \d matches (CPython 3.12 and 3.13, on Unicode 15.x, lack
@@ -166,6 +167,10 @@ jobs:
           qemu-system-aarch64 --version
           dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
           test -f "$AIOS_EDK2_FW"
+      # just soak builds this checkout's aios binary and runs it; build it
+      # first so a build failure shows as its own step, not inside the soak.
+      - name: Build the host tools
+        run: just tools
       # TCG on x86 is slower than on the arm64 dev hosts, hence 90 s per boot.
       - name: Soak (5 boots x 90 s)
         run: just soak runs=5 secs=90 report_only=1 out="$SOAK_OUT"
