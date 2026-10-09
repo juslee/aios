@@ -51,6 +51,9 @@ GICv3 GICD base:              0x0800_0000
 GICv3 GICR base:              0x080A_0000
 ARM Generic Timer freq:       62.5 MHz on QEMU; 1 ms tick = freq/1000 = 62500
 Timer PPI INTID:              30 (EL1 physical timer)
+Timer IRQs on CPUs 1-3:       none today (#200): init_gicv3_secondary never writes GICR_IGROUPR0, so
+                              PPI 30 stays in Group 0, which the kernel never enables. Only CPU 0
+                              runs the tick work and IRQ-path switches; fixed by its own crash-fix step.
 
 # Boot invariants
 QEMU boots to EL1 directly    (no EL2 setup)
@@ -77,6 +80,13 @@ TPIDR_EL1 (1b):               MPIDR Aff0, written by boot.S on every CPU (_start
                               switch). The IRQ-class lock stamps its CPU id from it (tripwire::cpu_tpidr;
                               one inline load under TCG, where an MPIDR read is two helper calls).
                               kernel_main, secondary_main and note_dispatch count a mismatch (tpidrbad).
+IRQ-path address values (1b): CPUs 1-3 install VBAR_EL1 with adrp while the MMU is off, so their
+                              exception paths run at physical-alias PCs, and any address value
+                              computed there (adrp, Location::caller()) is physical. An address
+                              value computed on the IRQ path and compared, stored or published
+                              across CPUs must be a VA captured at thread level on CPU 0 (e.g.
+                              TEXT_LO/TEXT_HI from kernel_main) or be normalised (v < KERNEL_VIRT
+                              -> v + VIRT_PHYS_OFFSET). Pointers that are only dereferenced are fine.
 
 # MMU strategy (do not get this wrong)
 edk2 state post-EBS:          MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
@@ -109,6 +119,10 @@ on Inner Shareable + Cacheable memory. spin::Mutex (and any atomic RMW: fetch_ad
 swap) HANGS on Non-Cacheable Normal memory.
   Phase 1: use only load(Acquire) / store(Release) for inter-core sync.
   Phase 2 M8: TTBR0 RAM blocks upgraded to WB (Attr3); spinlocks safe after TTBR1 active.
+  Kernel statics are not NC: boot.S maps the image WB + Inner Shareable in the boot TTBR1, and
+  kernel_main runs at its VA from its first instruction, so atomic RMW on statics (e.g. the
+  IrqSpinLock CAS, BOOT_LOG before init_mmu) is safe on every CPU; physical-alias accesses on
+  CPUs 1-3 go through the identity map's RAM block, WB since M8.
 
 # Slab allocator
 Size classes: 5 (64, 128, 256, 512, 4096B); smaller rounds up to 64. Backed by frame allocator (kernel pool).
@@ -214,12 +228,13 @@ aios/
 │   │                     window move/resize, system hotkeys (M25 adds
 │   │                     window/cursor/focus/input_route/hotkey/text)
 │   ├── storage/          BlockEngine, WAL, MemTable, object/version stores, crypto, posix bridge, budget
-│   ├── observability/    structured log, metrics, trace (feature-gated)
-│   ├── sync/             IrqSpinLock (detect-only lock of the 9 IRQ-shared statics)
+│   ├── observability/    structured log, metrics, trace (feature-gated), tripwire (crash-fix 1b counters)
+│   ├── sync/             IrqSpinLock (detect-only lock of the 9 IRQ-shared statics),
+│   │                     selftest (tripwire-selftest feature, off by default)
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
 ├── shared/src/           types crossing kernel/stub boundary (no_std)
 │   ├── (top-level)       boot, cap, ipc, sched, memory, storage, gpu, input, compositor, syscall,
-│   │                     kaslr, cache, observability, collections, lib
+│   │                     kaslr, cache, observability, collections, lock, tripwire, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):

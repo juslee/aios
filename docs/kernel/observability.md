@@ -254,7 +254,7 @@ macro_rules! ktrace { ($subsys:ident, $($arg:tt)*) => { klog!(Trace, $subsys, $(
 
 ### 2.7 UART Drain
 
-A drain function, called from the CPU 0 timer tick handler (every 4th 1 ms tick), from the boot sequence, and from the scheduler's `pc=0` check before it panics (on any CPU), reads all per-core rings and writes formatted entries to the UART:
+A drain function, called from the CPU 0 timer tick handler (every 4th 1 ms tick), from the boot sequence, from the scheduler's `pc=0` check before it panics (on any CPU), and from the panic handler on CPU 0 (a bounded loop that empties the rings, skipped when CPU 0 was already inside a drain), reads all per-core rings and writes formatted entries to the UART:
 
 ```text
 [   0.003142] [0] INFO  Mm   Pool init: 32768 pages in Kernel
@@ -871,12 +871,29 @@ The boot-crash fix ([ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preempt
 |---|---|---|
 | `hb` | `NonZero` | Once per `[heartbeat] tick=N` line, before the next heartbeat |
 | `g1` | `Full` | Once, after `[bench] === Gate 1 Complete ===` |
+| `panic` | `Full` | From the panic handler on the panicking CPU, after the `PANIC:` lines and a `[panic]` line |
+| `exc` | `Full` | From the synchronous exception report on the faulting CPU, after its `regs:` and `ctx:` lines |
 
-The schema reserves `panic` and `exc` for lines printed by the fatal-dump paths.
+The `hb` and `g1` lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler`, after the tick's own work (time slice, IPC timeouts, load balance, `NEED_RESCHED`). The UART has no lock, so a line waits while a thread holds the console: the Gate 1 bench marks it busy from its header to `=== Gate 1 Complete ===`. A line also waits while the thread CPU 0 interrupted holds one of the IRQ-class locks (`sync::held_by_stream(0)`, [deadlock-prevention.md](./deadlock-prevention.md) §3.3), so that the print does not stretch that hold while other CPUs spin on it. After 256 ticks of waiting the line prints anyway, and `hbdefer` counts it. That cap is below the 1000 ticks between heartbeats. At most one line prints per tick, the heartbeat's first.
 
-Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler`, after the tick's own work (time slice, IPC timeouts, load balance, `NEED_RESCHED`). The UART has no lock, so a line waits while a thread holds the console: the Gate 1 bench marks it busy from its header to `=== Gate 1 Complete ===`. A line also waits while the thread CPU 0 interrupted holds one of the IRQ-class locks (`sync::held_by_stream(0)`, [deadlock-prevention.md](./deadlock-prevention.md) §3.3), so that the print does not stretch that hold while other CPUs spin on it. After 256 ticks of waiting the line prints anyway, and `hbdefer` counts it. That cap is below the 1000 ticks between heartbeats. At most one line prints per tick, the heartbeat's first.
+**Counters.** `CpuCounters` keeps one row of counters per CPU. Only that CPU writes its row, with IRQs masked, using `Relaxed` load and store only (no atomic read-modify-write). A per-CPU key prints each CPU's own row; any other key prints the sum over the rows, or the maximum for a gauge. `tick` counts each CPU's own timer IRQs, while `t` (`TICK_COUNT`) advances on CPU 0 only. Today CPUs 1–3 take no timer IRQs (#200: their timer PPI stays in GIC Group 0), so their `tick`, `irqsw` and `pcphys` read 0.
 
-**Counters.** `CpuCounters` keeps one row of counters per CPU. Only that CPU writes its row, with IRQs masked, using `Relaxed` load and store only (no atomic read-modify-write). A per-CPU key prints each CPU's own row; any other key prints the sum over the rows, or the maximum for a gauge. `tick` counts each CPU's own timer IRQs, while `t` (`TICK_COUNT`) advances on CPU 0 only.
+**Key groups.** `shared/src/tripwire.rs` documents every key; in short:
+
+| Keys | Width | Meaning |
+|---|---|---|
+| `tick`, `irqsw`, `irqsw0`, `nest`, `insched`, `n4` | per CPU | Timer IRQs; switches committed by `schedule()` on the IRQ return path (`irqsw0`: with no current thread); nested IRQ entries; `schedule()` calls refused by its re-entrancy guard; dispatches on a CPU other than the one read before masking (N4) |
+| `elrmm`, `spsrmm` | per CPU | IRQ returns whose ELR_EL1 or SPSR_EL1 differs from the value the stub saved at entry (H1). Every step-1b boot that runs past about tick 1000 shows one on CPU 0, most likely a harmless swap of the bench threads' `wfe` tail loops after Gate 1 (the crash-fix ADR's 2026-10-09 errata), so a single mismatch is not by itself evidence of harm |
+| `rsthold`, `tpidrbad` | per CPU | A `restore_context` while the dispatching stream still held a lock stamped with its own generation; a TPIDR_EL1 that is not MPIDR_EL1 Aff0. Both expected 0 |
+| `xdir`, `xrep`, `xnever`, `n1` | 1 | Direct and reply switches to a thread that last ran on another CPU, or never ran; `schedule()` on the IRQ return path leaving its Runnable current thread unqueued (N1) |
+| `pcnull`, `pcphys`, `pcother`, `spbad` | 1 | Restore-site checks: a saved PC of 0, in the physical alias of the kernel text, or elsewhere (or misaligned); a saved SP outside the thread's stack |
+| `n2` | 4 | `rpre`, `rblk`, `vpre`, `vblk`: wakes that skipped a waiter. `rblk` (reply side) and `vblk` (receive side) mean the waiter is left with no timeout, the N2 lost-wakeup precursor; `rpre`/`vpre` heal when the waiter's timeout fires |
+| `latereply`, `misrep`, `ctbusy` | 1 | Reply skips that heal by the caller's timeout; replies that woke a thread blocked in another wait; wakes whose `clear_timeout` found `TIMEOUT_QUEUE` busy and left a stale entry |
+| `ubrun`, `ubrbl`, `ubdead`, `ubnone`, `ubmove` | 15, per wake source | `unblock` outcomes per source (`call`, `reply`, `send`, `selcall`, `selsend`, `selsig`, `sig`, `ndestroy`, `nto`, `nsto`, `pwait`, `to`, `chdestroy`, `pexit`, `cancel`): skipped a Running or Runnable target, revived a non-blocked one, found no thread, queued off the target's last CPU. `ubrun[reply]` (index 1) counts N2 and late replies together; `n2` splits them |
+| `lkph`, `lkpho`, `lkphrun`, `lkoxp`, `lkself`, `lktry`, `lktph`, `lkstk` | 9, per lock class | IRQ-class lock contention (§3.3 of [deadlock-prevention.md](./deadlock-prevention.md)). `lkoxp` is large in healthy boots (tens to hundreds of thousands for `THREAD_TABLE` by `g1`): every dispatch bumps the CPU's switch generation while holding `THREAD_TABLE`, so a waiter on another CPU sees a stamp whose CPU has dispatched since. It counts mostly that window, not migrated holders |
+| `lb`, `enqfull`, `badchan`, `badtid` | 1, 1, 3, 1 | Load-balancer migrations; enqueues dropped on a full run queue; out-of-range channel ids rejected at the capability check, `ipc_select` and the table slot; out-of-range thread ids met by the instrumentation |
+
+The scan keys are under "Heartbeat scans" below, and `twc`, `twn` and `twmax` under "Cost".
 
 **Heartbeat scans.** Right before each `src=hb` line, under the same deferral rule, CPU 0 runs two read-only scans of the scheduler and IPC state. Every lock is a try-lock that counts nothing (`try_lock_quiet`, and `spin::Mutex::try_lock` for `CHANNEL_TABLE`), so a scan never waits and never panics; a busy lock skips the scan.
 
@@ -893,6 +910,21 @@ Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler
 
 `kind` is `ph` (a holder switched out on this CPU and not current elsewhere, met with IRQs masked; not by itself evidence of a wedge), `self` (the holder is the waiter's own thread, a same-stream deadlock the stamp cannot see) or `stuck` (one `lock()` has waited more than 2 s). `idx` is the per-CPU array index, or `-` for a scalar static; `ctx` is `thread`, `thread-off`, `irq` or `irq-exit`; `owner_cpu` and `owner_gen` decode the lock word the waiter saw; `holder_running` is the CPU the holder is current on, `none` or `?`. Unknown values print `?`. The same events are counted in the `lk*` keys, which the `[tripwire]` line carries. They are not `[tripwire]` lines and have no `n`.
 
+**Re-entry panic and fatal dumps.** An `IrqSpinLock` whose word already holds its waiter's own stamp panics. The panic handler prints the location and the message on two lines, and the soak harness joins them:
+
+```text
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/sync/selftest.rs:94 holder_irqs=on tid=19 gen=96512
+[panic] cpu=0 tid=19 ctx=irq-exit irq_was=off t=6.142418 irq_elr=0xffff000000087c84
+[tripwire] v=1 src=panic cpu=0 ...
+```
+
+That is the `tripwire-selftest` boot (below). `ctx` is the waiter's context, `holder` the holder's acquisition site (`?` when the IRQ landed between the holder's CAS and its field stores), and `gen` the stamp's switch generation. `ctx=irq` or `ctx=irq-exit` with `holder_irqs=on` is the crash-fix ADR's H3. The `[panic]` line names the CPU, the current thread, the context, whether IRQs were on, the CNTVCT time and, in IRQ context, `irq_elr`, the PC the IRQ interrupted (the holder's PC when the holder is the interrupted thread). The handler masks IRQs before it prints, halts at once on a second panic on the same CPU and, on CPU 0, then empties the log rings (§2.7). A synchronous exception report keeps its head and `Abort` lines and adds `regs:` (SP, SPSR, TTBR0_EL1, VBAR_EL1) and `ctx:` (CPU, thread, raw `IRQ_CTX`, in-scheduler) lines, indented two spaces, and a `src=exc` line.
+
+A lock word is bit 63 HELD, bit 62 IRQS_ON (IRQs were on at the acquisition), bits 54–61 the CPU and bits 0–53 that CPU's switch generation (`shared/src/lock.rs`). A fatal ELR, FAR or register value with the top two bits set and a small number in the low bits is a lock word, not an address: 0xc000000000034f51 is held, IRQs on, CPU 0, generation 216,913. Seeing one as a PC means a stale copy of a lock word was used as a return address.
+
+**Self-test.** The kernel feature `tripwire-selftest` (off by default, never in a soak arm) adds `kernel/src/sync/selftest.rs`: an Interactive thread pinned to CPU 0 takes `THREAD_TABLE` with IRQs on and spins for 3 ticks, so CPU 0's next tick re-enters the lock and prints the re-entry panic above end to end. Build it with `cargo build --target aarch64-unknown-none -p kernel --features tripwire-selftest`, assemble the ESP as the `justfile` `disk` recipe does, and boot it with `just soak runs=1 secs=40 --no-build report_only=1`. Without a panic it prints a `[selftest] ... FAIL` line.
+
 **SMP lines.** Each CPU prints one `[smp]` line at boot, straight to the UART (`smp::print_cpu_line`), recording where its exception vectors and `TTBR0_EL1` point:
 
 ```text
@@ -901,7 +933,7 @@ Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler
 
 `vbar_kva` is 1 when `VBAR_EL1` is a kernel (TTBR1) VA, and `ttbr0_idmap` is 1 when `TTBR0_EL1`'s table base (ASID and CnP masked off) is the boot identity map. CPUs 1–3 install `VBAR_EL1` with `adrp` while their MMU is off, so theirs is the physical alias of the vector table (`vbar_kva=0`, `ttbr0_idmap=1`), and their exception paths run at physical-alias PCs. A secondary prints its line inside its `PRINT_TURN` window, right after `Core N online`. CPU 0 prints its own after the boot address-space switch test: a TTBR1 VBAR (`vbar_kva=1`) and address space B's `TTBR0_EL1`, whose ASID is in bits [63:48] (`ttbr0_idmap=0`). Those positions are execution order, not serial-log order: `Core N online`, `4 CPUs online` and `TTBR0 switch: ASID 1 -> ASID 2` are ring-buffered `kinfo!` entries that reach the UART only at the next log drain, while the `[smp]` line is a direct `println!`, so in the log all four `[smp]` lines appear above those earlier entries. The `[smp]` line has no timestamp; match CPU 0's `ttbr0` ASID to the `TTBR0 switch` line by content, not by line order. Expect one line per CPU in `ONLINE_CPUS`. When the bring-up wait times out (`SMP timeout: …`, after 100 ms), CPU 0 stops waiting and goes on printing, so a late secondary's `[smp]` line can interleave with CPU 0's output, and a secondary that never comes up has no line. No parser depends on `[smp]` lines; they are not `[tripwire]` lines and have no `n`.
 
-**Cost.** The printer uses `putc` only, with no `core::fmt`, no lock and no buffer, and runs with IRQs masked. `twc` is the cumulative CNTVCT time spent printing lines, `twn` the number of lines, and `twmax` the longest single line. A line's own cost is added after it prints, so the next line reports it.
+**Cost.** The printer uses `putc` only, with no `core::fmt`, no lock and no buffer, and runs with IRQs masked. `twc` is the cumulative CNTVCT time spent printing lines, `twn` the number of lines, and `twmax` the longest single line. A line's own cost is added after it prints, so the next line reports it. Under QEMU a line costs about 4.9 µs (about 300 CNTVCT ticks) per byte: a 95-byte heartbeat line about 29,000 ticks, and the `Full` `g1` line (about 920 bytes) 170,000–210,000 ticks (2.8–3.4 ms). So from Gate 1 on, `twmax` is the `g1` line's cost, and a bound meant for heartbeat lines must be checked against their own cost.
 
 -----
 

@@ -114,7 +114,7 @@ mov  x19, x0                // save BootInfo pointer (callee-saved)
 
 **boot.S Step 7: Configure TCR_EL1.** Set T1SZ=16 (48-bit kernel VA), TG1=4KiB granule, IRGN1/ORGN1=WB WA, SH1=Inner Shareable. Preserve existing TTBR0 configuration (bits[15:0]) from edk2.
 
-**boot.S Step 8: Install TTBR1 and branch to virtual kernel_main.** Write L0 physical address to `TTBR1_EL1`. Execute `TLBI VMALLE1` + `DSB NSH` (non-broadcast — broadcast hangs with parked cores under NC memory). Compute virtual kernel_main address by adding `VIRT_PHYS_OFFSET` (`0xFFFE_FFFF_C000_0000`). Convert SP to virtual. Branch to virtual `kernel_main` with `x0 = x19` (BootInfo physical address).
+**boot.S Step 8: Install TTBR1 and branch to virtual kernel_main.** Write L0 physical address to `TTBR1_EL1`. Execute `TLBI VMALLE1` + `DSB NSH` (non-broadcast — broadcast hangs with parked cores under NC memory). Compute virtual kernel_main address by adding `VIRT_PHYS_OFFSET` (`0xFFFE_FFFF_C000_0000`). Convert SP to virtual. Set `TPIDR_EL1` to `MPIDR_EL1` Aff0, the CPU id that crash-fix step 1b's IRQ-class lock stamps with (written once per CPU, before any Rust code, and never saved or restored on a switch). Branch to virtual `kernel_main` with `x0 = x19` (BootInfo physical address).
 
 #### Phase B: kernel_main (Rust)
 
@@ -231,7 +231,7 @@ Secondary core (_secondary_entry in boot.S → secondary_main in smp.rs):
   2. Install Rust exception vectors at VBAR_EL1 (boot.S)
   3. Load MAIR/TCR/TTBR0/TTBR1, enable MMU (boot.S — safe: MMU was off)
   4. Load per-core SP from SECONDARY_STACKS[core_id] (boot.S)
-  5. Branch to secondary_main(core_id) (Rust)
+  5. Set TPIDR_EL1 = MPIDR_EL1 Aff0, branch to secondary_main(core_id) (Rust)
   6. Init GIC redistributor + CPU interface for this core
   7. Install full kmap TTBR1 (replaces boot.S minimal TTBR1)
   8. Wait for PRINT_TURN == core_id, print, store core_id + 1

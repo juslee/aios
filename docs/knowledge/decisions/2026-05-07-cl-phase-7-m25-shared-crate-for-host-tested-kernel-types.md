@@ -88,7 +88,8 @@ guarded data, which the second heuristic bullet above sends to
   hardware belongs in `shared/`. There, host threads and `just miri`
   check it. In `kernel/` its tests would compile and never run.
 - Hardware inputs come in through a trait or a hook that the kernel
-  implements: `CpuView` (MPIDR and the per-CPU switch generation) and
+  implements: `CpuView` (the CPU id, which the kernel reads from
+  TPIDR_EL1, and the per-CPU switch generation) and
   `PreRelease` (the kernel's holder fields). Tests implement them with
   scripted models, such as an exhaustive CPU-switch model for
   `read_stamp`.
@@ -97,7 +98,7 @@ guarded data, which the second heuristic bullet above sends to
   a `// SAFETY:` comment. No inline asm, MMIO or pointers into kernel
   memory.
 - The kernel keeps the parts that need hardware or kernel state: DAIF
-  and MPIDR reads, counters, printing and panics
+  and CPU-id reads (TPIDR_EL1, MPIDR_EL1), counters, printing and panics
   (`kernel/src/sync/irq_spin_lock.rs`).
 
 The first two heuristic bullets therefore read "`unsafe` for hardware
