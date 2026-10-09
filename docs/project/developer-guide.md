@@ -1022,8 +1022,8 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~431), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1036,16 +1036,16 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (570)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  mod.rs          (584)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (762)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (763)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (226) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (234)  # IPC Kit error variants through KernelIpc (#190) self-test
+    select_cap.rs (186)  # IpcSelect capability self-test
+    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
   shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
@@ -1552,7 +1552,7 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
 | `just soak` | Boot N times in a row and classify each boot (PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN); see §5.6 |
 | `just test` | Run host-side unit tests (shared crate only; excludes the tools crate, which is tested separately with `cargo test -p aios-tools`, CI's Tools (host) job) |
-| `just tools` | Build the host tools binary `target/tools/release/aios` (`cargo build --release -p aios-tools --target-dir target/tools`); `.claude/hooks/aios` runs it (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios`) |
+| `just tools` | Build the host tools binary (`cargo build --release -p aios-tools --target-dir target/tools`), then install it at `target/tools/installed/aios` by atomic rename, with the provenance stamp `installed/aios.stamp` beside it; `.claude/hooks/aios` runs it (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
 | `just clippy` | Run clippy on kernel and stub targets with `-D warnings`, plus host clippy on the tools crate |
 | `just fmt` | Format code with `cargo fmt` |
 | `just fmt-check` | Check formatting without modifying files (CI mode) |
@@ -1759,7 +1759,7 @@ mod tests {
 
 ### 5.6 Boot Soak Testing (`just soak`)
 
-A single `just run` cannot tell you whether a change affects intermittent boot failures: a crash that hits 7 boots in 10 will still miss some boots. `just soak` (backed by `scripts/soak-qemu.sh`) builds the ESP once, boots it N times in a row with the same QEMU arguments as `just run` (text mode) or `just run-gpu` plus `-display none` (gpu mode), and classifies every boot. Use it to measure a failure rate before you change anything, and again after.
+A single `just run` cannot tell you whether a change affects intermittent boot failures: a crash that hits 7 boots in 10 will still miss some boots. `just soak` (backed by `aios soak` in the `tools/` crate) builds the ESP once, boots it N times in a row with the same QEMU arguments as `just run` (text mode) or `just run-gpu` plus `-display none` (gpu mode), and classifies every boot. Use it to measure a failure rate before you change anything, and again after.
 
 ```bash
 just soak                                  # 10 text-mode boots x 75 s
@@ -1767,12 +1767,14 @@ just soak runs=20 secs=75                  # baseline-sized sample
 just soak mode=gpu runs=10                 # VirtIO-GPU + input devices
 just soak runs=5 secs=90 report_only=1     # exit 0 even if boots fail (used by CI)
 just soak --no-build --reuse-data          # boot the existing image on data.img
-scripts/soak-qemu.sh --help                # all options
+just soak --help                           # all options
 ```
 
-Each boot runs under `timeout` (or `gtimeout`, from Homebrew coreutils on macOS) in its own process group, so only that boot's QEMU is ever killed. The harness picks the first one that accepts `--kill-after`, passes through the exit status of a command that finishes in time, and exits 124 when it stops the command (checked by running it, not by its version string), so GNU coreutils and uutils (the default on Ubuntu 26.04) both work. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
+Each boot's QEMU runs in its own process group under the harness, which sends the group SIGTERM when `secs` run out and SIGKILL 10 s later if it is still running. QEMU's exit status is recorded as `timeout(1)` reported it: 124 when the time limit stopped it, 137 when SIGKILL was needed. No external `timeout` is needed. Ctrl-C (SIGINT), SIGTERM, SIGHUP and Ctrl-\ (SIGQUIT) stop the running QEMU and remove the scratch directory before the harness exits with 130, 143, 129 or 131. SIGKILL cannot be caught: a harness killed by it leaves that boot's QEMU running until you kill it by hand, so stop a soak with one of the other four. The harness catches these four even when it started with them ignored, unlike the script, which inherited an ignored signal: `nohup aios soak`, or a soak run as a background job of a non-interactive shell, still stops on SIGHUP, SIGINT or SIGQUIT, so run a long soak under `setsid`, `tmux` or `screen`. Ctrl-Z (SIGTSTP) suspends QEMU along with the harness, and on resume the boot's time limit and the timings in its footer are moved back by the time spent stopped, so a stopped stretch never hides a stall. SIGSTOP cannot be caught either, and SIGTTIN or SIGTTOU (a background soak touching the terminal) is not: each stops only the harness, and QEMU runs on past its time limit until the harness is continued. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
 
-Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root.
+Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root. Results in a PR worktree are ignored files that git deletes with the worktree; `/merge-and-cleanup` copies them to the main checkout as `target/soak/pr<number>-<run>` before merging.
+
+`just soak` first builds the checkout's own `aios` (`just tools`, into that checkout's `target/tools/`) and runs it, unlike the recipes that go through `.claude/hooks/aios` and run the main checkout's build. From a PR worktree, both the kernel and the harness that classifies it therefore come from the worktree, so the commit in `summary.md` (with `-dirty` for uncommitted changes, `tools/` included) identifies both, as the script's did. A failed tools build stops the soak; there is no fallback to an older binary.
 
 | File | Contents |
 |---|---|
@@ -1795,28 +1797,29 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 **Not a boot result.** Two cases are `INCONCLUSIVE` whatever the heartbeat shows:
 
 - *The UEFI stub never ran*: the log has no `AIOS UEFI stub` line and no kernel output, whatever QEMU's exit status. QEMU failed to start, or the firmware never loaded the stub (for example an `AIOS_EDK2_FW` that enforces Secure Boot and rejects the unsigned stub, a stale or corrupt `aios.img`, or the firmware dropping to the UEFI shell). A firmware exception in that phase is included. On the first boot of a soak this is a setup error instead: the harness stops with exit status 2, even with `report_only=1`. A stub that ran but never started the kernel (for example a stub panic) stays a `WEDGE`, "kernel never started".
-- *QEMU was killed by a signal* before the time limit, with no fatal report before it: exit status above 128 other than the timeout's own (124, or 137 once `--kill-after` fires at the limit), or 137 before the limit (a SIGKILL from outside, such as the OOM killer). The silence that follows is not the kernel's doing. An early exit with a status of 128 or below (QEMU ending on its own) is still judged by the rules below, with a "qemu exited before the time limit" note.
+- *QEMU was killed by a signal* before the time limit, with no fatal report before it: exit status above 128 other than the harness's own (124 when the time limit stopped it, or 137 once SIGKILL follows SIGTERM at the limit), or 137 before the limit (a SIGKILL from outside, such as the OOM killer). The silence that follows is not the kernel's doing. An early exit with a status of 128 or below (QEMU ending on its own) is still judged by the rules below, with a "qemu exited before the time limit" note.
 
 **Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock times at which the kernel started, the first heartbeat, the bench header and `=== Gate 1 Complete ===` appeared, and a new heartbeat last appeared. A boot is `CLEAN` only if all of these hold:
 
 1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs masked on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, that fits the IRQ-masked loop hanging on CPU 0 ("heartbeat stuck at tick 0 after the Gate 1 bench started"). A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
-2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the timeout's SIGTERM by about 1 s (up to 10 s if `--kill-after` has to SIGKILL it). A QEMU process that exits early counts as silent for the rest of the planned time.
+2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the harness's SIGTERM by about 1 s (up to 10 s if SIGKILL is needed). A QEMU process that exits early counts as silent for the rest of the planned time.
 3. The log contains `=== Gate 1 Complete ===`. The bench can hang while the timer keeps running (seen under TCG in CI, with heartbeats reaching tick 79000), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". `G1PASS` is not required, because the IPC latency threshold can legitimately fail on a slow or loaded host.
 4. In gpu mode, the log contains `GpuReady`, `InputReady` and `display handoff complete` (all printed before the bench); otherwise "gpu markers missing".
 
-**Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The script warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
+**Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The harness warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
 **Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
-**Re-classifying saved logs.** `scripts/soak-qemu.sh --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
+**Re-classifying saved logs.** `just soak --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
 
 **Comparing before and after.** Boot failures are random, so treat every soak result as a sample:
 
-- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches.
+- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches (`scripts/soak-matrix.sh`, below, boots one of each per round, rotating the order).
 - Small samples have wide intervals. 6 CLEAN out of 20 gives a 95% interval of about 15–52%. Doubling that to 12/20 is *not* significant (two-sided Fisher exact test p ≈ 0.11), while 6/20 → 18/20 is (p ≈ 0.0002). Compare the Wilson intervals printed in `summary.md`, or run a Fisher exact test on the 2×2 CLEAN / not-CLEAN table, before claiming an improvement.
 - Zero failures is weak evidence. With no failures in n boots, the 95% upper bound on the failure rate is about 3/n (the rule of three): 20 clean boots only bound it below 15%, and you need about 60 to bound it below 5%.
 - Look at the class mix, not just the CLEAN count. A change that turns `PCZERO` boots into `WEDGE` boots has moved the bug, not fixed it.
-- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 24.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
+- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 26.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
+- To compare revisions, interleave them. `scripts/soak-matrix.sh REF REF [REF [REF]]` builds 2–4 revisions, each in its own worktree (outside the checkout by default, so no parent `.cargo/config.toml` leaks into the builds), then boots them in rounds: one boot per revision per round, the order rotated each round, so host drift hits every revision alike. Each boot is that revision's own `soak-qemu.sh --no-build --runs 1`. Revisions from after Tools R4 no longer have the bash harness (`aios soak` replaced it), so they cannot be arms until the matrix learns to run `aios soak`; the script stops with an error naming the arm. Every revision must contain 7167d40 (#196), without which the kernel faults at the jump on strict-NX edk2 such as the CI runner's. Keeping everything but the change fixed applies here too: the script refuses revisions that pin different toolchain channels or build with different compilers (`rustc --version`, compared after the builds), since such a pair compares the change plus the compiler (`--allow-mixed-toolchains` overrides both checks, runs them anyway and marks the summary), and revisions that boot different firmware; it stops if the QEMU version line, the sha256 of the QEMU binary on `PATH` (which also catches a Homebrew revision bump that keeps the version line) or the firmware's sha256 changes mid-soak (an upgrade from another session, say). Results go to `target/soak-matrix/<timestamp>-<mode>/` in the main checkout, whichever worktree runs the script, because `/merge-and-cleanup` copies only `target/soak/` out of a PR worktree before git deletes it; keep an `--out` outside PR worktrees for the same reason. `summary.md` gives per-revision class counts, the CLEAN rate with its Wilson interval, IPC round-trip medians, a pairwise Fisher exact test (one-sided toward the revision with the lower CLEAN rate, which is how the crash-fix regression guard reads a pair, and two-sided) and every non-CLEAN boot; `--help` has the options and output layout. Giving the same ref twice makes an A/A control, which shows how far two identical arms drift apart by chance. The `Soak matrix` workflow (`.github/workflows/soak-matrix.yml`, manual dispatch only, e.g. `gh workflow run soak-matrix.yml -f refs="c1ce1a24ef34be4082a84814b02790db60c44b08 43fc8d5bfc51acedd143f2e1f922e5916aeac3c0" -f runs=30`) runs it on one `ubuntu-26.04` runner, 90 s per boot by default, and uploads the `soak-matrix-logs` artifact. A revision there must be reachable from a branch or a tag on `origin`, or from the head of a pull request whose branch is in this repository (the workflow fetches those heads, so a squash-merged PR's commits stay usable after its branch is deleted). Fork pull request heads are never fetched, so a fork commit cannot be an arm. Every arm's build scripts run on the runner and can write to the Actions cache of the dispatching ref, which `ci.yml`'s cached jobs may restore later, so dispatch only revisions you have reviewed, and give each as the full 40-digit SHA of the reviewed commit. The workflow refuses branch names, since a branch resolves only when the job runs and a later push would be built unreviewed, and short SHAs, since git takes a tag named like a short SHA over the commit, and that tag could point at a commit crafted to share the prefix. Each arm builds into its own worktree's `target/`, so arms never share build output. The job uses no `rust-cache`: it cached nothing the soak uses, and its post-job save would carry files an arm's build scripts write under `~/.cargo` into later dispatches. Like `qemu-soak`, its numbers are their own baseline: do not pool them with local arm64 soaks.
 
 ---
 
@@ -2314,7 +2317,7 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main. Other skills stop at a hand-off instead of merging |
+| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Preserves the PR worktree's soak results and agent memory → squash merges PR (gh deletes the remote+local branch and removes the worktree) → verifies removal → fast-forwards main. Other skills stop at a hand-off instead of merging |
 
 #### Skill usage examples
 
@@ -2353,7 +2356,8 @@ Many skills use **git worktrees** to isolate work from the main branch. This pre
 
 ```text
 create worktree → work on branch → commit → push → create PR
-    → review → merge → remove worktree → delete local branch → update main
+    → review → preserve soak results and agent memory
+    → squash merge (gh removes worktree + local branch) → verify → fast-forward main
 ```
 
 **Manual commands** (if not using skills):
@@ -2366,14 +2370,20 @@ git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 cd .claude/worktrees/docs-memory
 # ... edit files, commit, push, create PR ...
 
-# After PR merges, clean up (from main repo root)
+# Before the PR merges, from the main checkout: copy out what git ignores,
+# because removing the worktree deletes ignored files without asking
 cd /path/to/aios
-git worktree remove .claude/worktrees/docs-memory
-git branch -d claude/docs-update-memory
-git checkout main && git pull origin main
+mkdir -p target/soak && [ ! -e "target/soak/pr<number>-<run>" ] &&
+  cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<number>-<run>"   # per soak run
+# ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
+
+# Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
+gh pr merge <number> --squash --delete-branch
+git worktree list
+git fetch --prune origin && git merge --ff-only origin/main
 ```
 
-The `/merge-and-cleanup` skill automates the entire cleanup sequence.
+The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions). After a merge on GitHub, run it to preserve and clean up.
 
 ### Audit Loop Pattern
 
@@ -2420,7 +2430,7 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 Agent teams and skills are configured in:
 
 - **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables, the plugins it enables (`enabledPlugins`: superpowers, remember, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
-- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/release/aios` from the main checkout). They live under `.claude/` so edits to them are never auto-approved
+- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/installed/aios` from the main checkout after checking its provenance stamp; its `guard` branch fails closed with an "ask" decision on every path that runs neither a fresh binary nor a runnable `AIOS_TOOLS_BIN` override, which is run without a stamp or freshness test). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
 - **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `10-harness-mechanics`)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)

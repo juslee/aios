@@ -1,0 +1,75 @@
+exit 130
+--- stdout
+soak: 2 x 30s, mode=text, commit=<REV>, data=fresh
+soak: firmware=<ROOT>/fw.fd
+soak: logs in <ROOT>/repo/out (load average at start: <L>)
+run 01/2  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
+--- stderr
+soak: warning: --secs 30 leaves under 20s beyond --stall-secs 15 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 15s of a boot is never seen
+--- out: run-01.log run-02.log summary.tsv
+--- file run-01.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/x.rs:1:1:
+boom | with a pipe é
+
+[soak] meta mode=text secs=30 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=15 load1=<L>
+--- file run-02.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+--- file summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log
+01	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log
+--- argv-1
+-machine
+virt,gic-version=3
+-cpu
+cortex-a72
+-smp
+4
+-m
+2G
+-nographic
+-bios
+<ROOT>/fw.fd
+-drive
+if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp.img,format=raw
+-device
+virtio-blk-pci,drive=disk0
+-drive
+if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw
+-device
+virtio-blk-device,drive=data0
+-device
+ramfb
+--- argv-2
+-machine
+virt,gic-version=3
+-cpu
+cortex-a72
+-smp
+4
+-m
+2G
+-nographic
+-bios
+<ROOT>/fw.fd
+-drive
+if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp.img,format=raw
+-device
+virtio-blk-pci,drive=disk0
+-drive
+if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw
+-device
+virtio-blk-device,drive=data0
+-device
+ramfb
+--- still running: -

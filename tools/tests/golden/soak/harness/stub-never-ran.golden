@@ -1,0 +1,41 @@
+exit 2
+--- stdout
+soak: 3 x 5s, mode=text, commit=<REV>, data=fresh
+soak: firmware=<ROOT>/fw.fd
+soak: logs in <ROOT>/repo/out (load average at start: <L>)
+--- stderr
+soak: warning: --secs 5 leaves under 20s beyond --stall-secs 1 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 1s of a boot is never seen
+UEFI firmware (fake)
+
+[soak] meta mode=text secs=5 elapsed=<N> qemu_rc=0 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=0 hb_last_advance=<N> hb_max_gap=<N> stall_limit=1 load1=<L>
+soak: error: the UEFI stub never ran on the first boot (QEMU exit status 0 after <N>s): check QEMU, the firmware (<ROOT>/fw.fd) and the ESP image; see <ROOT>/repo/out/run-01.log
+--- out: run-01.log summary.tsv
+--- file run-01.log
+UEFI firmware (fake)
+
+[soak] meta mode=text secs=5 elapsed=<N> qemu_rc=0 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=0 hb_last_advance=<N> hb_max_gap=<N> stall_limit=1 load1=<L>
+--- file summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log
+--- argv-1
+-machine
+virt,gic-version=3
+-cpu
+cortex-a72
+-smp
+4
+-m
+2G
+-nographic
+-bios
+<ROOT>/fw.fd
+-drive
+if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp.img,format=raw
+-device
+virtio-blk-pci,drive=disk0
+-drive
+if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw
+-device
+virtio-blk-device,drive=data0
+-device
+ramfb
+--- still running: -

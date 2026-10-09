@@ -17,7 +17,7 @@ Hardware         Model Pool   What Fits                           User Experienc
 2 GB (degraded)    0 MB       Cloud inference only                Basic, connectivity-dependent
 4 GB (current)     2 GB       3B Q4 general-purpose               Functional AI, limited reasoning
 8 GB (target)      4 GB       8B Q4 + embedding model             Full AI-native experience
-16 GB (near)       8 GB       8B Q5 + code specialist + vision    Multi-model, no switching
+16 GB (near)       8 GB       8B Q5 + code specialist             Multi-model; vision still switches
 32 GB (future)    16 GB       13B Q4 + 3 specialists loaded       Desktop-class AI
 64 GB (future)    32 GB       70B Q4 or 13B F16 + specialists     Near-cloud-quality local AI
 ```
@@ -30,7 +30,7 @@ As RAM grows, AIRS evolves from single-model switching to multi-model concurrenc
 The current design. One primary model loaded at a time. Specialist tasks require eviction and reload. Acceptable on 8 GB, limiting on 4 GB.
 
 **Phase 2 (16 GB) — Primary + specialists:**
-Primary model stays resident. 1-2 small specialists (code, vision, embedding) loaded alongside. Most tasks are handled without any model switching. AIRS routes based on task type.
+Primary model stays resident. 1-2 small specialists (code, embedding) loaded alongside. Most tasks are handled without any model switching. Vision is the exception: LLaVA 1.5 7B (~4.5 GB) does not fit next to the primary model in the 8 GB pool, so a vision task still swaps with the primary model ([model-registry.md §4.4](./model-registry.md)) until the model pool grows past its current 8 GB cap, as §11.1 projects for 32 GB devices. AIRS routes based on task type.
 
 **Phase 3 (32+ GB) — Model ensemble:**
 Multiple full-size models loaded simultaneously. AIRS routes each request to the best specialist. Intent verification uses a dedicated security model. Code generation uses a code-tuned model. Vision tasks use a multimodal model. Conversation uses a general-purpose model. Zero switching latency for any task type.
@@ -71,16 +71,16 @@ More RAM directly enables longer conversations and richer context:
 | 16 GB | 32K-128K tokens | Extended conversations, full documents, rich system context |
 | 32 GB+ | 128K-256K+ tokens | Entire codebases in context, book-length documents, persistent agent memory |
 
-Longer context windows reduce the need for context compression (§5.8 in [intelligence-services.md](./intelligence-services.md)) and allow system services (intent verifier, behavioral monitor, context engine) to maintain richer working memory, improving their accuracy.
+Longer context windows reduce the need for context compression (§5.8 in [intelligence-services.md](./intelligence-services.md)) and allow system services (intent verifier, behavioral monitor) to maintain richer working memory, improving their accuracy.
 
 ### 11.4 NPU and Accelerator Integration
 
 Future SBCs increasingly include Neural Processing Units (NPUs) and dedicated ML accelerators. AIRS's compute scheduler is already designed for heterogeneous compute:
 
 ```text
-Current (Pi 5):       CPU (NEON SIMD) — 4-8 tok/s for 8B model
-Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s
-Future:               CPU + NPU + GPU compute — 40-100+ tok/s
+Current (Pi 5):       CPU (NEON SIMD) — see inference.md §3.8.2 (pre-benchmark)
+Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s (projection)
+Future:               CPU + NPU + GPU compute — 40-100+ tok/s (projection)
 ```
 
 The `ComputeDeviceClass` enum (§3.2 in [inference.md](./inference.md)) includes NPU and DSP as variants. When NPU drivers are available through the subsystem framework, the compute scheduler routes small models and embedding generation to the NPU (where fixed-point arithmetic excels) and keeps large model inference on CPU/GPU.

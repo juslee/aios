@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+cases/hb-stopped.txt  CLEAN        tick=2000   stall=35s   [G1DONE]
+--- stderr

@@ -3,6 +3,8 @@
 //! test, an isolated git environment, and a throwaway repository.
 
 pub mod fixture;
+pub mod soak;
+pub mod soak_fake;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

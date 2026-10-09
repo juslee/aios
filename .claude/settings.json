@@ -64,7 +64,6 @@
       "Bash(sh -n .claude/hooks/aios)",
       "Bash(bash -n scripts/agent/brief.sh)",
       "Bash(bash -n scripts/agent/checkpoint.sh)",
-      "Bash(bash -n scripts/soak-qemu.sh)",
       "Bash(.claude/hooks/aios *)",
       "Bash(objdump *)",
       "Bash(qemu-system-aarch64 *)",
@@ -75,6 +74,9 @@
       "Bash(git status *)",
       "Bash(git log *)",
       "Bash(git diff *)",
+      "Bash(rust-analyzer --version)",
+      "Bash(claude plugin --help)",
+      "Bash(claude plugin list *)",
       "Bash(git fetch)",
       "Bash(git fetch origin *)",
       "Bash(git fetch --prune origin *)",
@@ -162,7 +164,8 @@
       "Bash(echo *)",
       "Bash(cp *)",
       "Bash(pkill -f \"qemu-system-aarch64*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python3 -m json.tool .claude/settings.json)"
     ],
     "ask": [
       "Bash(gh pr merge*)",
@@ -239,10 +242,26 @@
       "Edit(**/tools/src/cmd/guard/**)",
       "Write(**/tools/src/cmd/guard/**)",
       "Edit(**/tools/src/cmd/loop/**)",
-      "Write(**/tools/src/cmd/loop/**)"
+      "Write(**/tools/src/cmd/loop/**)",
+      "Bash(cp *target/tools*)",
+      "Bash(mv *target/tools*)",
+      "Bash(ln *target/tools*)",
+      "Bash(install *target/tools*)",
+      "Bash(tee *target/tools*)",
+      "Bash(dd *target/tools*)",
+      "Bash(rm *target/tools*)",
+      "Bash(touch *target/tools*)",
+      "Bash(sed *-i*target/tools*)",
+      "Bash(sed *--in-place*target/tools*)",
+      "Bash(*>*target/tools*)",
+      "Bash(just -*)",
+      "Bash(git fetch *:*remotes/*)",
+      "Bash(git pull *:*remotes/*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
+      "Bash(git log *--output*)",
+      "Bash(git diff *--output*)",
       "Bash(git push *--force)",
       "Bash(git push *--force *)",
       "Bash(git push -f*)",
@@ -267,7 +286,9 @@
       "Bash(git -C * push *heads/main*)",
       "Bash(gh pr merge --admin*)",
       "Bash(gh pr merge *--admin*)",
-      "mcp__*__delete_repository"
+      "mcp__*__delete_repository",
+      "Edit(**/target/tools/**)",
+      "Write(**/target/tools/**)"
     ]
   },
   "extraKnownMarketplaces": {

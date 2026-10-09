@@ -26,7 +26,7 @@ Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-
 - **Silent regex differences.** These look the same in both languages but are not:
   - Python's non-MULTILINE `$` also matches just before a final `\n`. The crate's `$` is `\z`.
   - Python's `re.IGNORECASE` folds `ı` (U+0131) and `İ` (U+0130) to `i`. The crate's `(?i)` does not.
-  - Python's `\d` matches every Unicode decimal digit. The plan ported it as `[0-9]`.
+  - Python's `\d` matches every Unicode decimal digit. The plan ported it as `[0-9]` (#205 switched to the exact class).
 - **Integer parsing.** Python `str.isdigit()` is true for non-decimal digits such as `²`, and `int()` then raises. CPython 3.11 and later also raises in `int()` past 4300 digits.
 - **JSON numbers.** `serde_json` without `arbitrary_precision` rejects numbers beyond the f64 range, such as `1e400`, which Python's `json` accepts.
 - **The shim's freshness test.** A `cargo build` with nothing to do leaves the binary's mtime unchanged. A `find -newer` freshness test then reports the binary as stale after every edit that does not change it, for example an edit under `tools/tests/`, and the shim rebuilds on every call.
@@ -44,7 +44,8 @@ Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-
   - A pinned commit: `git clone --shared`, a detached checkout, and every ref deleted, so the history base is the pinned commit.
   - A fixture repository with exactly one injected drift per check.
 
-  Keep a differential test that runs both tools while the old one exists, and prove it is not vacuous: capture the old tool's actual invocations, and check that a mutated port fails both the golden test and the differential.
+  Keep a differential test that runs both tools, and prove it is not vacuous: capture the old tool's actual invocations, and check that a mutated port fails both the golden test and the differential. Deleting the old tool need not end the differential: since #206, docs-check's test materialises `check.py` from git history and keeps running it wherever `python3` is CPython 3.14. When a later change moves an input the old tool hardcodes (#218 moved `CLAUDE.md` to `.claude/CLAUDE.md`), patch the extracted oracle with a small committed patch that mirrors the port's change and fails loudly if it stops applying, rather than dropping the differential and gating on goldens alone.
+- Pin the oracle's interpreter to the Unicode version the port's class tables match. Python's `\d` follows `unicodedata`: CPython 3.12 and 3.13 (Unicode 15.x) match 680 code points, CPython 3.14 (Unicode 16.0) matches 760. ubuntu-24.04's `python3` was 3.12, so the Tools (host) job installs 3.14 with `actions/setup-python` rather than relying on any runner image's `python3`, and the oracle refuses an interpreter whose `unicodedata.unidata_version` is not 16.0.0.
 - Resolve an external interpreter to its absolute path (`sys.executable`) outside the test's isolated environment, then run that path inside it.
 - Settle permission-rule syntax with a one-call headless probe instead of reading it off the docs. Let the probe `Read` the file before it edits: `Edit` requires a prior read, and an edit that fails that precondition says nothing about whether the ask rule matched.
   - Probe every path shape the rule must cover, not only the obvious one. The anchored `Edit(/tools/src/cmd/guard/**)` form passed a root-path probe but does not match the same paths under `.claude/worktrees/*/`, where the work actually happens. The `**/` form covers both.
@@ -54,10 +55,10 @@ Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-
 
 ## How to avoid next time
 
-- `just tools` stamps `target/tools/release/aios` with the time the build started (`touch -r` from a per-build `mktemp` stamp file, so overlapping builds do not share one). A no-op build still makes the binary fresh, and a file edited during the build stays newer than the binary, so the next shim call rebuilds.
-- Test a PR's own build with `AIOS_TOOLS_BIN="$PWD/target/tools/release/aios"`.
+- `just tools` gives the installed binary the time the build started (`touch -r` from a `mktemp` start file, created once the recipe holds `target/tools/.install.lock`, so a recipe that waited for another takes its own build's start time). A no-op build still makes the binary fresh, and a file edited during the build stays newer than the binary, so the next shim call rebuilds. Since #203 the binary is a copy at `target/tools/installed/aios`, renamed into place with a provenance stamp beside it, and the shim checks the stamp as well as the mtime.
+- Test a PR's own build with `AIOS_TOOLS_BIN="$PWD/target/tools/installed/aios"`.
 - Add a dependency in the PR that first uses it; `time` is approved but not yet declared.
-- Before R2-R5 reuse `pystr` and `markdown`, reconsider the "`\d` is `[0-9]`" constraint and the use of the crate's plain `\s`. `\p{Nd}` and `[\s\x1c-\x1f]` match Python's `str`-pattern classes exactly, and these two choices produced about half of the listed divergences.
+- Compile ported patterns with `tools/src/pyre.rs` (`pyre::compile`). `\p{Nd}` and `[\s\x1c-\x1f]` match CPython 3.14's `str`-pattern classes (Unicode 16.0) exactly; R1's `[0-9]` and plain `\s` produced about half of its listed divergences, and #205 replaced them before R2-R5 reuse `pystr` and `markdown`.
 - Later ports with an old tool (R4, R3, R5) follow the same order:
   1. the fixture bundle and drift variants;
   2. an ignored recorder test;

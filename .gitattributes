@@ -1,0 +1,5 @@
+# The docs-check fixture bundles and goldens are compared byte for byte
+# (tools/tests/docs_check_parity.rs): no end-of-line conversion, whatever
+# core.autocrlf or text=auto says.
+tools/tests/fixtures/** -text
+tools/tests/golden/** -text

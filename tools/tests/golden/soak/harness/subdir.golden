@@ -1,0 +1,100 @@
+exit 1
+--- stdout
+soak: 1 x 30s, mode=text, commit=<REV>, data=fresh
+soak: firmware=<ROOT>/fw.fd
+soak: logs in <ROOT>/repo/docs/soakout (load average at start: <L>)
+run 01/1  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
+
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `<REV>` (kernel ELF sha256 `94cc3f95c7b1a13c`) |
+| Boots | 1 x 30s, stall limit 15s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) |
+| Firmware | `<ROOT>/fw.fd` |
+| Host | <HOST> |
+| Load average | <L> |
+| Logs | `<ROOT>/repo/docs/soakout` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC | 1 | 100% |
+| EXCEPTION | 0 | 0% |
+| WEDGE | 0 | 0% |
+| INCONCLUSIVE | 0 | 0% |
+| CLEAN | 0 | 0% |
+| **Total** | 1 | |
+
+CLEAN rate: 0% (95% Wilson interval 0%-79%)
+
+soak: per-boot table in <ROOT>/repo/docs/soakout/summary.md, machine-readable rows in <ROOT>/repo/docs/soakout/summary.tsv
+--- stderr
+soak: warning: --secs 30 leaves under 20s beyond --stall-secs 15 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 15s of a boot is never seen
+--- out: run-01.log summary.md summary.tsv
+--- file run-01.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/x.rs:1:1:
+boom | with a pipe é
+
+[soak] meta mode=text secs=30 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=15 load1=<L>
+--- file summary.md
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `<REV>` (kernel ELF sha256 `94cc3f95c7b1a13c`) |
+| Boots | 1 x 30s, stall limit 15s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) |
+| Firmware | `<ROOT>/fw.fd` |
+| Host | <HOST> |
+| Load average | <L> |
+| Logs | `<ROOT>/repo/docs/soakout` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC | 1 | 100% |
+| EXCEPTION | 0 | 0% |
+| WEDGE | 0 | 0% |
+| INCONCLUSIVE | 0 | 0% |
+| CLEAN | 0 | 0% |
+| **Total** | 1 | |
+
+CLEAN rate: 0% (95% Wilson interval 0%-79%)
+
+| Run | Class | Last tick | Stall | Markers | LB last | First fatal line / detail |
+|---:|---|---:|---:|---|---|---|
+| 01 | PANIC | 0 | <N> | EL1,BOOT | no | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+--- file summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log
+01	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log
+--- argv-1
+-machine
+virt,gic-version=3
+-cpu
+cortex-a72
+-smp
+4
+-m
+2G
+-nographic
+-bios
+<ROOT>/fw.fd
+-drive
+if=none,id=disk0,file=<ROOT>/repo/docs/soakout/.scratch.XXXXXX/esp.img,format=raw
+-device
+virtio-blk-pci,drive=disk0
+-drive
+if=none,id=data0,file=<ROOT>/repo/docs/soakout/.scratch.XXXXXX/data.img,format=raw
+-device
+virtio-blk-device,drive=data0
+-device
+ramfb
+--- still running: -

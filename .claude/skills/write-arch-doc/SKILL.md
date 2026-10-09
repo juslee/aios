@@ -345,7 +345,7 @@ EOF
 ```
 
 4. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
-5. Hand off and stop: report the PR URL and `gh pr checks <number>`, and ask the user to run `/merge-and-cleanup` (user-invocable only; it squash merges, deletes the branches, removes the worktree and fast-forwards main). Never merge or push to `main` yourself.
+5. Hand off and stop: report the PR URL and `gh pr checks <number>`, and ask the user to run `/merge-and-cleanup` (user-invocable only; it preserves soak results and agent memory, squash merges, deletes the branches, removes the worktree and fast-forwards main). Never merge or push to `main` yourself.
 
 ## TodoWrite Template
 

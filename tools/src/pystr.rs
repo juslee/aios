@@ -6,24 +6,33 @@
 //! L865, L902, L939, L946, L1178, L1285, L1343), text-mode reading (`text=True`
 //! at L397, and `open(..., errors="replace")` with `read()` at L405-406),
 //! `str.expandtabs(4)` (L275), `str.isdigit()` (L854, L963, L1000), `int()` /
-//! `str(int())` and `urllib.parse.unquote` (L571, L617, L620, L661).
+//! `str(int())` and `urllib.parse.unquote` (L571, L617, L620, L661). The regex
+//! classes `\s` and `\d` are `crate::pyre`'s; `is_space` and `is_decimal_char`
+//! are the same two classes for one character.
 //!
-//! Accepted divergences (no tracked file reaches them):
-//! `is_ascii_digits` and `parse_uint` accept ASCII digits only, where Python's
-//! `str.isdigit()` and `int()` also accept other Unicode decimal digits, and
-//! numbers that do not fit `u64` are treated as no match. Python's `str.isdigit()`
-//! is also true for some characters `int()` itself rejects (e.g. superscript `²`,
-//! `ValueError`); `is_ascii_digits`/`parse_uint` reject those too, so this is not
-//! an added divergence, just a distinct case from the Unicode-decimal-digit one
-//! above. CPython 3.11+'s
-//! `int()` also raises past 4300 digits, so at every site ported through
-//! these helpers, check.py exits 2 where aios parses, saturates or treats the
-//! value as no match. The `regex` crate's `\s` lacks U+001C..U+001F, so
-//! ported code uses these helpers instead of a pattern wherever Python
-//! whitespace matters.
+//! Digits are Python's decimal digits: every Unicode Nd character (`١`, `３`, ...),
+//! not only ASCII, as for `\d`, `str.isdecimal()` and `int()`. Accepted divergences
+//! (no tracked file reaches them):
+//!
+//! - check.py tests its table cells with `str.isdigit()`, which is also true for
+//!   the 128 characters of Numeric_Type=Digit that are not decimal (superscripts
+//!   such as `²`, circled digits such as `①`); `int()` rejects those with
+//!   `ValueError`. The ports test `is_decimal` instead, because neither Rust std nor
+//!   the `regex` crate exposes Numeric_Type and matching it would need a hand-kept
+//!   Unicode table. The call sites list what check.py does with such a cell (exit 2,
+//!   or counting a §8 row) where aios skips it.
+//! - `parse_uint` treats a number that does not fit `u64` as no match, and
+//!   CPython 3.11+'s `int()` raises past 4300 digits, so at every site ported
+//!   through these helpers, check.py exits 2 where aios parses, saturates or
+//!   treats the value as no match.
 
-/// `str.isspace()` for one character: Unicode whitespace plus U+001C..U+001F,
-/// which Python counts as whitespace and `char::is_whitespace` does not.
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+/// `str.isspace()` for one character, the characters of Python's `\s`
+/// (`crate::pyre::SPACE`): Unicode White_Space plus U+001C..U+001F, which Python
+/// counts as whitespace and `char::is_whitespace` does not.
 pub fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
@@ -117,30 +126,86 @@ pub fn indent_width(line: &str) -> usize {
     width
 }
 
-/// `str.isdigit()` restricted to ASCII digits (an accepted divergence, listed in
-/// the module doc).
-pub fn is_ascii_digits(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+/// Python's `\d` for one character (`str.isdecimal()`): Unicode Nd. It asks the
+/// `regex` crate's own `\d` table, so it agrees with `crate::pyre` patterns by
+/// construction.
+pub fn is_decimal_char(c: char) -> bool {
+    static DECIMAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\A\d\z").expect("valid regex"));
+    c.is_ascii_digit() || (!c.is_ascii() && DECIMAL.is_match(c.encode_utf8(&mut [0; 4])))
 }
 
-/// `int(s)` for a run of ASCII digits; `None` when `s` is not one, or overflows.
-pub fn parse_uint(s: &str) -> Option<u64> {
-    if !is_ascii_digits(s) {
+/// `unicodedata.decimal(c)`, or `None` when `c` is not a decimal digit. Unicode
+/// encodes every decimal digit set as ten consecutive code points from 0 to 9 (a
+/// stability policy), so a maximal run of Nd code points is whole sets end to end
+/// (the mathematical digits U+1D7CE..U+1D7FF are five), and a digit's value is its
+/// offset from the start of its run, modulo 10.
+pub fn decimal_value(c: char) -> Option<u32> {
+    if c.is_ascii_digit() {
+        return c.to_digit(10);
+    }
+    if !is_decimal_char(c) {
         return None;
     }
-    s.parse::<u64>().ok()
+    let mut start = u32::from(c);
+    while let Some(prev) = start.checked_sub(1).and_then(char::from_u32) {
+        if !is_decimal_char(prev) {
+            break;
+        }
+        start -= 1;
+    }
+    Some((u32::from(c) - start) % 10)
 }
 
-/// `str(int(digits))` for a run of ASCII digits of any length: leading zeros go.
-/// CPython 3.11+'s `int()` raises past 4300 digits instead (check.py exits 2);
-/// see the module doc.
+/// `str.isdecimal()`: non-empty and every character a decimal digit. check.py's
+/// `str.isdigit()` calls are ported with this (see the module doc for `²`).
+pub fn is_decimal(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_decimal_char)
+}
+
+/// `int(s)` for a run of decimal digits (what `\d+` matches and `is_decimal`
+/// accepts); `None` when `s` is not one, or overflows `u64`.
+pub fn parse_uint(s: &str) -> Option<u64> {
+    if s.is_empty() {
+        return None;
+    }
+    s.chars().try_fold(0u64, |value, c| {
+        value
+            .checked_mul(10)?
+            .checked_add(u64::from(decimal_value(c)?))
+    })
+}
+
+/// `str(int(digits))` for a run of decimal digits of any length: ASCII digits,
+/// leading zeros dropped. CPython 3.11+'s `int()` raises past 4300 digits instead
+/// (check.py exits 2); see the module doc.
 pub fn int_str(digits: &str) -> String {
-    let trimmed = digits.trim_start_matches('0');
+    debug_assert!(
+        is_decimal(digits),
+        "int_str needs decimal digits: {digits:?}"
+    );
+    let ascii: String = digits
+        .chars()
+        .map(|c| {
+            decimal_value(c)
+                .and_then(|d| char::from_digit(d, 10))
+                .unwrap_or(c)
+        })
+        .collect();
+    let trimmed = ascii.trim_start_matches('0');
     if trimmed.is_empty() {
         "0".to_string()
     } else {
         trimmed.to_string()
     }
+}
+
+/// `s` without the whitespace `int(s)` ignores around a number: Unicode
+/// White_Space (`char::is_whitespace`), which is `str.isspace()` without
+/// U+001C..U+001F. CPython turns non-ASCII whitespace into a space and then skips
+/// only C whitespace (space and `\t\n\x0b\x0c\r`), and U+001C..U+001F are ASCII,
+/// so `int("\x1c3")` raises.
+pub fn int_strip(s: &str) -> &str {
+    s.trim()
 }
 
 /// `urllib.parse.unquote(s)`: only ASCII runs are unquoted, each run's bytes
@@ -210,6 +275,23 @@ mod tests {
     }
 
     #[test]
+    fn character_classes_agree_with_the_pattern_classes() {
+        // `is_space` and `is_decimal_char` are `\s` and `\d` for one character; the
+        // pattern classes are pinned to CPython in `crate::pyre`'s tests.
+        let space = crate::pyre::compile(r"\A\s\z").expect("valid pattern");
+        let digit = crate::pyre::compile(r"\A\d\z").expect("valid pattern");
+        for c in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            let text = c.encode_utf8(&mut [0; 4]).to_string();
+            assert_eq!(is_space(c), space.is_match(&text), "is_space({c:?})");
+            assert_eq!(
+                is_decimal_char(c),
+                digit.is_match(&text),
+                "is_decimal_char({c:?})"
+            );
+        }
+    }
+
+    #[test]
     fn strip_family_matches_python() {
         assert_eq!(strip(" \u{1c} a b \t\n"), "a b");
         assert_eq!(lstrip("\u{a0}x "), "x ");
@@ -275,17 +357,28 @@ mod tests {
 
     #[test]
     fn digits_and_ints_match_python() {
-        assert!(is_ascii_digits("0123"));
-        assert!(!is_ascii_digits(""));
-        assert!(!is_ascii_digits("12a"));
-        // Accepted divergence: Python's str.isdigit() is true for these.
-        assert!(!is_ascii_digits("١٢"));
+        assert!(is_decimal("0123"));
+        assert!(!is_decimal(""));
+        assert!(!is_decimal("12a"));
+        // Arabic-Indic, fullwidth, Devanagari and mathematical digits are decimal.
+        assert!(is_decimal("١٢"));
+        assert!(is_decimal("３２"));
+        assert!(is_decimal("\u{966}\u{1D7D8}"));
+        // Accepted divergence (module doc): Python's str.isdigit() is true for `²` and
+        // `①`, but they are not decimal, and int() rejects them.
+        assert!(!is_decimal("²"));
+        assert!(!is_decimal("\u{2460}"));
 
         assert_eq!(parse_uint("007"), Some(7));
         assert_eq!(parse_uint("18446744073709551615"), Some(u64::MAX));
         assert_eq!(parse_uint("18446744073709551616"), None);
         assert_eq!(parse_uint(""), None);
         assert_eq!(parse_uint("1x"), None);
+        assert_eq!(parse_uint("+5"), None);
+        assert_eq!(parse_uint("١٢"), Some(12));
+        assert_eq!(parse_uint("３２"), Some(32));
+        assert_eq!(parse_uint("\u{966}\u{967}"), Some(1));
+        assert_eq!(parse_uint("²"), None);
 
         assert_eq!(int_str("007"), "7");
         assert_eq!(int_str("0000"), "0");
@@ -294,6 +387,53 @@ mod tests {
             int_str("0012300000000000000000000000045"),
             "12300000000000000000000000045"
         );
+        assert_eq!(int_str("٠٠٧"), "7");
+        assert_eq!(int_str("\u{1D7D8}\u{1D7D9}"), "1");
+    }
+
+    #[test]
+    fn decimal_values_match_unicodedata() {
+        // unicodedata.decimal() on CPython 3.14, including digit sets that abut
+        // (U+116D0..U+116E3 is two, U+1D7CE..U+1D7FF five) and one that does not
+        // start at a multiple of ten (Ol Onal, U+1E5F1..U+1E5FA).
+        for (c, want) in [
+            ('0', Some(0)),
+            ('9', Some(9)),
+            ('\u{663}', Some(3)),
+            ('\u{FF13}', Some(3)),
+            ('\u{966}', Some(0)),
+            ('\u{1D7CE}', Some(0)),
+            ('\u{1D7D8}', Some(0)),
+            ('\u{1D7FF}', Some(9)),
+            ('\u{116DA}', Some(0)),
+            ('\u{116E3}', Some(9)),
+            ('\u{1E5F1}', Some(0)),
+            ('\u{1E5FA}', Some(9)),
+            ('²', None),
+            ('\u{2460}', None),
+            ('a', None),
+        ] {
+            assert_eq!(decimal_value(c), want, "decimal({c:?})");
+        }
+        // Over every code point: 760 decimal digits whose values sum to 76 * 45,
+        // as `sum(unicodedata.decimal(chr(c)) for c in ... if chr(c).isdecimal())`.
+        let values: Vec<u32> = (0..=0x10_FFFF)
+            .filter_map(char::from_u32)
+            .filter_map(decimal_value)
+            .collect();
+        assert_eq!(values.len(), 760);
+        assert_eq!(values.iter().sum::<u32>(), 3420);
+    }
+
+    #[test]
+    fn int_strip_matches_python_int() {
+        // int() on CPython 3.14: `int(" 3 ")`, `int("\u2003" "3" "\u3000")` and
+        // `int("\x85 7")` parse; `int("\x1c3")` and `int("3\x1f")` raise.
+        assert_eq!(int_strip(" 3 "), "3");
+        assert_eq!(int_strip("\u{2003}3\u{3000}"), "3");
+        assert_eq!(int_strip("\u{85} 7"), "7");
+        assert_eq!(int_strip("\u{1c}3"), "\u{1c}3");
+        assert_eq!(int_strip("3\u{1f}"), "3\u{1f}");
     }
 
     #[test]

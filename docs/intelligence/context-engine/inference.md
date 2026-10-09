@@ -15,7 +15,7 @@ The Context Model transforms a vector of signals into a `ContextState`. Two impl
 
 ```rust
 pub struct ContextClassifier {
-    /// GGML model handle
+    /// candle model handle
     model: ModelHandle,
     /// Feature extraction pipeline
     feature_extractor: FeatureExtractor,

@@ -4,7 +4,6 @@
   "counts": {
     "md-links": 23,
     "section-refs": 4,
-    "anchors": 1,
     "doc-map": 4,
     "just-recipes": 1,
     "lock-order": 16,
@@ -207,13 +206,6 @@
       "file": "docs/kernel/boot/testing.md",
       "target": "../../applications/agents.md §2.4",
       "message": "no §2.4 heading in docs/applications/agents.md or its hub members"
-    },
-    {
-      "key": "anchors|docs/applications/inspector/views.md|#57-airs-analysis-view-phase-41",
-      "check": "anchors",
-      "file": "docs/applications/inspector/views.md",
-      "target": "#57-airs-analysis-view-phase-41",
-      "message": "no heading for anchor #57-airs-analysis-view-phase-41 in docs/applications/inspector/views.md"
     },
     {
       "key": "doc-map|docs/experience/scriptable-protocol.md|unlisted",

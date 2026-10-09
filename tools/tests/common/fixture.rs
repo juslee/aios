@@ -9,16 +9,37 @@
 //! `.claude/` or `.rs` files. `materialize_fixture` turns base plus one variant into a
 //! throwaway git repository (removed when the returned `TestRepo` drops).
 //!
-//! The parity half adds the real-repository snapshot at `SNAPSHOT_SHA` (plus
-//! `SNAPSHOT_MIGRATION`), the case list replayed by `tests/docs_check_parity.rs`, and
-//! the golden file paths.
+//! The parity half adds the real-repository snapshot at `SNAPSHOT_SHA`, the case list
+//! replayed by `tests/docs_check_parity.rs`, the golden file paths, and the check.py
+//! oracle: R1 deleted scripts/docs/check.py, so `check_py` materialises it from git
+//! history (`git cat-file blob <SNAPSHOT_SHA>:scripts/docs/check.py`) into
+//! `CARGO_TARGET_TMPDIR`, patches it with `CHECK_PY_MIGRATION` so that it reads the
+//! project memory at `.claude/CLAUDE.md` as aios does since #218, then with
+//! `CHECK_PY_IRQ_SPIN_LOCK` so that `lock-order` counts `IrqSpinLock` statics as aios
+//! does since crash-fix step 1b, and `run_check_py` runs it against any repository.
+//!
+//! The oracle's `re` classes follow its interpreter's Unicode version, so `check_py`
+//! accepts only a `python3` whose `unicodedata.unidata_version` is
+//! `ORACLE_UNIDATA_VERSION` (16.0.0, CPython 3.14), the version `aios_tools::pyre`'s
+//! classes match. CPython 3.12 and 3.13 (Unicode 15.x) lack 80 of the 760 code points
+//! of `\d`, so a test using one of those digits would fail against them although aios
+//! matches 3.14; `check_py` reports such an interpreter as unavailable instead.
+//!
+//! `python3` is often an asdf (or pyenv) shim: under the isolated test `HOME`
+//! (`common::isolated`), such a shim exits 126 before it ever reaches CPython, which
+//! would make the recorder fail outright and the differential silently skip without
+//! comparing anything. So the interpreter's absolute path is resolved once from the
+//! ambient environment (`python3 -c "import sys; print(sys.executable)"`, run outside
+//! `isolated()`), cached, and only that resolved absolute path is ever run inside
+//! `isolated()`.
 
-use super::{git, isolated, unique_dir, TestRepo};
+use super::{git, isolated, unique_dir, Run, TestRepo};
 use aios_tools::cmd::docs_check::model::CHECK_ORDER;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 /// One bundle directive with its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +70,7 @@ pub struct Variant {
 /// single-drift variant per check (in CHECK_ORDER), then line-shift, skip and grown.
 /// check.py read the project memory at the root `CLAUDE.md`; the bundles now place it
 /// at `.claude/CLAUDE.md`, so these keys and the layout, harness-tables and repo-paths
-/// goldens carry that path where check.py's carried `CLAUDE.md`.
+/// goldens carry that path, as check.py with `CHECK_PY_MIGRATION` applied reports it.
 pub const VARIANTS: &[Variant] = &[
     Variant {
         name: "base",
@@ -306,11 +327,13 @@ pub const SNAPSHOT_SHA: &str = "33c6b3deabb36055d26d57fb2a60db233c4d3f6f";
 /// `tests/fixtures/docs-check/<this>`: a patch against `SNAPSHOT_SHA` that moves its
 /// root `CLAUDE.md` to `.claude/CLAUDE.md`, the only place docs-check reads it now, and
 /// updates the links into and out of it and the one baseline entry keyed by its path.
-/// The real-repository goldens were recorded from check.py on the unmigrated snapshot
-/// and differ from its output only in that path (`CLAUDE.md` became
+/// The real-repository goldens were first recorded from check.py on the unmigrated
+/// snapshot and differ from that output only in that path (`CLAUDE.md` became
 /// `.claude/CLAUDE.md`) and in the `lock-order` line of `list-checks`, which is the
 /// description of check.py at 56c4bf4 (crash-fix step 1b counts `IrqSpinLock` statics;
-/// the snapshot defines none, so no finding changes).
+/// the snapshot defines none, so no finding changes); check.py with
+/// `CHECK_PY_MIGRATION` and `CHECK_PY_IRQ_SPIN_LOCK` applied, run on the migrated
+/// snapshot, reproduces them byte for byte.
 pub const SNAPSHOT_MIGRATION: &str = "snapshot-claude-md.patch";
 
 /// The repository that contains `tools/` (the checkout or worktree under test).
@@ -346,16 +369,17 @@ impl Source {
     }
 }
 
-/// One golden case: `aios docs-check <args>` in a fresh copy of `source`.
+/// One golden case: `aios docs-check <args>` (or `check.py <args>`) in a fresh copy of
+/// `source`.
 #[derive(Clone, Debug)]
 pub struct Case {
     pub source: Source,
     pub name: String,
     /// docs-check flags only; `docs-check` itself is prepended for aios.
     pub args: Vec<String>,
-    /// Where aios runs, relative to the repository root; `None` is the root. aios finds
-    /// the same repository from anywhere inside it, but `--baseline` is resolved against
-    /// this directory (as check.py L1611-1613 did).
+    /// Where the tool runs, relative to the repository root; `None` is the root. Both
+    /// tools find the same repository from anywhere inside it, but `--baseline` is
+    /// resolved against this directory (check.py L1611-1613).
     pub cwd: Option<&'static str>,
     /// The baseline this case writes, relative to the repository root. Only read when
     /// `writes_baseline`.
@@ -386,6 +410,11 @@ impl Case {
             Some(rel) => repo.join(rel),
             None => repo.to_path_buf(),
         }
+    }
+
+    /// The flags, for check.py.
+    pub fn flag_args(&self) -> Vec<&str> {
+        self.args.iter().map(String::as_str).collect()
     }
 
     /// `docs-check` plus the flags, for aios.
@@ -581,5 +610,258 @@ pub fn materialize(source: Source) -> TestRepo {
     match source {
         Source::Real => snapshot_real(),
         Source::Fixture(variant) => materialize_fixture(variant),
+    }
+}
+
+/// Where check.py lived, relative to the repository root: its path in
+/// `check_py_object()` and in `CHECK_PY_MIGRATION`.
+const CHECK_PY_PATH: &str = "scripts/docs/check.py";
+
+/// The last `scripts/docs/check.py` on main, as a git object: `SNAPSHOT_SHA`'s copy.
+/// faf6d20 (#166) added the file, no later commit on main changed it (the blob is
+/// 6cea366 at faf6d20, at `SNAPSHOT_SHA` and at 201af49, the parent of the deletion),
+/// and 212df62 (#207, R1) deleted it. The oracle runs this version with
+/// `CHECK_PY_MIGRATION` and then `CHECK_PY_IRQ_SPIN_LOCK` applied.
+pub fn check_py_object() -> String {
+    format!("{SNAPSHOT_SHA}:{CHECK_PY_PATH}")
+}
+
+/// `tests/fixtures/docs-check/<this>`: a patch against `check_py_object()` that makes
+/// check.py read and report the project memory at `.claude/CLAUDE.md`, as #218 made
+/// aios do (`repo::CLAUDE_MD`). check.py hardcodes the root `CLAUDE.md`, which no
+/// longer exists in the fixture bundles or in the snapshot once `SNAPSHOT_MIGRATION` is
+/// applied, so unpatched it would skip or misreport every CLAUDE.md check there. The
+/// patch mirrors #218 and nothing else: each `CLAUDE.md` path check.py reads, keys a
+/// finding by or lists as a current-state doc becomes `.claude/CLAUDE.md`, and
+/// `BEFORE_CLAUDE_RE` gains the same optional `.claude/` prefix as aios's. Finding
+/// messages, check descriptions and every other line stay check.py's, so the oracle
+/// still decides what each check finds. `materialize_check_py` applies it with
+/// `git apply` and panics if it does not apply.
+pub const CHECK_PY_MIGRATION: &str = "check-py-claude-md.patch";
+
+/// `tests/fixtures/docs-check/<this>`: a patch against `check_py_object()` with
+/// `CHECK_PY_MIGRATION` applied that replays check.py's crash-fix step 1b change
+/// (56c4bf4, made on its branch before R1 deleted check.py on main): `lock-order` counts
+/// `sync::IrqSpinLock` statics beside `spin::Mutex` ones, and its `list-checks`
+/// description says `Mutex/IrqSpinLock`, as `checks::lock_order` does. Without it the
+/// oracle would report every `IrqSpinLock` static in the live checkout's lock table as
+/// stale. The patched result is 56c4bf4's check.py with `CHECK_PY_MIGRATION` applied.
+/// `materialize_check_py` applies it after `CHECK_PY_MIGRATION` and panics if it does
+/// not apply.
+pub const CHECK_PY_IRQ_SPIN_LOCK: &str = "check-py-irq-spin-lock.patch";
+
+/// The Unicode version (`unicodedata.unidata_version`) the oracle's interpreter must
+/// have: CPython 3.14's, the version `aios_tools::pyre`'s `\d` and `\s` classes were
+/// pinned against (its `digit_class_is_pythons` and `space_class_is_pythons` tests).
+/// A CPython on another Unicode version disagrees with aios on the digits one version
+/// has and the other lacks, so it is not used as the oracle. When CPython and the
+/// `regex` crate move to a newer Unicode version, update the pinned tables and this
+/// together.
+pub const ORACLE_UNIDATA_VERSION: &str = "16.0.0";
+
+/// The flags every oracle interpreter run starts with. `-E` ignores every `PYTHON*`
+/// variable, so the developer's `PYTHONPATH` (a `sitecustomize.py`, or a module
+/// shadowing `re` or `unicodedata`), `PYTHONHOME`, `PYTHONSTARTUP` or
+/// `PYTHONIOENCODING` cannot change what the pinned interpreter running the pinned
+/// script prints. Because `-E` also ignores `PYTHONUTF8` and `PYTHONDONTWRITEBYTECODE`,
+/// `-X utf8` and `-B` set UTF-8 mode and suppress bytecode explicitly. Not `-I`: it would also change
+/// `sys.path[0]`, which `CHECK_PY_BOOTSTRAP` sets itself.
+const ORACLE_FLAGS: [&str; 4] = ["-E", "-X", "utf8", "-B"];
+
+/// Prints the interpreter's version and its `unicodedata` version, space-separated.
+const VERSION_PROBE: &str =
+    "import sys, unicodedata; print(sys.version.split()[0], unicodedata.unidata_version)";
+
+/// The differential oracle: check.py materialised from git history with
+/// `CHECK_PY_MIGRATION` and `CHECK_PY_IRQ_SPIN_LOCK` applied, and the interpreter that
+/// runs it.
+pub struct CheckPy {
+    /// The absolute path of the resolved `python3` (see `python3_interpreter`).
+    pub interpreter: PathBuf,
+    /// The interpreter's Python and Unicode versions, for the test log.
+    pub version: String,
+    /// The patched check.py, written under `CARGO_TARGET_TMPDIR/check-py/`.
+    pub script: PathBuf,
+}
+
+/// check.py materialised from `check_py_object()` with `CHECK_PY_MIGRATION` and
+/// `CHECK_PY_IRQ_SPIN_LOCK` applied, and a working `python3`, resolved once per test
+/// process. `Err` is the reason the oracle is unavailable, for the caller to print when
+/// it skips: no usable `python3` on `PATH`, a `python3` whose Unicode version is not
+/// `ORACLE_UNIDATA_VERSION`, or no such git object (a shallow clone; CI's Tools (host)
+/// job checks out with `fetch-depth: 0` and installs CPython 3.14). A patch that does
+/// not apply is a defect in this repository, not a missing tool, so it panics instead
+/// of skipping.
+pub fn check_py() -> Result<&'static CheckPy, &'static str> {
+    static ORACLE: OnceLock<Result<CheckPy, String>> = OnceLock::new();
+    ORACLE
+        .get_or_init(materialize_check_py)
+        .as_ref()
+        .map_err(String::as_str)
+}
+
+fn materialize_check_py() -> Result<CheckPy, String> {
+    let interpreter = python3_interpreter()
+        .ok_or("python3 is not available (not on PATH, or it does not run)")?
+        .clone();
+    let probe = isolated(
+        Command::new(&interpreter)
+            .args(ORACLE_FLAGS)
+            .args(["-c", VERSION_PROBE]),
+    )
+    .output()
+    .ok()
+    .filter(|out| out.status.success())
+    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    .ok_or_else(|| {
+        format!(
+            "{} cannot report its version in the isolated test environment",
+            interpreter.display()
+        )
+    })?;
+    let (python, unidata) = probe.split_once(' ').ok_or_else(|| {
+        format!(
+            "{} printed {probe:?} for its version",
+            interpreter.display()
+        )
+    })?;
+    if unidata != ORACLE_UNIDATA_VERSION {
+        return Err(format!(
+            "{} is Python {python} with Unicode {unidata}; the oracle needs Unicode \
+             {ORACLE_UNIDATA_VERSION} (CPython 3.14), the version aios's \\d and \\s \
+             classes match",
+            interpreter.display()
+        ));
+    }
+    let version = format!("Python {python}, Unicode {unidata}");
+    let object = check_py_object();
+    let out = isolated(Command::new("git").arg("-C").arg(repo_root()).args([
+        "cat-file",
+        "blob",
+        object.as_str(),
+    ]))
+    .output()
+    .map_err(|e| format!("cannot run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git cannot read {object} (a shallow clone? the oracle needs history back to \
+             {SNAPSHOT_SHA}): {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    // Written at its repository path in a per-process git work area, patched there as
+    // `snapshot_real` patches the snapshot, then renamed over the shared path, so test
+    // processes that materialise it at the same time never read a partial or unpatched
+    // file.
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("check-py");
+    let work_name = format!("work.{}", std::process::id());
+    let work = dir.join(&work_name);
+    if work.exists() {
+        fs::remove_dir_all(&work)
+            .map_err(|e| format!("cannot remove the stale {}: {e}", work.display()))?;
+    }
+    let partial = work.join(CHECK_PY_PATH);
+    let parent = partial.parent().expect("CHECK_PY_PATH has a directory");
+    fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    fs::write(&partial, &out.stdout)
+        .map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
+    git(&dir, &["init", "-q", work_name.as_str()]);
+    for patch in [CHECK_PY_MIGRATION, CHECK_PY_IRQ_SPIN_LOCK] {
+        let patch = fixtures_dir().join(patch);
+        let patch = patch.to_str().expect("fixture path is UTF-8");
+        // `git` panics with git's stderr when the patch does not apply.
+        git(&work, &["apply", patch]);
+    }
+    let script = dir.join("check.py");
+    fs::rename(&partial, &script).map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+    fs::remove_dir_all(&work).map_err(|e| format!("cannot remove {}: {e}", work.display()))?;
+    Ok(CheckPy {
+        interpreter,
+        version,
+        script,
+    })
+}
+
+/// Runs the script named by `argv[1]` as `__main__` with `__file__` = `argv[2]` and
+/// `sys.argv` = `[argv[2]] + argv[3:]`, as `python3 <argv[2]> <args>` would if check.py
+/// sat at `argv[2]`. check.py reads `__file__` only in `repo_root()` (L1576-1582), to
+/// find its repository with `git rev-parse --show-toplevel` in the script's directory,
+/// so `run_check_py` points it at `<root>/check.py`. `sys.path[0]` is the directory of
+/// the materialised script (it holds nothing else that imports could pick up), as when
+/// a script runs directly.
+const CHECK_PY_BOOTSTRAP: &str = "\
+import sys
+def _run(script, fake, args):
+    import __main__, os
+    sys.argv[:] = [fake] + args
+    sys.path[0] = os.path.dirname(os.path.abspath(script))
+    with open(script, 'rb') as f:
+        code = compile(f.read(), fake, 'exec', dont_inherit=True)
+    namespace = __main__.__dict__
+    del namespace['_run']
+    namespace['__file__'] = fake
+    exec(code, namespace)
+_run(sys.argv[1], sys.argv[2], sys.argv[3:])
+";
+
+/// The absolute path of the ambient `python3` interpreter, resolved once outside
+/// `isolated()` (see the module doc: a version-manager shim breaks under the isolated
+/// `HOME`). `None` when `python3` is not on `PATH`, does not run, or does not print a
+/// usable path.
+fn python3_interpreter() -> Option<&'static PathBuf> {
+    static INTERPRETER: OnceLock<Option<PathBuf>> = OnceLock::new();
+    INTERPRETER
+        .get_or_init(|| {
+            // Deliberately NOT isolated(): resolving the shim to CPython's own
+            // absolute path needs the developer's ambient HOME/PATH (asdf, pyenv,
+            // etc.). Only the resolved absolute path is ever run under isolated().
+            let out = Command::new("python3")
+                .arg("-c")
+                .arg("import sys; print(sys.executable)")
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let stdout = String::from_utf8(out.stdout).ok()?;
+            let path = stdout.trim();
+            if path.is_empty() {
+                return None;
+            }
+            Some(PathBuf::from(path))
+        })
+        .as_ref()
+}
+
+/// check.py `<args>` on the repository at `root`, with `cwd` as the working directory:
+/// the materialised script (`check_py`) run by the resolved interpreter (not the ambient
+/// `python3` shim) in the isolated environment, through `CHECK_PY_BOOTSTRAP`, so that
+/// check.py takes `root` as its repository without a copy of the script inside it.
+/// `cwd` only changes the paths check.py resolves itself, such as a relative
+/// `--baseline`. Panics when the oracle is unavailable; callers check `check_py` first.
+pub fn run_check_py(root: &Path, cwd: &Path, args: &[&str]) -> Run {
+    let oracle = check_py().unwrap_or_else(|reason| panic!("check.py is unavailable: {reason}"));
+    let out = isolated(
+        Command::new(&oracle.interpreter)
+            .args(ORACLE_FLAGS)
+            .arg("-c")
+            .arg(CHECK_PY_BOOTSTRAP)
+            .arg(&oracle.script)
+            .arg(root.join("check.py"))
+            .args(args)
+            .current_dir(cwd),
+    )
+    .output()
+    .unwrap_or_else(|e| {
+        panic!(
+            "cannot run {} in {}: {e}",
+            oracle.interpreter.display(),
+            cwd.display()
+        )
+    });
+    Run {
+        code: out.status.code().unwrap_or(-1),
+        stdout: out.stdout,
+        stderr: out.stderr,
     }
 }

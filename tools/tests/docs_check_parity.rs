@@ -1,18 +1,36 @@
-//! docs-check parity with scripts/docs/check.py (R1 parity: the goldens).
+//! docs-check parity with scripts/docs/check.py (R1 parity: goldens and parity tests).
 //!
-//! `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
-//! main at `SNAPSHOT_SHA` plus `SNAPSHOT_MIGRATION`, 48 on the fixture repository) and
-//! compares `exit N\n` plus stdout, and the written baseline, byte for byte with
-//! `tests/golden/docs-check/`. It is the only parity gate: the goldens were recorded
-//! from check.py at `SNAPSHOT_SHA` (33c6b3d), before R1 deleted it, and later adapted
-//! for the project memory's move to `.claude/CLAUDE.md` (see `SNAPSHOT_MIGRATION`) and
-//! for check.py's `lock-order` description at 56c4bf4 (`IrqSpinLock` statics).
-//! `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios instead (for an intentional
-//! output change; review the diff).
+//! - `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
+//!   main at `SNAPSHOT_SHA` plus `SNAPSHOT_MIGRATION`, 48 on the fixture repository)
+//!   and compares `exit N\n` plus stdout, and the written baseline, byte for byte with
+//!   `tests/golden/docs-check/`. `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios
+//!   instead (for an intentional output change; review the diff).
+//! - `record_goldens_from_check_py` (ignored) records those goldens from check.py.
+//! - `differential_against_check_py` runs check.py and aios side by side on every case
+//!   and on the live checkout. R1 deleted check.py, so both tests run the last version
+//!   of it, materialised from git history (`fixture::check_py`: the blob at
+//!   `SNAPSHOT_SHA`), wherever `python3` is on Unicode 16.0 (CPython 3.14; see
+//!   `fixture::ORACLE_UNIDATA_VERSION`). Without such a `python3` or that git object (a
+//!   shallow clone) the differential prints the reason and returns, and
+//!   `goldens_match_aios` alone is the parity gate; `AIOS_REQUIRE_CHECK_PY=1` (set in
+//!   CI's Tools (host) job) turns that skip into a failure, so the oracle cannot go
+//!   quiet there unnoticed.
+//!   R2-R5 (the ports of the other host scripts) are expected to reuse this same
+//!   pattern: a differential against their own script, goldens recorded from it, and
+//!   after that script is deleted, the same script materialised from git history.
 //!
-//! R2-R5 (the ports of the other host scripts) can recover the recorder and the
-//! side-by-side differential against a script that still exists from git history
-//! (#207), then gate on goldens alone once that script is deleted in turn.
+//! The project memory moved to `.claude/CLAUDE.md` in #218, after check.py was deleted,
+//! and aios reads only that path. The fixture bundles and the snapshot (through
+//! `SNAPSHOT_MIGRATION`) carry it there, and the oracle makes the same move:
+//! `fixture::CHECK_PY_MIGRATION` patches the materialised check.py's `CLAUDE.md` paths
+//! and its `BEFORE_CLAUDE_RE` exactly as #218 changed aios, and no check logic, so both
+//! tests compare aios against check.py on the same migrated inputs and goldens.
+//!
+//! Crash-fix step 1b changed check.py itself (56c4bf4, on its branch, before R1 deleted
+//! check.py on main): `lock-order` counts `IrqSpinLock` statics beside `Mutex` ones, and
+//! its `list-checks` description says so. `fixture::CHECK_PY_IRQ_SPIN_LOCK` replays that
+//! change on the materialised check.py after `CHECK_PY_MIGRATION`, so the oracle is
+//! 56c4bf4's check.py, migrated; the `list-checks` goldens carry its description.
 
 mod common;
 
@@ -22,6 +40,14 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Read-only modes compared on the live checkout by the differential test.
+const LIVE_CASES: [(&str, &[&str]); 4] = [
+    ("default", &[]),
+    ("all", &["--all"]),
+    ("json-all", &["--json", "--all"]),
+    ("markdown", &["--markdown"]),
+];
 
 /// What a run produced: `exit <code>\n` + stdout, and the written baseline for
 /// `--update-baseline` cases.
@@ -39,9 +65,19 @@ impl Outcome {
     }
 }
 
-/// Run one case in `repo` with aios.
-fn run_case(repo: &TestRepo, case: &Case) -> Outcome {
-    let run = run_aios(&case.run_dir(repo.path()), &case.aios_args());
+#[derive(Clone, Copy)]
+enum Tool {
+    Aios,
+    CheckPy,
+}
+
+/// Run one case in `repo` with `tool`.
+fn run_case(tool: Tool, repo: &TestRepo, case: &Case) -> Outcome {
+    let dir = case.run_dir(repo.path());
+    let run = match tool {
+        Tool::Aios => run_aios(&dir, &case.aios_args()),
+        Tool::CheckPy => fixture::run_check_py(repo.path(), &dir, &case.flag_args()),
+    };
     let baseline = case.writes_baseline.then(|| {
         let path = repo.path().join(case.baseline_rel);
         fs::read(&path)
@@ -118,15 +154,16 @@ impl Shared {
     }
 }
 
-/// Run every case: `--update-baseline` cases in a fresh materialization, the others in
-/// the shared one.
-fn run_cases(cases: &[Case]) -> Vec<Outcome> {
+/// Run every case with `tool`: `--update-baseline` cases in a fresh materialization,
+/// the others in the shared one.
+fn run_cases(cases: &[Case], tool: Tool) -> Vec<Outcome> {
     let shared = Shared::new(cases);
     parallel_map(cases, |case| {
         if case.writes_baseline {
-            run_case(&fixture::materialize(case.source), case)
+            let fresh = fixture::materialize(case.source);
+            run_case(tool, &fresh, case)
         } else {
-            run_case(shared.get(case.source), case)
+            run_case(tool, shared.get(case.source), case)
         }
     })
 }
@@ -260,7 +297,7 @@ fn write_goldens(cases: &[Case], outcomes: &[Outcome]) {
 #[test]
 fn goldens_match_aios() {
     let cases = fixture::cases();
-    let outcomes = run_cases(&cases);
+    let outcomes = run_cases(&cases, Tool::Aios);
     if std::env::var("AIOS_BLESS_GOLDENS").as_deref() == Ok("1") {
         write_goldens(&cases, &outcomes);
         return;
@@ -276,6 +313,83 @@ fn goldens_match_aios() {
     assert!(
         failures.is_empty(),
         "{} golden mismatch(es):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+#[ignore = "records the goldens from check.py (materialised from git history); run after adding or changing a case"]
+fn record_goldens_from_check_py() {
+    if let Err(reason) = fixture::check_py() {
+        panic!("recording the goldens needs check.py: {reason}");
+    }
+    let cases = fixture::cases();
+    let outcomes = run_cases(&cases, Tool::CheckPy);
+    write_goldens(&cases, &outcomes);
+}
+
+/// Set to `1` to fail, instead of skip, when the check.py oracle is unavailable.
+const REQUIRE_CHECK_PY: &str = "AIOS_REQUIRE_CHECK_PY";
+
+#[test]
+fn differential_against_check_py() {
+    let oracle = match fixture::check_py() {
+        Ok(oracle) => oracle,
+        Err(reason) => {
+            assert!(
+                std::env::var(REQUIRE_CHECK_PY).as_deref() != Ok("1"),
+                "differential_against_check_py: {REQUIRE_CHECK_PY}=1 but {reason}"
+            );
+            eprintln!("differential_against_check_py: skipped, {reason}");
+            return;
+        }
+    };
+    let cases = fixture::cases();
+    let shared = Shared::new(&cases);
+    let mut failures: Vec<String> = parallel_map(&cases, |case| {
+        let (want, got) = if case.writes_baseline {
+            let for_python = fixture::materialize(case.source);
+            let for_aios = fixture::materialize(case.source);
+            (
+                run_case(Tool::CheckPy, &for_python, case),
+                run_case(Tool::Aios, &for_aios, case),
+            )
+        } else {
+            let repo = shared.get(case.source);
+            (
+                run_case(Tool::CheckPy, repo, case),
+                run_case(Tool::Aios, repo, case),
+            )
+        };
+        differences(&case.label(), &want, &got)
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    let root = fixture::repo_root();
+    for (name, flags) in LIVE_CASES {
+        let want = Outcome::of(&fixture::run_check_py(&root, &root, flags), None);
+        let got = Outcome::of(
+            &run_aios(&root, &[&["docs-check"][..], flags].concat()),
+            None,
+        );
+        failures.extend(differences(&format!("live/{name}"), &want, &got));
+    }
+    eprintln!(
+        "differential_against_check_py: compared {} cases and {} live modes, {} difference(s) \
+         ({} running {} with {} and {})",
+        cases.len(),
+        LIVE_CASES.len(),
+        failures.len(),
+        oracle.version,
+        fixture::check_py_object(),
+        fixture::CHECK_PY_MIGRATION,
+        fixture::CHECK_PY_IRQ_SPIN_LOCK
+    );
+    assert!(
+        failures.is_empty(),
+        "{} difference(s) between check.py and aios:\n{}",
         failures.len(),
         failures.join("\n")
     );
