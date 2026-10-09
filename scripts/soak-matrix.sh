@@ -108,9 +108,11 @@ anyway and marks the summary. A rust-toolchain.toml channel that cannot be
 read counts as a mismatch. A firmware mismatch is always refused, and so is
 firmware that is not an absolute path (each arm's harness would resolve it
 inside that arm's worktree) or does not exist; all are checked before any
-build. Every boot must then run the QEMU (qemu-system-aarch64 --version)
-and the firmware (by sha256) that the soak read after the builds: an
-upgrade mid-soak stops it, and the boot that saw it is not counted.
+build. Every boot must then run the QEMU (qemu-system-aarch64 --version,
+and the sha256 of the binary that PATH resolves) and the firmware (by
+sha256) that the soak read after the builds: an upgrade mid-soak, a
+rebuilt Homebrew revision with the same version included, stops it, and
+the boot that saw it is not counted.
 
 Every boot runs, from inside the arm's worktree:
   scripts/soak-qemu.sh --no-build --runs 1 --secs T --mode M --report-only
@@ -530,7 +532,7 @@ write_summary() {
         echo "| Harness | $HARNESS_NOTE |"
         echo "| Toolchain | $TOOLCHAIN_NOTE |"
         echo "| Host | $(uname -srm), $(host_cpus) CPUs |"
-        echo "| QEMU | $QEMU_VER |"
+        echo "| QEMU | $QEMU_VER (\`$QEMU_BIN\`, sha256 \`${QEMU_SHA:0:16}\`) |"
         echo "| Firmware | \`$FW\` (all arms; sha256 \`${FW_SHA:0:16}\`) |"
         echo "| Started | $STARTED |"
         echo "| Output | \`$OUT\` |"
@@ -757,7 +759,7 @@ ERROR_STREAK=0
 # one firmware for every boot. That boot is not counted; the boots before it
 # stay in summary.md, marked "stopped".
 check_instrument() {
-    local label=$1 rr=$2 dir=$3 qv="" fws
+    local label=$1 rr=$2 dir=$3 qv="" qb qs="" fws
     # The QEMU the boot's harness ran, from the summary.md it writes when it
     # finishes; without one, the QEMU installed now.
     [ ! -f "$dir/summary.md" ] || qv=$(sed -n 's/^| QEMU | \(.*\) |$/\1/p' "$dir/summary.md" | sed -n 1p)
@@ -765,6 +767,17 @@ check_instrument() {
     [ "$qv" = "$QEMU_VER" ] ||
         die "arm $label round $rr ran QEMU '${qv:-(none found)}', but the soak started with '$QEMU_VER'" \
             "(upgraded mid-soak?); that boot is not counted, the boots before it are in summary.md ($dir)"
+    # The version line alone misses a Homebrew revision bump (keg 11.1.2 ->
+    # 11.1.2_1, rebuilt against new libraries, same version line), so the
+    # binary PATH resolves now must also hash as it did at the start.
+    if qb=$(command -v qemu-system-aarch64 2>/dev/null); then
+        qs=$(sha256_of "$qb" 2>/dev/null) || qs=""
+    fi
+    if [ "$qs" != "$QEMU_SHA" ]; then
+        [ -n "$qs" ] || qs=unreadable
+        die "the QEMU binary changed during the soak (sha256 ${QEMU_SHA:0:16} at the start, now" \
+            "${qs:0:16}); arm $label round $rr is not counted, the boots before it are in summary.md ($dir)"
+    fi
     fws=$(sha256_of "$FW" 2>/dev/null) || fws=""
     if [ "$fws" != "$FW_SHA" ]; then
         [ -n "$fws" ] || fws=unreadable
@@ -793,6 +806,12 @@ boot_arm() {
             exit "$rc"
             ;;
     esac
+    # A harness that did not finish (no summary.tsv, or a failing exit) may
+    # have died without its traps: stop what it left before anything below
+    # can stop the soak, since no exit path reaches that process group.
+    if [ "$rc" -ne 0 ] || [ ! -f "$dir/summary.tsv" ]; then
+        reap_boot "$dir"
+    fi
     check_instrument "$label" "$rr" "$dir"
 
     class=""
@@ -811,7 +830,6 @@ boot_arm() {
         esac
     fi
     if [ -z "$class" ]; then
-        reap_boot "$dir"
         # soak-qemu.sh stopped with a setup error. On an arm's first boot that
         # means the setup is broken (as in soak-qemu.sh itself), so stop.
         if [ "$r" -eq 1 ]; then
@@ -1122,6 +1140,8 @@ RW=${#RUNS}
 # The instrument every boot must run (check_instrument), read after the
 # builds, so an upgrade while they ran costs nothing.
 QEMU_VER=$(qemu-system-aarch64 --version | sed -n 1p)
+QEMU_BIN=$(command -v qemu-system-aarch64)
+QEMU_SHA=$(sha256_of "$QEMU_BIN") || die "cannot read the QEMU binary $QEMU_BIN"
 FW_SHA=$(sha256_of "$FW") || die "cannot read the UEFI firmware $FW"
 SEQ=0
 BOOTS_DONE=0
