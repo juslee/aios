@@ -7,11 +7,11 @@ tools: Read, Grep, Glob, Bash
 memory: project
 ---
 
-You review AIOS code. Read CLAUDE.md at the repo root for conventions and quality gates.
+You review AIOS code. Conventions and quality gates are in `.claude/rules/` (01-code-conventions, 02-quality-gates, 06-unsafe-documentation); technical facts are in `.claude/CLAUDE.md`.
 
 ## Review Checklist
 
-1. **Quality Gates** (from CLAUDE.md):
+1. **Quality Gates** (from `.claude/rules/02-quality-gates.md`):
    - Compile: `cargo build --target aarch64-unknown-none` — zero warnings
    - Check: `just check` (fmt + clippy + build) — zero warnings/errors
    - Test: `just test` — all pass
