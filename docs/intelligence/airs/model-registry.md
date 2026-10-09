@@ -236,7 +236,7 @@ Primary model: llama-8b (loaded, no vision capability)
   → Then evict the vision model and reload the primary model.
 ```
 
-**4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. Example: user opens a photo space → AIRS begins loading the vision model in a background thread while the user browses thumbnails.
+**4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. A pre-load is background work, so it evicts nothing (`BackgroundTaskNeeds` never evicts the primary model or the companion) and loads only into free model pool space. Example: user opens a photo space → AIRS predicts a vision request, but the LLaVA 1.5 7B vision model does not fit beside the primary model (§4.4), so AIRS does not pre-load it. That load waits for the user's request, which is an `InteractiveTaskNeeds` eviction (point 3).
 
 **SD card reality:** On a Pi with an SD card, even mmap-based loading is slow because every page fault requires an SD card read (~100 μs per 4 KB page, vs ~5 μs for NVMe). A 4 GB model requires ~1 million page faults to fully warm up. AIOS mitigates this with sequential pre-faulting — after the mmap, a background thread reads the model file sequentially (which aligns with SD card's best-case sequential read performance of ~90 MB/s) to populate all pages before inference begins. First-token latency is ~45 seconds on SD vs ~3 seconds on NVMe for a 4 GB model.
 
