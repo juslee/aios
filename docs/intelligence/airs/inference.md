@@ -1521,7 +1521,7 @@ Apple M3+ (64 GB)    70B      Q4_K_M    ~500ms    ~15-25    128K       32 GB
 
 Decode rate is bounded by the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md): bandwidth ÷ model size. The published figures in the Pi 5 and Apple rows are above that bound for the bandwidths in [compute/classification.md](../../kernel/compute/classification.md) §4.3: ~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s for the Pi 5 row, and at ~100 GB/s about 18 tok/s for 8B Q5_K_M (~5.5 GB), 13 tok/s for 13B Q4_K_M (~7.6 GB) and 2-3 tok/s for 70B Q4_K_M (~40 GB). These rows are unverified, so Phase 11 checks them against the roofline first.
 
-The Apple M2 (32 GB) and Apple M3+ (64 GB) rows are projected tiers, like the 32 GB and 64 GB rows in [scaling.md](./scaling.md) §11.1: their Memory column assumes a model pool larger than today's 8 GB cap ([model-registry.md](./model-registry.md) §4.3), so no device runs these models today.
+The Apple M2 (32 GB) and Apple M3+ (64 GB) rows are projected tiers, like the 32 GB and 64 GB rows in [scaling.md](./scaling.md) §11.1: their Memory column assumes a model pool larger than today's 8 GB cap ([model-registry.md](./model-registry.md) §4.3), so no device runs these models today. Even the projected 32 GB pool of the Apple M3+ (64 GB) row does not hold its 70B Q4_K_M model (~40 GB): that row needs a pool of about 40 GB or more, or a smaller quantization.
 
 **Target invariants:**
 

@@ -466,7 +466,10 @@ pub struct BreakDetector {
 impl BreakDetector {
     pub fn is_user_on_break(&self) -> bool {
         let idle_duration = Instant::now() - self.last_input_time;
+        // A breakpoint the Context Engine reports (app switch, build start)
+        // is a break even while input continues.
         idle_duration > self.break_threshold
+            || self.context_engine.breakpoint_pending()
     }
 
     pub fn on_input_event(&mut self) {
@@ -480,7 +483,7 @@ impl BreakDetector {
 }
 ```
 
-When the user pauses (30 seconds of no input), queued `NextBreak` items appear as subtle toasts — visible but not blocking. The 30-second default is the `attention.break_threshold` preference. `BreakDetector` also treats the breakpoints that the Context Engine's `BreakpointDetector` reports through `context_engine` (such as an app switch or a build start; [learning.md](./context-engine/learning.md) §13.4) as breaks; the two share this idle threshold.
+When the user pauses (30 seconds of no input), queued `NextBreak` items appear as subtle toasts — visible but not blocking. The 30-second default is the `attention.break_threshold` preference. `BreakDetector` also treats the breakpoints that the Context Engine's `BreakpointDetector` reports through `context_engine` (such as an app switch or a build start; [learning.md](./context-engine/learning.md) §13.4) as breaks, even during continuous input; the two share this idle threshold.
 
 ### 5.3 Context Transition Flush
 
@@ -1718,7 +1721,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 | `ContentScreener` | Sanitization | Markup stripped; impersonation rejected; trust-level violations caught |
 | `UrgencyCalibrator` | Weight update | Acted → positive shift; Never → negative shift; weights clamped [0, 1] |
 | `PostingRateMonitor` | EWMA tracking | Normal rate → Normal; 3× rate spike → Anomalous; EWMA converges after spike |
-| `BreakDetector` | Idle detection | 30s idle → break; continuous input → no break; input resets timer |
+| `BreakDetector` | Idle and breakpoint detection | 30s idle → break; continuous input with no Context Engine breakpoint → no break; input resets timer; Context Engine breakpoint (app switch, build start) → break without 30s idle |
 | `AuditEntry` | Hash chain | Each entry's prev_hash matches previous entry's hash; empty chain starts with zero hash |
 
 ### 20.2 Integration Tests
