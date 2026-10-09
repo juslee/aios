@@ -893,6 +893,14 @@ Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler
 
 `kind` is `ph` (a holder switched out on this CPU and not current elsewhere, met with IRQs masked; not by itself evidence of a wedge), `self` (the holder is the waiter's own thread, a same-stream deadlock the stamp cannot see) or `stuck` (one `lock()` has waited more than 2 s). `idx` is the per-CPU array index, or `-` for a scalar static; `ctx` is `thread`, `thread-off`, `irq` or `irq-exit`; `owner_cpu` and `owner_gen` decode the lock word the waiter saw; `holder_running` is the CPU the holder is current on, `none` or `?`. Unknown values print `?`. The same events are counted in the `lk*` keys, which the `[tripwire]` line carries. They are not `[tripwire]` lines and have no `n`.
 
+**SMP lines.** Each CPU prints one `[smp]` line at boot, straight to the UART (`smp::print_cpu_line`), recording where its exception vectors and `TTBR0_EL1` point:
+
+```text
+[smp] cpu=1 vbar=0x0000000040081000 ttbr0=0x00000000402ad000 vbar_kva=0 ttbr0_idmap=1
+```
+
+`vbar_kva` is 1 when `VBAR_EL1` is a kernel (TTBR1) VA, and `ttbr0_idmap` is 1 when `TTBR0_EL1`'s table base (ASID and CnP masked off) is the boot identity map. CPUs 1–3 install `VBAR_EL1` with `adrp` while their MMU is off, so theirs is the physical alias of the vector table (`vbar_kva=0`, `ttbr0_idmap=1`), and their exception paths run at physical-alias PCs. A secondary prints its line inside its `PRINT_TURN` window, right after `Core N online`. CPU 0 prints its own after the boot address-space switch test: a TTBR1 VBAR (`vbar_kva=1`) and address space B's `TTBR0_EL1`, whose ASID is in bits [63:48] (`ttbr0_idmap=0`). Expect one line per CPU in `ONLINE_CPUS`. When the bring-up wait times out (`SMP timeout: …`, after 100 ms), CPU 0 stops waiting and goes on printing, so a late secondary's `[smp]` line can interleave with CPU 0's output, and a secondary that never comes up has no line. No parser depends on `[smp]` lines; they are not `[tripwire]` lines and have no `n`.
+
 **Cost.** The printer uses `putc` only, with no `core::fmt`, no lock and no buffer, and runs with IRQs masked. `twc` is the cumulative CNTVCT time spent printing lines, `twn` the number of lines, and `twmax` the longest single line. A line's own cost is added after it prints, so the next line reports it.
 
 -----

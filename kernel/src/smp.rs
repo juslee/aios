@@ -179,6 +179,39 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
     sched
 }
 
+/// Print this CPU's `[smp]` line straight to the UART:
+///
+/// ```text
+/// [smp] cpu=1 vbar=0x0000000040081000 ttbr0=0x… vbar_kva=0 ttbr0_idmap=1
+/// ```
+///
+/// `vbar_kva` is 1 when `VBAR_EL1` is a kernel (TTBR1) VA. CPUs 1–3 install
+/// it with `adrp` while their MMU is off, so theirs is the physical alias of
+/// the vector table and their exception paths run at physical-alias PCs.
+/// `ttbr0_idmap` is 1 when `TTBR0_EL1`'s table base is the boot identity map
+/// ([`ttbr0_l0_addr`](crate::arch::aarch64::mmu::ttbr0_l0_addr)).
+///
+/// A direct UART line, not `kinfo!`, which cuts messages to 48 bytes. A
+/// secondary prints it inside its `PRINT_TURN` window; CPU 0 prints its own
+/// after the boot address-space switch test, from `kernel_main`. It runs at
+/// thread level during boot only, never on the IRQ path.
+pub fn print_cpu_line(cpu: usize) {
+    use crate::arch::aarch64::{exceptions, mmu};
+
+    let vbar = exceptions::read_vbar_el1();
+    let ttbr0 = exceptions::read_ttbr0_el1();
+    let vbar_kva = vbar >= mmu::KERNEL_BASE as u64;
+    let ttbr0_idmap = ttbr0 & mmu::TTBR_BADDR_MASK == mmu::ttbr0_l0_addr();
+    crate::println!(
+        "[smp] cpu={} vbar={:#018x} ttbr0={:#018x} vbar_kva={} ttbr0_idmap={}",
+        cpu,
+        vbar,
+        ttbr0,
+        u8::from(vbar_kva),
+        u8::from(ttbr0_idmap)
+    );
+}
+
 /// Entry point for secondary cores (called from boot.S _secondary_entry).
 #[no_mangle]
 pub extern "C" fn secondary_main(core_id: u64) -> ! {
@@ -208,6 +241,7 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     }
 
     crate::kinfo!(Smp, "Core {} online", core_id);
+    print_cpu_line(core_id);
 
     // Signal next core's turn to print.
     PRINT_TURN.store(core_id + 1, Ordering::Release);

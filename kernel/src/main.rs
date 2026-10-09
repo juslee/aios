@@ -282,6 +282,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
             uspace::switch_address_space(&as_b);
         }
         kinfo!(Mm, "Address space switching verified");
+        // CPU 0's `[smp]` line: a TTBR1 VBAR and address space B's TTBR0
+        // (ASID in bits [63:48]). CPUs 1–3 printed theirs in smp.rs.
+        smp::print_cpu_line(0);
     }
 
     // Final drain before entering idle loop (timer tick takes over in Step 4).
