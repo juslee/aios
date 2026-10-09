@@ -76,8 +76,8 @@ Timer              TICK_INTERVAL: AtomicU64                   arch/aarch64/timer
 Memory pools       FRAME_ALLOC: Mutex<Option<FrameAllocator>> mm/frame.rs
 Slab allocator     SLAB: Mutex<SlabAllocator>                mm/slab.rs
 ASID               ASID_ALLOC: Mutex<AsidAllocator>           mm/uspace.rs
-Scheduler          RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES]  sched/mod.rs
-                   THREAD_TABLE: Mutex<[Option<Thread>; 64]> task/mod.rs
+Scheduler          RUN_QUEUES: [IrqSpinLock<RunQueue>; MAX_CORES] sched/mod.rs
+                   THREAD_TABLE: IrqSpinLock<[Option<Thread>; MAX_THREADS]> task/mod.rs
 IPC channels       CHANNEL_TABLE: Mutex<[Option<Channel>]>   ipc/mod.rs
 Capabilities       (per-process CapabilityTable)             cap/mod.rs
 Processes          PROCESS_TABLE: Mutex<[Option<ProcessControl>]> task/process.rs
