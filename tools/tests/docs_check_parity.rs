@@ -1,10 +1,10 @@
 //! docs-check parity with scripts/docs/check.py (R1 parity: goldens and parity tests).
 //!
 //! - `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
-//!   main at `SNAPSHOT_SHA`, 48 on the fixture repository) and compares `exit N\n` plus
-//!   stdout, and the written baseline, byte for byte with `tests/golden/docs-check/`.
-//!   `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios instead (for an intentional
-//!   output change; review the diff).
+//!   main at `SNAPSHOT_SHA` plus `SNAPSHOT_MIGRATION`, 48 on the fixture repository)
+//!   and compares `exit N\n` plus stdout, and the written baseline, byte for byte with
+//!   `tests/golden/docs-check/`. `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios
+//!   instead (for an intentional output change; review the diff).
 //! - `record_goldens_from_check_py` (ignored) records those goldens from check.py.
 //! - `differential_against_check_py` runs check.py and aios side by side on every case
 //!   and on the live checkout. R1 deleted check.py, so both tests run the last version
@@ -18,6 +18,13 @@
 //!   R2-R5 (the ports of the other host scripts) are expected to reuse this same
 //!   pattern: a differential against their own script, goldens recorded from it, and
 //!   after that script is deleted, the same script materialised from git history.
+//!
+//! The project memory moved to `.claude/CLAUDE.md` in #218, after check.py was deleted,
+//! and aios reads only that path. The fixture bundles and the snapshot (through
+//! `SNAPSHOT_MIGRATION`) carry it there, and the oracle makes the same move:
+//! `fixture::CHECK_PY_MIGRATION` patches the materialised check.py's `CLAUDE.md` paths
+//! and its `BEFORE_CLAUDE_RE` exactly as #218 changed aios, and no check logic, so both
+//! tests compare aios against check.py on the same migrated inputs and goldens.
 
 mod common;
 
@@ -365,12 +372,13 @@ fn differential_against_check_py() {
     }
     eprintln!(
         "differential_against_check_py: compared {} cases and {} live modes, {} difference(s) \
-         ({} running {})",
+         ({} running {} with {})",
         cases.len(),
         LIVE_CASES.len(),
         failures.len(),
         oracle.version,
-        fixture::check_py_object()
+        fixture::check_py_object(),
+        fixture::CHECK_PY_MIGRATION
     );
     assert!(
         failures.is_empty(),

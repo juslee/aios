@@ -3,8 +3,10 @@
 //! control separators U+001C..U+001F where a check's pattern, `str.isdigit()` or `int()`
 //! meets them.
 //!
-//! Each test asserts the exit code and stdout that check.py (at 33c6b3d) prints for the
-//! same repository. Those expectations were recorded with `fixture::run_check_py`, and
+//! Each test asserts the exit code and stdout that check.py (at 33c6b3d, with
+//! `fixture::CHECK_PY_MIGRATION` applied, so the repositories keep their project memory
+//! at `.claude/CLAUDE.md` as aios reads it) prints for the same repository. Those
+//! expectations were recorded with `fixture::run_check_py`, and
 //! wherever the oracle is available (`fixture::check_py`) each test also runs check.py
 //! again and requires the same bytes, so the expectations cannot drift from Python.
 //! Before #205 (`[0-9]` for `\d`, the crate's plain `\s`), aios's exit code or stdout
@@ -80,7 +82,7 @@ New drift since baseline:
  + docs/a.md:3: no §٤ heading in docs/other.md or its hub members
 
 [repo-paths]
- + CLAUDE.md:3: path does not exist: kernel/src/gone.rs
+ + .claude/CLAUDE.md:3: path does not exist: kernel/src/gone.rs
 ";
 
 /// check.py's stdout for `decimal_digits_in_history_tables_and_claims`.
@@ -101,7 +103,7 @@ New drift since baseline:
  + README.md:11: states 7 tests; shared/src has 0 #[test] functions
 
 [lock-order]
- + CLAUDE.md:3: CLAUDE.md orders ALPHA_LOCK before BETA_LOCK, §3.3 ranks them 2 and 1
+ + .claude/CLAUDE.md:3: CLAUDE.md orders ALPHA_LOCK before BETA_LOCK, §3.3 ranks them 2 and 1
 
 [milestone-status]
  + docs/phases/٠١-arabic.md:3: all milestones (M3) are merged but status is 'Planned'
@@ -109,7 +111,7 @@ New drift since baseline:
  + docs/project/development-plan.md:7: all milestones (M3) are merged but status is 'Planned'
 
 [phase-count]
- + CLAUDE.md:5: says ٤ phases; development-plan §8 lists 2
+ + .claude/CLAUDE.md:5: says ٤ phases; development-plan §8 lists 2
  + README.md:5: says ٣ phases; development-plan §8 lists 2
 ";
 
@@ -149,24 +151,24 @@ docs-check: 17 findings across 7 checks - 17 new, 0 baselined (0 accepted false 
 New drift since baseline:
 
 [repo-paths]
- + CLAUDE.md:17: path does not exist: kernel/src/gone.rs
+ + .claude/CLAUDE.md:17: path does not exist: kernel/src/gone.rs
 
 [test-count]
- + CLAUDE.md:19: states 12 tests; shared/src has 0 #[test] functions
+ + .claude/CLAUDE.md:19: states 12 tests; shared/src has 0 #[test] functions
 
 [lock-order]
- + CLAUDE.md:21: lock ordering names ALPHA_LOCK, which is not a Mutex static in kernel/src
+ + .claude/CLAUDE.md:21: lock ordering names ALPHA_LOCK, which is not a Mutex static in kernel/src
  + docs/kernel/deadlock-prevention.md: production lock DELTA_LOCK is not in §3.3/§3.4 (defined at kernel/src/sync.rs:2)
  + docs/kernel/deadlock-prevention.md: production lock GAMMA_LOCK is not in §3.3/§3.4 (defined at kernel/src/sync.rs:1)
  + docs/kernel/deadlock-prevention.md:7: §3.3/§3.4 lists ALPHA_LOCK, which is not a Mutex static in kernel/src
 
 [layout]
- + CLAUDE.md: Workspace Layout does not list kernel module kernel/src/sync.rs
+ + .claude/CLAUDE.md: Workspace Layout does not list kernel module kernel/src/sync.rs
 
 [harness-tables]
- + CLAUDE.md: CLAUDE.md agents-table omits agent worker
- + CLAUDE.md: CLAUDE.md layout-skills lists skill ghost, which is not in .claude/
- + CLAUDE.md: CLAUDE.md skills-table omits skill build
+ + .claude/CLAUDE.md: CLAUDE.md agents-table omits agent worker
+ + .claude/CLAUDE.md: CLAUDE.md layout-skills lists skill ghost, which is not in .claude/
+ + .claude/CLAUDE.md: CLAUDE.md skills-table omits skill build
 
 [pointer-doctor]
  + .claude/agents/worker.md:7: agent bob is not defined in .claude/agents
@@ -224,7 +226,7 @@ fn decimal_digits_in_links_paths_and_names() {
                 "# Other\n\n## 1 One\n\n## ٣ Arabic three\n\n### ３.٢ Mixed\n",
             ),
             (
-                "CLAUDE.md",
+                ".claude/CLAUDE.md",
                 "# C\n\nCode in `kernel/src/main.rs:١٢`, `kernel/src/main.rs:1-١٢`, \
                  `kernel/src/main.rs:1,٣` and `kernel/src/gone.rs:٣`.\n",
             ),
@@ -301,7 +303,7 @@ fn decimal_digits_in_history_tables_and_claims() {
                  static BETA_LOCK: Mutex<()> = Mutex::new(());\n",
             ),
             (
-                "CLAUDE.md",
+                ".claude/CLAUDE.md",
                 "# C\n\nLock ordering: ALPHA_LOCK > BETA_LOCK\n\n٤ phases in all.\n",
             ),
         ],
@@ -390,7 +392,7 @@ fn control_separators_in_harness_layout_and_code() {
         "classes-space-harness",
         &[
             (
-                "CLAUDE.md",
+                ".claude/CLAUDE.md",
                 "# C\n\n## Workspace Layout\n\n```text\n\
                  ├── .claude/\n\
                  │   ├──\x1fskills/\x1fbuild, ghost\n\

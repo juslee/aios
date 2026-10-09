@@ -13,7 +13,9 @@
 //! replayed by `tests/docs_check_parity.rs`, the golden file paths, and the check.py
 //! oracle: R1 deleted scripts/docs/check.py, so `check_py` materialises it from git
 //! history (`git cat-file blob <SNAPSHOT_SHA>:scripts/docs/check.py`) into
-//! `CARGO_TARGET_TMPDIR`, and `run_check_py` runs it against any repository.
+//! `CARGO_TARGET_TMPDIR`, patches it with `CHECK_PY_MIGRATION` so that it reads the
+//! project memory at `.claude/CLAUDE.md` as aios does since #218, and `run_check_py`
+//! runs it against any repository.
 //!
 //! The oracle's `re` classes follow its interpreter's Unicode version, so `check_py`
 //! accepts only a `python3` whose `unicodedata.unidata_version` is
@@ -67,7 +69,7 @@ pub struct Variant {
 /// single-drift variant per check (in CHECK_ORDER), then line-shift, skip and grown.
 /// check.py read the project memory at the root `CLAUDE.md`; the bundles now place it
 /// at `.claude/CLAUDE.md`, so these keys and the layout, harness-tables and repo-paths
-/// goldens carry that path where check.py's carried `CLAUDE.md`.
+/// goldens carry that path, as check.py with `CHECK_PY_MIGRATION` applied reports it.
 pub const VARIANTS: &[Variant] = &[
     Variant {
         name: "base",
@@ -324,9 +326,10 @@ pub const SNAPSHOT_SHA: &str = "33c6b3deabb36055d26d57fb2a60db233c4d3f6f";
 /// `tests/fixtures/docs-check/<this>`: a patch against `SNAPSHOT_SHA` that moves its
 /// root `CLAUDE.md` to `.claude/CLAUDE.md`, the only place docs-check reads it now, and
 /// updates the links into and out of it and the one baseline entry keyed by its path.
-/// The real-repository goldens were recorded from check.py on the unmigrated snapshot
-/// and differ from its output only in that path (`CLAUDE.md` became
-/// `.claude/CLAUDE.md`).
+/// The real-repository goldens were first recorded from check.py on the unmigrated
+/// snapshot and differ from that output only in that path (`CLAUDE.md` became
+/// `.claude/CLAUDE.md`); check.py with `CHECK_PY_MIGRATION` applied, run on the
+/// migrated snapshot, reproduces them byte for byte.
 pub const SNAPSHOT_MIGRATION: &str = "snapshot-claude-md.patch";
 
 /// The repository that contains `tools/` (the checkout or worktree under test).
@@ -606,13 +609,31 @@ pub fn materialize(source: Source) -> TestRepo {
     }
 }
 
+/// Where check.py lived, relative to the repository root: its path in
+/// `check_py_object()` and in `CHECK_PY_MIGRATION`.
+const CHECK_PY_PATH: &str = "scripts/docs/check.py";
+
 /// The last `scripts/docs/check.py` on main, as a git object: `SNAPSHOT_SHA`'s copy.
 /// faf6d20 (#166) added the file, no later commit on main changed it (the blob is
 /// 6cea366 at faf6d20, at `SNAPSHOT_SHA` and at 201af49, the parent of the deletion),
-/// and 212df62 (#207, R1) deleted it. The goldens were recorded against this version.
+/// and 212df62 (#207, R1) deleted it. The oracle runs this version with
+/// `CHECK_PY_MIGRATION` applied.
 pub fn check_py_object() -> String {
-    format!("{SNAPSHOT_SHA}:scripts/docs/check.py")
+    format!("{SNAPSHOT_SHA}:{CHECK_PY_PATH}")
 }
+
+/// `tests/fixtures/docs-check/<this>`: a patch against `check_py_object()` that makes
+/// check.py read and report the project memory at `.claude/CLAUDE.md`, as #218 made
+/// aios do (`repo::CLAUDE_MD`). check.py hardcodes the root `CLAUDE.md`, which no
+/// longer exists in the fixture bundles or in the snapshot once `SNAPSHOT_MIGRATION` is
+/// applied, so unpatched it would skip or misreport every CLAUDE.md check there. The
+/// patch mirrors #218 and nothing else: each `CLAUDE.md` path check.py reads, keys a
+/// finding by or lists as a current-state doc becomes `.claude/CLAUDE.md`, and
+/// `BEFORE_CLAUDE_RE` gains the same optional `.claude/` prefix as aios's. Finding
+/// messages, check descriptions and every other line stay check.py's, so the oracle
+/// still decides what each check finds. `materialize_check_py` applies it with
+/// `git apply` and panics if it does not apply.
+pub const CHECK_PY_MIGRATION: &str = "check-py-claude-md.patch";
 
 /// The Unicode version (`unicodedata.unidata_version`) the oracle's interpreter must
 /// have: CPython 3.14's, the version `aios_tools::pyre`'s `\d` and `\s` classes were
@@ -636,22 +657,24 @@ const ORACLE_FLAGS: [&str; 4] = ["-E", "-X", "utf8", "-B"];
 const VERSION_PROBE: &str =
     "import sys, unicodedata; print(sys.version.split()[0], unicodedata.unidata_version)";
 
-/// The differential oracle: check.py materialised from git history, and the
-/// interpreter that runs it.
+/// The differential oracle: check.py materialised from git history with
+/// `CHECK_PY_MIGRATION` applied, and the interpreter that runs it.
 pub struct CheckPy {
     /// The absolute path of the resolved `python3` (see `python3_interpreter`).
     pub interpreter: PathBuf,
     /// The interpreter's Python and Unicode versions, for the test log.
     pub version: String,
-    /// check.py's bytes, written under `CARGO_TARGET_TMPDIR/check-py/`.
+    /// The patched check.py, written under `CARGO_TARGET_TMPDIR/check-py/`.
     pub script: PathBuf,
 }
 
-/// check.py materialised from `check_py_object()` and a working `python3`, resolved
-/// once per test process. `Err` is the reason the oracle is unavailable, for the caller
-/// to print when it skips: no usable `python3` on `PATH`, a `python3` whose Unicode
-/// version is not `ORACLE_UNIDATA_VERSION`, or no such git object (a shallow clone;
-/// CI's Tools (host) job checks out with `fetch-depth: 0` and installs CPython 3.14).
+/// check.py materialised from `check_py_object()` with `CHECK_PY_MIGRATION` applied, and
+/// a working `python3`, resolved once per test process. `Err` is the reason the oracle
+/// is unavailable, for the caller to print when it skips: no usable `python3` on `PATH`,
+/// a `python3` whose Unicode version is not `ORACLE_UNIDATA_VERSION`, or no such git
+/// object (a shallow clone; CI's Tools (host) job checks out with `fetch-depth: 0` and
+/// installs CPython 3.14). A `CHECK_PY_MIGRATION` that does not apply is a defect in
+/// this repository, not a missing tool, so it panics instead of skipping.
 pub fn check_py() -> Result<&'static CheckPy, &'static str> {
     static ORACLE: OnceLock<Result<CheckPy, String>> = OnceLock::new();
     ORACLE
@@ -709,15 +732,30 @@ fn materialize_check_py() -> Result<CheckPy, String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    // Written to a per-process temporary name, then renamed over the shared path, so
-    // test processes that materialise it at the same time never read a partial file.
+    // Written at its repository path in a per-process git work area, patched there as
+    // `snapshot_real` patches the snapshot, then renamed over the shared path, so test
+    // processes that materialise it at the same time never read a partial or unpatched
+    // file.
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("check-py");
-    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let script = dir.join("check.py");
-    let partial = dir.join(format!("check.py.{}.tmp", std::process::id()));
+    let work_name = format!("work.{}", std::process::id());
+    let work = dir.join(&work_name);
+    if work.exists() {
+        fs::remove_dir_all(&work)
+            .map_err(|e| format!("cannot remove the stale {}: {e}", work.display()))?;
+    }
+    let partial = work.join(CHECK_PY_PATH);
+    let parent = partial.parent().expect("CHECK_PY_PATH has a directory");
+    fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     fs::write(&partial, &out.stdout)
-        .and_then(|()| fs::rename(&partial, &script))
-        .map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+        .map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
+    git(&dir, &["init", "-q", work_name.as_str()]);
+    let migration = fixtures_dir().join(CHECK_PY_MIGRATION);
+    let migration = migration.to_str().expect("fixture path is UTF-8");
+    // `git` panics with git's stderr when the patch does not apply.
+    git(&work, &["apply", migration]);
+    let script = dir.join("check.py");
+    fs::rename(&partial, &script).map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+    fs::remove_dir_all(&work).map_err(|e| format!("cannot remove {}: {e}", work.display()))?;
     Ok(CheckPy {
         interpreter,
         version,

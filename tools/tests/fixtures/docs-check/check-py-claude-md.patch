@@ -1,0 +1,114 @@
+diff --git a/scripts/docs/check.py b/scripts/docs/check.py
+index 6cea366..2c5dd8a 100644
+--- a/scripts/docs/check.py
++++ b/scripts/docs/check.py
+@@ -50,7 +50,7 @@ BASELINE_REL = "scripts/docs/baseline.json"
+ # mention must exist today. Completed-milestone sections of phase docs are
+ # added separately (see Repo.current_state_regions).
+ CURRENT_STATE_DOCS = {
+-    "CLAUDE.md",
++    ".claude/CLAUDE.md",
+     "README.md",
+     "CONTRIBUTING.md",
+     "docs/project/developer-guide.md",
+@@ -862,7 +862,7 @@ def check_lock_order(repo: Repo) -> list[Finding]:
+         out.append(Finding("lock-order", doc, f"stale:{name}",
+                            f"§3.3/§3.4 lists {name}, which is not a Mutex static in kernel/src", doc_locks[name]))
+     # CLAUDE.md lock ordering chain.
+-    claude = repo.text("CLAUDE.md").splitlines()
++    claude = repo.text(".claude/CLAUDE.md").splitlines()
+     chain_text = ""
+     name_line: dict[str, int] = {}  # first CLAUDE.md line naming each lock in the chain
+     for i, line in enumerate(claude):
+@@ -884,7 +884,7 @@ def check_lock_order(repo: Repo) -> list[Finding]:
+         for g in groups:
+             for name in g:
+                 if name not in statics:
+-                    out.append(Finding("lock-order", "CLAUDE.md", f"unknown:{name}",
++                    out.append(Finding("lock-order", ".claude/CLAUDE.md", f"unknown:{name}",
+                                        f"lock ordering names {name}, which is not a Mutex static in kernel/src",
+                                        name_line.get(name, 0)))
+         for i, gi in enumerate(groups):
+@@ -892,7 +892,7 @@ def check_lock_order(repo: Repo) -> list[Finding]:
+                 for a in gi:
+                     for b in gj:
+                         if a in ranks and b in ranks and ranks[a] > ranks[b]:
+-                            out.append(Finding("lock-order", "CLAUDE.md", f"order:{a}>{b}",
++                            out.append(Finding("lock-order", ".claude/CLAUDE.md", f"order:{a}>{b}",
+                                                f"CLAUDE.md orders {a} before {b}, §3.3 ranks them {ranks[a]} and {ranks[b]}",
+                                                name_line.get(b, 0)))
+     # `Lock ordering` comment blocks in kernel code.
+@@ -1003,7 +1003,7 @@ def check_phase_count(repo: Repo) -> list[Finding]:
+         (plan, r"\b(\d+) phases across\b"),
+         ("README.md", r"\b(\d+) phases across\b"),
+         (".claude/rules/07-milestone-numbering.md", r"\b(\d+) phases\b"),
+-        ("CLAUDE.md", r"\b(\d+) phases\b"),
++        (".claude/CLAUDE.md", r"\b(\d+) phases\b"),
+     ]
+     out = []
+     for rel, rx in sources:
+@@ -1018,7 +1018,7 @@ def check_phase_count(repo: Repo) -> list[Finding]:
+ 
+ 
+ def layout_block(repo: Repo) -> list[str]:
+-    lines = [l for _, l in section_body(repo.text("CLAUDE.md"), r"^## Workspace Layout", r"^## ")]
++    lines = [l for _, l in section_body(repo.text(".claude/CLAUDE.md"), r"^## Workspace Layout", r"^## ")]
+     return lines
+ 
+ 
+@@ -1067,10 +1067,10 @@ def check_layout(repo: Repo) -> list[Finding]:
+         ("shared module", smods, sm, "shared/src/{}.rs"),
+     ):
+         for name in sorted(actual - listed):
+-            out.append(Finding("layout", "CLAUDE.md", "missing:" + fmt.format(name),
++            out.append(Finding("layout", ".claude/CLAUDE.md", "missing:" + fmt.format(name),
+                                f"Workspace Layout does not list {label} {fmt.format(name)}"))
+         for name in sorted(listed - actual):
+-            out.append(Finding("layout", "CLAUDE.md", "stale:" + fmt.format(name),
++            out.append(Finding("layout", ".claude/CLAUDE.md", "stale:" + fmt.format(name),
+                                f"Workspace Layout lists {fmt.format(name)}, which does not exist"))
+     rule = ".claude/rules/05-file-placement.md"
+     if rule in repo.file_set:
+@@ -1088,7 +1088,7 @@ SKILL_NAME = r"[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?"
+ 
+ def claude_table_names(repo: Repo, marker: str, rx: str) -> set[str]:
+     names: set[str] = set()
+-    for _, line in section_body(repo.text("CLAUDE.md"), re.escape(marker), r"^\*\*|^## "):
++    for _, line in section_body(repo.text(".claude/CLAUDE.md"), re.escape(marker), r"^\*\*|^## "):
+         if line.lstrip().startswith("|"):
+             cells = [c.strip() for c in line.strip().strip("|").split("|")]
+             m = re.match(rx, cells[0]) if cells else None
+@@ -1158,10 +1158,10 @@ def check_harness_tables(repo: Repo) -> list[Finding]:
+         if listed is None:
+             continue
+         for name in sorted(actual - listed):
+-            out.append(Finding("harness-tables", "CLAUDE.md", f"{where}-missing:{name}",
++            out.append(Finding("harness-tables", ".claude/CLAUDE.md", f"{where}-missing:{name}",
+                                f"CLAUDE.md {where} omits {kind} {name}"))
+         for name in sorted(listed - actual):
+-            out.append(Finding("harness-tables", "CLAUDE.md", f"{where}-stale:{name}",
++            out.append(Finding("harness-tables", ".claude/CLAUDE.md", f"{where}-stale:{name}",
+                                f"CLAUDE.md {where} lists {kind} {name}, which is not in .claude/"))
+     return out
+ 
+@@ -1175,9 +1175,9 @@ def norm_section(name: str) -> str:
+ 
+ def claude_sections(repo: Repo) -> dict[str, tuple[str, bool]]:
+     """normalized '## ' heading -> (heading, is_pointer_stub)."""
+-    text = repo.text("CLAUDE.md").splitlines()
++    text = repo.text(".claude/CLAUDE.md").splitlines()
+     out: dict[str, tuple[str, bool]] = {}
+-    for lineno, level, heading in repo.headings("CLAUDE.md"):
++    for lineno, level, heading in repo.headings(".claude/CLAUDE.md"):
+         if level != 2:
+             continue
+         body = []
+@@ -1208,7 +1208,7 @@ TITLE_WORD = r"[A-Z][A-Za-z0-9&/-]*"
+ # aside: "Code Conventions (`.claude/rules/`) and Quality Gates".
+ TITLE_LIST = r"(" + TITLE_WORD + r"(?:\s*\([^)]*\)|\s*,\s*|\s+and\s+|\s+|" + TITLE_WORD + r")*)"
+ BEFORE_CLAUDE_RE = re.compile(
+-    r"((?:" + TITLE_WORD + r"\s+){0,6}" + TITLE_WORD + r")[\"'”*]*\s*\(?\s*(?:in|from)\s+`?CLAUDE\.md\b"
++    r"((?:" + TITLE_WORD + r"\s+){0,6}" + TITLE_WORD + r")[\"'”*]*\s*\(?\s*(?:in|from)\s+`?(?:\.claude/)?CLAUDE\.md\b"
+ )
+ AFTER_CLAUDE_RE = re.compile(r"`?CLAUDE\.md`?\s*(:)?\s*[\"“]?" + TITLE_LIST)
+ # "2. Update: Workspace Layout, Key Technical Facts" under a heading that names CLAUDE.md.
