@@ -168,8 +168,10 @@ such a worktree too.
                  rewritten after each boot
   arms.tsv       one row per arm: ref, commit, toolchain, rustc, kernel ELF
                  and ESP image sha256, harness (soak-qemu.sh or aios soak)
-                 and harness id (the script's sha256, or the git tree id of
-                 the arm's tools/, the aios source), tree state, build time
+                 and harness id (the script's sha256, or for aios a hash of
+                 the git tree entries of everything `just tools` builds it
+                 from: tools/, Cargo.lock, Cargo.toml, rust-toolchain(.toml),
+                 .cargo/ and the justfile), tree state, build time
   boots.tsv      one row per boot in boot order: round, position in the
                  round, arm, class, 1-min load average before the boot, IPC
                  avg (us), min (ns) and iterations, image check, harness
@@ -499,7 +501,7 @@ END {
     for (a = 1; a <= na; a++)
         printf "| %s | `%s` | `%s` | %s (%s) | %s `%s` | `%s` | %s | %ss |\n", L[a], md(REF[a]), substr(SHA[a], 1, 12), md(TC[a]), md(RUSTC[a]), md(HN[a]), substr(HID[a], 1, 12), substr(KSHA[a], 1, 16), TREE[a], BS[a]
     print ""
-    print "Harness: `soak-qemu.sh` is the arm's scripts/soak-qemu.sh (id: its sha256), `aios soak` the arm's own aios, run as `just soak` (id: the git tree of the arm's tools/)."
+    print "Harness: `soak-qemu.sh` is the arm's scripts/soak-qemu.sh (id: its sha256), `aios soak` the arm's own aios, run as `just soak` (id: a hash of the git tree entries of its build inputs: tools/, Cargo.lock, Cargo.toml, rust-toolchain(.toml), .cargo/ and the justfile)."
     print ""
     print "### Results"
     print ""
@@ -775,11 +777,18 @@ prepare_arm() {
         ARM_HID[i]=$(sha256_of "$h")
         ;;
     aios)
-        # The harness's source: the arm's tools/ crate, as committed (the
-        # worktree is a clean checkout of the arm's commit).
+        # The harness's source: every input the arm's `just tools` builds aios
+        # from (the `inputs` list of the justfile's tools recipe, also what its
+        # provenance stamp records), as committed in the arm's commit (the
+        # worktree is a clean checkout of it). tools/ alone would miss a
+        # Cargo.lock bump of a dependency such as signal-hook.
         ARM_HNAME[i]="aios soak"
-        ARM_HID[i]=$(git -C "$REPO_ROOT" rev-parse --verify --quiet "${ARM_SHA[$i]}:tools") ||
+        git -C "$REPO_ROOT" rev-parse --verify --quiet "${ARM_SHA[$i]}:tools" >/dev/null ||
             die "arm $label (${ARM_REF[$i]}): its \`just soak\` runs aios soak, but it has no tools/ directory"
+        ARM_HID[i]=$(git -C "$REPO_ROOT" ls-tree "${ARM_SHA[$i]}" -- \
+            tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile |
+            git -C "$REPO_ROOT" hash-object --stdin) ||
+            die "arm $label (${ARM_REF[$i]}): cannot hash its aios build inputs"
         ;;
     esac
     # The channel line, double- or single-quoted, indented or not. A missing
