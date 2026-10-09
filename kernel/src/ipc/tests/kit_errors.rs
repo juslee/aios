@@ -10,6 +10,7 @@ use shared::{
 };
 
 use super::bad_pid::{revoke_region_access, revoke_token, token_id};
+use super::select_cap::SelectCapChannels;
 use super::TEST_PID;
 
 const PAGE: usize = 4096;
@@ -32,10 +33,10 @@ const USER_BIT: u64 = 0b1000;
 /// notification table filled during boot.
 ///
 /// Runs in the ipc-timeout thread `my_tid` (process 1), after
-/// `select_cap_test`, on that test's channels: `channels` is its
-/// `(owned_a, denied)`, so this test creates no channel and grants no
-/// ChannelAccess. `open` (`owned_a`) is accessible and empty; every message
-/// sent to it is received again, so it is left empty. `denied` is not
+/// `select_cap_test`, on that test's channels, so this test creates no
+/// channel and grants no ChannelAccess. `open` (`owned_a`) is accessible and
+/// empty; every message sent to it is received again, so it is left empty.
+/// `owned_b` is accessible too and only named in a lookup. `denied` is not
 /// accessible. The shared memory checks revoke the SharedMemoryCreate token
 /// they grant right after the create, and the region's SharedMemoryAccess
 /// tokens before the unmap that frees it.
@@ -46,7 +47,7 @@ const USER_BIT: u64 = 0b1000;
 ///
 /// Logs one line: the success text, or the bitmask of failed checks (bit n
 /// is check n below).
-pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, ChannelId)>) {
+pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChannels>) {
     let pid = match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => p,
         other => {
@@ -54,7 +55,12 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
             return;
         }
     };
-    let Some((open, denied)) = channels else {
+    let Some(SelectCapChannels {
+        owned_a: open,
+        owned_b,
+        denied,
+    }) = channels
+    else {
         crate::kwarn!(Ipc, "Kit-error test: no select-cap channels");
         return;
     };
@@ -84,13 +90,14 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     checks[3] = kit.select(&[chan(open), chan(denied)], 10).err() == access_denied(denied);
     // select's fallback, which no test can reach through the race behind
     // it, so the lookup is called directly: with every channel entry held
-    // (a grant landed after ipc_select's check) it names the first channel
-    // entry, past any notification entry, and a set with no channel entry
-    // gives None.
+    // (a grant landed after ipc_select's check) it names the first of the
+    // two channel entries, past any notification entry, and a set with no
+    // channel entry gives None.
     let notification = SelectEntry {
         kind: SelectKind::Notification(NotificationId(0), 1),
     };
-    checks[22] = crate::ipc::first_denied_channel(&[notification, chan(open)]) == Some(open);
+    checks[22] =
+        crate::ipc::first_denied_channel(&[notification, chan(open), chan(owned_b)]) == Some(open);
     checks[23] = crate::ipc::first_denied_channel(&[notification]).is_none();
     // channel_destroy checks ChannelAccess before it touches the table, so
     // `denied` survives.

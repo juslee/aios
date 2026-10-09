@@ -455,7 +455,7 @@ fn ipc_caller_entry() -> ! {
 /// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
 /// (`syscall_args_test`, whose bad-buffer checks use `select_cap_test`'s
 /// `owned_a`), and the IPC Kit's error variants through `KernelIpc`
-/// (`kit_errors_test`, on both of `select_cap_test`'s channels).
+/// (`kit_errors_test`, on all three of `select_cap_test`'s channels).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -543,7 +543,7 @@ fn ipc_timeout_entry() -> ! {
 
     bad_pid::shm_bad_pid_test(caller_tid);
     let select_channels = select_cap::select_cap_test(caller_tid);
-    syscall_args::syscall_args_test(caller_tid, select_channels.map(|(open, _)| open));
+    syscall_args::syscall_args_test(caller_tid, select_channels.map(|c| c.owned_a));
     kit_errors::kit_errors_test(caller_tid, select_channels);
 
     loop {

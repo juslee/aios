@@ -21,6 +21,8 @@ const PAGE: u64 = 4096;
 const READ: u64 = 0b001;
 const READ_WRITE: u64 = 0b011;
 const WRITE_EXECUTE: u64 = 0b110;
+/// Number of checks in `syscall_args_test`.
+const CHECKS: usize = 43;
 
 /// Issue syscall `nr` with `args` in x0.. through `syscall_dispatch`, the
 /// path an EL0 SVC takes, and return x0 as the signed result.
@@ -45,7 +47,7 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// every id cannot pass checks 13-14 alone.
 ///
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
-/// no state and grant nothing. Checks 0-20 and 26-40 log no warning; checks
+/// no state and grant nothing. Checks 0-20 and 26-42 log no warning; checks
 /// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
 /// warnings. The one MemoryMap allocation is freed by the
 /// test's own exact unmap, the one shared region by its unmap once the
@@ -61,20 +63,23 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// build with overflow checks.
 ///
 /// IpcRecv and IpcCall validate their buffers before the call (checks
-/// 32-36), on `open`, a channel process 1 can access and that is empty
-/// (`select_cap_test`'s `owned_a`): a later copy-out would also return
-/// EINVAL, but only after the receive had consumed a message or the call had
-/// sent one. IpcRecv gets a bad buffer while one message is queued, which a
-/// later in-kernel receive must still find; IpcCall gets an empty send
-/// buffer at `USER_VA_MIN` and a page-0 or null reply buffer, and the ring
-/// must stay empty. A late check would make IpcCall time out after one tick
-/// instead. Checks 39-40 show the handlers accept empty buffers at
+/// 32-36 and 41-42), on `open`, a channel process 1 can access and that is
+/// empty (`select_cap_test`'s `owned_a`): a later copy-out would also
+/// return EINVAL, but only after the receive had consumed a message or the
+/// call had sent one. IpcRecv gets a bad buffer while one message is
+/// queued, which a later in-kernel receive must still find; IpcCall gets an
+/// empty send buffer at `USER_VA_MIN` and a page-0 or null reply buffer,
+/// and the ring must stay empty. A late check would make IpcCall time out
+/// after one tick instead. A null buffer is EINVAL even at length 0 (checks
+/// 41-42), so a handler that skipped the check for an empty buffer fails
+/// them. Checks 39-40 show the handlers accept empty buffers at
 /// `USER_VA_MIN`, so a fix that rejected every buffer cannot pass checks
-/// 32-36 alone, and that check 35's EINVAL comes from the reply buffer. With
-/// the ring filled, so that nothing blocks, an IpcCall with both buffers
-/// there gets past validation to the full ring (ENOSPC), and an IpcRecv into
-/// an empty buffer there takes a queued message (0 bytes). `open` is left
-/// empty for `kit_errors_test`. The checks fail if `open` is `None`.
+/// 32-36 and 41-42 alone, and that the EINVAL of checks 35 and 42 comes from
+/// the reply buffer. With the ring filled, so that nothing blocks, an
+/// IpcCall with both buffers there gets past validation to the full ring
+/// (ENOSPC), and an IpcRecv into an empty buffer there takes a queued
+/// message (0 bytes). `open` is left empty for `kit_errors_test`. The checks
+/// fail if `open` is `None`.
 ///
 /// MemoryUnmap, which freed direct-map addresses before #188, gets the
 /// direct-map address of physical page 0 instead of a stack buffer: that
@@ -114,7 +119,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
         .position(Option::is_none)
         .unwrap_or(MAX_NOTIFICATIONS) as u64;
 
-    let mut checks = [false; 41];
+    let mut checks = [false; CHECKS];
 
     // User pointers: null, page 0 and kernel addresses are EINVAL.
     checks[0] = svc(Syscall::DebugPrint, &[0, 4]) == einval;
@@ -188,15 +193,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
     }
 
     if let Some(open) = open {
-        let [recv_null, recv_page_zero, kept, call_rejected, nothing_sent, call_ok, recv_ok] =
-            bad_buffer_checks(open, page_zero);
-        checks[32] = recv_null;
-        checks[33] = recv_page_zero;
-        checks[34] = kept;
-        checks[35] = call_rejected;
-        checks[36] = nothing_sent;
-        checks[39] = call_ok;
-        checks[40] = recv_ok;
+        bad_buffer_checks(open, page_zero, &mut checks);
     }
 
     let failed = checks
@@ -213,32 +210,33 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
     }
 }
 
-/// IpcRecv and IpcCall on `open` with bad buffers, then with empty ones
-/// (checks 32-36 and 39-40 of `syscall_args_test`). Returns `[recv_null,
-/// recv_page_zero, kept, call_rejected, nothing_sent, call_ok, recv_ok]`,
-/// with `kept` and `nothing_sent` false if the message could not be queued.
-/// Drains `open` before it returns, whatever the results.
-fn bad_buffer_checks(open: ChannelId, page_zero: u64) -> [bool; 7] {
+/// IpcRecv and IpcCall on `open` with bad buffers, then with empty ones:
+/// sets checks 32-36 and 39-42 of `syscall_args_test`, with 34 and 36 false
+/// if the message could not be queued. Drains `open` before it returns,
+/// whatever the results.
+fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS]) {
     let einval = IpcError::Einval as i64;
     let channel = open.0 as u64;
     let mut buf = [0u8; 4];
-    let mut result = [false; 7];
 
     let queued = crate::ipc::ipc_send(open, b"TEST") == 0;
-    result[0] = svc(Syscall::IpcRecv, &[channel, 0, 4, 0]) == einval;
-    result[1] = svc(Syscall::IpcRecv, &[channel, page_zero, 4, 0]) == einval;
-    // The message is still queued: neither rejected receive consumed it.
-    result[2] = queued && crate::ipc::ipc_recv(open, &mut buf, 0).map(|(n, _)| n) == Ok(4);
+    checks[32] = svc(Syscall::IpcRecv, &[channel, 0, 4, 0]) == einval;
+    checks[33] = svc(Syscall::IpcRecv, &[channel, page_zero, 4, 0]) == einval;
+    // Null is EINVAL even for an empty buffer.
+    checks[41] = svc(Syscall::IpcRecv, &[channel, 0, 0, 0]) == einval;
+    // The message is still queued: no rejected receive consumed it.
+    checks[34] = queued && crate::ipc::ipc_recv(open, &mut buf, 0).map(|(n, _)| n) == Ok(4);
 
     // A valid empty send buffer and a bad reply buffer: EINVAL before the
     // call sends anything, so the ring stays empty.
     let user_va_min = USER_VA_MIN as u64;
-    result[3] = svc(
+    checks[35] = svc(
         Syscall::IpcCall,
         &[channel, user_va_min, 0, page_zero, 4, 1],
     ) == einval
         && svc(Syscall::IpcCall, &[channel, user_va_min, 0, 0, 4, 1]) == einval;
-    result[4] = queued && crate::ipc::ipc_recv(open, &mut buf, 0) == Err(IpcError::Eagain as i64);
+    checks[42] = svc(Syscall::IpcCall, &[channel, user_va_min, 0, 0, 0, 1]) == einval;
+    checks[36] = queued && crate::ipc::ipc_recv(open, &mut buf, 0) == Err(IpcError::Eagain as i64);
 
     // Positive controls: empty buffers at USER_VA_MIN pass validation and
     // the copies never touch them. The ring is filled first, so neither call
@@ -253,16 +251,15 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64) -> [bool; 7] {
         }
     }
     let full = send == IpcError::Eagain as i64;
-    result[5] = full
+    checks[39] = full
         && svc(
             Syscall::IpcCall,
             &[channel, user_va_min, 0, user_va_min, 0, 1],
         ) == IpcError::Enospc as i64;
-    result[6] = full && svc(Syscall::IpcRecv, &[channel, user_va_min, 0, 0]) == 0;
+    checks[40] = full && svc(Syscall::IpcRecv, &[channel, user_va_min, 0, 0]) == 0;
 
     // Leave `open` empty for kit_errors_test even after a failed check.
     while crate::ipc::ipc_recv(open, &mut buf, 0).is_ok() {}
-    result
 }
 
 /// On a region with `max_flags` READ | USER that process `pid` (the calling

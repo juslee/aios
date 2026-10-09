@@ -164,8 +164,8 @@ impl From<IpcError> for IpcKitError {
     ///   to a target pid with no process, and ProcessWait for a child pid
     ///   with no process or after a wake that finds no exit code. `reply`,
     ///   `notification_create` and `shmem_unmap` override it; the other
-    ///   syscalls named here have no Kit wrapper, so a plain decode of their
-    ///   EPERM reads as `CapabilityDenied`.
+    ///   EPERM paths listed above have no Kit wrapper, so a plain decode of
+    ///   their EPERM reads as `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
