@@ -154,8 +154,8 @@ jobs:
           qemu-system-aarch64 --version
           dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
           test -f "$AIOS_EDK2_FW"
-      # just soak runs the aios binary (.claude/hooks/aios); build it first so
-      # a build failure shows as its own step, not as a soak setup error.
+      # just soak builds this checkout's aios binary and runs it; build it
+      # first so a build failure shows as its own step, not inside the soak.
       - name: Build the host tools
         run: just tools
       # TCG on x86 is slower than on the arm64 dev hosts, hence 90 s per boot.

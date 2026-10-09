@@ -101,6 +101,15 @@ exit 1
 const CLEAN_TAIL: &str = r"printf '[bench] === Gate 1 Benchmark ===\r\nGate 1: IPC < 10 us: PASS\r\n=== Gate 1 Complete ===\r\n[heartbeat] tick=1000\r\n'
 ";
 
+/// The heartbeat goes on advancing until QEMU is stopped.
+const HEARTBEAT_LOOP: &str = r"tick=1500
+while :; do
+    sleep 0.5
+    printf '[heartbeat] tick=%d\r\n' $tick
+    tick=$((tick + 500))
+done
+";
+
 /// The gpu markers, then an EL1 exception; QEMU exits 1.
 const GPU_EXCEPTION_TAIL: &str = r"printf 'GpuReady\r\nInputReady\r\ndisplay handoff complete\r\n'
 printf 'EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff000000081234\r\n'
@@ -195,18 +204,14 @@ fn interrupted(name: &'static str, signal: &'static str) -> Scenario {
 }
 
 /// One CLEAN boot whose QEMU gets Ctrl-Z with the harness; see [`Scenario::suspend`].
+/// The heartbeat advances every half second of QEMU running time until the
+/// limit, so the boot is CLEAN only when the time spent stopped is left out
+/// of the progress times.
 pub fn suspended() -> Scenario {
     let mut s = Scenario::new(
         "suspend",
-        &[
-            "--no-build",
-            "runs=1",
-            "secs=2",
-            "stall_secs=1",
-            "report_only=1",
-            "out=out",
-        ],
-        format!("{BOOT_HEAD}{CLEAN_TAIL}echo $$ >\"$AIOS_FAKE_ROOT/qemu.pid\"\nexec sleep 30\n"),
+        &["--no-build", "runs=1", "secs=3", "stall_secs=2", "out=out"],
+        format!("{BOOT_HEAD}{CLEAN_TAIL}echo $$ >\"$AIOS_FAKE_ROOT/qemu.pid\"\n{HEARTBEAT_LOOP}"),
     );
     s.suspend = true;
     s
@@ -579,8 +584,8 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
             );
             std::thread::sleep(Duration::from_millis(50));
         }
-        // Past the 2 s limit: a stopped QEMU must not have used it up.
-        std::thread::sleep(Duration::from_millis(2_500));
+        // Past the 3 s limit: a stopped QEMU must not have used it up.
+        std::thread::sleep(Duration::from_millis(3_500));
         assert_eq!(state(&qemu), "T", "{}: QEMU did not stay stopped", sc.name);
         send("CONT");
     }

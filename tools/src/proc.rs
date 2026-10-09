@@ -154,14 +154,15 @@ impl Supervisor {
     /// itself until it is continued (Ctrl-Z): SIGSTOP the child's process group,
     /// run `stopped`, then SIGCONT the group and move the time limit (and a
     /// SIGKILL that is due) back by the time spent stopped, which the stopped
-    /// child did not use. When the group cannot be stopped, say so and return
+    /// child did not use. Returns the time spent in `stopped`, so the caller
+    /// can move its own clock of the child's running time back by the same
+    /// amount. When the group cannot be stopped, say so and return zero
     /// without running `stopped`: a caller stopped while the child runs on
     /// would leave the child without a limit.
-    pub fn suspend(&mut self, stopped: impl FnOnce()) -> Result<()> {
+    pub fn suspend(&mut self, stopped: impl FnOnce()) -> Result<Duration> {
         self.service()?;
         if self.status.is_some() {
-            stopped();
-            return Ok(());
+            return Ok(timed(stopped));
         }
         let pid = self.id();
         match signal_group_with(self.kill_program, pid, "STOP") {
@@ -170,23 +171,20 @@ impl Supervisor {
                 // As in signal: a leader that has exited ended the group.
                 if let Ok(Some(exited)) = self.child.try_wait() {
                     self.status = Some(exited);
-                    stopped();
-                } else {
-                    self.warn(&format!(
-                        "{} -STOP for process group {pid} failed ({status}); not suspending",
-                        self.kill_program
-                    ));
+                    return Ok(timed(stopped));
                 }
-                return Ok(());
+                self.warn(&format!(
+                    "{} -STOP for process group {pid} failed ({status}); not suspending",
+                    self.kill_program
+                ));
+                return Ok(Duration::ZERO);
             }
             Err(e) => {
                 self.warn(&format!("{e:#}; not suspending"));
-                return Ok(());
+                return Ok(Duration::ZERO);
             }
         }
-        let since = Instant::now();
-        stopped();
-        let paused = since.elapsed();
+        let paused = timed(stopped);
         match signal_group_with(self.kill_program, pid, "CONT") {
             Ok(status) if status.success() => {}
             // A group that stays stopped still ends at the limit: SIGKILL
@@ -199,7 +197,7 @@ impl Supervisor {
         }
         self.deadline = self.deadline.and_then(|d| d.checked_add(paused));
         self.term_sent = self.term_sent.map(|t| t.checked_add(paused).unwrap_or(t));
-        Ok(())
+        Ok(paused)
     }
 
     /// `timeout`'s exit status once the child has been reaped.
@@ -254,16 +252,17 @@ impl Drop for Supervisor {
     }
 }
 
-/// Send `signal` (a name such as `TERM`) to process group `pgid` with the POSIX
-/// `kill` utility: std can only SIGKILL its own child, not a group, and this
-/// crate forbids `unsafe`. A group that has already exited is not an error.
-pub fn signal_group(pgid: u32, signal: &str) -> Result<()> {
-    signal_group_with("kill", pgid, signal)?;
-    Ok(())
+/// How long `f` takes to run.
+fn timed(f: impl FnOnce()) -> Duration {
+    let since = Instant::now();
+    f();
+    since.elapsed()
 }
 
-/// Run `program -SIGNAL -- -PGID` (the `kill` utility, or a test's stand-in)
-/// and return its exit status: an error only when it cannot run. It runs in its
+/// Run `program -SIGNAL -- -PGID` (the POSIX `kill` utility, or a test's
+/// stand-in: std can only SIGKILL its own child, not a group, and this crate
+/// forbids `unsafe`) and return its exit status: an error only when it cannot
+/// run, so the caller decides what a failed `kill` means. It runs in its
 /// own process group, so a terminal signal (Ctrl-C, Ctrl-Z) meant for the
 /// harness never stops it while the harness waits for it.
 fn signal_group_with(program: &str, pgid: u32, signal: &str) -> Result<ExitStatus> {
@@ -497,13 +496,15 @@ mod tests {
         .expect("sh starts");
         let pid = s.id().to_string();
         let mut seen = String::new();
-        s.suspend(|| {
-            seen = state(&pid);
-            // Longer than the limit: a stopped child must not use it up.
-            std::thread::sleep(Duration::from_millis(1_000));
-        })
-        .expect("suspend");
+        let paused = s
+            .suspend(|| {
+                seen = state(&pid);
+                // Longer than the limit: a stopped child must not use it up.
+                std::thread::sleep(Duration::from_millis(1_000));
+            })
+            .expect("suspend");
         assert_eq!(seen, "T", "the child was not stopped");
+        assert!(paused >= Duration::from_millis(1_000), "{paused:?}");
         s.service().expect("service");
         assert_eq!(s.exit_code(), None, "the limit ran out while stopped");
         assert_ne!(state(&pid), "T", "the child was not continued");
@@ -520,19 +521,12 @@ mod tests {
         for program in BROKEN_KILLS {
             let mut s = with_kill(program, "exec sleep 30", Duration::from_secs(60));
             let mut ran = false;
-            s.suspend(|| ran = true).expect("suspend");
+            let paused = s.suspend(|| ran = true).expect("suspend");
             assert!(
                 !ran,
                 "{program}: the caller would stop while the child runs"
             );
+            assert_eq!(paused, Duration::ZERO, "{program}");
         }
-    }
-
-    #[test]
-    fn signalling_a_group_that_is_gone_is_not_an_error() {
-        // No host can allocate this process group id: Linux pids stop at
-        // PID_MAX_LIMIT (4194304 on 64-bit), macOS's at 99999. A smaller id
-        // such as 999999 can be a live group on Linux, which would get SIGTERM.
-        signal_group(i32::MAX as u32, "TERM").expect("kill ran");
     }
 }

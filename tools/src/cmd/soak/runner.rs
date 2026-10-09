@@ -16,8 +16,9 @@
 //! - SIGHUP and SIGQUIT are caught like SIGINT and SIGTERM (exit 129 and 131),
 //!   so no terminal signal leaves QEMU running after the harness ends.
 //! - Ctrl-Z (SIGTSTP) during a boot stops QEMU's process group with the
-//!   harness, and on resume moves the boot's time limit back by the time spent
-//!   stopped. The script's `timeout` ran in its own group, so QEMU ran on and
+//!   harness, and on resume moves the boot's time limit and its clock back by
+//!   the time spent stopped, so the classifier's timings are QEMU's running
+//!   time. The script's `timeout` ran in its own group, so QEMU ran on and
 //!   was killed at the limit while bash was stopped.
 
 use std::ffi::{OsStr, OsString};
@@ -528,7 +529,10 @@ fn build_and_boot(
 
         let log_file =
             File::create(&log).with_context(|| format!("cannot create {}", log.display()))?;
-        let start = Instant::now();
+        // QEMU's running time: a Ctrl-Z moves it forward by the time spent
+        // stopped, as it moves QEMU's time limit, so every progress time and
+        // the footer's elapsed share the limit's clock.
+        let mut start = Instant::now();
         let mut command = host::command("qemu-system-aarch64");
         // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
         command
@@ -566,7 +570,8 @@ fn build_and_boot(
                                 return Ok(code);
                             }
                             if interrupts.take_suspend() {
-                                qemu.suspend(|| interrupts.stop_self())?;
+                                let paused = qemu.suspend(|| interrupts.stop_self())?;
+                                start = start.checked_add(paused).unwrap_or(start);
                             }
                             qemu.service()?;
                             let now = Instant::now();

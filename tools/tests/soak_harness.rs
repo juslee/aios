@@ -255,12 +255,27 @@ fn an_interrupt_after_the_last_boot_skips_the_summary() {
 #[test]
 fn ctrl_z_stops_qemu_with_the_harness() {
     let o = run_scenario(Tool::Aios, &suspended());
-    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stderr));
+    // Status 0 without report_only: the boot is CLEAN.
+    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stdout));
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains("run 01/1  CLEAN "),
+        "{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
     assert!(o.alive.is_empty(), "still running: {:?}", o.alive);
-    // The limit ran out only after the resume: 2 s of running plus the 2.5 s
-    // or more spent stopped.
+    // The limit ran out only after the resume (124), and every time the
+    // classifier reads is QEMU's running time: the 3.5 s or more spent
+    // stopped is in neither the elapsed time nor the heartbeat's last advance.
     assert_eq!(footer_value(&o, "run-01.log", "qemu_rc"), 124);
-    assert!(footer_value(&o, "run-01.log", "elapsed") >= 4);
+    let elapsed = footer_value(&o, "run-01.log", "elapsed");
+    assert!((3..=4).contains(&elapsed), "elapsed={elapsed}");
+    let advance = footer_value(&o, "run-01.log", "hb_last_advance");
+    assert!(
+        (1..=elapsed).contains(&advance),
+        "hb_last_advance={advance}"
+    );
+    let gap = footer_value(&o, "run-01.log", "hb_max_gap");
+    assert!(gap <= 2, "hb_max_gap={gap}");
     assert!(
         o.listing
             .as_ref()

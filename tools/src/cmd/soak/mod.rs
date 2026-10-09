@@ -145,8 +145,8 @@ kill utility. Each boot's QEMU runs in its own process group: the harness
 sends the group SIGTERM when --secs run out and SIGKILL 10 s later, and
 records QEMU's exit status as timeout(1) reported it (124 when the time limit
 stopped QEMU, 137 when SIGKILL was needed). Ctrl-Z (SIGTSTP) stops the running
-QEMU along with the harness; on resume, the time limit is moved back by the
-time spent stopped.
+QEMU along with the harness; on resume, the time limit and the boot's
+timings are moved back by the time spent stopped.
 
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
 boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,

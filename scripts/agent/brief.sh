@@ -306,6 +306,8 @@ fi
 # main soak only when it finished and its commit is on origin/main with no
 # uncommitted changes; everything else (branch commits, dirty trees, runs still
 # in progress) is reported separately so it is never read as main's state.
+# just soak runs the booted checkout's own tools build, so that commit names the
+# classifier too.
 
 MAIN_TIP=$(git rev-parse -q --verify refs/remotes/origin/main 2>/dev/null || echo "")
 
