@@ -359,6 +359,14 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     bench::init();
     observability::drain_logs();
 
+    // Tripwire self-test (feature `tripwire-selftest`, off by default): a
+    // thread on CPU 0 that makes the next tick panic with `lock re-entry:`.
+    #[cfg(feature = "tripwire-selftest")]
+    {
+        sync::selftest::init();
+        observability::drain_logs();
+    }
+
     // --- Step 7d: Release secondary cores ---
     sched::start();
     observability::drain_logs();
