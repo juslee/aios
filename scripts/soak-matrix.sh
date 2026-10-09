@@ -11,13 +11,17 @@
 # the boot failure rate; .github/workflows/soak-matrix.yml runs it on a single
 # CI runner (workflow_dispatch).
 #
-# Each boot is one run of the arm's own scripts/soak-qemu.sh (--no-build
-# --runs 1 --report-only), started inside the arm's git worktree. That harness
-# finds the repository root from its own path, so it boots the arm's ESP image
-# with the arm's justfile and classifies the boot with the arm's classifier.
-# This script drives the bash soak-qemu.sh; the planned Rust port of the soak
-# (tools series R4) will replace that harness, and this script must be
-# updated then.
+# Each boot is one run of the arm's own boot harness (--no-build --runs 1
+# --report-only), started inside the arm's git worktree, so it boots the arm's
+# ESP image with the arm's justfile and classifies the boot with the arm's
+# classifier. An arm has one of two harnesses (harness_kind):
+#   - scripts/soak-qemu.sh, the bash harness of every revision before Tools R4
+#     (1a5c363), run as `bash scripts/soak-qemu.sh`;
+#   - aios soak, its Rust port in tools/ from R4 on, run through the arm's
+#     justfile as `just soak` (which first builds the arm's own aios).
+# Both take the same options and write the same files in the same formats
+# (R4's parity tests hold the port to the script), so one soak can mix a
+# pre-R4 arm with a post-R4 one.
 #
 # Portable across macOS (bash 3.2, BSD userland) and Linux (GNU userland):
 # no bash 4 features, POSIX awk only.
@@ -31,7 +35,7 @@ unset CDPATH
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 LETTERS=ABCD
 MAX_ARMS=4
-# The classes soak-qemu.sh reports, in the order the summary lists them. Any
+# The classes the harnesses report, in the order the summary lists them. Any
 # other class a harness reports is listed after these. ERROR is this script's
 # own: the harness failed and left no boot it could classify (no log, or a log
 # cut off before its "[soak] meta" footer).
@@ -41,8 +45,13 @@ MAX_ERROR_STREAK=3
 # Every arm must contain this commit (#196: kernel segments loaded executable
 # for strict-NX edk2; it also brings #192's harness). See --help.
 MIN_ARM_BASE=7167d408f6a43ca9859fb6238f608ca6bdee37d6
-# soak-qemu.sh's default --stall-secs; it refuses a --secs that is not larger.
+# The default --stall-secs of both harnesses (soak-qemu.sh and aios soak);
+# each refuses a --secs that is not larger.
 HARNESS_STALL_SECS=15
+# The command that runs each arm's builds and harness: every arm builds with
+# its own toolchain pin into its own target/. `just soak` rebuilds the arm's
+# aios (a no-op once built) before every boot, so it needs this too.
+ENV_CLEAN=(env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR)
 # Upper bounds for --runs and --secs. They keep every product of the two
 # well inside the shell's 64-bit arithmetic (4 arms x 1000 x 3600 s is 160
 # days of boots), so no size computed from them can wrap.
@@ -71,8 +80,8 @@ arms drift apart by chance.
 Options:
   --runs N          rounds, i.e. boots per arm, 1-1000 (default 30)
   --secs T          wall-clock seconds per boot, 16-3600 (default 90); must
-                    be more than 15, the harness's --stall-secs
-  --mode text|gpu   QEMU device set, as soak-qemu.sh --mode (default text)
+                    be more than 15, the harnesses' --stall-secs
+  --mode text|gpu   QEMU device set, as the harness's --mode (default text)
   --out DIR         output directory; must be new or empty (default
                     target/soak-matrix/<timestamp>-<mode> in the main
                     checkout, see below)
@@ -86,18 +95,41 @@ Options:
   -h, --help        show this help
 
 Each arm is checked out with `git worktree add --detach` and built there
-with `just disk`, which uses the arm's own rust-toolchain.toml (rustup
-installs a missing pinned toolchain on first use). Keep the worktrees
-outside any checkout: Cargo also reads the .cargo/config.toml of every
-parent directory, so a worktree inside a checkout builds with that
+with `just disk`, which uses the arm's own rust-toolchain.toml. Before the
+build, `rustup toolchain install --no-self-update` runs in the arm's
+worktree with no toolchain named: rustup reads the arm's
+rust-toolchain.toml itself and installs that channel with the file's
+components and targets, or leaves an installed one as it is. So no build
+relies on rustup installing a missing toolchain on first use, and the soak
+works whether RUSTUP_AUTO_INSTALL is on or off (0). That needs rustup 1.28
+or later, and network access for a toolchain not installed yet. Keep the
+worktrees outside any checkout: Cargo also reads the .cargo/config.toml of
+every parent directory, so a worktree inside a checkout builds with that
 checkout's configuration as well as its own.
+
+Each arm boots with its own harness, whichever of the two it has:
+  soak-qemu.sh  the bash harness of every revision before Tools R4
+                (1a5c363): the arm has scripts/soak-qemu.sh
+  aios soak     its Rust port from R4 on: the arm has no soak-qemu.sh, and
+                its justfile has a `soak` recipe that runs the arm's own
+                aios binary (and a `tools` recipe that builds it); its
+                build also runs `just tools`, and `just soak --help` must
+                list the options below
+An arm with neither is refused before any build. Both harnesses take the
+same options and write the same files in the same formats, so the arms of
+one soak may use different harnesses (a pre-R4 base against a post-R4
+fix, say); summary.md names each arm's harness, and says so when they
+differ.
 
 Every arm must contain 7167d40 (#196, main as of 2026-09-24 15:41 +0800 or
 later). That commit loads the kernel segments executable: strict-NX edk2
 (Ubuntu 26.04, the CI runner; upstream ArmVirt) maps EfiLoaderData
 execute-never, so an older kernel faults at the jump on every boot there.
 It also brings #192's find_timeout (the uutils timeout check that Ubuntu
-26.04 needs) on top of the --no-build option from #168.
+26.04 needs) on top of the --no-build option from #168, which every
+soak-qemu.sh arm needs. A soak with a soak-qemu.sh arm also needs a
+`timeout` or `gtimeout` that passes that check; aios soak stops QEMU
+itself and needs none.
 
 The arms must pin the same toolchain channel, build with the same compiler
 (rustc --version, compared after the builds) and boot the same firmware
@@ -114,50 +146,63 @@ sha256) that the soak read after the builds: an upgrade mid-soak, a
 rebuilt Homebrew revision with the same version included, stops it, and
 the boot that saw it is not counted.
 
-Every boot runs, from inside the arm's worktree:
-  scripts/soak-qemu.sh --no-build --runs 1 --secs T --mode M --report-only
-                       --out OUT/arm-X/rNN
+Every boot runs, from inside the arm's worktree, one of:
+  bash scripts/soak-qemu.sh OPTIONS                  (soak-qemu.sh arm)
+  just --justfile WORKTREE/justfile soak OPTIONS     (aios soak arm)
+with OPTIONS = --no-build --runs 1 --secs T --mode M --report-only
+--out OUT/arm-X/rNN. A boot whose harness failed but left a complete
+serial log is re-classified with the arm's harness (--report-only
+--classify run-01.log, run in the boot's directory).
 
 Output directory: by default target/soak-matrix/<timestamp>-<mode> in the
 main checkout (the first entry of `git worktree list`), whichever worktree
 runs the script. /merge-and-cleanup copies only target/soak/ out of a pull
 request's worktree before the merge deletes it, so keep an --out outside
 such a worktree too.
-  summary.md     settings, the arms, per-arm class counts, CLEAN rate with a
-                 95% Wilson interval over conclusive boots, IPC round-trip
-                 medians, pairwise Fisher exact tests of CLEAN vs not CLEAN
-                 (one-sided toward the arm with the lower CLEAN rate, as the
-                 crash-fix regression guard reads it, and two-sided), and
-                 every non-CLEAN boot; rewritten after each boot
+  summary.md     settings, the arms (each with its harness), per-arm class
+                 counts, CLEAN rate with a 95% Wilson interval over
+                 conclusive boots, IPC round-trip medians, pairwise Fisher
+                 exact tests of CLEAN vs not CLEAN (one-sided toward the arm
+                 with the lower CLEAN rate, as the crash-fix regression
+                 guard reads it, and two-sided), and every non-CLEAN boot;
+                 rewritten after each boot
   arms.tsv       one row per arm: ref, commit, toolchain, rustc, kernel ELF
-                 and ESP image sha256, harness sha256, tree state, build time
+                 and ESP image sha256, harness (soak-qemu.sh or aios soak)
+                 and harness id (the script's sha256, or the git tree id of
+                 the arm's tools/, the aios source), tree state, build time
   boots.tsv      one row per boot in boot order: round, position in the
                  round, arm, class, 1-min load average before the boot, IPC
                  avg (us), min (ns) and iterations, image check, harness
                  detail
-  arm-X/build.log   output of `just disk` for arm X
-  arm-X/rNN/        soak-qemu.sh output of arm X's boot in round NN
+  arm-X/build.log   output of arm X's build: the toolchain install, `just
+                    disk`, and for an aios soak arm `just tools`
+  arm-X/rNN/        harness output of arm X's boot in round NN
                     (run-01.log, summary.tsv, summary.md)
-  arm-X/rNN.out     soak-qemu.sh console output for that boot
+  arm-X/rNN.out     harness console output for that boot
+  arm-X/rNN.classify  the harness's --classify output, for a boot whose
+                    harness failed after its serial log was complete
 
 The image check compares each boot's summary.md (commit and kernel ELF
 sha256 inside the ESP snapshot) with the arm: "ok" means the boot ran that
 arm's kernel, built from a clean tree.
 
 Environment: AIOS_EDK2_FW is passed through to the builds and the harness.
-RUSTUP_TOOLCHAIN and CARGO_TARGET_DIR are unset for the builds, so every arm
-builds with its own toolchain pin into its own target/.
+RUSTUP_TOOLCHAIN and CARGO_TARGET_DIR are unset for the toolchain install,
+the builds and the harness (`just soak` rebuilds the arm's aios, a no-op
+once built, before every boot), so every arm builds with its own toolchain
+pin into its own target/.
 
 Exit status: 0 when every round ran, whatever the boot classes (report
 only); 2 on a usage or setup error (a ref that does not resolve, an arm
-without #196, mixed toolchains or firmware, a failed build, a harness error
-on an arm's first boot, 3 harness errors in a row, a QEMU or firmware
-change mid-soak, or a QEMU that outlives its dead harness and will not
-stop); 129, 130, 131 and 143 on SIGHUP, SIGINT, SIGQUIT and
-SIGTERM. A signal stops the running build or boot at once (the boot's
-harness stops QEMU and removes its scratch files), as does any other early
-exit; once the boots have started, it also marks summary.md "stopped". A
-soak stopped before then leaves no summary.md, only the build logs.
+without #196 or without a harness, mixed toolchains or firmware, a failed
+toolchain install or build, a harness error on an arm's first boot, 3
+harness errors in a row, a QEMU or firmware change mid-soak, or a QEMU
+that outlives its dead harness and will not stop); 129, 130, 131 and 143
+on SIGHUP, SIGINT, SIGQUIT and SIGTERM. A signal stops the running build
+or boot at once (the boot's harness, sent SIGTERM, stops QEMU and removes
+its scratch files before the soak exits), as does any other early exit;
+once the boots have started, it also marks summary.md "stopped". A soak
+stopped before then leaves no summary.md, only the build logs.
 EOF
 }
 
@@ -197,9 +242,9 @@ need_value() {
 # The next four match soak-qemu.sh's helpers of the same name.
 # find_timeout -- print the first of timeout / gtimeout that accepts
 # `--kill-after=N SECS CMD`, passes through the status of a command that
-# finishes in time, and exits 124 when it had to stop the command. Every
-# arm's harness refuses to boot without one; checking here, before the
-# builds, saves them.
+# finishes in time, and exits 124 when it had to stop the command. A
+# soak-qemu.sh arm's harness refuses to boot without one (aios soak stops
+# QEMU itself); checking before the builds saves them.
 find_timeout() {
     local c rc
     for c in timeout gtimeout; do
@@ -424,6 +469,7 @@ FILENAME == armsf {
     L[na] = $(AH["arm"]); IDX[L[na]] = na
     REF[na] = $(AH["ref"]); SHA[na] = $(AH["commit"])
     TC[na] = $(AH["toolchain"]); RUSTC[na] = $(AH["rustc"])
+    HN[na] = $(AH["harness"]); HID[na] = $(AH["harness_id"])
     KSHA[na] = $(AH["kernel_sha256"]); TREE[na] = $(AH["tree"]); BS[na] = $(AH["build_s"])
     next
 }
@@ -448,10 +494,12 @@ FNR == 1 { for (i = 1; i <= NF; i++) BH[$i] = i; next }
 END {
     print "### Arms"
     print ""
-    print "| Arm | Ref | Commit | Toolchain | Kernel ELF sha256 | Tree | Build |"
-    print "|---|---|---|---|---|---|---:|"
+    print "| Arm | Ref | Commit | Toolchain | Harness | Kernel ELF sha256 | Tree | Build |"
+    print "|---|---|---|---|---|---|---|---:|"
     for (a = 1; a <= na; a++)
-        printf "| %s | `%s` | `%s` | %s (%s) | `%s` | %s | %ss |\n", L[a], md(REF[a]), substr(SHA[a], 1, 12), md(TC[a]), md(RUSTC[a]), substr(KSHA[a], 1, 16), TREE[a], BS[a]
+        printf "| %s | `%s` | `%s` | %s (%s) | %s `%s` | `%s` | %s | %ss |\n", L[a], md(REF[a]), substr(SHA[a], 1, 12), md(TC[a]), md(RUSTC[a]), md(HN[a]), substr(HID[a], 1, 12), substr(KSHA[a], 1, 16), TREE[a], BS[a]
+    print ""
+    print "Harness: `soak-qemu.sh` is the arm's scripts/soak-qemu.sh (id: its sha256), `aios soak` the arm's own aios, run as `just soak` (id: the git tree of the arm's tools/)."
     print ""
     print "### Results"
     print ""
@@ -528,7 +576,7 @@ write_summary() {
         echo "|---|---|"
         echo "| Design | $N arms ($ARM_LIST); every round boots each arm once, the arm order rotated by one arm per round |"
         echo "| Progress | $1: $BOOTS_DONE of $((N * RUNS)) boots, $ROUNDS_DONE of $RUNS rounds complete |"
-        echo "| Boot | ${SECS}s each: \`scripts/soak-qemu.sh --no-build --runs 1 --report-only\` of the arm, run in the arm's worktree |"
+        echo "| Boot | ${SECS}s each: the arm's own harness with \`--no-build --runs 1 --report-only\`, run in the arm's worktree (Harness in Arms below) |"
         echo "| Harness | $HARNESS_NOTE |"
         echo "| Toolchain | $TOOLCHAIN_NOTE |"
         echo "| Host | $(uname -srm), $(host_cpus) CPUs |"
@@ -593,8 +641,11 @@ cleanup() {
 # stop_children -- stop the running build or boot, if any, and wait for it.
 # Each run_tracked command leads its own process group, and the whole group
 # gets SIGTERM: a build's cargo and rustc processes (or a toolchain install)
-# stop with it instead of running on orphaned, and soak-qemu.sh's TERM trap
-# stops QEMU and removes its scratch directory. SIGTERM, not the signal the
+# stop with it instead of running on orphaned, and the harness stops QEMU and
+# removes its scratch directory before it exits 143 -- soak-qemu.sh from its
+# TERM trap; aios soak, which shares its group with the `just` and shell
+# that started it, from its own handler while `just` waits for it, so the
+# wait below lasts until QEMU is gone. SIGTERM, not the signal the
 # script received: a SIGINT or SIGHUP from the terminal never reaches a
 # command in its own process group. Every background job is signalled, not
 # only CHILD_PID: a signal can arrive between `&` and `CHILD_PID=$!`.
@@ -612,13 +663,15 @@ stop_children() {
 
 # reap_boot DIR -- stop whatever is left of a boot whose harness died without
 # its traps (a SIGKILL from the OOM killer, say), then remove its scratch
-# directory. The harness starts QEMU under `timeout`, which moves itself and
-# QEMU into a process group of their own, so they outlive the harness and
-# stop_children never reaches them. Left running, they would share the host
-# with the next boot for up to SECS + 10 s and skew it. Both carry the
-# boot's own ESP path, DIR/.scratch.XXXXXX/esp.img, in their argv (DIR is
-# absolute and physical, like the harness's --out), so this finds exactly
-# them. It stops the soak if they do not go away.
+# directory. soak-qemu.sh starts QEMU under `timeout`, which moves itself and
+# QEMU into a process group of their own, and aios soak starts QEMU in a
+# process group of its own, so QEMU outlives the harness and stop_children
+# never reaches it. Left running, it would share the host with the next boot
+# (for up to SECS + 10 s under `timeout`, with no limit once aios soak is
+# gone) and skew it. QEMU (and `timeout`) carry the boot's own ESP path,
+# DIR/.scratch.XXXXXX/esp.img, in their argv (DIR is absolute and physical,
+# like the harness's --out), so this finds exactly them. It stops the soak
+# if they do not go away.
 reap_boot() {
     local pat n=0
     # DIR as an extended regex, every character that is special there escaped.
@@ -665,10 +718,34 @@ run_tracked() {
     return "$rc"
 }
 
+# harness_kind WT -- print the boot harness of the arm checked out in WT:
+# "script" when it has scripts/soak-qemu.sh (every revision before Tools R4,
+# 1a5c363), else "aios" when its justfile has a `tools` recipe and a `soak`
+# recipe whose body runs aios soak (R4 on: the arm's own
+# target/tools/installed/aios). Return 1 for neither. The script wins when
+# both are present, as the A/B use of pre-R4 bases expects.
+harness_kind() {
+    local wt=$1 body
+    if [ -f "$wt/scripts/soak-qemu.sh" ]; then
+        echo script
+        return 0
+    fi
+    [ -f "$wt/justfile" ] || return 1
+    body=$(cd -- "$wt" && just --justfile "$wt/justfile" --show soak 2>/dev/null) || return 1
+    (cd -- "$wt" && just --justfile "$wt/justfile" --show tools >/dev/null 2>&1) || return 1
+    # A recipe line (not a comment) naming the aios binary, then its soak
+    # subcommand: `{{ quote(... / "aios") }} soak "$@"`.
+    awk '
+        !/^[[:space:]]*#/ && /(^|[^[:alnum:]_.-])aios([^[:alnum:]_.-]|$).*[[:space:]]soak([[:space:]]|$)/ { f = 1 }
+        END { exit !f }
+    ' <<<"$body" || return 1
+    echo aios
+}
+
 # prepare_arm I -- create arm I's worktree and read what must match across
 # the arms (harness, toolchain channel, firmware path) without building.
 prepare_arm() {
-    local i=$1 wt label h msg
+    local i=$1 wt label h msg kind
     label=${ARM_LABEL[$i]}
     wt="$WT_DIR/arm-$label"
     # Claimed with a plain mkdir, which fails if the path exists, so a path
@@ -682,12 +759,29 @@ prepare_arm() {
     msg=$(git -C "$REPO_ROOT" worktree add --detach "$wt" "${ARM_SHA[$i]}" 2>&1) ||
         die "cannot create the worktree $wt for arm $label (${ARM_REF[$i]}): $msg"
 
-    h="$wt/scripts/soak-qemu.sh"
-    if [ ! -f "$h" ] || ! grep -q -- '--no-build' "$h" || ! grep -q '^find_timeout()' "$h"; then
-        die "arm $label (${ARM_REF[$i]}): its scripts/soak-qemu.sh is missing or lacks" \
-            "--no-build (#168) or find_timeout (#192, the uutils timeout check)"
-    fi
-    ARM_HSHA[i]=$(sha256_of "$h")
+    kind=$(harness_kind "$wt") ||
+        die "arm $label (${ARM_REF[$i]}): no boot harness: it has neither scripts/soak-qemu.sh" \
+            "(revisions before Tools R4, 1a5c363) nor a justfile with a \`tools\` recipe and a" \
+            "\`soak\` recipe that runs its own aios soak (R4 and later)"
+    ARM_HKIND[i]=$kind
+    case "$kind" in
+    script)
+        h="$wt/scripts/soak-qemu.sh"
+        if ! grep -q -- '--no-build' "$h" || ! grep -q '^find_timeout()' "$h"; then
+            die "arm $label (${ARM_REF[$i]}): its scripts/soak-qemu.sh lacks" \
+                "--no-build (#168) or find_timeout (#192, the uutils timeout check)"
+        fi
+        ARM_HNAME[i]=soak-qemu.sh
+        ARM_HID[i]=$(sha256_of "$h")
+        ;;
+    aios)
+        # The harness's source: the arm's tools/ crate, as committed (the
+        # worktree is a clean checkout of the arm's commit).
+        ARM_HNAME[i]="aios soak"
+        ARM_HID[i]=$(git -C "$REPO_ROOT" rev-parse --verify --quiet "${ARM_SHA[$i]}:tools") ||
+            die "arm $label (${ARM_REF[$i]}): its \`just soak\` runs aios soak, but it has no tools/ directory"
+        ;;
+    esac
     # The channel line, double- or single-quoted, indented or not. A missing
     # file or a channel this does not read is "unknown", which never counts
     # as matching another arm's.
@@ -698,33 +792,71 @@ prepare_arm() {
         die "arm $label (${ARM_REF[$i]}): \`just --evaluate edk2_fw\` failed in $wt"
 }
 
-# build_arm I -- build arm I's ESP image and record the arm in arms.tsv.
+# build_step LOG DIR CMD [ARG...] -- log "+ CMD ARG..." to LOG, then run CMD
+# in DIR with run_tracked and ENV_CLEAN, appending its output to LOG.
+# BUILD_STEP names the step for a failure message.
+build_step() {
+    local log=$1 dir=$2
+    shift 2
+    BUILD_STEP="$*"
+    echo "+ $*" >>"$log"
+    run_tracked "$log" "$dir" "${ENV_CLEAN[@]}" "$@"
+}
+
+# build_arm I -- install arm I's pinned toolchain, build its ESP image (and
+# its aios soak harness), and record the arm in arms.tsv.
 build_arm() {
-    local i=$1 wt label log start rc=0 kernel_rel disk_rel tree
-    # Every arm builds with its own toolchain pin into its own target/.
-    local -a env_clean=(env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR)
+    local i=$1 wt label log start rc=0 kernel_rel disk_rel tree help_from hint=""
     label=${ARM_LABEL[$i]}
     wt=${ARM_WT[$i]}
     log="$OUT/arm-$label/build.log"
     mkdir -p -- "$OUT/arm-$label"
-    note "arm $label: building ${ARM_REF[$i]} (${ARM_SHA[$i]:0:12}) in $wt -> $log"
+    : >"$log"
+    note "arm $label: building ${ARM_REF[$i]} (${ARM_SHA[$i]:0:12}, ${ARM_HNAME[$i]}) in $wt -> $log"
     start=$SECONDS
     # One tracked step per command (env execs it), so a signal stops whichever
-    # is running: rustc installs the toolchain pinned in the arm's
-    # rust-toolchain.toml (with its targets and components) if it is not
-    # installed yet, and that install can take minutes.
-    echo "+ rustc --version" >"$log"
-    run_tracked "$log" "$wt" "${env_clean[@]}" rustc --version || rc=$?
+    # is running. First the toolchain: with no toolchain named, rustup installs
+    # the one the arm's rust-toolchain.toml pins, with the file's components
+    # and targets (rustup parses the file, so nothing here has to), or leaves
+    # it as it is when it is already installed. The builds below then never
+    # depend on rustup's auto-install, which RUSTUP_AUTO_INSTALL=0 turns off.
+    # A first install can take minutes.
+    build_step "$log" "$wt" rustup toolchain install --no-self-update || {
+        rc=$?
+        hint=" (installing the arm's pinned toolchain needs rustup 1.28 or later, and network access the first time)"
+    }
     if [ "$rc" -eq 0 ]; then
-        echo "+ rustup show active-toolchain" >>"$log"
-        run_tracked "$log" "$wt" "${env_clean[@]}" rustup show active-toolchain || true
-        echo "+ just disk" >>"$log"
-        run_tracked "$log" "$wt" "${env_clean[@]}" just disk || rc=$?
+        build_step "$log" "$wt" rustc --version || rc=$?
+    fi
+    if [ "$rc" -eq 0 ]; then
+        build_step "$log" "$wt" rustup show active-toolchain || true
+        build_step "$log" "$wt" just disk || rc=$?
+    fi
+    if [ "$rc" -eq 0 ] && [ "${ARM_HKIND[$i]}" = aios ]; then
+        # The harness, built here so that a failed build stops the soak before
+        # any boot and no boot pays for it. `just soak` repeats this before
+        # every boot, a no-op by then. Its options must be the ones boot_arm
+        # passes.
+        build_step "$log" "$wt" just tools || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            help_from=$(($(wc -l <"$log") + 1))
+            build_step "$log" "$wt" just --justfile "$wt/justfile" soak --help || rc=$?
+            if [ "$rc" -eq 0 ] && ! awk -v from="$help_from" '
+                NR > from {
+                    for (k = 1; k <= 5; k++) if (index($0, w[k])) seen[k] = 1
+                }
+                BEGIN { split("--no-build --report-only --classify --runs --out", w, " ") }
+                END { for (k = 1; k <= 5; k++) if (!seen[k]) exit 1 }
+            ' "$log"; then
+                rc=1
+                hint=" (its help does not list --no-build, --report-only, --classify, --runs and --out)"
+            fi
+        fi
     fi
     ARM_BUILD_S[i]=$((SECONDS - start))
     if [ "$rc" -ne 0 ]; then
         tail -n 30 "$log" >&2
-        die "arm $label (${ARM_REF[$i]}): build failed (exit $rc); full log: $log"
+        die "arm $label (${ARM_REF[$i]}): build step \`$BUILD_STEP\` failed (exit $rc)$hint; full log: $log"
     fi
 
     ARM_RUSTC[i]=$(cd -- "$wt" && env -u RUSTUP_TOOLCHAIN rustc --version)
@@ -741,10 +873,10 @@ build_arm() {
             "its boots will report ${ARM_SHA[$i]:0:7}-dirty and fail the image check"
     fi
     note "arm $label: built in ${ARM_BUILD_S[$i]}s with ${ARM_RUSTC[$i]}; kernel ELF sha256 ${ARM_KSHA[$i]:0:16}"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$label" "$(cell "${ARM_REF[$i]}")" "${ARM_SHA[$i]}" "$(cell "${ARM_TOOLCHAIN[$i]}")" \
-        "$(cell "${ARM_RUSTC[$i]}")" "${ARM_KSHA[$i]}" "${ARM_ESPSHA[$i]}" "${ARM_HSHA[$i]}" \
-        "$tree" "${ARM_BUILD_S[$i]}" "$wt" >>"$ARMS_TSV"
+        "$(cell "${ARM_RUSTC[$i]}")" "${ARM_KSHA[$i]}" "${ARM_ESPSHA[$i]}" "${ARM_HNAME[$i]}" \
+        "${ARM_HID[$i]}" "$tree" "${ARM_BUILD_S[$i]}" "$wt" >>"$ARMS_TSV"
 }
 
 # ---------------------------------------------------------------------------
@@ -789,20 +921,28 @@ check_instrument() {
 # boot_arm I ROUND POS -- boot arm I once and append its row to boots.tsv.
 boot_arm() {
     local i=$1 r=$2 pos=$3 label wt rr dir out rc=0 load1 class tick elapsed qrc detail
-    local ipc avg mn iters rev ksha image summary_md
+    local ipc avg mn iters rev ksha image summary_md hname
     label=${ARM_LABEL[$i]}
     wt=${ARM_WT[$i]}
+    hname=${ARM_HNAME[$i]}
     rr=$(printf "%0${RW}d" "$r")
     dir="$OUT/arm-$label/r$rr"
     out="$dir.out"
     load1=$(loadavg | cut -d' ' -f1)
-    # CHILD_PID is the harness itself, so on_signal's SIGTERM reaches its
-    # trap, which stops QEMU.
-    run_tracked "$out" "$wt" bash scripts/soak-qemu.sh --no-build --runs 1 --secs "$SECS" \
+    # The arm's harness, as harness_kind found it; both take the same options.
+    if [ "${ARM_HKIND[$i]}" = script ]; then
+        set -- bash scripts/soak-qemu.sh
+    else
+        set -- just --justfile "$wt/justfile" soak
+    fi
+    # CHILD_PID leads the harness's process group (soak-qemu.sh itself, or
+    # the `just` running aios soak), so on_signal's SIGTERM reaches the
+    # harness, which stops QEMU (see stop_children).
+    run_tracked "$out" "$wt" "${ENV_CLEAN[@]}" "$@" --no-build --runs 1 --secs "$SECS" \
         --mode "$MODE" --report-only --out "$dir" || rc=$?
     case "$rc" in
         129 | 130 | 131 | 143)
-            warn "soak-qemu.sh was interrupted (exit $rc)"
+            warn "$hname was interrupted (exit $rc)"
             exit "$rc"
             ;;
     esac
@@ -830,11 +970,11 @@ boot_arm() {
         esac
     fi
     if [ -z "$class" ]; then
-        # soak-qemu.sh stopped with a setup error. On an arm's first boot that
-        # means the setup is broken (as in soak-qemu.sh itself), so stop.
+        # The harness stopped with a setup error. On an arm's first boot that
+        # means the setup is broken (as in the harness itself), so stop.
         if [ "$r" -eq 1 ]; then
             tail -n 20 "$out" >&2
-            die "arm $label: soak-qemu.sh failed on the arm's first boot (exit $rc); see $out"
+            die "arm $label: $hname failed on the arm's first boot (exit $rc); see $out"
         fi
         # A run-01.log means it booted and then stopped: with --runs 1 every
         # boot is the harness's first, so a boot on which the UEFI stub never
@@ -844,11 +984,23 @@ boot_arm() {
         # a harness that died mid-boot (a SIGKILL from the OOM killer, say):
         # classified from its content alone, a boot cut short reads as a
         # WEDGE, so it stays ERROR and never counts as a conclusive boot.
+        # The arm's own harness re-classifies the log, run in the boot's
+        # directory and tracked like the boot (aios soak's `just soak` first
+        # runs a cargo build check). Its line for the log reads "run-01.log
+        # CLASS ..."; `just` and cargo add their own lines to the output.
         if [ -f "$dir/run-01.log" ] && grep -a -q '^\[soak\] meta ' "$dir/run-01.log"; then
-            class=$(cd -- "$dir" && bash "$wt/scripts/soak-qemu.sh" --report-only --classify run-01.log 2>/dev/null |
-                awk 'NR == 1 { print $2 }') || class=""
+            if [ "${ARM_HKIND[$i]}" = script ]; then
+                set -- bash "$wt/scripts/soak-qemu.sh"
+            else
+                set -- just --justfile "$wt/justfile" soak
+            fi
+            run_tracked "$dir.classify" "$dir" "${ENV_CLEAN[@]}" "$@" --report-only --classify run-01.log ||
+                true
+            class=$(awk '$1 == "run-01.log" { print $2; exit }' "$dir.classify")
         fi
-        detail="soak-qemu.sh exit $rc: $(grep 'error:' "$out" | tail -n 1 || true)"
+        # The harness's own last error line; `just` adds an "error: recipe
+        # `soak` failed ..." line after it.
+        detail="$hname exit $rc: $(grep -a 'error:' "$out" | grep -v '^error: recipe ' | tail -n 1 || true)"
         [ -n "$class" ] || class=ERROR
         # Reclassified or not, it is a harness error: a host on which QEMU
         # cannot start must not burn hours of INCONCLUSIVE boots.
@@ -959,19 +1111,15 @@ RUNS=$v
 # The lower bound is checked here, before any build: every arm's harness
 # refuses a --secs that is not above its --stall-secs on round 1.
 v=$(uint_in_range "$SECS" $((HARNESS_STALL_SECS + 1)) "$MAX_SECS") ||
-    die "--secs must be a whole number from $((HARNESS_STALL_SECS + 1)) (above soak-qemu.sh's --stall-secs) to $MAX_SECS, got '$SECS'"
+    die "--secs must be a whole number from $((HARNESS_STALL_SECS + 1)) (above the harnesses' --stall-secs) to $MAX_SECS, got '$SECS'"
 SECS=$v
 case "$MODE" in
     text | gpu) ;;
     *) die "--mode must be text or gpu, got '$MODE'" ;;
 esac
-for t in git just rustc qemu-system-aarch64 mcopy; do
+for t in git just rustup rustc cargo qemu-system-aarch64 mcopy; do
     command -v "$t" >/dev/null 2>&1 || die "$t not found in PATH"
 done
-find_timeout >/dev/null ||
-    die "no usable timeout: need timeout or gtimeout that accepts --kill-after, passes through" \
-        "the exit status of a command that finishes in time, and exits 124 on timeout" \
-        "(macOS: brew install coreutils; Linux: coreutils)"
 
 git -C "$REPO_ROOT" cat-file -e "$MIN_ARM_BASE^{commit}" 2>/dev/null ||
     die "commit ${MIN_ARM_BASE:0:7} (#196) is not in this repository; fetch main's full history"
@@ -1050,7 +1198,7 @@ done
 
 ARMS_TSV="$OUT/arms.tsv"
 BOOTS_TSV="$OUT/boots.tsv"
-printf 'arm\tref\tcommit\ttoolchain\trustc\tkernel_sha256\tesp_sha256\tharness_sha256\ttree\tbuild_s\tworktree\n' >"$ARMS_TSV"
+printf 'arm\tref\tcommit\ttoolchain\trustc\tkernel_sha256\tesp_sha256\tharness\tharness_id\ttree\tbuild_s\tworktree\n' >"$ARMS_TSV"
 printf 'seq\tround\tpos\tarm\tref\tcommit\tclass\tharness_rc\tload1\tipc_avg_us\tipc_min_ns\tipc_iters\timage\tboot_rev\tboot_kernel_sha16\tlast_tick\telapsed_s\tqemu_rc\tdetail\tboot_dir\n' >"$BOOTS_TSV"
 
 STARTED=$(utc_now)
@@ -1066,24 +1214,42 @@ while [ "$i" -lt "$N" ]; do
     i=$((i + 1))
 done
 
+# A soak-qemu.sh arm's harness refuses to boot without a usable timeout
+# (aios soak needs none); found missing now, it costs no build.
+i=0
+while [ "$i" -lt "$N" ]; do
+    if [ "${ARM_HKIND[$i]}" = script ]; then
+        find_timeout >/dev/null ||
+            die "no usable timeout for arm ${ARM_LABEL[$i]}'s soak-qemu.sh: need timeout or gtimeout" \
+                "that accepts --kill-after, passes through the exit status of a command that finishes" \
+                "in time, and exits 124 on timeout (macOS: brew install coreutils; Linux: coreutils)"
+        break
+    fi
+    i=$((i + 1))
+done
+
 FW=${ARM_FW[0]}
-HARNESS_NOTE="identical in all arms (sha256 \`${ARM_HSHA[0]:0:16}\`)"
+HARNESS_NOTE="identical in all arms (${ARM_HNAME[0]}, id \`${ARM_HID[0]:0:16}\`)"
+HARNESS_LIST=""
 TC_LIST=""
 mixed_tc=0
 i=0
 while [ "$i" -lt "$N" ]; do
+    HARNESS_LIST="$HARNESS_LIST${HARNESS_LIST:+, }${ARM_LABEL[$i]} ${ARM_HNAME[$i]} ${ARM_HID[$i]:0:12}"
     TC_LIST="$TC_LIST${TC_LIST:+, }${ARM_LABEL[$i]} ${ARM_TOOLCHAIN[$i]}"
     { [ "${ARM_TOOLCHAIN[$i]}" != unknown ] && [ "${ARM_TOOLCHAIN[$i]}" = "${ARM_TOOLCHAIN[0]}" ]; } ||
         mixed_tc=1
     [ "${ARM_FW[$i]}" = "$FW" ] ||
         die "arm ${ARM_LABEL[$i]} boots firmware ${ARM_FW[$i]}, arm A boots $FW;" \
             "set AIOS_EDK2_FW so that every arm boots the same image"
-    if [ "${ARM_HSHA[$i]}" != "${ARM_HSHA[0]}" ]; then
-        HARNESS_NOTE="**differs between arms** (see arms.tsv): the classifiers may differ, so compare the class counts with care"
-        warn "the arms' scripts/soak-qemu.sh differ; their classifications may not be comparable"
+    if [ "${ARM_HKIND[$i]}" != "${ARM_HKIND[0]}" ] || [ "${ARM_HID[$i]}" != "${ARM_HID[0]}" ]; then
+        HARNESS_NOTE="**differs between arms** (see Arms): the classifiers may differ, so compare the class counts with care"
     fi
     i=$((i + 1))
 done
+case "$HARNESS_NOTE" in
+'**differs'*) warn "the arms' boot harnesses differ ($HARNESS_LIST); their classifications may not be comparable" ;;
+esac
 # Every arm's harness checks this too, but only on its first boot, after all
 # the builds, and resolves a relative path inside its own worktree.
 case "$FW" in
