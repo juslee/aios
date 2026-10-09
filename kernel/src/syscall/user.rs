@@ -12,9 +12,9 @@
 //! 0x1000_0000_0000 up to `USER_VA_LIMIT` (2^47) is in neither half and takes
 //! a translation fault, like an unmapped user page. The check does not prove
 //! the pages are mapped either, and what a validated address reaches depends
-//! on the TTBR0 in use: the copies are sound only while TTBR0 holds nothing
-//! but the calling process's user mappings. Nothing establishes that yet,
-//! because nothing switches TTBR0 per thread. CPUs 1-3 keep the boot
+//! on the TTBR0 in use: a non-empty copy is sound only while TTBR0 holds
+//! nothing but the calling process's user mappings. Nothing establishes that
+//! yet, because nothing switches TTBR0 per thread. CPUs 1-3 keep the boot
 //! identity map that `boot.S` loads (`TTBR0_L0`, built by `mmu::init_mmu`:
 //! device memory below 0x4000_0000 and RAM from 0x4000_0000 to 0xC000_0000),
 //! and CPU 0 keeps the test address space `main.rs` last switches to. On the
@@ -24,7 +24,8 @@
 //! switch must establish the precondition before the first EL0 process runs.
 //! No EL0 process exists today, and the kernel self-tests that call
 //! `syscall_dispatch` pass only ranges the check rejects, or a zero-length
-//! one, which the copies never touch.
+//! one (checks 39-40 of `syscall_args_test`), which the copies never touch,
+//! so it is sound under any TTBR0.
 //!
 //! Nothing recovers from a fault yet, and PAN is not configured: an unmapped
 //! or inaccessible user page takes an EL1 data abort, which halts the CPU
@@ -32,10 +33,13 @@
 //! `b .`). Fault recovery, when it exists, belongs in these two functions.
 //!
 //! The copies also need no other thread to access the user range while they
-//! run. No EL0 thread exists today; once a process has several, one may
-//! write the range from another CPU mid-copy, which is undefined behaviour
-//! for `copy_nonoverlapping`. The work that adds fault recovery must replace
-//! it with an asm byte copy before the first EL0 process runs.
+//! run. Once EL0 threads exist, any thread that can reach the range may write
+//! it from another CPU mid-copy: another thread of the calling process, or a
+//! thread of another process that maps the same shared memory region
+//! (`SharedMemoryShare`, `SharedMemoryMap`), even if both processes are
+//! single-threaded. That is undefined behaviour for `copy_nonoverlapping`.
+//! No EL0 thread exists today; the work that adds fault recovery must replace
+//! the copy with an asm byte copy before the first EL0 process runs.
 
 use super::IpcError;
 
@@ -57,10 +61,13 @@ pub(super) fn copy_from_user(dst: &mut [u8], src: usize) -> Result<(), i64> {
     }
     // SAFETY: [src, src + dst.len()) is non-null and lies wholly below
     // USER_VA_LIMIT, so outside the TTBR1 half, and a byte copy has no
-    // alignment requirement. TTBR0 (T0SZ=20, kept from edk2) translates only
-    // [0, 2^44); an address from 2^44 up to USER_VA_LIMIT is in neither half
-    // and faults like an unmapped page. The copy is sound only while TTBR0
-    // holds nothing but the calling process's user mappings: the range then
+    // alignment requirement. A zero-length copy touches no memory, so it is
+    // sound under any TTBR0; it is the only kind of copy today's self-tests
+    // make past validation (check 39 of syscall_args_test). TTBR0
+    // (T0SZ=20, kept from edk2) translates only [0, 2^44); an address from
+    // 2^44 up to USER_VA_LIMIT is in neither half and faults like an
+    // unmapped page. A non-empty copy is sound only while TTBR0 holds
+    // nothing but the calling process's user mappings: the range then
     // reaches only that process's memory and cannot alias `dst`.
     // validate_user_ptr above keeps the range out of the TTBR1 half; nothing
     // maintains the TTBR0 precondition yet (module doc: CPUs 1-3 run on the
@@ -75,13 +82,15 @@ pub(super) fn copy_from_user(dst: &mut [u8], src: usize) -> Result<(), i64> {
     // Concurrency: the copy also needs no other thread to write the source
     // range while it runs. That holds today because no EL0 thread exists and
     // the kernel self-tests pass only ranges the check rejects or empty
-    // ones. Once a process has several EL0 threads, one may write the range
-    // from another CPU mid-copy; callers then see a torn snapshot, which is
-    // harmless to them because they decode and check only `dst` and never
-    // re-read the user bytes, but a non-atomic read racing a write is still
-    // undefined behaviour for `copy_nonoverlapping`. The work that adds
-    // fault recovery here must replace it with an asm byte copy before the
-    // first EL0 process runs.
+    // ones. Once EL0 threads exist, any thread that can reach the range may
+    // write it from another CPU mid-copy: another thread of the calling
+    // process, or a thread of another process that maps the same shared
+    // memory region, even if both processes are single-threaded. Callers
+    // then see a torn snapshot, which is harmless to them because they
+    // decode and check only `dst` and never re-read the user bytes, but a
+    // non-atomic read racing a write is still undefined behaviour for
+    // `copy_nonoverlapping`. The work that adds fault recovery here must
+    // replace it with an asm byte copy before the first EL0 process runs.
     unsafe { core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len()) };
     Ok(())
 }
@@ -95,10 +104,13 @@ pub(super) fn copy_to_user(dst: usize, src: &[u8]) -> Result<(), i64> {
     }
     // SAFETY: [dst, dst + src.len()) is non-null and lies wholly below
     // USER_VA_LIMIT, so outside the TTBR1 half, and a byte copy has no
-    // alignment requirement. TTBR0 (T0SZ=20, kept from edk2) translates only
-    // [0, 2^44); an address from 2^44 up to USER_VA_LIMIT is in neither half
-    // and faults like an unmapped page. The copy is sound only while TTBR0
-    // holds nothing but the calling process's user mappings: the range then
+    // alignment requirement. A zero-length copy touches no memory, so it is
+    // sound under any TTBR0; it is the only kind of copy today's self-tests
+    // make past validation (check 40 of syscall_args_test). TTBR0
+    // (T0SZ=20, kept from edk2) translates only [0, 2^44); an address from
+    // 2^44 up to USER_VA_LIMIT is in neither half and faults like an
+    // unmapped page. A non-empty copy is sound only while TTBR0 holds
+    // nothing but the calling process's user mappings: the range then
     // reaches only that process's memory and cannot alias `src`.
     // validate_user_ptr above keeps the range out of the TTBR1 half; nothing
     // maintains the TTBR0 precondition yet (module doc: CPUs 1-3 run on the
@@ -113,11 +125,14 @@ pub(super) fn copy_to_user(dst: usize, src: &[u8]) -> Result<(), i64> {
     // Concurrency: the copy also needs no other thread to read or write the
     // destination range while it runs. That holds today because no EL0
     // thread exists and the kernel self-tests pass only ranges the check
-    // rejects or empty ones. Once a process has several EL0 threads, one may
-    // access the range from another CPU mid-copy; it then sees torn bytes,
-    // which is its own race since the kernel never reads the range back, but
-    // a non-atomic write racing another access is still undefined behaviour
-    // for `copy_nonoverlapping`. The work that adds fault recovery here must
+    // rejects or empty ones. Once EL0 threads exist, any thread that can
+    // reach the range may access it from another CPU mid-copy: another
+    // thread of the calling process, or a thread of another process that
+    // maps the same shared memory region, even if both processes are
+    // single-threaded. That thread then sees torn bytes, which is its own
+    // race since the kernel never reads the range back, but a non-atomic
+    // write racing another access is still undefined behaviour for
+    // `copy_nonoverlapping`. The work that adds fault recovery here must
     // replace it with an asm byte copy before the first EL0 process runs.
     unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len()) };
     Ok(())
