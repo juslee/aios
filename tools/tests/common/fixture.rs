@@ -648,8 +648,8 @@ pub const ORACLE_UNIDATA_VERSION: &str = "16.0.0";
 /// variable, so the developer's `PYTHONPATH` (a `sitecustomize.py`, or a module
 /// shadowing `re` or `unicodedata`), `PYTHONHOME`, `PYTHONSTARTUP` or
 /// `PYTHONIOENCODING` cannot change what the pinned interpreter running the pinned
-/// script prints. It also ignores the `PYTHONUTF8` and `PYTHONDONTWRITEBYTECODE` that
-/// `isolated()` sets, so `-X utf8` and `-B` restate them. Not `-I`: it would also change
+/// script prints. Because `-E` also ignores `PYTHONUTF8` and `PYTHONDONTWRITEBYTECODE`,
+/// `-X utf8` and `-B` set UTF-8 mode and suppress bytecode explicitly. Not `-I`: it would also change
 /// `sys.path[0]`, which `CHECK_PY_BOOTSTRAP` sets itself.
 const ORACLE_FLAGS: [&str; 4] = ["-E", "-X", "utf8", "-B"];
 
