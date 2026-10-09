@@ -336,15 +336,17 @@ fn channel_endpoint_states(channel: ChannelId) -> Option<(ipc::EndpointState, ip
 }
 
 /// Pid that the echo client's exit-walk probe exits. No process or thread has
-/// it, so `process_exit` marks no thread Dead.
+/// it, so `process_exit` marks no thread Dead, and with its process-table
+/// slot empty records no exit code: `ProcessWait` on it stays `EPERM`.
 const EXIT_PROBE_PID: ProcessId = ProcessId(6);
 
 /// Check that `process_exit` marks Dead each channel with the exiting pid on
-/// endpoint A or B, and leaves the rest Active. The echo channel has pid 7 on
-/// both endpoints, so it cannot tell the two matches apart. The probe exits a
-/// thread-less pid, not 7, so the caller stays Running: a thread marked Dead
-/// is switched out for good at its CPU's next tick, which could leave the
-/// probe channels unfreed or `CHANNEL_TABLE` held.
+/// endpoint A or B, and leaves the rest Active, with or without a peer. The
+/// echo channel has pid 7 on both endpoints, so it cannot tell the two
+/// matches apart. The probe exits a thread-less pid, not 7, so the caller
+/// stays Running: a thread marked Dead is switched out for good at its CPU's
+/// next tick, which could leave the probe channels unfreed or `CHANNEL_TABLE`
+/// held.
 fn exit_walk_probe() {
     let dead = Some((ipc::EndpointState::Dead, ipc::EndpointState::Dead));
     let active = Some((ipc::EndpointState::Active, ipc::EndpointState::Active));
@@ -354,20 +356,26 @@ fn exit_walk_probe() {
     let a_ch = ipc::channel_create_unchecked(EXIT_PROBE_PID);
     // Pid on endpoint B only.
     let b_ch = ipc::channel_create_unchecked(ProcessId(0));
-    // Pid on neither endpoint: must stay Active.
+    // Pid on neither endpoint, both set: must stay Active.
     let other_ch = ipc::channel_create_unchecked(ProcessId(0));
+    // Another pid on endpoint A and no peer, the shape of most live channels:
+    // must stay Active, so a missing peer never counts as a match.
+    let lone_ch = ipc::channel_create_unchecked(ProcessId(0));
     let mut ok = ipc::channel_set_peer(b_ch, EXIT_PROBE_PID).is_ok()
         && ipc::channel_set_peer(other_ch, ProcessId(0)).is_ok();
     if !ok {
         crate::kwarn!(Ipc, "Echo client: exit probe channel_set_peer failed");
     }
 
+    // A non-member exit: this pid-7 thread is not in pid 6. It cannot be
+    // killed partway through, because only this thread exits pid 7, later.
     crate::task::process::process_exit(EXIT_PROBE_PID, 0);
 
     let probes = [
         ("A-owned", a_ch, dead),
         ("B-owned", b_ch, dead),
         ("other", other_ch, active),
+        ("no-peer", lone_ch, active),
     ];
     for (name, probe, expected) in probes {
         let states = channel_endpoint_states(probe);

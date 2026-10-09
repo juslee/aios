@@ -97,7 +97,7 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 - `shmem.rs:10` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
 - `shmem.rs:192-193` (`shared_memory_create`) — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
 - `shmem.rs:488` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
-- `process.rs:150-151` (`process_exit`) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
+- `process.rs:159-160` (`process_exit`) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
 - `timeout.rs:88` — *"avoid lock ordering issues (TIMEOUT_QUEUE → THREAD_TABLE)."*
