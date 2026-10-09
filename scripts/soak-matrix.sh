@@ -33,7 +33,8 @@ LETTERS=ABCD
 MAX_ARMS=4
 # The classes soak-qemu.sh reports, in the order the summary lists them. Any
 # other class a harness reports is listed after these. ERROR is this script's
-# own: the harness failed and left no boot log to classify.
+# own: the harness failed and left no boot it could classify (no log, or a log
+# cut off before its "[soak] meta" footer).
 KNOWN_CLASSES="CLEAN WEDGE PANIC PCZERO EXCEPTION INCONCLUSIVE"
 # Harness errors in a row (after round 1) that end the soak early.
 MAX_ERROR_STREAK=3
@@ -130,7 +131,8 @@ such a worktree too.
                  and ESP image sha256, harness sha256, tree state, build time
   boots.tsv      one row per boot in boot order: round, position in the
                  round, arm, class, 1-min load average before the boot, IPC
-                 avg (us) and min (ns), image check, harness detail
+                 avg (us), min (ns) and iterations, image check, harness
+                 detail
   arm-X/build.log   output of `just disk` for arm X
   arm-X/rNN/        soak-qemu.sh output of arm X's boot in round NN
                     (run-01.log, summary.tsv, summary.md)
@@ -147,8 +149,9 @@ builds with its own toolchain pin into its own target/.
 Exit status: 0 when every round ran, whatever the boot classes (report
 only); 2 on a usage or setup error (a ref that does not resolve, an arm
 without #196, mixed toolchains or firmware, a failed build, a harness error
-on an arm's first boot, 3 harness errors in a row, or a QEMU or firmware
-change mid-soak); 129, 130, 131 and 143 on SIGHUP, SIGINT, SIGQUIT and
+on an arm's first boot, 3 harness errors in a row, a QEMU or firmware
+change mid-soak, or a QEMU that outlives its dead harness and will not
+stop); 129, 130, 131 and 143 on SIGHUP, SIGINT, SIGQUIT and
 SIGTERM. A signal stops the running build or boot at once (the boot's
 harness stops QEMU and removes its scratch files), as does any other early
 exit; once the boots have started, it also marks summary.md "stopped". A
@@ -324,18 +327,23 @@ tsv_field() {
     ' "$1"
 }
 
-# ipc_of LOG -- print "AVG_US MIN_NS" from the first "[bench] IPC round-trip
-# (same core)" line of a serial log, or "- -". The whole log is read (no early
-# exit) so that no pipe writer dies of SIGPIPE under pipefail.
+# ipc_of LOG -- print "AVG_US MIN_NS ITERS" from the first "[bench] IPC
+# round-trip (same core)" line of a serial log, or "- - -". ITERS is the
+# line's "(N iters)" count, or "-" if the line was cut off before it: a CLEAN
+# boot with fewer than 10000 is step 1a's DEGRADED class, which the harness
+# does not report yet. The whole log is read (no early exit) so that no pipe
+# writer dies of SIGPIPE under pipefail.
 ipc_of() {
     tr -d '\000\r' <"$1" | awk '
         !found && /IPC round-trip \(same core\): avg=[0-9]+ us, p99=[0-9]+ us, min=[0-9]+ ns/ {
             s = substr($0, index($0, "IPC round-trip (same core): avg="))
             match(s, /avg=[0-9]+/); avg = substr(s, RSTART + 4, RLENGTH - 4)
             match(s, /min=[0-9]+/); mn = substr(s, RSTART + 4, RLENGTH - 4)
+            it = "-"
+            if (match(s, /\([0-9]+ iters\)/)) it = substr(s, RSTART + 1, RLENGTH - 8)
             found = 1
         }
-        END { if (found) print avg, mn; else print "-", "-" }
+        END { if (found) print avg, mn, it; else print "-", "-", "-" }
     '
 }
 
@@ -600,6 +608,32 @@ stop_children() {
     CHILD_PID=""
 }
 
+# reap_boot DIR -- stop whatever is left of a boot whose harness died without
+# its traps (a SIGKILL from the OOM killer, say), then remove its scratch
+# directory. The harness starts QEMU under `timeout`, which moves itself and
+# QEMU into a process group of their own, so they outlive the harness and
+# stop_children never reaches them. Left running, they would share the host
+# with the next boot for up to SECS + 10 s and skew it. Both carry the
+# boot's own ESP path, DIR/.scratch.XXXXXX/esp.img, in their argv (DIR is
+# absolute and physical, like the harness's --out), so this finds exactly
+# them. It stops the soak if they do not go away.
+reap_boot() {
+    local pat n=0
+    # DIR as an extended regex, every character that is special there escaped.
+    pat=$(printf '%s/.scratch.' "$1" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+    if pgrep -f -- "$pat" >/dev/null 2>&1; then
+        warn "stopping QEMU left running by a dead harness in $1"
+        pkill -TERM -f -- "$pat" 2>/dev/null || true
+        while pgrep -f -- "$pat" >/dev/null 2>&1; do
+            n=$((n + 1))
+            [ "$n" -ne 10 ] || pkill -KILL -f -- "$pat" 2>/dev/null || true
+            [ "$n" -lt 20 ] || die "QEMU left by a dead harness in $1 does not stop; stop it and rerun"
+            sleep 1
+        done
+    fi
+    rm -rf -- "$1"/.scratch.*
+}
+
 # on_signal STATUS -- stop the running build or boot, then exit STATUS (the
 # EXIT trap writes the "stopped" summary).
 on_signal() {
@@ -742,7 +776,7 @@ check_instrument() {
 # boot_arm I ROUND POS -- boot arm I once and append its row to boots.tsv.
 boot_arm() {
     local i=$1 r=$2 pos=$3 label wt rr dir out rc=0 load1 class tick elapsed qrc detail
-    local ipc avg mn rev ksha image summary_md
+    local ipc avg mn iters rev ksha image summary_md
     label=${ARM_LABEL[$i]}
     wt=${ARM_WT[$i]}
     rr=$(printf "%0${RW}d" "$r")
@@ -777,6 +811,7 @@ boot_arm() {
         esac
     fi
     if [ -z "$class" ]; then
+        reap_boot "$dir"
         # soak-qemu.sh stopped with a setup error. On an arm's first boot that
         # means the setup is broken (as in soak-qemu.sh itself), so stop.
         if [ "$r" -eq 1 ]; then
@@ -804,10 +839,12 @@ boot_arm() {
         ERROR_STREAK=0
     fi
 
-    ipc="- -"
+    ipc="- - -"
     [ ! -f "$dir/run-01.log" ] || ipc=$(ipc_of "$dir/run-01.log")
-    avg=${ipc% *}
-    mn=${ipc#* }
+    avg=${ipc%% *}
+    ipc=${ipc#* }
+    mn=${ipc%% *}
+    iters=${ipc#* }
 
     # Which bits did this boot run? soak-qemu.sh's summary.md names the
     # commit of the tree it ran in and the kernel ELF inside its ESP snapshot.
@@ -838,9 +875,9 @@ boot_arm() {
         warn "arm $label round $rr: image check '$image' (commit $rev, kernel $ksha; arm ${ARM_SHA[$i]:0:12}, ${ARM_KSHA[$i]:0:16})"
 
     SEQ=$((SEQ + 1))
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$SEQ" "$r" "$pos" "$label" "$(cell "${ARM_REF[$i]}")" "${ARM_SHA[$i]:0:12}" "$class" "$rc" \
-        "$(cell "$load1")" "$avg" "$mn" "$image" "$(cell "$rev")" "$(cell "$ksha")" \
+        "$(cell "$load1")" "$avg" "$mn" "$iters" "$image" "$(cell "$rev")" "$(cell "$ksha")" \
         "$(cell "$tick")" "$(cell "$elapsed")" "$(cell "$qrc")" "$(cell "$detail")" "arm-$label/r$rr" >>"$BOOTS_TSV"
     # Counted with its row, so a summary written on the way out below agrees.
     BOOTS_DONE=$((BOOTS_DONE + 1))
@@ -996,7 +1033,7 @@ done
 ARMS_TSV="$OUT/arms.tsv"
 BOOTS_TSV="$OUT/boots.tsv"
 printf 'arm\tref\tcommit\ttoolchain\trustc\tkernel_sha256\tesp_sha256\tharness_sha256\ttree\tbuild_s\tworktree\n' >"$ARMS_TSV"
-printf 'seq\tround\tpos\tarm\tref\tcommit\tclass\tharness_rc\tload1\tipc_avg_us\tipc_min_ns\timage\tboot_rev\tboot_kernel_sha16\tlast_tick\telapsed_s\tqemu_rc\tdetail\tboot_dir\n' >"$BOOTS_TSV"
+printf 'seq\tround\tpos\tarm\tref\tcommit\tclass\tharness_rc\tload1\tipc_avg_us\tipc_min_ns\tipc_iters\timage\tboot_rev\tboot_kernel_sha16\tlast_tick\telapsed_s\tqemu_rc\tdetail\tboot_dir\n' >"$BOOTS_TSV"
 
 STARTED=$(utc_now)
 note "$N arms ($ARM_LIST); runs=$RUNS secs=$SECS mode=$MODE"
