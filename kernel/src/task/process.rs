@@ -120,8 +120,8 @@ static EXIT_CODES: [AtomicI32; MAX_PROCESSES] = {
 /// wake ProcessWait waiters, and notify the service manager.
 ///
 /// A pid `>= MAX_PROCESSES` names no process, so the call does nothing. The
-/// callers pass their own pid (the `ProcessExit` syscall) or a fixed kernel
-/// service pid, so an out-of-range pid never reaches here.
+/// callers pass their own pid (the `ProcessExit` syscall), a fixed kernel
+/// service pid or the echo client's exit-probe pid, all in range.
 pub fn process_exit(pid: ProcessId, exit_code: i32) {
     let Some(idx) = pid.index() else {
         return;
