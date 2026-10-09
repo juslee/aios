@@ -144,7 +144,9 @@ Requires qemu-system-aarch64, just, mtools (for `just disk`) and the POSIX
 kill utility. Each boot's QEMU runs in its own process group: the harness
 sends the group SIGTERM when --secs run out and SIGKILL 10 s later, and
 records QEMU's exit status as timeout(1) reported it (124 when the time limit
-stopped QEMU, 137 when SIGKILL was needed).
+stopped QEMU, 137 when SIGKILL was needed). Ctrl-Z (SIGTSTP) stops the running
+QEMU along with the harness; on resume, the time limit is moved back by the
+time spent stopped.
 
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
 boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
@@ -152,7 +154,9 @@ build failure, the UEFI stub never running on the first boot) -- setup errors
 exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
 131 on SIGQUIT; QEMU is stopped first. SIGKILL cannot be caught: a harness
 killed by it leaves the running QEMU behind until it is killed by hand, so
-stop a soak with one of the four signals above.
+stop a soak with one of the four signals above. Likewise SIGSTOP, or SIGTTIN
+or SIGTTOU stopping a background soak, stops only the harness: QEMU runs on
+past its time limit until the harness is continued.
 "#;
 
 /// What the command line asks for.

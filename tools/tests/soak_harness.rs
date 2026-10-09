@@ -15,11 +15,14 @@
 //!   that kills `just create-data-disk` or `sha256sum` (130, not a setup error).
 //! - `an_interrupt_after_the_last_boot_skips_the_summary` covers a signal that
 //!   arrives once no QEMU runs (the script's trap exited 130 at once).
+//! - `ctrl_z_stops_qemu_with_the_harness` covers SIGTSTP during a boot: QEMU
+//!   stops with the harness and its time limit waits for the resume (the
+//!   script's `timeout` killed it at the limit while bash was stopped).
 
 mod common;
 
 use common::soak::{check_golden, golden_dir};
-use common::soak_fake::{golden_text, run_scenario, scenarios, Outcome, Scenario, Tool};
+use common::soak_fake::{golden_text, run_scenario, scenarios, suspended, Outcome, Scenario, Tool};
 
 /// Run `f` over `items` on scoped threads, keeping the input order.
 fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -246,5 +249,23 @@ fn an_interrupt_after_the_last_boot_skips_the_summary() {
     assert_eq!(
         o.listing.as_deref(),
         Some(&["run-01.log".to_string(), "summary.tsv".to_string()][..])
+    );
+}
+
+#[test]
+fn ctrl_z_stops_qemu_with_the_harness() {
+    let o = run_scenario(Tool::Aios, &suspended());
+    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(o.alive.is_empty(), "still running: {:?}", o.alive);
+    // The limit ran out only after the resume: 2 s of running plus the 2.5 s
+    // or more spent stopped.
+    assert_eq!(footer_value(&o, "run-01.log", "qemu_rc"), 124);
+    assert!(footer_value(&o, "run-01.log", "elapsed") >= 4);
+    assert!(
+        o.listing
+            .as_ref()
+            .is_some_and(|l| l.iter().any(|n| n == "summary.md")),
+        "{:?}",
+        o.listing
     );
 }

@@ -15,6 +15,10 @@
 //!   denominator and the `--secs` warning).
 //! - SIGHUP and SIGQUIT are caught like SIGINT and SIGTERM (exit 129 and 131),
 //!   so no terminal signal leaves QEMU running after the harness ends.
+//! - Ctrl-Z (SIGTSTP) during a boot stops QEMU's process group with the
+//!   harness, and on resume moves the boot's time limit back by the time spent
+//!   stopped. The script's `timeout` ran in its own group, so QEMU ran on and
+//!   was killed at the limit while bash was stopped.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
@@ -532,37 +536,49 @@ fn build_and_boot(
             .stdin(Stdio::null())
             .stdout(log_file.try_clone()?)
             .stderr(log_file);
-        let rc = match Supervisor::spawn(command, Duration::from_secs(cfg.secs), KILL_AFTER) {
-            Err(e) => {
-                // As timeout(1) did when it could not run the command: a note in
-                // the log, and status 127.
-                append(
-                    &log,
-                    format!("soak: cannot run qemu-system-aarch64: {e}\n").as_bytes(),
-                )?;
-                127
+        let rc = {
+            // Until QEMU has exited, Ctrl-Z stops QEMU's group before the harness;
+            // nothing the harness waits for meanwhile runs in the terminal's
+            // foreground group. Declared before `qemu`, so it is dropped after it.
+            let _deferred = interrupts.defer_suspend();
+            match Supervisor::spawn(command, Duration::from_secs(cfg.secs), KILL_AFTER) {
+                Err(e) => {
+                    // As timeout(1) did when it could not run the command: a note
+                    // in the log, and status 127.
+                    append(
+                        &log,
+                        format!("soak: cannot run qemu-system-aarch64: {e}\n").as_bytes(),
+                    )?;
+                    127
+                }
+                Ok(mut qemu) => {
+                    qemu.warn_as("soak");
+                    loop {
+                        qemu.service()?;
+                        if let Some(rc) = qemu.exit_code() {
+                            break rc;
+                        }
+                        let wake = Instant::now() + POLL;
+                        loop {
+                            if let Some(code) = interrupts.pending() {
+                                qemu.terminate()?;
+                                qemu.wait()?;
+                                return Ok(code);
+                            }
+                            if interrupts.take_suspend() {
+                                qemu.suspend(|| interrupts.stop_self())?;
+                            }
+                            qemu.service()?;
+                            let now = Instant::now();
+                            if now >= wake {
+                                break;
+                            }
+                            std::thread::sleep(SLICE.min(wake - now));
+                        }
+                        progress.poll(&read(&log)?, secs_since(start));
+                    }
+                }
             }
-            Ok(mut qemu) => loop {
-                qemu.service()?;
-                if let Some(rc) = qemu.exit_code() {
-                    break rc;
-                }
-                let wake = Instant::now() + POLL;
-                loop {
-                    if let Some(code) = interrupts.pending() {
-                        qemu.terminate()?;
-                        qemu.wait()?;
-                        return Ok(code);
-                    }
-                    qemu.service()?;
-                    let now = Instant::now();
-                    if now >= wake {
-                        break;
-                    }
-                    std::thread::sleep(SLICE.min(wake - now));
-                }
-                progress.poll(&read(&log)?, secs_since(start));
-            },
         };
         let elapsed = secs_since(start);
         progress.poll(&read(&log)?, elapsed);

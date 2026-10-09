@@ -57,7 +57,9 @@ jobs:
     name: Tools (host)
     # Host-only crate tools/ (package aios-tools, binary aios): fmt, clippy and
     # tests, including the docs-check parity goldens. The real-repository goldens
-    # replay a pinned main commit, so the checkout needs full history.
+    # replay a pinned main commit, and the soak parity tests read the deleted
+    # scripts/soak-qemu.sh from git history at 212df62, so the checkout needs
+    # full history.
     # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in
     # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
     # no longer prove the shim is POSIX.

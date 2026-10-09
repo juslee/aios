@@ -149,8 +149,12 @@ pub struct Scenario {
     /// The working directory, relative to the repository.
     pub cwd: &'static str,
     pub out: Out,
-    /// Signal the harness (INT, TERM or HUP) once boot 2's kernel has started.
+    /// Signal the harness (INT, TERM, HUP or QUIT) once boot 2's kernel has started.
     pub interrupt: Option<&'static str>,
+    /// Ctrl-Z the harness once boot 1's QEMU has recorded its pid, check that
+    /// the harness and QEMU both stop and that QEMU outlives its time limit
+    /// while stopped, then continue the harness.
+    pub suspend: bool,
 }
 
 impl Scenario {
@@ -168,6 +172,7 @@ impl Scenario {
             cwd: "",
             out: Out::At("out"),
             interrupt: None,
+            suspend: false,
         }
     }
 }
@@ -187,6 +192,37 @@ fn interrupted(name: &'static str, signal: &'static str) -> Scenario {
         .push((2, format!("{BOOT_HEAD}{WAIT_FOR_SIGNAL_TAIL}")));
     s.interrupt = Some(signal);
     s
+}
+
+/// One CLEAN boot whose QEMU gets Ctrl-Z with the harness; see [`Scenario::suspend`].
+pub fn suspended() -> Scenario {
+    let mut s = Scenario::new(
+        "suspend",
+        &[
+            "--no-build",
+            "runs=1",
+            "secs=2",
+            "stall_secs=1",
+            "report_only=1",
+            "out=out",
+        ],
+        format!("{BOOT_HEAD}{CLEAN_TAIL}echo $$ >\"$AIOS_FAKE_ROOT/qemu.pid\"\nexec sleep 30\n"),
+    );
+    s.suspend = true;
+    s
+}
+
+/// `ps`'s state letter for `pid` (`T` when stopped), or empty when it is gone.
+fn state(pid: &str) -> String {
+    let out = Command::new("ps")
+        .args(["-o", "stat=", "-p", pid])
+        .output()
+        .expect("run ps");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .chars()
+        .take(1)
+        .collect()
 }
 
 /// Every golden scenario, in golden-file order.
@@ -508,6 +544,45 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
             .status()
             .expect("run kill");
         assert!(sent.success(), "kill -{signal}");
+    }
+    if sc.suspend {
+        let pid_file = root.join("qemu.pid");
+        let until = Instant::now() + Duration::from_secs(60);
+        let qemu = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .filter(|p| p.ends_with('\n'))
+            {
+                break pid.trim().to_string();
+            }
+            assert!(Instant::now() < until, "{}: QEMU never started", sc.name);
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        let harness = child.id().to_string();
+        let send = |signal: &str| {
+            let sent = Command::new("kill")
+                .arg(format!("-{signal}"))
+                .arg(&harness)
+                .status()
+                .expect("run kill");
+            assert!(sent.success(), "kill -{signal}");
+        };
+        send("TSTP");
+        let until = Instant::now() + Duration::from_secs(5);
+        while state(&harness) != "T" || state(&qemu) != "T" {
+            assert!(
+                Instant::now() < until,
+                "{}: after SIGTSTP the harness is {:?} and QEMU {:?}",
+                sc.name,
+                state(&harness),
+                state(&qemu)
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // Past the 2 s limit: a stopped QEMU must not have used it up.
+        std::thread::sleep(Duration::from_millis(2_500));
+        assert_eq!(state(&qemu), "T", "{}: QEMU did not stay stopped", sc.name);
+        send("CONT");
     }
     let out = child.wait_with_output().expect("wait for the harness");
 
