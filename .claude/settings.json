@@ -75,6 +75,9 @@
       "Bash(git status *)",
       "Bash(git log *)",
       "Bash(git diff *)",
+      "Bash(rust-analyzer --version)",
+      "Bash(claude plugin --help)",
+      "Bash(claude plugin list *)",
       "Bash(git fetch)",
       "Bash(git fetch origin *)",
       "Bash(git fetch --prune origin *)",
@@ -162,7 +165,8 @@
       "Bash(echo *)",
       "Bash(cp *)",
       "Bash(pkill -f \"qemu-system-aarch64*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python3 -m json.tool .claude/settings.json)"
     ],
     "ask": [
       "Bash(gh pr merge*)",
@@ -257,6 +261,8 @@
     ],
     "deny": [
       "Bash(rm -rf /)",
+      "Bash(git log *--output*)",
+      "Bash(git diff *--output*)",
       "Bash(git push *--force)",
       "Bash(git push *--force *)",
       "Bash(git push -f*)",

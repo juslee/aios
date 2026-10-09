@@ -415,7 +415,7 @@ pub enum PredictiveAction {
 
 The Attention Manager (§6.2) filters notifications against the context threshold. AI-native intelligence makes this smarter:
 
-**Content-aware urgency.** A quantized DistilBERT or TinyBERT model (Tier 3) reads the notification content and assesses urgency independently of the sender's declaration. "Server is on fire" in a Slack message is genuinely urgent. "Check out this meme" from the same channel is not. The model learns to distinguish content patterns that predict user engagement.
+**Content-aware urgency (Attention Manager).** Reading notification content is the Attention Manager's job, not the Context Engine's, which never sees content (§12 principle 4 of [context-engine.md](../context-engine.md)). The Attention Manager assesses urgency from the content ([attention.md](../attention.md) §4.2), and the quantized DistilBERT or TinyBERT model (Tier 3) that reads it is an Attention Manager deliverable. It runs inside the Attention Manager's < 50 ms per-item urgency assessment ([attention.md](../attention.md) §14.1). "Server is on fire" in a Slack message is genuinely urgent. "Check out this meme" from the same channel is not. The model learns to distinguish content patterns that predict user engagement.
 
 **Sender relationship graph.** The strongest predictor of notification urgency is the sender's relationship to the user. A message from the user's manager during work hours is almost always worth interrupting for. A message from a marketing bot is almost never worth interrupting for. The Context Engine maintains a sender importance graph:
 
@@ -444,7 +444,7 @@ pub enum SenderCategory {
 
 **Attention as finite budget.** Research (Gloria Mark, UC Irvine) shows that context switches cost ~23 minutes of recovery time. The Context Engine tracks an **attention budget** — a finite daily interruption capacity. Each interrupt costs attention budget. When the budget is depleted, the threshold automatically tightens. This prevents notification fatigue even when individual notifications pass the urgency threshold.
 
-**Breakpoint detection.** The engine identifies natural breakpoints in the user's activity — moments when an interruption is least costly. Typing pauses, app switches, scrolling stops, and compile waits are breakpoints. Notifications marked `NextBreak` are delivered at the next detected breakpoint rather than at an arbitrary time.
+**Breakpoint detection.** The engine identifies natural breakpoints in the user's activity — moments when an interruption is least costly. Typing pauses, app switches, scrolling stops, and compile waits are breakpoints. Notifications marked `NextBreak` are delivered at the next detected breakpoint rather than at an arbitrary time. The engine reports breakpoints; the Attention Manager's `BreakDetector` ([attention.md](../attention.md) §5.2) consumes them and does the delivery. Both use the same idle threshold, 30 seconds by default (the `attention.break_threshold` preference).
 
 ```rust
 pub struct AttentionBudget {
@@ -458,7 +458,7 @@ pub struct AttentionBudget {
 
 pub struct BreakpointDetector {
     /// Input velocity threshold for detecting pauses
-    idle_threshold: Duration,       // default: 3 seconds
+    idle_threshold: Duration,       // default: 30 seconds (attention.break_threshold)
     /// App switch as breakpoint
     app_switch_window: Duration,    // default: 2 seconds after switch
     /// Compile/build as breakpoint
@@ -513,7 +513,7 @@ At Tier 3, the full AIRS inference engine can generate natural language descript
 
 **Conversational context queries.** "What was I doing when I got that email?" AIRS searches the context history, correlates the timestamp, and answers: "You were in deep work mode, coding in the research space. The email arrived during a natural typing pause and was delivered as a NextBreak notification."
 
-**Cross-app semantic grouping.** For notification summarization, AIRS uses entity extraction to group related notifications: "5 messages about the deployment (3 from #engineering, 2 from CI bot)" rather than "5 new notifications." This requires Tier 3 because entity extraction and semantic similarity are compute-intensive.
+**Cross-app semantic grouping (Attention Manager).** Grouping reads notification content, so like content-aware urgency (§13.4) it is an Attention Manager deliverable, not a Context Engine one: it extends the Attention Manager's grouping and summarization ([attention.md](../attention.md) §6.1, §6.2). For notification summarization, AIRS uses entity extraction to group related notifications: "5 messages about the deployment (3 from #engineering, 2 from CI bot)" rather than "5 new notifications." This requires Tier 3 because entity extraction and semantic similarity are compute-intensive.
 
 ### 13.7 Summary
 
@@ -526,14 +526,14 @@ At Tier 3, the full AIRS inference engine can generate natural language descript
 | Kalman filter smoothing | 1 | <0.1ms | N/A (algorithm) | No |
 | GRU prediction | 2 | <10ms | ~200KB | No (kernel ML) |
 | HMM transitions | 1 | <0.1ms | <1KB | No |
-| Content-aware urgency | 3 | <100ms | ~50MB (quantized) | Yes |
+| Content-aware urgency (Attention Manager deliverable, see §13.4) | 3 | <50ms (attention.md §14.1) | ~50MB (quantized) | Yes |
 | Sender importance | 2 | <1ms | <10KB | No (kernel ML) |
 | Attention budget | 1 | <0.1ms | N/A (counter) | No |
 | Breakpoint detection | 1 | <0.1ms | N/A (heuristic) | No |
 | Cross-device BLE | 1 | N/A | N/A (protocol) | No |
 | CRDT sync | 1 | <1ms | N/A (algorithm) | No |
 | LLM narration | 3 | <1s | ~2GB | Yes |
-| Semantic grouping | 3 | <100ms | ~50MB | Yes |
+| Semantic grouping (Attention Manager deliverable, see §13.6) | 3 | <100ms | ~50MB | Yes |
 
 -----
 

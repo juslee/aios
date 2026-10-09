@@ -1022,8 +1022,8 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~431), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1036,16 +1036,16 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (570)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  mod.rs          (584)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (762)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (763)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (226) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (234)  # IPC Kit error variants through KernelIpc (#190) self-test
+    select_cap.rs (186)  # IpcSelect capability self-test
+    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
   shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
@@ -1812,11 +1812,12 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Comparing before and after.** Boot failures are random, so treat every soak result as a sample:
 
-- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches.
+- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches (`scripts/soak-matrix.sh`, below, boots one of each per round, rotating the order).
 - Small samples have wide intervals. 6 CLEAN out of 20 gives a 95% interval of about 15–52%. Doubling that to 12/20 is *not* significant (two-sided Fisher exact test p ≈ 0.11), while 6/20 → 18/20 is (p ≈ 0.0002). Compare the Wilson intervals printed in `summary.md`, or run a Fisher exact test on the 2×2 CLEAN / not-CLEAN table, before claiming an improvement.
 - Zero failures is weak evidence. With no failures in n boots, the 95% upper bound on the failure rate is about 3/n (the rule of three): 20 clean boots only bound it below 15%, and you need about 60 to bound it below 5%.
 - Look at the class mix, not just the CLEAN count. A change that turns `PCZERO` boots into `WEDGE` boots has moved the bug, not fixed it.
-- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 24.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
+- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 26.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
+- To compare revisions, interleave them. `scripts/soak-matrix.sh REF REF [REF [REF]]` builds 2–4 revisions, each in its own worktree (outside the checkout by default, so no parent `.cargo/config.toml` leaks into the builds), then boots them in rounds: one boot per revision per round, the order rotated each round, so host drift hits every revision alike. Each boot is that revision's own `soak-qemu.sh --no-build --runs 1`. Every revision must contain 7167d40 (#196), without which the kernel faults at the jump on strict-NX edk2 such as the CI runner's. Keeping everything but the change fixed applies here too: the script refuses revisions that pin different toolchain channels or build with different compilers (`rustc --version`, compared after the builds), since such a pair compares the change plus the compiler (`--allow-mixed-toolchains` overrides both checks, runs them anyway and marks the summary), and revisions that boot different firmware; it stops if the QEMU version line, the sha256 of the QEMU binary on `PATH` (which also catches a Homebrew revision bump that keeps the version line) or the firmware's sha256 changes mid-soak (an upgrade from another session, say). Results go to `target/soak-matrix/<timestamp>-<mode>/` in the main checkout, whichever worktree runs the script, because `/merge-and-cleanup` copies only `target/soak/` out of a PR worktree before git deletes it; keep an `--out` outside PR worktrees for the same reason. `summary.md` gives per-revision class counts, the CLEAN rate with its Wilson interval, IPC round-trip medians, a pairwise Fisher exact test (one-sided toward the revision with the lower CLEAN rate, which is how the crash-fix regression guard reads a pair, and two-sided) and every non-CLEAN boot; `--help` has the options and output layout. Giving the same ref twice makes an A/A control, which shows how far two identical arms drift apart by chance. The `Soak matrix` workflow (`.github/workflows/soak-matrix.yml`, manual dispatch only, e.g. `gh workflow run soak-matrix.yml -f refs="c1ce1a24ef34be4082a84814b02790db60c44b08 43fc8d5bfc51acedd143f2e1f922e5916aeac3c0" -f runs=30`) runs it on one `ubuntu-26.04` runner, 90 s per boot by default, and uploads the `soak-matrix-logs` artifact. A revision there must be reachable from a branch or a tag on `origin`, or from the head of a pull request whose branch is in this repository (the workflow fetches those heads, so a squash-merged PR's commits stay usable after its branch is deleted). Fork pull request heads are never fetched, so a fork commit cannot be an arm. Every arm's build scripts run on the runner and can write to the Actions cache of the dispatching ref, which `ci.yml`'s cached jobs may restore later, so dispatch only revisions you have reviewed, and give each as the full 40-digit SHA of the reviewed commit. The workflow refuses branch names, since a branch resolves only when the job runs and a later push would be built unreviewed, and short SHAs, since git takes a tag named like a short SHA over the commit, and that tag could point at a commit crafted to share the prefix. Each arm builds into its own worktree's `target/`, so arms never share build output. The job uses no `rust-cache`: it cached nothing the soak uses, and its post-job save would carry files an arm's build scripts write under `~/.cargo` into later dispatches. Like `qemu-soak`, its numbers are their own baseline: do not pool them with local arm64 soaks.
 
 ---
 

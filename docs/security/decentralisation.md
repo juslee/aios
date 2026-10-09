@@ -266,7 +266,7 @@ The AI gets better at understanding your patterns over time — which documents 
 
 ### How it works
 
-AIOS runs inference locally via the AIRS inference engine (GGML runtime with NEON SIMD acceleration). Models are stored locally in the AIRS model registry. No inference request ever leaves the device unless the user explicitly connects to a hosted model provider — and even then, the connection is capability-gated with an explicit token.
+AIOS runs inference locally via the AIRS inference engine (candle runtime with NEON SIMD acceleration). Models are stored locally in the AIRS model registry. No inference request ever leaves the device unless the user explicitly connects to a hosted model provider — and even then, the connection is capability-gated with an explicit token.
 
 **Intelligence continuity across devices**: AIRS state — conversation history, user preferences, behavioral baselines, context signals — is stored in AIRS-internal spaces. These spaces sync across devices via the same Merkle exchange protocol used for all spaces (§5). When you switch from phone to laptop, the laptop's AIRS instance has your latest context because its AIRS spaces were synced.
 

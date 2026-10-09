@@ -1,0 +1,256 @@
+name: Soak matrix
+
+# Interleaved A/B/C boot soak (scripts/soak-matrix.sh): builds 2-4 kernel
+# revisions, then boots them in rounds -- one boot per arm per round, the arm
+# order rotated every round -- all on ONE runner, so every arm shares that
+# runner's conditions. Arms are never split across jobs. Dispatch only;
+# report-only like the qemu-soak job in ci.yml: the run fails only when the
+# soak could not run or was cut short, never because of the boot classes.
+#
+#   gh workflow run soak-matrix.yml -f runs=30 \
+#     -f refs="c1ce1a24ef34be4082a84814b02790db60c44b08 43fc8d5bfc51acedd143f2e1f922e5916aeac3c0"
+#
+# Every arm must contain 7167d40 (#196): the runner's strict-NX edk2 maps
+# EfiLoaderData execute-never, so an older kernel faults at the jump on every
+# boot. The arms must also pin the same toolchain channel and build with the
+# same compiler (rustc --version, compared after the builds) unless
+# allow_mixed_toolchains is set, which overrides both checks
+# (scripts/soak-matrix.sh --help). An arm is found if it is reachable from a
+# branch or a tag on origin, or from the head of a pull request whose branch
+# is in this repository; GitHub keeps pull request heads after the branch is
+# deleted.
+#
+# Every arm's build scripts run on the runner, and code running in this job
+# can write to the Actions cache of the dispatching ref whether or not the
+# job uses one: a dispatch from main can plant entries that ci.yml's
+# rust-cache jobs restore later. So dispatch only arms whose code you have
+# reviewed, and the job fetches no pull request head from a fork, so a fork
+# commit cannot resolve as an arm. An arm must be a full commit SHA (40 hex
+# digits), never a branch name: a branch resolves only when the job runs, so
+# a push after the review, or while the job is queued, would build code
+# nobody reviewed. Nor a short SHA: git tries ref names first, so a tag
+# named like it, pointing at a commit crafted to share the prefix, would
+# stand in for the reviewed commit; git always reads 40 hex digits as the
+# commit itself.
+#
+# Each arm builds into its own worktree's target/, so arms never share build
+# output. The job uses no rust-cache: it cached nothing the soak uses, and
+# its post-job save would carry files an arm's build scripts write under
+# ~/.cargo into later dispatches of this workflow.
+#
+# The results are x86 TCG numbers on ubuntu-26.04 and form their own
+# baseline: never pool them with local arm64 soaks, or with runs on another
+# runner image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: "2-4 space-separated full commit SHAs (40 hex digits; no branch names or short SHAs), one arm each (A, B, C, D in order); each must contain 7167d40 (#196)"
+        required: true
+        type: string
+      runs:
+        description: "Rounds, i.e. boots per arm (1-1000)"
+        required: false
+        default: 30
+        type: number
+      secs:
+        description: "Seconds per boot, 16-3600 (x86 TCG is slower than the arm64 dev hosts)"
+        required: false
+        default: 90
+        type: number
+      mode:
+        description: "QEMU device set"
+        required: false
+        default: text
+        type: choice
+        options:
+          - text
+          - gpu
+      allow_mixed_toolchains:
+        description: "Run arms whose rust-toolchain.toml channels or compilers (rustc --version) differ (the crash-fix soak protocol refuses such a pair)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  # Read-only: lists the pull requests to fetch only this repository's heads.
+  pull-requests: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  soak-matrix:
+    name: Interleaved boot soak (report-only)
+    # Pinned: the QEMU and edk2 versions come from the runner image, and soak
+    # results are only comparable across runs on the same image. Same runner
+    # image, QEMU/edk2/mtools install and AIOS_EDK2_FW as ci.yml's qemu-soak
+    # job (but no rust-cache, and a full-history checkout; see above).
+    runs-on: ubuntu-26.04
+    # GitHub's job limit. The soak step gets a tighter limit computed from the
+    # inputs (see "Plan the soak"), so a soak that overruns is stopped with
+    # time left for the summary and the artifact upload.
+    timeout-minutes: 360
+    env:
+      AIOS_EDK2_FW: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+      # Inputs reach the scripts as environment variables, never as ${{ }}
+      # text inside a script.
+      REFS: ${{ inputs.refs }}
+      RUNS: ${{ inputs.runs }}
+      SECS: ${{ inputs.secs }}
+      MODE: ${{ inputs.mode }}
+      ALLOW_MIXED_TOOLCHAINS: ${{ inputs.allow_mixed_toolchains }}
+    steps:
+      # Step time limit, in minutes:
+      #   boots   ceil(arms x runs x (secs + 15) / 60)
+      #           15 s per boot covers the harness start (timeout check, ESP
+      #           snapshot) and QEMU's exit after the timeout's SIGTERM (up to
+      #           10 s with --kill-after)
+      #   builds  5 x arms: toolchain install plus a cold debug build of
+      #           kernel and stub (the qemu-soak job's warm `just disk` takes
+      #           about 20 s)
+      #   margin  10
+      # Defaults, 3 arms: 158 + 15 + 10 = 183 min; 4 arms: 210 + 20 + 10 = 240.
+      # The limit must stay <= 340, leaving 20 min of the 360 for setup,
+      # summary and upload: at secs=90 that is at most 44 runs with 4 arms,
+      # 60 with 3 and 91 with 2. A larger soak fails here, before any build.
+      #
+      # First, so the always() steps below have a path even when the plan
+      # refuses the inputs.
+      - name: Choose the output directory
+        run: echo "MATRIX_OUT=$RUNNER_TEMP/soak-matrix" >> "$GITHUB_ENV"
+      - name: Plan the soak
+        id: plan
+        run: |
+          set -f
+          # shellcheck disable=SC2086 # split the refs into words, no globbing
+          set -- $REFS
+          set +f
+          arms=$#
+          if [ "$arms" -lt 2 ] || [ "$arms" -gt 4 ]; then
+            echo "::error::refs must name 2-4 revisions (got $arms)"
+            exit 1
+          fi
+          # A branch name, or a tag named like a short SHA, would resolve to
+          # whatever it points at when the job runs, not to the reviewed
+          # commit (see the trust note above).
+          for ref in "$@"; do
+            hex=yes
+            case "$ref" in
+              *[!0-9a-fA-F]*) hex=no ;;
+            esac
+            if [ "$hex" != yes ] || [ "${#ref}" -ne 40 ]; then
+              echo "::error::'$ref' is not a full commit SHA; give each arm as the 40 hex digit SHA of the commit you reviewed, never a branch name or a short SHA"
+              exit 1
+            fi
+          done
+          # Whole numbers only, leading zeros dropped (bash would read 030
+          # as octal), and at most 4 digits before any arithmetic, so a huge
+          # value cannot wrap the 64-bit products below into range.
+          for v in "$RUNS" "$SECS"; do
+            case "$v" in
+              '' | *[!0-9]*) echo "::error::runs and secs must be whole numbers (got '$v')"; exit 1 ;;
+            esac
+            v=${v#"${v%%[!0]*}"}
+            if [ "${#v}" -gt 4 ]; then
+              echo "::error::runs and secs must be at most 1000 and 3600 (got $v)"
+              exit 1
+            fi
+          done
+          runs=$((10#$RUNS))
+          secs=$((10#$SECS))
+          # soak-matrix.sh's own bounds (--runs 1-1000, --secs 16-3600).
+          if [ "$runs" -lt 1 ] || [ "$runs" -gt 1000 ]; then
+            echo "::error::runs must be from 1 to 1000 (got $runs)"
+            exit 1
+          fi
+          # soak-qemu.sh refuses a --secs that is not above its --stall-secs (15).
+          if [ "$secs" -le 15 ] || [ "$secs" -gt 3600 ]; then
+            echo "::error::secs must be more than 15 (the harness's stall limit) and at most 3600 (got $secs)"
+            exit 1
+          fi
+          boot_min=$(( (arms * runs * (secs + 15) + 59) / 60 ))
+          soak_min=$(( boot_min + 5 * arms + 10 ))
+          echo "Plan: $arms arms x $runs rounds x ($secs s + 15 s) = $boot_min min of boots; soak step limit $soak_min min"
+          # Arms are compared only within one dispatch (one runner), so a
+          # soak that does not fit is made smaller, never split across
+          # dispatches.
+          if [ "$soak_min" -gt 340 ]; then
+            echo "::error::the soak needs about $soak_min min, over the 340 min this job can give it; lower runs or secs, or dispatch fewer arms (keep both arms of each compared pair in the same dispatch: arms from different dispatches ran on different runners and must never be compared)"
+            exit 1
+          fi
+          echo "soak_minutes=$soak_min" >> "$GITHUB_OUTPUT"
+      # Full history of every branch and tag, then the head of every pull
+      # request whose branch is in this repository, so an arm can be any
+      # commit reachable from one of them, including commits of a
+      # squash-merged pull request whose branch was deleted.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Fail closed: a pull request is fetched only when the API names this
+      # repository as its head repository. A fork's head, or one whose fork
+      # was deleted (no head repository), is never fetched, so its commits do
+      # not resolve as arms (see the trust note above).
+      - name: Fetch this repository's pull request heads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=all&per_page=100" \
+            --jq '.[] | "\(.number) \(.head.repo.id // "none")"' >"$RUNNER_TEMP/pulls.txt"
+          awk -v id="$GITHUB_REPOSITORY_ID" '$2 == id { print "+refs/pull/" $1 "/head:refs/remotes/origin/pr/" $1 }' \
+            "$RUNNER_TEMP/pulls.txt" >"$RUNNER_TEMP/pull-refspecs.txt"
+          echo "Fetching $(wc -l <"$RUNNER_TEMP/pull-refspecs.txt") of $(wc -l <"$RUNNER_TEMP/pulls.txt") pull request heads (this repository's only)"
+          xargs -r -n 100 git fetch --no-tags --quiet origin <"$RUNNER_TEMP/pull-refspecs.txt"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools
+      - uses: extractions/setup-just@v4
+      # ipxe-qemu provides efi-virtio.rom, the option ROM virtio-blk-pci needs.
+      - name: Install QEMU, edk2 firmware and mtools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 ipxe-qemu mtools
+          qemu-system-aarch64 --version
+          dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
+          test -f "$AIOS_EDK2_FW"
+      # Each arm is built in its own worktree, $RUNNER_TEMP/arm-A and so on,
+      # with that arm's rust-toolchain.toml: rustup installs a pinned nightly
+      # the runner does not have yet on first use.
+      - name: Soak (${{ inputs.runs }} rounds x ${{ inputs.secs }} s, ${{ inputs.mode }})
+        timeout-minutes: ${{ fromJSON(steps.plan.outputs.soak_minutes) }}
+        run: |
+          set -f
+          # shellcheck disable=SC2086 # split the refs into words, no globbing
+          set -- $REFS
+          set +f
+          mixed=""
+          [ "$ALLOW_MIXED_TOOLCHAINS" != true ] || mixed=--allow-mixed-toolchains
+          # exec: the runner's SIGINT/SIGTERM on a timeout or cancel reach the
+          # soak itself, which stops the running build or boot. Once the
+          # boots have started, it also marks summary.md "stopped" before the
+          # steps below read it; a soak stopped during the builds leaves only
+          # the build logs.
+          # shellcheck disable=SC2086 # $mixed is one flag or nothing
+          exec bash scripts/soak-matrix.sh --runs "$RUNS" --secs "$SECS" --mode "$MODE" $mixed \
+            --out "$MATRIX_OUT" --worktrees "$RUNNER_TEMP" --keep-worktrees -- "$@"
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "$MATRIX_OUT/summary.md" ]; then
+            cat "$MATRIX_OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The soak matrix produced no summary; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload soak logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-matrix-logs
+          path: ${{ env.MATRIX_OUT }}
+          if-no-files-found: warn
