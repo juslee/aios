@@ -17,9 +17,9 @@
 //! catch it and check.py exits 2 through `__main__` (L1665-1670), where aios
 //! still falls back to the directory name and exits 0 or 1.
 //!
-//! `layout_list`'s per-call `entry` regex, and the shared `TREE_PREFIX_RE`
-//! (defined in `layout.rs`), use `\s`, which here does not match U+001C..U+001F
-//! where Python's `\s` does; no tracked line reaches it.
+//! `layout_list`'s per-call `entry` regex, like every pattern here and the shared
+//! `TREE_PREFIX_RE` (defined in `layout.rs`), is compiled with
+//! `crate::pyre::compile`, so its `\s` is Python's (U+001C..U+001F included).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
@@ -31,6 +31,7 @@ use crate::cmd::docs_check::checks::Check;
 use crate::cmd::docs_check::markdown::section_body;
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
+use crate::pyre;
 use crate::pystr::{lstrip, strip};
 
 const CHECK: &str = "harness-tables";
@@ -40,30 +41,31 @@ const CHECK: &str = "harness-tables";
 pub const SKILL_NAME: &str = r"[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?";
 
 static SKILL_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(SKILL_NAME).expect("valid regex"));
+    LazyLock::new(|| pyre::compile(SKILL_NAME).expect("valid regex"));
 /// check.py L1149: first cell of a Skills table row (anchored, as L1094's `re.match`).
 static SKILL_CELL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&["^`/(", SKILL_NAME, ")"].concat()).expect("valid regex"));
+    LazyLock::new(|| pyre::compile(&["^`/(", SKILL_NAME, ")"].concat()).expect("valid regex"));
 /// check.py L1150: first cell of an Agents table row.
 static AGENT_CELL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^`([a-z0-9-]+)`").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^`([a-z0-9-]+)`").expect("valid regex"));
 /// check.py L1091: a table section ends at the next bold label or `## ` heading.
 static TABLE_STOP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\*\*|^## ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\*\*|^## ").expect("valid regex"));
 /// check.py L1126. `\n?$` matches Python's non-MULTILINE `$` on a tracked path
 /// ending in a trailing newline; same for the three regexes below (L1135, L1139,
-/// L1147).
+/// L1147; `AGENT_FILE_RE` also ports L1278, pointer-doctor's agent set).
 static PLUGIN_JSON_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json\n?$").expect("valid regex")
+    pyre::compile(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json\n?$")
+        .expect("valid regex")
 });
 static PLUGIN_SKILL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\.claude/skills/([^/]+)/skills/([^/]+)/SKILL\.md\n?$").expect("valid regex")
+    pyre::compile(r"^\.claude/skills/([^/]+)/skills/([^/]+)/SKILL\.md\n?$").expect("valid regex")
 });
 static SKILL_FILE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?\n?$").expect("valid regex")
+    pyre::compile(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?\n?$").expect("valid regex")
 });
 static AGENT_FILE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\.claude/agents/([^/]+)\.md\n?$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\.claude/agents/([^/]+)\.md\n?$").expect("valid regex"));
 
 /// CLAUDE.md skills/agents tables and layout lists vs .claude/.
 pub struct HarnessTables;
@@ -110,7 +112,7 @@ fn plugin_name(text: &str) -> Option<String> {
     }
 }
 
-/// check.py L1147: `.claude/agents/<name>.md` names.
+/// check.py L1147 and L1278: `.claude/agents/<name>.md` names.
 pub fn project_agents(repo: &Repo) -> BTreeSet<String> {
     repo.files()
         .iter()
@@ -123,7 +125,7 @@ pub fn project_agents(repo: &Repo) -> BTreeSet<String> {
 /// first cell of each table row between the line containing `marker` and the
 /// next `**` label or `## ` heading of [`CLAUDE_MD`].
 pub fn claude_table_names(repo: &Repo, marker: &str, rx: &Regex) -> BTreeSet<String> {
-    let start = Regex::new(&regex::escape(marker)).expect("an escaped literal is a valid regex");
+    let start = pyre::compile(&regex::escape(marker)).expect("an escaped literal is a valid regex");
     let text = repo.text(CLAUDE_MD);
     let mut names = BTreeSet::new();
     for (_, line) in section_body(&text, &start, &TABLE_STOP_RE) {
@@ -146,7 +148,7 @@ pub fn claude_table_names(repo: &Repo, marker: &str, rx: &Regex) -> BTreeSet<Str
 /// `── <label>/` and its continuation lines (text before the first `(` only),
 /// or `None` when the tree has no such entry.
 pub fn layout_list(block: &[String], label: &str) -> Option<BTreeSet<String>> {
-    let entry = Regex::new(&[r"──\s+", &regex::escape(label), r"/\s+(.*)$"].concat())
+    let entry = pyre::compile(&[r"──\s+", &regex::escape(label), r"/\s+(.*)$"].concat())
         .expect("an escaped label forms a valid regex");
     let mut names = BTreeSet::new();
     let mut found = false;
@@ -251,7 +253,7 @@ mod tests {
             &SKILL_FILE_RE,
             &AGENT_FILE_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);

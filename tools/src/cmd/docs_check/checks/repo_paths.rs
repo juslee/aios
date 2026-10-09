@@ -3,10 +3,10 @@
 //! an existing path.
 //!
 //! Like check.py, code spans are read from the raw prose line (HTML comments are not
-//! masked). Accepted divergences: `\S` in `REPO_PATH_RE` is Rust's, which treats
-//! U+001C..U+001F as non-space; and `is_path_placeholder` counts a capital assigned
-//! after Unicode 16 (e.g. U+A7CE) as uppercase, so such a path is skipped here where
-//! check.py reports it (listed in the `markdown` module doc).
+//! masked). `REPO_PATH_RE` is compiled with `crate::pyre::compile`, so its `\S` stops at
+//! U+001C..U+001F as Python's does. Accepted divergence: `is_path_placeholder` counts a
+//! capital assigned after Unicode 16 (e.g. U+A7CE) as uppercase, so such a path is skipped
+//! here where check.py reports it (listed in the `markdown` module doc).
 
 use std::sync::LazyLock;
 
@@ -18,10 +18,11 @@ use crate::cmd::docs_check::markdown::{
 };
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::Repo;
+use crate::pyre;
 
 /// check.py `REPO_PATH_RE` (L724), applied with `re.match`.
 static REPO_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^((?:kernel|shared|uefi-stub|scripts)/\S*)").expect("valid regex")
+    pyre::compile(r"^((?:kernel|shared|uefi-stub|scripts)/\S*)").expect("valid regex")
 });
 
 /// `repo-paths` (check.py `check_repo_paths`, L733-748).
@@ -73,7 +74,7 @@ mod tests {
 
     #[test]
     fn regexes_compile() {
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         LazyLock::force(&REPO_PATH_RE);
     }

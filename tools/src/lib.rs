@@ -9,4 +9,5 @@
 pub mod cmd;
 pub mod paths;
 pub mod proc;
+pub mod pyre;
 pub mod pystr;
