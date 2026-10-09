@@ -167,12 +167,18 @@ test:
 # uncommitted changes (untracked and gitignored files count: an ignored
 # tools/build.rs or .cargo/config still changes the build; the exclude
 # pathspecs, anchored under tools/ and .cargo/ for the reason the shim gives,
-# leave out OS and editor files no build reads), when HEAD has input
+# leave out OS and editor files no build reads), when the index marks an input
+# file assume-unchanged or skip-worktree (git status skips it; `git ls-files
+# -v` tags every other file H), when HEAD has input
 # changes that origin/main (refs/remotes/origin/main) lacks, or when there is
 # no origin/main, so only inputs merged through a PR stamp "source clean". The
 # test runs git status without optional locks, so a background build never
-# holds the main checkout's index.lock while other git commands run there. The
-# shim treats a missing or mismatched stamp as stale, and repeats the dirty
+# holds the main checkout's index.lock while other git commands run there, and
+# with the work tree pinned to this checkout (over core.worktree) and the
+# config that lets git status skip reading files turned off (core.fsmonitor,
+# core.untrackedCache, core.checkStat, core.trustctime); a clean filter set
+# in the config still hides an edit (the shim's header lists what it trusts).
+# The shim treats a missing or mismatched stamp as stale, and repeats the dirty
 # test on a dirty stamp; the inputs list, the dirty test and the format must
 # match the shim's.
 # Build the host tools binary target/tools/installed/aios (run through .claude/hooks/aios)
@@ -205,12 +211,16 @@ tools:
     cargo build --release -p aios-tools --target-dir target/tools 9>&-
     inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
     src=$(git ls-tree HEAD -- $inputs)
-    changes=$(git --no-optional-locks status --porcelain --untracked-files=all --ignored=matching -- $inputs \
+    changes=$(git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false \
+        -c core.checkStat=default -c core.trustctime=true --work-tree="$PWD" \
+        status --porcelain --untracked-files=all --ignored=matching -- $inputs \
         ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
         ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
         ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
         ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk')
-    if [ -n "$changes" ]; then
+    flags=$(git --work-tree="$PWD" ls-files -v -- $inputs)
+    hidden=$(printf '%s\n' "$flags" | sed '/^H /d;/^$/d')
+    if [ -n "$changes" ] || [ -n "$hidden" ]; then
         state=dirty
     elif ! base=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
         ! git diff-tree --quiet -r "$base" HEAD -- $inputs; then

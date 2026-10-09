@@ -27,6 +27,7 @@ const STALE_RUNNING: &str =
 const STALE_NO_BUILD: &str =
     "aios tools are stale or unverified, and a background build could not start; run just tools";
 const UNCOMMITTED: &str = "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; revert or remove them (merge any you need through a PR first), then run just tools";
+const HIDDEN: &str = "aios tools were built while assume-unchanged or skip-worktree flags in the main checkout's index hid input files from git status; clear the flags (git ls-files -v shows them as lowercase tags or S), then run just tools";
 const DIRTY: &str = "aios tools were built from input commits in the main checkout that are not on origin/main; once they have merged through a PR, or if they are not wanted, reset the main checkout onto origin/main (git reset --keep origin/main), then run just tools";
 const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not a non-empty regular executable file";
 const NO_ORIGIN: &str = "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools";
@@ -610,6 +611,68 @@ fn a_stale_guard_says_when_no_background_build_can_start() {
     let out = sandbox.run(&["--prebuild"]);
     assert_eq!(code(&out), 0);
     assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+}
+
+/// A directory of links to the named commands as the test's `PATH` finds
+/// them, for a `PATH` that holds only those. A name it does not find is left
+/// out.
+fn only_commands(label: &str, names: &[&str]) -> TestRepo {
+    let dir = TestRepo::adopt(unique_dir(label));
+    for name in names {
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg("command -v \"$1\"")
+            .arg("sh")
+            .arg(name)
+            .output()
+            .expect("run sh");
+        let found = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if out.status.success() && found.starts_with('/') {
+            std::os::unix::fs::symlink(&found, dir.path().join(name))
+                .unwrap_or_else(|err| panic!("link {found}: {err}"));
+        }
+    }
+    dir
+}
+
+// The recipe needs `just` to run it and flock(1) or lockf(1) for its lock.
+// Without either, a background build would fail at once, so guard says that
+// none could start rather than that one is rebuilding, and starts none.
+#[test]
+fn a_stale_guard_without_just_or_a_lock_tool_starts_no_build() {
+    let sandbox = Sandbox::new("shim-no-just");
+    sandbox.install_bin(false);
+    let shim_needs = [
+        "dirname", "git", "find", "head", "cat", "sed", "mkdir", "rmdir",
+    ];
+    let no_just = only_commands(
+        "shim-no-just-path",
+        &[&shim_needs[..], &["flock", "lockf"]].concat(),
+    );
+    let no_lock_tool = only_commands(
+        "shim-no-lock-tool-path",
+        &[&shim_needs[..], &["just"]].concat(),
+    );
+    assert!(
+        no_lock_tool.path().join("just").exists(),
+        "the tests need just on PATH"
+    );
+    for dir in [&no_just, &no_lock_tool] {
+        let path = format!(
+            "{}:{}",
+            sandbox.bin_dir.path().display(),
+            dir.path().display()
+        );
+        assert_asks(
+            &sandbox.run_env(&["guard", "PreToolUse"], &[("PATH", &path)]),
+            STALE_NO_BUILD,
+        );
+        assert!(sandbox.no_build_started());
+        let out = sandbox.run_env(&["--prebuild"], &[("PATH", &path)]);
+        assert_eq!(code(&out), 0);
+        assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+        assert!(sandbox.no_build_started());
+    }
 }
 
 #[test]
@@ -1243,8 +1306,10 @@ fn a_build_with_ignored_input_files_is_dirty() {
 }
 
 // OS and editor files that no build reads (Finder's .DS_Store, editor swap and
-// backup files) do not make a build dirty, ignored or untracked, so one left
-// in the main checkout never holds guard at a dirty ask that starts no build.
+// backup files) do not make a build dirty, ignored or untracked, nor stale
+// when written after it (nor do the directories they change), so one left
+// in the main checkout never holds guard at a dirty ask that starts no build,
+// and one an editor keeps rewriting never starts a rebuild.
 #[test]
 fn os_and_editor_files_under_the_inputs_keep_a_build_clean() {
     let sandbox = Sandbox::new("shim-inert-files");
@@ -1253,17 +1318,29 @@ fn os_and_editor_files_under_the_inputs_keep_a_build_clean() {
         .write(".gitignore", "target/\n*.log\n.DS_Store\n*.swp\n");
     sandbox.repo.commit("Ignore OS and editor files");
     sandbox.merge();
-    for file in [
+    let inert = [
         "tools/.DS_Store",
         "tools/src/.DS_Store",
         "tools/src/.lib.rs.swp",
         "tools/src/lib.rs~",
         "tools/src/lib.rs.bk",
         ".cargo/.config.toml.swo",
-    ] {
+    ];
+    for file in inert {
         sandbox.repo.write(file, "not a build input\n");
     }
-    sandbox.install_bin(true);
+    // The binary keeps its build's start time; the files, and the directories
+    // that hold them, are rewritten after the build.
+    let out = sandbox.just_tools(&[]);
+    assert!(out.status.success(), "just tools failed: {}", stderr(&out));
+    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+    for file in inert {
+        sandbox.repo.write(file, "rewritten after the build\n");
+        set_mtime(&sandbox.repo.path().join(file), NEWER_STAMP);
+    }
+    for dir in ["tools", "tools/src", ".cargo"] {
+        set_mtime(&sandbox.repo.path().join(dir), NEWER_STAMP);
+    }
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
     assert_eq!(
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
@@ -1288,6 +1365,78 @@ fn os_and_editor_files_under_the_inputs_keep_a_build_clean() {
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
         "fake:guard PreToolUse\n"
     );
+}
+
+// The dirty test reads the main checkout's git config and index. Config that
+// moves the work tree or lets git status trust a file system monitor, and
+// index flags that make git status skip a file, must not hide a changed input
+// from the recipe or from the shim's repeat of its test.
+#[test]
+fn git_config_and_index_flags_do_not_hide_changed_inputs() {
+    let edit = "// an edit hidden from a plain git status\n";
+
+    // core.worktree pointing at a clean copy of HEAD.
+    let sandbox = Sandbox::new("shim-hidden-worktree");
+    let copy = TestRepo::adopt(unique_dir("shim-hidden-worktree-copy"));
+    let mut cmd = Command::new("sh");
+    isolated(&mut cmd)
+        .current_dir(sandbox.repo.path())
+        .arg("-c")
+        .arg("git archive HEAD | tar -xf - -C \"$1\"")
+        .arg("sh")
+        .arg(copy.path());
+    assert!(cmd.status().expect("run git archive").success());
+    common::git(
+        sandbox.repo.path(),
+        &["config", "core.worktree", copy.path_str()],
+    );
+    sandbox.repo.write("tools/src/lib.rs", edit);
+    sandbox.repo.write("tools/build.rs", "fn main() {}\n");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), UNCOMMITTED);
+    assert!(sandbox.no_build_started());
+
+    // A file system monitor that never reports a change, queried once before
+    // the edit so that the index records its token.
+    let sandbox = Sandbox::new("shim-hidden-fsmonitor");
+    let monitor = sandbox.bin_dir.path().join("fsmonitor");
+    write_executable(&monitor, "#!/bin/sh\nprintf 'tok\\0'\n");
+    common::git(
+        sandbox.repo.path(),
+        &[
+            "config",
+            "core.fsmonitor",
+            monitor.to_str().expect("a UTF-8 path"),
+        ],
+    );
+    common::git(sandbox.repo.path(), &["status", "--porcelain"]);
+    sandbox.repo.write("tools/src/lib.rs", edit);
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), UNCOMMITTED);
+    assert!(sandbox.no_build_started());
+
+    // Index flags: git status skips a file marked assume-unchanged or
+    // skip-worktree, so the test reads the flags from git ls-files -v.
+    for (label, flag) in [
+        ("shim-hidden-assume-unchanged", "--assume-unchanged"),
+        ("shim-hidden-skip-worktree", "--skip-worktree"),
+    ] {
+        let sandbox = Sandbox::new(label);
+        common::git(
+            sandbox.repo.path(),
+            &["update-index", flag, "tools/src/lib.rs"],
+        );
+        sandbox.repo.write("tools/src/lib.rs", edit);
+        sandbox.install_bin(true);
+        assert!(
+            read(&sandbox.stamp()).ends_with("\nsource dirty\n"),
+            "{flag}"
+        );
+        assert_asks(&sandbox.run(&["guard", "PreToolUse"]), HIDDEN);
+        assert!(sandbox.no_build_started());
+    }
 }
 
 // A directory at either install path fails the recipe with a message, rather

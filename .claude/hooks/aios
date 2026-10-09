@@ -11,7 +11,8 @@
 # one, .cargo/, and the justfile, whose recipe writes the stamp), the git hash
 # of the installed binary, and whether those inputs were dirty: changed but not
 # committed (untracked and gitignored files included, except the OS and editor
-# files no build reads: .DS_Store, *.swp, *.swo, *~ and *.rs.bk), or committed
+# files no build reads: .DS_Store, *.swp, *.swo, *~ and *.rs.bk, and tracked
+# files the index marks assume-unchanged or skip-worktree), or committed
 # on HEAD but not on origin/main (refs/remotes/origin/main, which a plain fetch
 # moves only to what was merged on GitHub), or origin/main is missing. This
 # repository squash-merges, so a commit made in the main checkout never reaches
@@ -26,9 +27,10 @@
 #
 # The main checkout's binary is, in order:
 #   missing  not a non-empty regular executable file.
-#   stale    a build input is newer than the binary (it carries its build's
-#            start time, so an edit made during a build counts, and so do
-#            uncommitted edits), or the stamp is missing or does not match
+#   stale    a build input file, other than those OS and editor files, is
+#            newer than the binary (it carries its build's start time, so an
+#            edit made during a build counts, and so do uncommitted edits),
+#            or the stamp is missing or does not match
 #            the main checkout's HEAD and the binary: a binary built
 #            elsewhere, or replaced after its build, even one future-dated to
 #            pass the mtime test. Also a dirty stamp whose cause is gone
@@ -49,8 +51,9 @@
 #                     says whether it started, one was already running, or
 #                     none could start), dirty (no build; the reason names the
 #                     cause the dirty test finds now: uncommitted, untracked or
-#                     ignored input files, input commits origin/main lacks, or
-#                     no origin/main), an override that is not a runnable
+#                     ignored input files, input files index flags hide from
+#                     git status, input commits origin/main lacks, or no
+#                     origin/main), an override that is not a runnable
 #                     file, and a shim that cannot find its own directory or
 #                     the main checkout. A runnable override is the
 #                     exception: it runs as a child like a fresh binary, with
@@ -81,6 +84,11 @@
 # .git/worktrees/<name>/commondir), and no rule covers them. Pointed at a
 # repository the session controls, they make this shim run that repository's
 # binary, stamped clean by its own `just tools` against its own origin/main.
+# The dirty test trusts the main checkout's .git/config and index the same
+# way: it pins the work tree, turns off the config that lets git status skip
+# reading files, and reads the index flags, but a clean filter (a
+# filter.<driver>.clean command in the config, given to input files by an
+# attributes file) still makes git status see the committed content.
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
 # never to stdout, so JSON on stdout stays parseable.
 
@@ -172,11 +180,18 @@ inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo ju
 
 # Print why the main checkout's inputs are dirty now, by the `tools` recipe's
 # test: changes (uncommitted, untracked or gitignored input files: an ignored
-# tools/build.rs or .cargo/config still changes the build), no-origin, or
-# unmerged (HEAD has input changes that origin/main lacks: a squash merge
-# leaves the main checkout's own commits off origin/main, so this holds until
-# the main checkout is reset onto it). Print nothing when they are clean. A
-# failing git status counts as changes, so it never starts a build. The
+# tools/build.rs or .cargo/config still changes the build), hidden (input
+# files the index marks assume-unchanged or skip-worktree, which git status
+# skips: `git ls-files -v` tags them in lowercase or S, every other file H),
+# no-origin, or unmerged (HEAD has input changes that origin/main lacks: a
+# squash merge leaves the main checkout's own commits off origin/main, so this
+# holds until the main checkout is reset onto it). Print nothing when they are
+# clean. A failing git command counts as changes or hidden, so it never starts
+# a build. git status runs with the work tree pinned to the main checkout
+# (over core.worktree) and with the config that lets it skip reading files
+# turned off (core.fsmonitor, core.untrackedCache, core.checkStat,
+# core.trustctime), which a session could otherwise set in the main
+# checkout's .git/config. The
 # exclude pathspecs leave out OS and editor files that no build reads, which
 # Finder or an editor leaves in the main checkout: counted, one would hold
 # guard at a dirty ask that starts no build. They are anchored under the
@@ -184,13 +199,18 @@ inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo ju
 # as `**/.DS_Store`) makes git status list the ignored target/ directory.
 dirty_cause() {
     # shellcheck disable=SC2086
-    if ! changes=$(git --no-optional-locks -C "$main" status --porcelain --untracked-files=all --ignored=matching -- $inputs \
+    if ! changes=$(git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false \
+        -c core.checkStat=default -c core.trustctime=true -C "$main" --work-tree="$main" \
+        status --porcelain --untracked-files=all --ignored=matching -- $inputs \
         ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
         ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
         ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
         ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk' 2>/dev/null) ||
         [ -n "$changes" ]; then
         echo changes
+    elif ! flags=$(git -C "$main" --work-tree="$main" ls-files -v -- $inputs 2>/dev/null) ||
+        [ -n "$(printf '%s\n' "$flags" | sed '/^H /d;/^$/d')" ]; then
+        echo hidden
     elif ! git -C "$main" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1; then
         echo no-origin
     elif ! base=$(git -C "$main" merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
@@ -200,10 +220,17 @@ dirty_cause() {
 }
 
 # Print fresh, stale, or dirty-<cause> (see dirty_cause) for a runnable $bin
-# (see the header).
+# (see the header). The mtime test skips directories and the OS and editor
+# files the dirty test leaves out: Finder or an editor rewrites them (a swap
+# file every few seconds), and creating one moves its directory's mtime, so
+# either would start rebuild after rebuild. A file removed since the build
+# changes no mtime it reads: uncommitted, the removal leaves a clean build
+# valid (and a dirty one is tested again below), and committed, it changes
+# HEAD's entries in the stamp.
 verdict() {
     # shellcheck disable=SC2086 # $inputs is a list of plain relative paths.
-    if [ -n "$(cd "$main" && find $inputs -newer "$bin" -print 2>/dev/null | head -n 1)" ]; then
+    if [ -n "$(cd "$main" && find $inputs ! -type d ! -name .DS_Store ! -name '*.swp' ! -name '*.swo' \
+        ! -name '*~' ! -name '*.rs.bk' -newer "$bin" -print 2>/dev/null | head -n 1)" ]; then
         echo stale
         return
     fi
@@ -258,7 +285,10 @@ recipe_running() {
 }
 
 # Start one background `just tools` and return 0. Return 1 when a background
-# build is already running, and 2 when none can start. The lock directory
+# build is already running, and 2 when none can start: no `just` on PATH, or
+# neither flock(1) nor lockf(1), without which the recipe exits at once, or no
+# lock directory (target/tools cannot be created, or something other than a
+# directory holds the lock path). The lock directory
 # .building (mkdir takes it atomically) covers a background build from before
 # its recipe starts until after it ends. A build killed with its subshell
 # leaves it behind, so it is taken over once `find -mmin +1` matches it (after
@@ -267,6 +297,8 @@ recipe_running() {
 # A takeover that is wrong, or two at once, only starts a redundant build,
 # which the recipe's lock runs after the other.
 build_bg() {
+    command -v just >/dev/null 2>&1 || return 2
+    command -v flock >/dev/null 2>&1 || command -v lockf >/dev/null 2>&1 || return 2
     mkdir -p "$main/target/tools" 2>/dev/null || return 2
     if [ -n "$(find "$lock" -prune -mmin +1 2>/dev/null)" ] && ! recipe_running; then
         rmdir "$lock" 2>/dev/null
@@ -316,6 +348,9 @@ guard)
     fresh) run_guard "aios guard" "run just tools" "$bin" "$@" ;;
     dirty-changes)
         ask "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; revert or remove them (merge any you need through a PR first), then run just tools"
+        ;;
+    dirty-hidden)
+        ask "aios tools were built while assume-unchanged or skip-worktree flags in the main checkout's index hid input files from git status; clear the flags (git ls-files -v shows them as lowercase tags or S), then run just tools"
         ;;
     dirty-no-origin)
         ask "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools"
