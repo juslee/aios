@@ -380,6 +380,9 @@ mod tests {
 
     #[test]
     fn signalling_a_group_that_is_gone_is_not_an_error() {
-        signal_group(999_999, "TERM").expect("kill ran");
+        // No host can allocate this process group id: Linux pids stop at
+        // PID_MAX_LIMIT (4194304 on 64-bit), macOS's at 99999. A smaller id
+        // such as 999999 can be a live group on Linux, which would get SIGTERM.
+        signal_group(i32::MAX as u32, "TERM").expect("kill ran");
     }
 }

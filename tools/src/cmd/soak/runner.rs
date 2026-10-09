@@ -13,7 +13,8 @@
 //! - `--runs`, `--secs` and `--stall-secs` with leading zeros are decimal
 //!   everywhere; bash read them as octal in `$((...))` (the CLEAN-rate
 //!   denominator and the `--secs` warning).
-//! - SIGHUP is caught like SIGINT and SIGTERM (exit 129) so QEMU never outlives the harness.
+//! - SIGHUP and SIGQUIT are caught like SIGINT and SIGTERM (exit 129 and 131),
+//!   so no terminal signal leaves QEMU running after the harness ends.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
@@ -261,8 +262,20 @@ fn secs_since(start: Instant) -> i64 {
     i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX)
 }
 
+/// What [`run`] has settled before it installs the signal handlers: the
+/// repository, the justfile's paths (the image paths relative to `root`), and
+/// the new or empty output directory.
+struct Setup {
+    root: PathBuf,
+    firmware: Vec<u8>,
+    disk_rel: Vec<u8>,
+    data_rel: Vec<u8>,
+    kernel_rel: Vec<u8>,
+    out_dir: PathBuf,
+}
+
 /// Run a soak. Returns the exit status: 0, 1 (a boot was not CLEAN), or 129,
-/// 130 or 143 when a signal interrupted it. Setup errors are `Err`.
+/// 130, 131 or 143 when a signal interrupted it. Setup errors are `Err`.
 pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -> Result<u8> {
     if host::find_in_path("qemu-system-aarch64").is_none() {
         bail!("qemu-system-aarch64 not found in PATH");
@@ -318,6 +331,39 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
     }
 
     let interrupts = Interrupts::install()?;
+    let setup = Setup {
+        root,
+        firmware,
+        disk_rel,
+        data_rel,
+        kernel_rel,
+        out_dir,
+    };
+    // From here on aios survives a terminal signal, but the children it runs sit
+    // in the terminal's foreground group and die of it (`just`, `sha256sum`).
+    // A step that then fails ends with the signal's status, as the script's trap
+    // exited 130 or 143 before `|| die` or `set -e` could act.
+    build_and_boot(cfg, setup, &interrupts, out, err).or_else(|e| interrupts.pending().ok_or(e))
+}
+
+/// Build and snapshot the ESP, boot it `cfg.runs` times and write the reports,
+/// with the signal handlers installed. Returns [`run`]'s status.
+fn build_and_boot(
+    cfg: &Config,
+    setup: Setup,
+    interrupts: &Interrupts,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<u8> {
+    let Setup {
+        root,
+        firmware,
+        disk_rel,
+        data_rel,
+        kernel_rel,
+        out_dir,
+    } = setup;
+    let firmware_os = OsStr::from_bytes(&firmware);
     let scratch = ScratchDir::create(&out_dir).map_err(|_| {
         anyhow::anyhow!("cannot create a scratch directory in {}", out_dir.display())
     })?;
@@ -424,6 +470,11 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
         .map(|o| host::first_line(&o.stdout).to_vec())
         .unwrap_or_default();
     let load_start = host::loadavg();
+    // A signal that ended one of the probes above (git, mcopy, QEMU's version,
+    // sysctl) without failing the soak: stop before any report, as the trap did.
+    if let Some(code) = interrupts.pending() {
+        return Ok(code);
+    }
 
     let tsv = out_dir.join("summary.tsv");
     std::fs::write(&tsv, TSV_HEADER).with_context(|| format!("cannot write {}", tsv.display()))?;

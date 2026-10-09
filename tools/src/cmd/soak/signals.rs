@@ -1,25 +1,28 @@
-//! SIGINT, SIGTERM and SIGHUP while a soak runs. The script trapped INT and TERM
-//! (`cleanup; exit 130` / `exit 143`); the harness now supervises QEMU itself,
-//! so it also catches HUP (exit 129), which would otherwise leave QEMU running
-//! with nothing left to stop it at the time limit.
+//! SIGINT, SIGTERM, SIGHUP and SIGQUIT while a soak runs. The script trapped INT
+//! and TERM (`cleanup; exit 130` / `exit 143`); the harness now supervises QEMU
+//! itself, so it also catches HUP (exit 129) and QUIT (exit 131, Ctrl-\), the
+//! other terminal signals that end a process. Either would otherwise end the
+//! harness and leave QEMU, in its own process group, running with nothing left
+//! to stop it at the time limit. SIGKILL cannot be caught: a harness killed by it
+//! leaves the current boot's QEMU running until it is killed by hand.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 
 /// The signals caught during a soak, and the exit status each one leads to.
-const CAUGHT: [(i32, usize); 3] = [(SIGINT, 130), (SIGTERM, 143), (SIGHUP, 129)];
+const CAUGHT: [(i32, usize); 4] = [(SIGINT, 130), (SIGTERM, 143), (SIGHUP, 129), (SIGQUIT, 131)];
 
-/// Records the last of SIGINT, SIGTERM or SIGHUP to arrive, instead of letting
-/// it end the process, so the caller can stop QEMU and clean up first.
+/// Records the last of SIGINT, SIGTERM, SIGHUP or SIGQUIT to arrive, instead of
+/// letting it end the process, so the caller can stop QEMU and clean up first.
 pub struct Interrupts {
     code: Arc<AtomicUsize>,
 }
 
 impl Interrupts {
-    /// Replace the default action of the three signals for the rest of the process.
+    /// Replace the default action of the four signals for the rest of the process.
     pub fn install() -> Result<Interrupts> {
         let code = Arc::new(AtomicUsize::new(0));
         for (signal, exit) in CAUGHT {

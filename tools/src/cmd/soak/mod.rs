@@ -11,7 +11,8 @@
 //! - Messages start `soak: error:` and `soak: warning:` (the script's were
 //!   `soak-qemu: ...`), and the usage text names `aios soak`.
 //! - A log file that exists but cannot be read ends with a `soak: error:`
-//!   message and status 2 (the script's `set -e` exited 1 after `tr`'s message).
+//!   message and status 2 (the script's `set -e` exited 1 after bash's
+//!   redirection error, `<script>: line N: <file>: Permission denied`).
 //! - A `--runs`, `--secs` or `--stall-secs` value that is not valid UTF-8 is
 //!   rejected as not a positive integer, as before; one in a message (`--mode`)
 //!   is shown with U+FFFD for its invalid bytes.
@@ -148,8 +149,10 @@ stopped QEMU, 137 when SIGKILL was needed).
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
 boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
 build failure, the UEFI stub never running on the first boot) -- setup errors
-exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP;
-QEMU is stopped first.
+exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
+131 on SIGQUIT; QEMU is stopped first. SIGKILL cannot be caught: a harness
+killed by it leaves the running QEMU behind until it is killed by hand, so
+stop a soak with one of the four signals above.
 "#;
 
 /// What the command line asks for.

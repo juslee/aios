@@ -2,7 +2,9 @@
 //! `scripts/soak-qemu.sh` (blob at `212df62`: `loadavg`, `sha256_of`,
 //! `host_cpus` at L499-517, and the inline probes in `run_soak`). They run the
 //! same utilities as the script, so `summary.md` reads the same on each host.
-//! Every program `aios soak` runs starts from [`command`], in the C locale.
+//! Every program `aios soak` runs starts from [`command`], in the C locale,
+//! except the `kill` that `proc::Supervisor` signals QEMU's process group with
+//! (its output is discarded).
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;

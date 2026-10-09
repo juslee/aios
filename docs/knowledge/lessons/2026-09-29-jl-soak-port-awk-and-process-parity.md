@@ -34,7 +34,8 @@ On real logs the classifier matched the oracle on 354 local logs at planning tim
   - std's `CommandExt::process_group(0)`, which puts the child in its own group;
   - the `kill` utility (`kill -TERM -- -PGID`) to signal the group. BSD kill and procps both accept it, and both exit 1 for a group that is gone.
   - `signal-hook`'s flag registration, the one safe way to catch signals.
-- **SIGHUP matters once the harness owns the time limit.** With `timeout` gone, nothing else bounds QEMU's run time. A terminal hangup reaches only the foreground group, not QEMU's own group. A harness killed by SIGHUP would leave QEMU running for good, skewing every later rate soak on the host. So the harness catches HUP like INT and TERM (exit 129) and stops the group.
+- **SIGHUP and SIGQUIT matter once the harness owns the time limit.** With `timeout` gone, nothing else bounds QEMU's run time. A terminal hangup or Ctrl-\ reaches only the foreground group, not QEMU's own group. A harness killed by either would leave QEMU running for good, skewing every later rate soak on the host. So the harness catches HUP and QUIT like INT and TERM (exit 129 and 131) and stops the group. SIGKILL cannot be caught, so a SIGKILLed harness still leaves its QEMU behind; the usage text says so.
+- **The children still die of the signal the harness survives.** Once the handlers are installed, a Ctrl-C no longer ends `aios`, but `just create-data-disk` or `sha256sum` running in the terminal's foreground group dies of it and returns a failure. Reported as a setup error, that would exit 2 instead of 130. So any error after the handlers are installed yields to a pending signal's status, as the script's trap did.
 
 ## What we learned
 
@@ -57,6 +58,6 @@ On real logs the classifier matched the oracle on 354 local logs at planning tim
 
 - For any awk or shell arithmetic being ported, port the value semantics first (`tools/src/cmd/soak/awk.rs`: `to_num`, `num_str`, `fmt_g`, `clip`, `trim`, `fields`). Use them everywhere, and test them against the real awk on a list of strings.
 - Keep log-derived data as `Vec<u8>` from input to every output. Never use `from_utf8_lossy`, `str::lines`, `trim` or `split_whitespace` on it.
-- Supervise any long-running child with `proc::Supervisor`: its own process group, SIGTERM at the limit, SIGKILL after the grace period, and a group stop on drop. Catch INT, TERM and HUP with `signal-hook`.
+- Supervise any long-running child with `proc::Supervisor`: its own process group, SIGTERM at the limit, SIGKILL after the grace period, and a group stop on drop. Catch INT, TERM, HUP and QUIT with `signal-hook`, and let a pending signal decide the exit status of any error after that.
 - Before writing a plan for a port, store the prototype patch and its inputs under `$(git rev-parse --git-common-dir)/aios-agent/port-inputs/<pr>/`, with a `SHA256SUMS`. The plan's code tasks apply slices of the patch with `git apply --include`.
 - Leave settings edits out of subagent tasks. When a deleted script leaves a dead permission rule, the owner approves its removal as a separate commit (R4: `Bash(bash -n scripts/soak-qemu.sh)`).

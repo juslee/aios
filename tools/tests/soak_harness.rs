@@ -8,8 +8,11 @@
 //! - `record_harness_goldens_from_oracle` (ignored) records the goldens from the
 //!   oracle; it needs `timeout` or `gtimeout` on PATH.
 //! - `harness_differential_against_oracle` (ignored, about 30 s) runs both.
-//! - `sighup_stops_qemu_and_cleans_up` covers the one signal the script did not
-//!   handle (the port exits 129 instead of leaving QEMU running).
+//! - `sighup_and_sigquit_stop_qemu_and_clean_up` covers the two signals the
+//!   script did not handle (the port exits 129 or 131 instead of leaving QEMU
+//!   running).
+//! - `a_signal_that_ends_a_setup_step_exits_with_its_status` covers a Ctrl-C
+//!   that kills `just create-data-disk` or `sha256sum` (130, not a setup error).
 //! - `an_interrupt_after_the_last_boot_skips_the_summary` covers a signal that
 //!   arrives once no QEMU runs (the script's trap exited 130 at once).
 
@@ -148,43 +151,94 @@ fn harness_differential_against_oracle() {
     assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
 }
 
-#[test]
-fn sighup_stops_qemu_and_cleans_up() {
-    let sc = scenarios()
+/// The golden scenario called `name`.
+fn scenario(name: &str) -> Scenario {
+    scenarios()
         .into_iter()
-        .find(|s| s.name == "interrupt-int")
-        .expect("the INT scenario");
-    let sc = Scenario {
-        name: "interrupt-hup",
-        interrupt: Some("HUP"),
-        ..sc
-    };
-    let o = run_scenario(Tool::Aios, &sc);
-    assert_eq!(o.code, 129, "{}", String::from_utf8_lossy(&o.stderr));
-    assert!(o.alive.is_empty(), "still running: {:?}", o.alive);
-    assert_eq!(
-        o.listing.as_deref(),
-        Some(
-            &[
-                "run-01.log".to_string(),
-                "run-02.log".to_string(),
-                "summary.tsv".to_string()
-            ][..]
-        )
-    );
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("no scenario {name}"))
+}
+
+#[test]
+fn sighup_and_sigquit_stop_qemu_and_clean_up() {
+    let cases = [
+        ("interrupt-hup", "HUP", 129),
+        ("interrupt-quit", "QUIT", 131),
+    ];
+    let outcomes = parallel(&cases, |&(name, signal, _)| {
+        let sc = Scenario {
+            name,
+            interrupt: Some(signal),
+            ..scenario("interrupt-int")
+        };
+        run_scenario(Tool::Aios, &sc)
+    });
+    for ((name, _, code), o) in cases.iter().zip(&outcomes) {
+        assert_eq!(
+            o.code,
+            *code,
+            "{name}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(o.alive.is_empty(), "{name}: still running: {:?}", o.alive);
+        assert_eq!(
+            o.listing.as_deref(),
+            Some(
+                &[
+                    "run-01.log".to_string(),
+                    "run-02.log".to_string(),
+                    "summary.tsv".to_string()
+                ][..]
+            ),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_signal_that_ends_a_setup_step_exits_with_its_status() {
+    let cases = [
+        (
+            "interrupt-data-disk",
+            &["--no-build", "--reuse-data", "runs=1", "secs=35", "out=out"][..],
+            &["data-disk-interrupted"][..],
+        ),
+        (
+            "interrupt-sha256",
+            &["--no-build", "runs=1", "secs=35", "out=out"][..],
+            &["sha256-interrupted"][..],
+        ),
+    ];
+    let outcomes = parallel(&cases, |&(name, args, flags)| {
+        let sc = Scenario {
+            name,
+            args,
+            flags,
+            ..scenario("panic-exit")
+        };
+        run_scenario(Tool::Aios, &sc)
+    });
+    for ((name, _, _), o) in cases.iter().zip(&outcomes) {
+        // 130 and no `soak: error:`, as the script's trap exited.
+        assert_eq!(
+            o.code,
+            130,
+            "{name}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&o.stderr), "", "{name}: stderr");
+        assert!(o.argv.is_empty(), "{name}: QEMU booted");
+        assert_eq!(o.listing.as_deref(), Some(&[][..]), "{name}");
+    }
 }
 
 #[test]
 fn an_interrupt_after_the_last_boot_skips_the_summary() {
-    let sc = scenarios()
-        .into_iter()
-        .find(|s| s.name == "panic-exit")
-        .expect("the panic-exit scenario");
     let sc = Scenario {
         name: "interrupt-after-last-boot",
         args: &["--no-build", "runs=1", "secs=30", "out=out"],
         flags: &["uname-interrupts"],
-        ..sc
+        ..scenario("panic-exit")
     };
     let o = run_scenario(Tool::Aios, &sc);
     assert_eq!(o.code, 130, "{}", String::from_utf8_lossy(&o.stderr));

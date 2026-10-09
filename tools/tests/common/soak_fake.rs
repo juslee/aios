@@ -47,9 +47,25 @@ case "$*" in
         echo "fake build"
         printf 'ESP image' >aios.img
         ;;
-    create-data-disk) : >data.img ;;
+    create-data-disk)
+        if [ -f "$AIOS_FAKE_ROOT/data-disk-interrupted" ]; then
+            # A terminal Ctrl-C: SIGINT reaches the harness and this child.
+            kill -INT "$PPID"
+            kill -INT $$
+            exit 130
+        fi
+        : >data.img
+        ;;
     *) echo "fake just: unexpected arguments: $*" >&2; exit 64 ;;
 esac
+"#;
+
+/// Fake `sha256sum`, installed by the `sha256-interrupted` flag: a terminal
+/// Ctrl-C while it runs, so SIGINT reaches the harness and ends this child.
+const FAKE_SHA256SUM: &str = r#"#!/bin/sh
+kill -INT "$PPID"
+kill -INT $$
+exit 130
 "#;
 
 /// Fake `mcopy`: writes a fixed kernel to its last argument, or fails when the
@@ -116,8 +132,9 @@ pub struct Scenario {
     pub args: &'static [&'static str],
     /// `(0, script)` runs for every boot without its own `(n, script)`.
     pub boots: Vec<(u32, String)>,
-    /// Files created in the fake root: `build-fails`, `mcopy-fails`;
-    /// `uname-interrupts` also installs [`FAKE_UNAME`].
+    /// Files created in the fake root: `build-fails`, `mcopy-fails`,
+    /// `data-disk-interrupted`; `uname-interrupts` also installs [`FAKE_UNAME`],
+    /// and `sha256-interrupted` installs [`FAKE_SHA256SUM`].
     pub flags: &'static [&'static str],
     /// A tracked file is modified, so the commit is `<sha>-dirty`.
     pub dirty: bool,
@@ -314,6 +331,29 @@ fn write_exec(path: &Path, text: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 }
 
+/// The system directories at the end of every scenario's PATH but `no-qemu`'s.
+const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+/// What the oracle runs before it looks for QEMU: `bash` itself, `dirname` for
+/// its repository, `cat` for its awk program, and `sh` and `sleep` in its probe
+/// of `timeout`. aios runs nothing before that check.
+const PRE_QEMU_TOOLS: [&str; 5] = ["bash", "cat", "dirname", "sh", "sleep"];
+
+/// A directory of links to [`PRE_QEMU_TOOLS`] in [`SYSTEM_PATH`], and nothing else.
+fn pre_qemu_tools(root: &Path) -> PathBuf {
+    let dir = root.join("sys-bin");
+    std::fs::create_dir_all(&dir).expect("sys-bin");
+    for name in PRE_QEMU_TOOLS {
+        let found = SYSTEM_PATH
+            .split(':')
+            .map(|d| Path::new(d).join(name))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
+        std::os::unix::fs::symlink(found, dir.join(name)).expect("symlink a system tool");
+    }
+    dir
+}
+
 /// The `timeout` (or `gtimeout`) on the ambient PATH, for the oracle.
 fn ambient_timeout() -> PathBuf {
     let out = Command::new("sh")
@@ -362,6 +402,9 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
     write_exec(&bin.join("mcopy"), FAKE_MCOPY);
     if sc.flags.contains(&"uname-interrupts") {
         write_exec(&bin.join("uname"), FAKE_UNAME);
+    }
+    if sc.flags.contains(&"sha256-interrupted") {
+        write_exec(&bin.join("sha256sum"), FAKE_SHA256SUM);
     }
     for (n, script) in &sc.boots {
         let name = if *n == 0 {
@@ -419,7 +462,14 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
         path.push(":");
         path.push(&oracle_bin);
     }
-    path.push(":/usr/bin:/bin:/usr/sbin:/sbin");
+    path.push(":");
+    if sc.no_qemu {
+        // A distro QEMU in a system directory (Linux's qemu-system-arm package)
+        // would be found there, so give the tool only what it runs first.
+        path.push(pre_qemu_tools(&root));
+    } else {
+        path.push(SYSTEM_PATH);
+    }
 
     let mut command = match tool {
         Tool::Aios => {
