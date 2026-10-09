@@ -201,7 +201,11 @@ impl LogRing {
 // besides the CPU 0 timer tick (see `DRAIN_BATCH_SIZE`), and one can overlap
 // the tick's drain: a known gap in this protocol, which shows as lost marks
 // when it splits a pair, and can repeat a drop report or hold it back until
-// the ring's next drop.
+// the ring's next drop. The panic handler's drain on CPU 0
+// (`drain_logs_after_panic`) is one of those callers; it skips the drain
+// while CPU 0 is inside another drain (`cpu0_draining`), so it does not
+// overlap a drain it interrupted on its own CPU, but it can still overlap one
+// running on another CPU.
 unsafe impl Sync for LogRing {}
 
 /// Global log rings, one per core. BSS-allocated.
@@ -337,7 +341,58 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 /// 4th tick; a full batch still runs well past one 1ms tick (see `timer.rs`).
 /// The boot sequence calls `drain_logs` directly as well, to flush bursts,
 /// and so does the scheduler's `pc=0` check before it panics, on any CPU.
+/// The panic handler drains in a loop on CPU 0 (`drain_logs_after_panic`).
 const DRAIN_BATCH_SIZE: usize = 16;
+
+/// The most `drain_logs` calls the panic drain makes: enough to empty every
+/// ring once, since each line a call counts pops at least one entry
+/// (256 × 8 / 16 = 128).
+const PANIC_DRAIN_CALLS: usize = LOG_RING_SIZE * MAX_CORES / DRAIN_BATCH_SIZE;
+
+/// A drain that started on CPU 0 with IRQs masked is running: the timer
+/// tick's, the scheduler's `pc=0` check's, or the panic drain's. Nothing can
+/// interrupt or move such a drain, so the flag brackets it exactly. Written
+/// by `drain_logs` on CPU 0 only.
+static CPU0_DRAINING_MASKED: AtomicBool = AtomicBool::new(false);
+
+/// A drain that started on CPU 0 with IRQs on is running: a boot flush, or a
+/// thread's. CPU 0's timer tick can drain inside it; the tick uses
+/// [`CPU0_DRAINING_MASKED`], so this flag stays set across it. Set on CPU 0,
+/// and cleared when the drain ends, on whatever CPU the thread has moved to
+/// by then: a flag left set would turn the panic drain off for good. Two
+/// threads draining on CPU 0 in turn, the first preempted inside its drain,
+/// can clear it while the first one's drain is still unfinished: a known gap,
+/// which only lets a panic drain overlap that drain.
+static CPU0_DRAINING_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Whether CPU 0 is inside a `drain_logs` call, or was when the code now
+/// running on it interrupted that call. The panic drain then stays off, so
+/// that it does not pop rings a drain it interrupted is popping.
+///
+/// `Relaxed` loads are enough: the question is about CPU 0's own earlier
+/// stores, and CPU 0 sees its own stores in program order.
+fn cpu0_draining() -> bool {
+    CPU0_DRAINING_MASKED.load(Ordering::Relaxed) || CPU0_DRAINING_OPEN.load(Ordering::Relaxed)
+}
+
+/// The panic handler's drain: print what the log rings hold, on CPU 0 only.
+///
+/// Calls `drain_logs` until a call prints fewer than `DRAIN_BATCH_SIZE`
+/// lines (a call can print more than that, see there), at most
+/// `PANIC_DRAIN_CALLS` times. Does nothing on CPUs 1–3, which are not the
+/// rings' consumer, and nothing while CPU 0 is inside another drain
+/// ([`cpu0_draining`]). The caller has masked IRQs for good. Post-fatal: it
+/// formats with `core::fmt`, and `drain_logs` only try-locks BOOT_LOG.
+pub fn drain_logs_after_panic() {
+    if current_core_id() != 0 || cpu0_draining() {
+        return;
+    }
+    for _ in 0..PANIC_DRAIN_CALLS {
+        if drain_logs() < DRAIN_BATCH_SIZE {
+            break;
+        }
+    }
+}
 
 /// Drain the per-core log rings and write formatted entries to UART,
 /// DRAIN_BATCH_SIZE lines per call plus what that doc lists past the limit.
@@ -352,7 +407,35 @@ const DRAIN_BATCH_SIZE: usize = 16;
 /// Messages a full ring dropped are reported where they were lost, as one
 /// `[log] core N: K messages dropped (ring full)` line between the entries
 /// logged before the drop and those logged after it (`LogRing::pop`).
-pub fn drain_logs() {
+///
+/// Returns the lines printed, counted as above: a joined pair is one line,
+/// and drop reports are not counted. On CPU 0 the call sets
+/// [`CPU0_DRAINING_MASKED`] or [`CPU0_DRAINING_OPEN`] for its duration, by
+/// the IRQ mask at entry.
+pub fn drain_logs() -> usize {
+    let flag = if current_core_id() == 0 {
+        let daif = crate::observability::tripwire::read_daif();
+        Some(if daif & crate::observability::tripwire::DAIF_I != 0 {
+            &CPU0_DRAINING_MASKED
+        } else {
+            &CPU0_DRAINING_OPEN
+        })
+    } else {
+        None
+    };
+    if let Some(flag) = flag {
+        flag.store(true, Ordering::Relaxed);
+    }
+    let drained = drain_rings();
+    if let Some(flag) = flag {
+        flag.store(false, Ordering::Relaxed);
+    }
+    drained
+}
+
+/// `drain_logs`'s body: drain the rings round-robin and return the lines
+/// printed.
+fn drain_rings() -> usize {
     use crate::arch::aarch64::uart::UartWriter;
     use core::fmt::Write;
 
@@ -392,6 +475,7 @@ pub fn drain_logs() {
             drained += 1;
         }
     }
+    drained
 }
 
 /// Pop the next entry of `ring`, the ring of core `core`. When the ring

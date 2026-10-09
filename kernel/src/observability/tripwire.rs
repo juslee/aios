@@ -88,7 +88,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use shared::lock::TID_NONE;
 use shared::tripwire::{
     self, classify_slot, count_tids, mask_bit, mask_set, mask_test, pop_lowest, ClearResult,
-    CpuCounters, EdgeCounter, Key, LineMode, LineSrc, MaskSet, Sink, SlotFlags, SlotState,
+    CpuCounters, Ctx, EdgeCounter, Key, LineMode, LineSrc, MaskSet, Sink, SlotFlags, SlotState,
     SlotVerdict, TextLayout, TwoStrike, UnblockKind, UnblockOutcome, WakeSource, CLASS_COUNT,
     IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE, PHASE_PUBLISHED,
 };
@@ -301,6 +301,106 @@ pub fn print_line(src: LineSrc, mode: LineMode) {
     if let Some(slot) = Key::Twmax.slot(0) {
         COUNTERS.store_max(usize::from(cpu), slot, spent);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fatal dumps
+// ---------------------------------------------------------------------------
+
+/// Emit `v` in decimal, zero-padded on the left to 6 digits (the micros of
+/// a `secs.micros` time). A value of 10^6 or more prints in full.
+fn put_dec6(out: &mut UartSink, v: u64) {
+    let mut div: u64 = 100_000;
+    while div > 1 && v < div {
+        out.put(b'0');
+        div = div.wrapping_div(10);
+    }
+    tripwire::put_dec(out, v);
+}
+
+/// Emit `tid`, or `?` for [`TID_NONE`].
+fn put_tid_or_unknown(out: &mut UartSink, tid: u32) {
+    if tid == TID_NONE {
+        out.put(b'?');
+    } else {
+        tripwire::put_dec(out, u64::from(tid));
+    }
+}
+
+/// The panic handler's report after its `PANIC: ` lines: one `[panic]` line,
+/// then a full `[tripwire] v=1 src=panic` line.
+///
+/// ```text
+/// [panic] cpu=0 tid=12 ctx=irq-exit irq_was=on t=2.345678 irq_elr=0xffff000000091234
+/// ```
+///
+/// - `tid` is `CURRENT_TID[cpu]`, the lock-free mirror (no lock is taken),
+///   `?` before this CPU's first dispatch.
+/// - `ctx` labels `IRQ_CTX[cpu]` with the IRQ mask the handler found
+///   (`irq_was_on`), as the lock's messages do.
+/// - `t` is CNTVCT_EL0 in seconds.
+/// - `irq_elr`, only in `irq` or `irq-exit` context: ELR_EL1, which still
+///   holds the PC the IRQ interrupted, because no EL1 exception returns in
+///   between (the synchronous handler halts). It names the holder's PC when
+///   an IRQ re-entered a lock its stream held (Design §2.7).
+///
+/// The caller has masked IRQs for good. `putc` only; lowercase keys, and
+/// never `PANIC: `, which the soak harness keys on.
+#[inline(never)]
+pub fn print_panic_report(irq_was_on: bool) {
+    let cpu = cpu_here();
+    let ctx = Ctx::from_raw(irq_ctx(usize::from(cpu)), !irq_was_on);
+    let (secs, micros) =
+        shared::timestamp_to_secs_micros(timer::read_counter(), timer::read_cntfrq());
+    let out = &mut UartSink;
+    out.put_str("[panic] cpu=");
+    tripwire::put_dec(out, u64::from(cpu));
+    out.put_str(" tid=");
+    put_tid_or_unknown(out, current_tid(cpu));
+    out.put_str(" ctx=");
+    out.put_str(ctx.name());
+    out.put_str(" irq_was=");
+    out.put_str(if irq_was_on { "on" } else { "off" });
+    out.put_str(" t=");
+    tripwire::put_dec(out, secs);
+    out.put(b'.');
+    put_dec6(out, micros);
+    if ctx.is_irq() {
+        out.put_str(" irq_elr=");
+        tripwire::put_hex(out, crate::arch::aarch64::exceptions::read_elr_el1());
+    }
+    out.put(b'\n');
+    print_line(LineSrc::Panic, LineMode::Full);
+}
+
+/// The exception report's context line, after its register line:
+///
+/// ```text
+///   ctx: cpu=0 tid=12 irq=1 sched=0
+/// ```
+///
+/// `tid` as in [`print_panic_report`], `irq` the raw `IRQ_CTX[cpu]` (0
+/// thread, 1 irq, 2 irq-exit), `sched` 1 while the CPU is inside
+/// `schedule()`. Then a full `[tripwire] v=1 src=exc` line. Exception
+/// context, so IRQs are masked. `putc` only.
+#[inline(never)]
+pub fn print_exception_ctx() {
+    let cpu = cpu_here();
+    let out = &mut UartSink;
+    out.put_str("  ctx: cpu=");
+    tripwire::put_dec(out, u64::from(cpu));
+    out.put_str(" tid=");
+    put_tid_or_unknown(out, current_tid(cpu));
+    out.put_str(" irq=");
+    tripwire::put_dec(out, u64::from(irq_ctx(usize::from(cpu))));
+    out.put_str(" sched=");
+    out.put(if crate::sched::in_scheduler(usize::from(cpu)) {
+        b'1'
+    } else {
+        b'0'
+    });
+    out.put(b'\n');
+    print_line(LineSrc::Exc, LineMode::Full);
 }
 
 // ---------------------------------------------------------------------------

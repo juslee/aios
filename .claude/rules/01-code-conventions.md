@@ -8,7 +8,7 @@
 - No TODO comments in code — complete implementations only
 - Naming: `snake_case` for functions/variables, `CamelCase` for types, `SCREAMING_SNAKE` for constants
 - Error handling: `Result<T, E>` for fallible operations; panics reserved for unrecoverable invariant violations
-- Panic handler: always prints to UART then halts with `wfe` loop (not `loop {}`)
+- Panic handler: masks IRQs first, prints to UART without taking a lock, then halts with `wfe` loop (not `loop {}`)
 - Prefer the best approach over the simplest — choose the design that is cleanest, most maintainable, and architecturally sound, even if a shortcut exists
 
 ## Architecture-Specific (aarch64)

@@ -618,13 +618,17 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
 
 The error code is returned to userspace in register `x0` via the `TrapFrame`. Error values are defined in `shared/src/syscall.rs` as `IpcError` enum variants with numeric discriminants.
 
-**Pattern 2: Unrecoverable panic** -- UART output then halt
+**Pattern 2: Unrecoverable panic** -- mask IRQs, UART output, then halt
 
 ```rust
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // 1. mrs DAIF + msr DAIFSet, #0x2: mask IRQs for good, remember irq_was.
+    // 2. PANICKING[cpu]: a second panic on this CPU halts at once.
     let mut w = crate::arch::aarch64::uart::UartWriter;
     let _ = writeln!(&mut w, "PANIC: {}", info);
+    observability::tripwire::print_panic_report(irq_was_on); // [panic] + [tripwire] src=panic
+    observability::drain_logs_after_panic(); // CPU 0 only: empty the log rings
     halt()
 }
 
@@ -637,6 +641,8 @@ fn halt() -> ! {
 ```
 
 Why `wfe` and not `loop {}`? `wfe` (Wait For Event) puts the core in a low-power state. A bare `loop {}` burns full CPU cycles doing nothing. On real hardware, this matters for power consumption and thermal management.
+
+The handler masks IRQs before it prints, so the timer tick cannot preempt the report or run the scheduler on top of the broken state; it takes no lock and calls no `klog!`. After the unchanged `PANIC: ` lines (the soak harness keys on them and captures the message on the next line) it prints a `[panic] cpu=N tid=T|? ctx=<label> irq_was=on|off t=<secs.micros>` line, with `irq_elr=0x…` (the PC the IRQ interrupted) when it panicked in IRQ context, then a full `[tripwire] v=1 src=panic` line. On CPU 0 it then drains the log rings in a bounded loop, unless CPU 0 was already inside a drain. A synchronous exception's report likewise adds `  regs:` (SP, SPSR, TTBR0, VBAR) and `  ctx:` (CPU, thread, IRQ context, in-scheduler) lines and a `src=exc` tripwire line after its unchanged head and Abort lines. `free_pages`, `free_dma_pages` and the compositor's `release_buffer` are `#[track_caller]`, so a bad free's `[mm] BUG: free_pages(` assertion names the caller, not `frame.rs`.
 
 **Pattern 3: Boot validation** -- structured log then explicit halt
 

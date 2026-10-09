@@ -212,6 +212,16 @@ static IN_SCHEDULER: [AtomicBool; MAX_CORES] = {
     [F; MAX_CORES]
 };
 
+/// Whether CPU `cpu` is inside `schedule()` (its re-entrancy guard is set),
+/// for the exception report's `sched=` field. `false` for an out-of-range
+/// `cpu`. Diagnostic only: another CPU's flag may change right after the
+/// load.
+pub fn in_scheduler(cpu: usize) -> bool {
+    IN_SCHEDULER
+        .get(cpu)
+        .is_some_and(|flag| flag.load(core::sync::atomic::Ordering::Relaxed))
+}
+
 /// Scheduler initialization complete flag. Secondary cores wait for this
 /// before attempting to pick threads from their run queues.
 static SCHED_READY: AtomicBool = AtomicBool::new(false);
