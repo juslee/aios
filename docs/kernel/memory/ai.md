@@ -198,7 +198,7 @@ pub struct SharedPrefix {
 pub enum CachePriority {
     /// User actively waiting (conversation bar)
     Interactive,
-    /// System service (intent verification, context engine)
+    /// System service (intent verification, behavioral monitoring)
     System,
     /// Background work (space indexing)
     Background,

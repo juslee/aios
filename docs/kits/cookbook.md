@@ -836,7 +836,7 @@ use aios_conversation::{
     ToolInvocation, ContextWindow, SessionConfig,
 };
 use aios_airs::{InferenceEngine, ModelId, InferenceSession};
-use aios_notification::{NotificationBuilder, ChannelId, Urgency};
+use aios_notification::{NotificationBuilder, ChannelId};
 use aios_storage::{Space, Object, ObjectId, Query};
 
 struct ChatModel {
@@ -1007,7 +1007,6 @@ fn update(model: &mut ChatModel, msg: Msg) -> Vec<Command<Msg>> {
                     NotificationBuilder::new(ChannelId::new("messages"))
                         .title("New response")
                         .body("Your AI assistant has replied")
-                        .urgency(Urgency::Default)
                         .post()
                         .await
                 },

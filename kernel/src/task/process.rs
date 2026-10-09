@@ -120,8 +120,12 @@ static EXIT_CODES: [AtomicI32; MAX_PROCESSES] = {
 /// wake ProcessWait waiters, and notify the service manager.
 ///
 /// A pid `>= MAX_PROCESSES` names no process, so the call does nothing. The
-/// callers pass their own pid (the `ProcessExit` syscall) or a fixed kernel
-/// service pid, so an out-of-range pid never reaches here.
+/// callers pass their own pid (the `ProcessExit` syscall), a fixed kernel
+/// service pid or the echo client's exit-probe pid, all in range.
+///
+/// An in-range pid whose `PROCESS_TABLE` slot is empty (the exit probe's)
+/// still has its threads, channels and regions cleaned up, but records no
+/// exit code and wakes no waiter, so `process_wait` on it stays `EPERM`.
 pub fn process_exit(pid: ProcessId, exit_code: i32) {
     let Some(idx) = pid.index() else {
         return;
@@ -129,8 +133,13 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
 
     crate::kinfo!(Ipc, "process_exit: pid={} exit_code={}", pid.0, exit_code);
 
-    // Store exit code for waiters.
-    EXIT_CODES[idx].store(exit_code, Ordering::Release);
+    // Store the exit code for waiters, only if a process holds the slot, so
+    // a recorded code always belongs to a process. An exited process keeps
+    // its slot.
+    let has_process = PROCESS_TABLE.lock()[idx].is_some();
+    if has_process {
+        EXIT_CODES[idx].store(exit_code, Ordering::Release);
+    }
 
     // 1. Walk thread table: mark all threads owned by this process as Dead.
     {
@@ -188,8 +197,10 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
     // 4. Notify service manager.
     crate::service::service_on_death(pid);
 
-    // 5. Wake any thread blocked in process_wait() for this pid.
-    {
+    // 5. Wake any thread blocked in process_wait() for this pid. With no
+    //    process in the slot there is none: process_wait returns EPERM before
+    //    it registers.
+    if has_process {
         let mut waiters = PROCESS_WAITERS.lock();
         if let Some(waiter_tid) = waiters[idx].take() {
             crate::sched::unblock(waiter_tid);

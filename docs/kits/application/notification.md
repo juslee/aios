@@ -12,12 +12,18 @@ treat all alerts equally, Notification Kit integrates deeply with the user's con
 attention state to decide not just *what* to show, but *when* and *how*.
 
 Every notification enters through a named `NotificationChannel` that the posting agent
-configures with default urgency, delivery style, and grouping rules. The user can override
-these defaults per channel through system Settings. When a notification is posted, Attention
-Kit scores it against the user's current context (deep work, meeting, idle) and attention
-budget (how many interruptions have already occurred this session). Notifications that fall
-below the attention threshold are silently deferred to the notification center rather than
-interrupting the user.
+configures with a delivery style, schedule and grouping rules. The user can override
+these defaults per channel through system Settings. Neither the channel nor the notification
+carries an urgency: the Attention Manager assesses each notification as `Interrupt`,
+`NextBreak`, `Digest` or `Silent` from its content, sender and history, and the agent never
+learns which level it was given ([attention.md](../../intelligence/attention.md) §4.3). The
+context filter then weighs that urgency against the user's current context (deep work,
+meeting, idle) and attention budget (how many interruptions have already occurred).
+Notifications below the current context's threshold are silently deferred to the
+notification center rather than interrupting the user
+([attention.md](../../intelligence/attention.md) §5.1). A user who wants an agent's
+notifications quieter caps that agent's urgency in the Attention Manager's per-agent settings
+([attention.md](../../intelligence/attention.md) §11.1).
 
 Cross-device delivery is a first-class concern. When a notification targets a user identity
 rather than a specific device, Notification Kit routes it to the device where the user is
@@ -29,7 +35,7 @@ across the device mesh through Identity Kit's Space Mesh sync.
 
 ```rust
 use aios_capability::CapabilityHandle;
-use aios_attention::{AttentionScore, AttentionBudget};
+use aios_attention::AttentionBudget;
 use aios_interface::View;
 use aios_audio::AudioSession;
 
@@ -59,12 +65,12 @@ pub trait NotificationChannel {
 
 /// Rules governing when, where, and how notifications are presented.
 ///
-/// DeliveryPolicy is the primary mechanism for balancing notification
-/// importance against the user's attention budget.
+/// DeliveryPolicy carries no urgency. The Attention Manager assesses the
+/// urgency of every notification and the context filter decides when it may
+/// interrupt (intelligence/attention.md §4.3, §5.1). The policy shapes how
+/// and where a notification appears and can hold it back further (schedule,
+/// summarization), but never brings it forward.
 pub trait DeliveryPolicy {
-    /// The base urgency level (Critical, High, Default, Low, Silent).
-    fn urgency(&self) -> Urgency;
-
     /// The presentation style (Banner, Alert, Badge, Silent).
     fn presentation(&self) -> PresentationStyle;
 
@@ -103,9 +109,6 @@ pub trait NotificationBuilder {
 
     /// Set the notification's channel.
     fn channel(self, channel: &ChannelId) -> Self;
-
-    /// Set an explicit urgency override for this notification.
-    fn urgency(self, urgency: Urgency) -> Self;
 
     /// Set the grouping key for this notification.
     fn group_key(self, key: &GroupKey) -> Self;
@@ -192,13 +195,12 @@ NotificationKit::builder()
 **Realistic -- grouped notifications with actions:**
 
 ```rust
-use aios_notification::{NotificationKit, Urgency, NotificationAction};
+use aios_notification::{NotificationKit, NotificationAction};
 
 // Register a channel (typically done once at agent startup)
 NotificationKit::register_channel(ChannelConfig {
     id: ChannelId::new("com.example.chat.messages"),
     display_name: "Chat Messages",
-    default_urgency: Urgency::Default,
     default_presentation: PresentationStyle::Banner,
     summarize_after: Some(5),
 })?;
@@ -225,12 +227,11 @@ NotificationKit::builder()
 **Advanced -- context-aware delivery with attention budgeting:**
 
 ```rust
-use aios_notification::{NotificationKit, DeliveryPolicy, Urgency};
+use aios_notification::{NotificationKit, DeliveryPolicy};
 use aios_attention::AttentionKit;
 
 // Create a delivery policy that respects attention budget
 let policy = DeliveryPolicy::builder()
-    .urgency(Urgency::Default)
     .presentation(PresentationStyle::Banner)
     .schedule(DeliverySchedule::only_during(TimeRange::work_hours()))
     .target_devices(DeviceTarget::MostActive)
@@ -242,15 +243,15 @@ NotificationKit::update_channel_policy(
     policy,
 )?;
 
-// When posting, Attention Kit evaluates whether to deliver now or defer.
-// The notification's effective score = urgency * context_weight * budget_remaining.
-// If the score is below the threshold, the notification goes to the
-// notification center silently rather than interrupting the user.
+// When posting, the Attention Manager assesses the notification's urgency
+// from its content and sender, never from the agent, and the context filter
+// compares it with the threshold for the user's current context
+// (intelligence/attention.md §4, §5.1). Below the threshold, the notification
+// goes to the notification center silently rather than interrupting the user.
 let id = NotificationKit::builder()
     .title("Weekly report ready")
     .body("Your team's weekly metrics are available")
     .channel(&ChannelId::new("com.example.app.updates"))
-    .urgency(Urgency::Low)
     .expires_after(Duration::from_secs(24 * 60 * 60))
     .post()?;
 ```
@@ -259,9 +260,11 @@ let id = NotificationKit::builder()
 >
 > - **Not registering channels.** Notifications posted to unregistered channels are silently
 >   dropped. Always call `register_channel()` at agent startup.
-> - **Overriding urgency to `Critical` for non-critical content.** Critical notifications
->   bypass DND and attention budget. Misusing this urgency will cause the behavioral monitor
->   to flag the agent and potentially revoke `NotificationPost` capability.
+> - **Requesting `bypass_dnd` for non-emergency channels.** DND bypass needs the restricted
+>   `NotificationCritical` capability, and misusing it will cause the behavioral monitor to
+>   flag the agent and potentially revoke that capability. Bypass never raises urgency: only
+>   notifications the Attention Manager itself assesses as `Interrupt` reach the user during
+>   DND, and no agent can force `Interrupt` ([attention.md](../../intelligence/attention.md) §18.3).
 > - **Ignoring group keys.** Without grouping, each notification appears individually. For
 >   high-volume channels (chat, email), always set a `group_key` to enable summarization.
 > - **Posting updates as new notifications.** Use `NotificationBuilder::update()` to modify
@@ -269,27 +272,27 @@ let id = NotificationKit::builder()
 
 ## 4. Integration Examples
 
-**Notification Kit + Attention Kit -- priority-scored delivery:**
+**Notification Kit + Attention Kit -- AI-assessed delivery:**
 
 ```rust
 use aios_notification::NotificationKit;
-use aios_attention::{AttentionKit, AttentionScore};
 
-// Attention Kit automatically scores every notification before delivery.
-// You can query the score after posting to understand delivery decisions.
+// The Attention Manager assesses the urgency of every notification before
+// delivery. The agent never learns the urgency it was given
+// (intelligence/attention.md §4.3): the delivery status says only what
+// happened to the agent's own notification.
 
 let id = NotificationKit::builder()
     .title("PR review requested")
     .body("@alice requested your review on #42")
     .channel(&ChannelId::new("com.example.dev.reviews"))
-    .urgency(Urgency::High)
     .post()?;
 
-// Check what Attention Kit decided
+// Check what happened to it
 let delivery = NotificationKit::delivery_status(id)?;
 match delivery {
-    DeliveryStatus::Delivered { score, device } => {
-        println!("Delivered to {} (score: {:.2})", device, score.value());
+    DeliveryStatus::Delivered { device } => {
+        println!("Delivered to {}", device);
     }
     DeliveryStatus::Deferred { reason, .. } => {
         println!("Deferred: {}", reason);
@@ -315,7 +318,6 @@ NotificationKit::builder()
     .title("Timer finished")
     .body("Your 25-minute focus session is complete")
     .channel(&ChannelId::new("com.example.timer"))
-    .urgency(Urgency::High)
     .sound(SoundRef::System("timer_complete"))
     .post()?;
 
@@ -409,7 +411,7 @@ pub enum NotificationError {
 
 | Failure | Degradation |
 | --- | --- |
-| Attention Kit unavailable | All notifications delivered at face-value urgency (no scoring) |
+| AIRS unavailable | Attention Manager falls back to rule-based urgency triage; urgency still never comes from the channel policy |
 | Audio Kit unavailable | Notifications delivered silently (no sound) |
 | Cross-device sync fails | Notification delivered to local device only |
 | Attachment load fails | Notification shown with title/body only, attachment omitted |
@@ -424,7 +426,7 @@ pub enum NotificationError {
 | Feature | What AIRS provides | Without AIRS |
 | --- | --- | --- |
 | Group summarization | Natural language summary of grouped notifications | Count-based summary ("5 new messages") |
-| Priority scoring | ML-based urgency scoring using context and history | Static urgency from channel policy |
+| Urgency assessment | ML-based urgency scoring using content, context and history | Rule-based triage from the source agent's registry category, keywords and relationship boosts ([attention.md](../../intelligence/attention.md) §15.2) |
 | Smart scheduling | Learns optimal delivery times per user | Delivers immediately or per static schedule |
 | Content extraction | Extracts key information for compact presentation | Shows full notification body |
 | DND auto-activation | Detects focus sessions and enables DND automatically | Manual DND only |

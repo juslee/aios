@@ -1022,8 +1022,8 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~431), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1036,16 +1036,16 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (570)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  mod.rs          (584)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (762)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (763)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (226) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (234)  # IPC Kit error variants through KernelIpc (#190) self-test
+    select_cap.rs (186)  # IpcSelect capability self-test
+    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
   shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
