@@ -611,6 +611,8 @@ mod tests {
 
     use serde_json::json;
 
+    use crate::cmd::docs_check::repo::CLAUDE_MD;
+
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     /// A private directory under the system temp dir, removed when dropped.
@@ -728,8 +730,8 @@ mod tests {
         assert_eq!(f.count(), 3);
         assert_eq!(f.location(), "docs/a.md:12 (also 20, 31)");
 
-        let file_level = Finding::new("layout", "CLAUDE.md", "stale:kernel/src/x/", "m", 0);
-        assert_eq!(file_level.location(), "CLAUDE.md");
+        let file_level = Finding::new("layout", CLAUDE_MD, "stale:kernel/src/x/", "m", 0);
+        assert_eq!(file_level.location(), CLAUDE_MD);
 
         let detailed = Finding::new(
             "lock-order",

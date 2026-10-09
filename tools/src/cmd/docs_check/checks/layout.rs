@@ -13,12 +13,11 @@ use regex::Regex;
 use crate::cmd::docs_check::checks::Check;
 use crate::cmd::docs_check::markdown::section_body;
 use crate::cmd::docs_check::model::Finding;
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::paths::basename;
 use crate::pyre;
 
 const CHECK: &str = "layout";
-const CLAUDE_MD: &str = "CLAUDE.md";
 const RULE_05: &str = ".claude/rules/05-file-placement.md";
 /// A tree entry line (`├── `, `└── `) contains this box-drawing run.
 const TREE_MARK: &str = "──";
@@ -46,8 +45,8 @@ static RULE_DIR_RE: LazyLock<Regex> =
 /// kernel/src and shared/src modules vs CLAUDE.md layout and rule 05.
 pub struct Layout;
 
-/// check.py L1020-1022: the lines of CLAUDE.md's `## Workspace Layout` section
-/// (fences included), without line numbers.
+/// check.py L1020-1022: the lines of [`CLAUDE_MD`]'s `## Workspace Layout`
+/// section (fences included), without line numbers.
 pub fn layout_block(repo: &Repo) -> Vec<String> {
     let text = repo.text(CLAUDE_MD);
     section_body(&text, &LAYOUT_START_RE, &LAYOUT_STOP_RE)

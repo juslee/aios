@@ -362,10 +362,8 @@ pub fn bench_main_entry() -> ! {
     let _ = writeln!(w, "\n[bench] === Gate 1 Benchmark ===");
 
     // --- Setup: Create bench channel and server ---
-    let bench_ch = {
-        let my_tid = crate::ipc::current_thread_id().unwrap_or(ThreadId(0));
-        ipc::channel_create_unchecked(my_tid)
-    };
+    // Both endpoints belong to process 8 (bench main and the bench server).
+    let bench_ch = ipc::channel_create_unchecked(ProcessId(8));
 
     // Grant ChannelAccess to process 8 (bench process).
     let _ = cap::grant_to_process(
@@ -375,8 +373,7 @@ pub fn bench_main_entry() -> ! {
     );
 
     // Set peer for the channel.
-    let bench_server_tid_placeholder = ThreadId(0xB00);
-    let _ = ipc::channel_set_peer(bench_ch, bench_server_tid_placeholder);
+    let _ = ipc::channel_set_peer(bench_ch, ProcessId(8));
 
     BENCH_CHANNEL.store(bench_ch.0, Ordering::Release);
 

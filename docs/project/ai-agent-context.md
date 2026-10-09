@@ -8,7 +8,7 @@
 
 **Related**:
 
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [developer-guide.md](./developer-guide.md) -- Human-readable kernel developer guide
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules
 
@@ -21,11 +21,11 @@ Before writing code for any phase step, read these documents in order:
 ### Mandatory (every task)
 
 1. **Phase doc** (`docs/phases/NN-phase-name.md`) -- Read the specific step you are implementing. Note the acceptance criteria -- this is your done condition.
-2. **CLAUDE.md** -- Read these sections:
-   - Code Conventions (Rust, Assembly, Architecture-Specific)
-   - Unsafe Documentation Standard (three-line SAFETY format)
-   - Key Technical Facts (addresses, offsets, constants)
-   - File Placement (where to put new files)
+2. **`.claude/rules/` and `.claude/CLAUDE.md`** -- Read:
+   - Code conventions (Rust, Assembly, Architecture-Specific): `.claude/rules/01-code-conventions.md`
+   - Unsafe documentation standard (three-line SAFETY format): `.claude/rules/06-unsafe-documentation.md`
+   - Key Technical Facts (addresses, offsets, constants): `.claude/CLAUDE.md`
+   - File placement (where to put new files): `.claude/rules/05-file-placement.md`
 3. **Developer guide §2** ([developer-guide.md §2](./developer-guide.md#2-aios-kernel-patterns)) -- The four unsafe patterns (MMIO, page tables, SPSC rings, system registers) and three error handling patterns.
 4. **Developer guide §4** ([developer-guide.md §4](./developer-guide.md#4-common-pitfalls)) -- All seven pitfalls. These represent real bugs discovered during Phases 1-3.
 5. **Deadlock prevention** ([deadlock-prevention.md](../kernel/deadlock-prevention.md)) -- Lock ordering rules. Violating lock order causes deadlocks that are extremely difficult to debug.
@@ -65,9 +65,9 @@ When implementing kernel code, use these established patterns:
 | Write ARM system register | `asm!("msr REG, {}",  in(reg) val)` + ISB if needed | `arch/aarch64/timer.rs:51-58` |
 | New static shared across cores | `AtomicT` with appropriate ordering | `smp.rs:34` (PRINT_TURN) |
 | Write-once boot-time static | `UnsafeCell` + `unsafe impl Sync` | `arch/aarch64/mmu.rs:32-39` |
-| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:101` (LOG_RINGS) |
+| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:205` (LOG_RINGS) |
 | New module in kernel | `pub mod name;` in parent + file with `//!` doc comment | `arch/aarch64/mod.rs` |
-| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:16` |
+| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:18` |
 | Error from syscall handler | Return `Err(IpcError::Variant as i64)` | `ipc/mod.rs` (channel_create) |
 | Unrecoverable error | `kerror!(Subsys, "msg"); halt()` OR `panic!("msg")` | `main.rs:53-64` |
 | Feature-gated code | `#[cfg(feature = "feature-name")] { ... }` | `observability/trace.rs:6` |
@@ -80,7 +80,7 @@ When implementing kernel code, use these established patterns:
 
 | Task | Pattern | Reference File |
 |---|---|---|
-| Lock ordering enforcement | Acquire in order per CLAUDE.md: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
+| Lock ordering enforcement | Acquire in the order of the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
 | Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
@@ -108,7 +108,7 @@ RIGHT: Read from architecture doc
 const GICD_CTLR: usize = 0x000;
 ```
 
-If you don't know a register offset, address, or constant -- read the architecture doc or `CLAUDE.md` Key Technical Facts. Never guess.
+If you don't know a register offset, address, or constant -- read the architecture doc or `.claude/CLAUDE.md` Key Technical Facts. Never guess.
 
 ### Never use spin::Mutex on Non-Cacheable memory
 
@@ -123,7 +123,7 @@ AIOS convention: no TODO comments in code. If a feature is incomplete, either:
 
 ### Never create files in wrong directories
 
-Follow CLAUDE.md File Placement rules exactly:
+Follow the file placement rules in `.claude/rules/05-file-placement.md` exactly:
 
 - aarch64-specific code → `kernel/src/arch/aarch64/`
 - Memory management → `kernel/src/mm/`
@@ -158,12 +158,7 @@ W^X policy: pages are writable OR executable, never both. See developer-guide.md
 
 ### Never acquire locks out of order
 
-The full lock ordering is defined in CLAUDE.md Key Technical Facts. The canonical order is:
-
-```text
-PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE
-  > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
-```
+The canonical lock ordering is the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts. Read it there rather than from a copy: it grows with each milestone that adds a lock.
 
 Violating this causes deadlocks under contention. When you need two locks, always acquire the earlier one first. See [deadlock-prevention.md](../kernel/deadlock-prevention.md).
 
@@ -239,8 +234,8 @@ Before marking any step complete, verify ALL of these:
 - [ ] All MMIO access uses volatile read/write
 - [ ] ISB after all MSR writes to instruction-affecting registers
 - [ ] Correct TLB invalidation strategy (local-only during boot, broadcast after all cores online)
-- [ ] Addresses and offsets match CLAUDE.md Key Technical Facts
-- [ ] Lock acquisition follows CLAUDE.md lock ordering
+- [ ] Addresses and offsets match `.claude/CLAUDE.md` Key Technical Facts
+- [ ] Lock acquisition follows the `.claude/CLAUDE.md` lock ordering
 - [ ] Capability checks precede all privileged operations (IPC, shmem, channel create)
 - [ ] No allocation in interrupt context (timer tick, GIC IRQ handler)
 - [ ] PhysAddr/VirtAddr types used correctly (no raw usize for addresses crossing domains)
@@ -369,7 +364,7 @@ pub fn ipc_send(
 // Create a new IPC channel. Requires ChannelCreate capability.
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs:177
+) -> Result<ChannelId, i64>              // ipc/mod.rs:182
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
@@ -454,7 +449,7 @@ pub fn revoke_in_process(
 
 - **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
 
-- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints of every channel its threads own Dead (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
+- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints Dead on every channel with an endpoint owned by the process (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
 
 - **CapabilityTable is per-process, max 256** (shared/src/cap.rs): Each process has `[Option<CapabilityToken>; 256]`. Handle allocation is O(n) scan for `None` slot. Don't assume constant-time allocation.
 

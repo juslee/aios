@@ -6,7 +6,7 @@
 
 **Related documents**:
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [hal.md](../kernel/hal.md) -- Hardware Abstraction Layer and platform porting (SS7)
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
 - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
@@ -236,6 +236,9 @@ impl LogRing {
         entries: UnsafeCell::new([LogEntry::ZERO; LOG_RING_SIZE]),
         head: AtomicU32::new(0),
         tail: AtomicU32::new(0),
+        dropped: AtomicU32::new(0),
+        drop_pos: AtomicU32::new(0),
+        dropped_reported: AtomicU32::new(0),
     };
 }
 
@@ -279,7 +282,7 @@ Understanding what AIOS does *not* use helps set expectations:
 - **`std::` anything** -- No filesystem, no networking, no threads library, no `println!`. The kernel provides these services; it cannot depend on them. (This restriction applies to *kernel code only*; application developers will have full `std` access via AIOS runtimes in later phases.)
 - **`async`/`await`** -- The kernel scheduler is cooperative/preemptive at the thread level, not at the Rust async task level. There is no executor.
 - **Dynamic dispatch (mostly)** -- Outside the `Platform` trait, AIOS uses monomorphization (generics) rather than trait objects. This avoids vtable indirection on hot paths.
-- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `MsgBuf` with a 48-byte stack buffer).
+- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `LogMessageBuf` with a 96-byte stack buffer).
 - **`#[derive(Debug)]` on kernel structs** -- Debug formatting pulls in formatting machinery that increases binary size. Kernel structs implement display manually where needed.
 
 ### Recommended Reading
@@ -396,52 +399,61 @@ const PTE_UXN: u64 = 1 << 54;        // Unprivileged execute-never
 
 ### 2.3 Unsafe Pattern: Lock-free SPSC Rings
 
-Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking:
+Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking. Abridged from `kernel/src/observability/mod.rs`, which has the full `// SAFETY:` comments:
 
 ```rust
 pub struct LogRing {
     entries: UnsafeCell<[LogEntry; LOG_RING_SIZE]>,
     head: AtomicU32,
     tail: AtomicU32,
+    dropped: AtomicU32,          // producer only
+    drop_pos: AtomicU32,         // producer only: `head` at the latest drop
+    dropped_reported: AtomicU32, // consumer only
 }
 
 impl LogRing {
-    fn push(&self, entry: LogEntry) {
+    /// Push a head entry and, for a message longer than one entry, its
+    /// continuation. `log_impl` calls this inside `with_irqs_masked`.
+    fn push(&self, entry: LogEntry, continuation: Option<LogEntry>) {
+        let count = if continuation.is_some() { 2 } else { 1 };
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = head.wrapping_add(1);
+        let next_head = head.wrapping_add(count);
 
-        // If the ring is full, advance tail to discard the oldest entry.
-        let tail = self.tail.load(Ordering::Relaxed);
+        // Acquire pairs with the Release store of `tail` in `pop`.
+        let tail = self.tail.load(Ordering::Acquire);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+            // Full: drop the message, record where, and count it; never
+            // overwrite. The Release store publishes `drop_pos` with the count.
+            self.drop_pos.store(head, Ordering::Relaxed);
+            let dropped = self.dropped.load(Ordering::Relaxed);
+            self.dropped.store(dropped.wrapping_add(1), Ordering::Release);
+            return;
         }
 
-        let idx = (head & LOG_RING_MASK) as usize;
-
-        // SAFETY: Single producer (owning core). UnsafeCell provides interior
-        // mutability. No concurrent writes to this index because head is only
-        // advanced by the owning core.
-        unsafe {
-            let slot = (*self.entries.get()).as_mut_ptr().add(idx);
-            core::ptr::write(slot, entry);
+        // write_slot is the unsafe slot write (SAFETY comment in the source).
+        self.write_slot(head, entry);
+        if let Some(continuation) = continuation {
+            self.write_slot(head.wrapping_add(1), continuation);
         }
 
+        // One Release store publishes the head entry and its continuation.
         self.head.store(next_head, Ordering::Release);
     }
 }
 
-// SAFETY: LogRing is accessed per-core (producer) and by drain (consumer).
-// The SPSC protocol ensures no data races.
+// SAFETY (abridged): each field has one writer. The producer (`log_impl` on
+// the owning core, IRQs masked) writes `head`, `dropped`, `drop_pos` and the
+// free slots; the consumer (`drain_logs`) writes `tail` and `dropped_reported`.
 unsafe impl Sync for LogRing {}
 ```
 
 **Key design decisions:**
 
-- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array. The producer (logging code on the owning core) never races with other producers -- there is exactly one writer per ring.
+- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array, and there is exactly one writer per ring. That holds because `log_impl` reads the core ID and pushes inside `with_irqs_masked`: an IRQ-context log call on the same core (such as the load balancer's, crash-fix ADR N6) would otherwise be a second producer, and a thread could migrate between reading its core ID and pushing.
 
-- **Overwrite-on-full**: When the ring fills, the oldest entry is discarded (tail advanced). This prevents logging from blocking kernel execution. Losing old log entries is acceptable; blocking the scheduler is not.
+- **Drop-on-full**: When the ring has no room for a message (one entry, or two for a head and its continuation), the message is dropped and counted, and its position (`head` at the drop) is kept. `drain_logs` prints the count when its read position reaches that point, so the report sits between the entries logged before the drop and those logged after it. Dropping instead of overwriting keeps the producer off `tail` and off slots a single drain may be reading, and logging still never blocks kernel execution. Two overlapping `drain_logs` calls break this: one can store `tail` past a slot the other is still reading, and a push can then tear the entry the slower drain reads.
 
-- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`. This guarantees the entry data written before the head advance is visible to the consumer when it reads the new head value.
+- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`, so the entries written before the head advance are visible to the consumer when it reads the new head value. `tail.store(Release)` in `pop` pairs with `tail.load(Acquire)` in `push`, so the producer reuses a slot only after the consumer has finished reading it (with one drain at a time; see Drop-on-full). `dropped.store(Release)` in `push` pairs with `dropped.load(Acquire)` in `pop`, so the drain sees a `drop_pos` at least as new as the count it reports.
 
 - **No lock needed**: The SPSC invariant (one producer, one consumer) eliminates the need for a mutex. Contrast this with `MessageRing` in `ipc/mod.rs`, which uses `spin::Mutex` because multiple threads may send to the same channel.
 
@@ -747,7 +759,7 @@ macro_rules! kinfo {
 Key design decisions:
 
 - The `const _LEVEL` binding makes the level comparison a compile-time constant. When `MIN_LOG_LEVEL` is `Info` and the call is `kdebug!(...)`, the entire macro expands to nothing -- zero runtime cost.
-- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 48-byte stack buffer inside `log_impl()`.
+- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 96-byte stack buffer (`LogMessageBuf`) inside `log_impl()`, which fills the 48-byte message of one `LogEntry`, or a head entry and a continuation for a longer message (observability.md §2.4).
 - `#[macro_export]` places the macro at the crate root, so it is invoked as `crate::kinfo!()` from within the kernel crate.
 
 **Feature-gated trace macro** (from `observability/trace.rs`):
@@ -1009,10 +1021,10 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | Range | Interpretation | Examples |
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
-| 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~783), `bench.rs` (~549) |
-| > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
+| 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
 
@@ -1024,17 +1036,19 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  mod.rs          (584)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (702)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (163)  # IpcSelect capability self-test
-  notify.rs       (376)  # Notification objects (signal/wait)
+    mod.rs        (763)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
+    select_cap.rs (186)  # IpcSelect capability self-test
+    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
+  notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (651)  # Shared memory regions
+  shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1052,6 +1066,7 @@ sched/
 
 ```rust
 // From kernel/src/arch/aarch64/mod.rs
+pub mod daif;
 pub mod exceptions;
 pub mod gic;
 pub mod mmu;
@@ -1119,7 +1134,7 @@ Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment an
 
 ```text
 kernel/src/storage/
-  mod.rs            (~866) # init(), run_self_tests() (11 test categories), re-exports
+  mod.rs            (~885) # init(), run_self_tests() (11 test categories), re-exports
   block_engine.rs   (~740) # BlockEngine, Superblock, LZ4 compression, encryption integration
   wal.rs            (~199) # Wal struct, circular buffer, append/commit (WalEntry in shared crate)
   lsm.rs              (~4) # Re-export: MemTable/ObjectIndex/SpaceTable in shared/src/storage.rs
@@ -1577,7 +1592,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 559+ host-side tests pass |
+| **Test** | `just test` | All 612+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1629,7 +1644,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 559 tests across: `boot`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 612 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1722,23 +1737,24 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (559 tests):**
+**Current test distribution (612 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
+| `ipc` | 61 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
-| `ipc` | 53 | Channel IDs and `ChannelId::index`, message validation, select entries, service names, user VA checks |
+| `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `kits` | 40 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips, memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
+| `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
+| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 21 | Syscall numbering, IpcError codes, `id_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
-| `observability` | 18 | Log level ordering, subsystem tags |
+| `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
 ### 5.6 Boot Soak Testing (`just soak`)
@@ -1756,7 +1772,7 @@ scripts/soak-qemu.sh --help                # all options
 
 Each boot runs under `timeout` (or `gtimeout`, from Homebrew coreutils on macOS) in its own process group, so only that boot's QEMU is ever killed. The harness picks the first one that accepts `--kill-after`, passes through the exit status of a command that finishes in time, and exits 124 when it stops the command (checked by running it, not by its version string), so GNU coreutils and uutils (the default on Ubuntu 26.04) both work. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
 
-Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root.
+Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root. Results in a PR worktree are ignored files that git deletes with the worktree; `/merge-and-cleanup` copies them to the main checkout as `target/soak/pr<number>-<run>` before merging.
 
 | File | Contents |
 |---|---|
@@ -1790,7 +1806,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The script warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
-**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`) and the edk2 noise before the stub do not affect classification.
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
 **Re-classifying saved logs.** `scripts/soak-qemu.sh --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
 
@@ -1829,7 +1845,7 @@ kdebug!(Sched, "Context switch: {} -> {}", from_tid, to_tid);
 
 **Available log levels:** `Trace`, `Debug`, `Info`, `Warn`, `Error`. In debug builds, all levels from `Debug` up are emitted. In release builds, only `Info` and above.
 
-**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by the timer tick handler every 1 ms. This means early boot messages appear immediately, while later messages may be slightly delayed.
+**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by CPU 0's timer tick handler every 4th 1 ms tick (and by boot-time flushes). This means early boot messages appear immediately, while later messages may be slightly delayed.
 
 **Exception handler note:** Exception vector stubs use direct `putc()` calls, not `klog!`. This prevents recursive faults when TTBR0 is switched away from the identity map (which would make the logging format string inaccessible).
 
@@ -2043,7 +2059,7 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 | Cause | Diagnosis | Fix |
 |---|---|---|
 | Missing VBAR_EL1 setup | First exception causes jump to address 0x0 | Set VBAR_EL1 in boot.S before any Rust code runs |
-| Stack pointer misaligned | SP not 16-byte aligned causes fault | Ensure `.balign 16` on stack symbols in linker script |
+| Stack pointer misaligned | SP not 16-byte aligned causes fault | Keep `ALIGN(16)` on the `.stack` output section in `linker.ld` (boot.S loads `__stack_top` from it) |
 | FPU not enabled | First NEON instruction faults | Enable FPU in boot.S: `orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb` |
 
 **QEMU prints exception info then halts:**
@@ -2067,10 +2083,10 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 
 Claude Code has LSP (Language Server Protocol) integration with `rust-analyzer` for semantic code intelligence. **Always prefer LSP over manual searching** when navigating the codebase.
 
-**Configuration** (already set up in `.claude/`):
+**Configuration** (already set up):
 
-- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section
-- `.claude/.lsp.json` — maps `.rs` files to `rust-analyzer`
+- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section, and `rust-analyzer-lsp@claude-plugins-official` in `enabledPlugins` (the plugin registers `rust-analyzer` for `.rs` files and runs it from `PATH`)
+- `rust-toolchain.toml` — `rust-analyzer` in `components`, so rustup installs the server that matches the pinned nightly
 
 **Available LSP operations:**
 
@@ -2250,42 +2266,30 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
 | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
-| **Code conventions** | [CLAUDE.md](../../CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
+| **Code conventions** | [.claude/rules/](../../.claude/rules/) | 01-code-conventions, 06-unsafe-documentation |
 
 ---
 
-## 8b. Obsidian Desktop Setup (Optional)
+## 8b. Browsing `docs/` in Obsidian (Optional)
 
-The AIOS knowledge hive is accessible via Claude Code automatically (MCP configured in `.mcp.json`). For visual exploration with graph view and backlinks, you can optionally install the Obsidian desktop app:
-
-1. Download Obsidian from https://obsidian.md
-2. Open `docs/` as a vault (File → Open folder as vault → select `docs/`)
-3. The `.obsidian/` config folder is gitignored — your personal settings stay local
-
-This gives you:
-- **Graph view**: See how 80+ architecture docs connect to each other
-- **Backlinks**: See which docs reference the current doc
-- **Tag search**: Filter by domain (kernel, platform, security, etc.)
-- **Quick switcher**: Cmd+O to jump to any doc by name
-
-This is purely optional — all docs are plain markdown readable in any editor or on GitHub.
+`docs/` is plain Markdown, readable in any editor or on GitHub; you can optionally open it as a vault in the [Obsidian](https://obsidian.md) app (its `.obsidian/` config folder is gitignored).
 
 ---
 
 ## 8c. Claude Code Agents, Skills & Worktrees
 
-AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and twelve slash-command skills (eight project skills plus the four `/justin:*` session skills) automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
 
-The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
+The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
 
 ### Agents
 
-Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows CLAUDE.md conventions.
+Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows the conventions in `.claude/rules/` (technical facts in `.claude/CLAUDE.md`).
 
 | Agent | Role | Spawned by | Key capabilities |
 | --- | --- | --- | --- |
 | `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
-| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, MultiEdit, Bash, Grep, Glob |
+| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, Bash, Grep, Glob |
 | `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
 | `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
 | `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
@@ -2310,7 +2314,7 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main. Other skills stop at a hand-off instead of merging |
+| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Preserves the PR worktree's soak results and agent memory → squash merges PR (gh deletes the remote+local branch and removes the worktree) → verifies removal → fast-forwards main. Other skills stop at a hand-off instead of merging |
 
 #### Skill usage examples
 
@@ -2349,7 +2353,8 @@ Many skills use **git worktrees** to isolate work from the main branch. This pre
 
 ```text
 create worktree → work on branch → commit → push → create PR
-    → review → merge → remove worktree → delete local branch → update main
+    → review → preserve soak results and agent memory
+    → squash merge (gh removes worktree + local branch) → verify → fast-forward main
 ```
 
 **Manual commands** (if not using skills):
@@ -2362,14 +2367,20 @@ git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 cd .claude/worktrees/docs-memory
 # ... edit files, commit, push, create PR ...
 
-# After PR merges, clean up (from main repo root)
+# Before the PR merges, from the main checkout: copy out what git ignores,
+# because removing the worktree deletes ignored files without asking
 cd /path/to/aios
-git worktree remove .claude/worktrees/docs-memory
-git branch -d claude/docs-update-memory
-git checkout main && git pull origin main
+mkdir -p target/soak && [ ! -e "target/soak/pr<number>-<run>" ] &&
+  cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<number>-<run>"   # per soak run
+# ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
+
+# Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
+gh pr merge <number> --squash --delete-branch
+git worktree list
+git fetch --prune origin && git merge --ff-only origin/main
 ```
 
-The `/merge-and-cleanup` skill automates the entire cleanup sequence.
+The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions). After a merge on GitHub, run it to preserve and clean up.
 
 ### Audit Loop Pattern
 
@@ -2395,11 +2406,11 @@ OUTER LOOP:
 
 **Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
+The audit loop is **mandatory before any PR** — see [rule 04](../../.claude/rules/04-phase-workflow.md) (Phase Implementation Workflow).
 
 ### Knowledge Hive Integration
 
-Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across sessions:
+Agents use the knowledge hive (`docs/knowledge/`, searched with Grep) for persistent memory across sessions:
 
 | Directory | Persistence | Purpose |
 |---|---|---|
@@ -2415,12 +2426,13 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 
 Agent teams and skills are configured in:
 
-- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables
+- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables, the plugins it enables (`enabledPlugins`: superpowers, remember, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
 - **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/release/aios` from the main checkout). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
+- **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `10-harness-mechanics`)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
-- **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
+- **`.claude/CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
 
 ---
 

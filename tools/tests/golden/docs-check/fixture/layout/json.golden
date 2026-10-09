@@ -73,9 +73,9 @@ exit 1
   },
   "findings": [
     {
-      "key": "layout|CLAUDE.md|missing:kernel/src/extra.rs",
+      "key": "layout|.claude/CLAUDE.md|missing:kernel/src/extra.rs",
       "check": "layout",
-      "file": "CLAUDE.md",
+      "file": ".claude/CLAUDE.md",
       "line": 0,
       "also": [],
       "count": 1,

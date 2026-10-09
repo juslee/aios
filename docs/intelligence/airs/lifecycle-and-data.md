@@ -100,7 +100,7 @@ pub enum Role {
 
 | Component | Choice | License | Rationale |
 |---|---|---|---|
-| Inference runtime | GGML / llama.cpp | MIT | Purpose-built for local LLM inference on consumer hardware |
+| Inference runtime | candle | MIT / Apache-2.0 | Pure Rust (no C FFI), reads GGUF natively, NEON SIMD; GGML stays an FFI alternative behind the `InferenceRuntime` trait ([inference.md §3.9](./inference.md)) |
 | Model format | GGUF | MIT | Standard format for quantized models, metadata-rich |
 | SIMD | NEON (aarch64) | — | Only architecture we target, maximum optimization |
 | Embedding index | HNSW (custom) | BSD-2-Clause | Fast approximate nearest-neighbor for semantic search |

@@ -1,2 +1,2 @@
-@@@ append CLAUDE.md
+@@@ append .claude/CLAUDE.md
 | `/ghost` | Haunts the tables |

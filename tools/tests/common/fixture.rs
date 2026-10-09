@@ -65,6 +65,9 @@ pub struct Variant {
 
 /// Every variant, verified against scripts/docs/check.py: the base repository, one
 /// single-drift variant per check (in CHECK_ORDER), then line-shift, skip and grown.
+/// check.py read the project memory at the root `CLAUDE.md`; the bundles now place it
+/// at `.claude/CLAUDE.md`, so these keys and the layout, harness-tables and repo-paths
+/// goldens carry that path where check.py's carried `CLAUDE.md`.
 pub const VARIANTS: &[Variant] = &[
     Variant {
         name: "base",
@@ -92,7 +95,7 @@ pub const VARIANTS: &[Variant] = &[
     },
     Variant {
         name: "repo-paths",
-        expect_new: &["repo-paths|CLAUDE.md|kernel/src/missing.rs"],
+        expect_new: &["repo-paths|.claude/CLAUDE.md|kernel/src/missing.rs"],
     },
     Variant {
         name: "just-recipes",
@@ -116,11 +119,11 @@ pub const VARIANTS: &[Variant] = &[
     },
     Variant {
         name: "layout",
-        expect_new: &["layout|CLAUDE.md|missing:kernel/src/extra.rs"],
+        expect_new: &["layout|.claude/CLAUDE.md|missing:kernel/src/extra.rs"],
     },
     Variant {
         name: "harness-tables",
-        expect_new: &["harness-tables|CLAUDE.md|skills-table-stale:ghost"],
+        expect_new: &["harness-tables|.claude/CLAUDE.md|skills-table-stale:ghost"],
     },
     Variant {
         name: "pointer-doctor",
@@ -314,8 +317,17 @@ fn apply(repo: &TestRepo, op: &Op) {
 }
 
 /// main at the branch point of PR R1. Its scripts/docs/check.py and docs produced the
-/// real-repository goldens; the snapshot replays exactly this commit.
+/// real-repository goldens; the snapshot replays this commit with `SNAPSHOT_MIGRATION`
+/// applied.
 pub const SNAPSHOT_SHA: &str = "33c6b3deabb36055d26d57fb2a60db233c4d3f6f";
+
+/// `tests/fixtures/docs-check/<this>`: a patch against `SNAPSHOT_SHA` that moves its
+/// root `CLAUDE.md` to `.claude/CLAUDE.md`, the only place docs-check reads it now, and
+/// updates the links into and out of it and the one baseline entry keyed by its path.
+/// The real-repository goldens were recorded from check.py on the unmigrated snapshot
+/// and differ from its output only in that path (`CLAUDE.md` became
+/// `.claude/CLAUDE.md`).
+pub const SNAPSHOT_MIGRATION: &str = "snapshot-claude-md.patch";
 
 /// The repository that contains `tools/` (the checkout or worktree under test).
 pub fn repo_root() -> PathBuf {
@@ -333,7 +345,8 @@ pub fn golden_root() -> PathBuf {
 /// Where a case's input repository comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// A snapshot of this repository at `SNAPSHOT_SHA`.
+    /// A snapshot of this repository at `SNAPSHOT_SHA` with `SNAPSHOT_MIGRATION`
+    /// applied (`snapshot_real`).
     Real,
     /// `materialize_fixture(<variant>)`.
     Fixture(&'static str),
@@ -520,8 +533,9 @@ pub fn cases() -> Vec<Case> {
     out
 }
 
-/// A clone of this repository at `SNAPSHOT_SHA` with every ref deleted, so that
-/// docs-check's history base (merge-base with origin/main or main) falls back to HEAD.
+/// A clone of this repository at `SNAPSHOT_SHA` with `SNAPSHOT_MIGRATION` applied to the
+/// index and working tree (not committed) and every ref deleted, so that docs-check's
+/// history base (merge-base with origin/main or main) falls back to HEAD.
 pub fn snapshot_real() -> TestRepo {
     let source = repo_root();
     let commit = format!("{SNAPSHOT_SHA}^{{commit}}");
@@ -550,6 +564,9 @@ pub fn snapshot_real() -> TestRepo {
         ],
     );
     git(repo.path(), &["checkout", "-q", "--detach", SNAPSHOT_SHA]);
+    let migration = fixtures_dir().join(SNAPSHOT_MIGRATION);
+    let migration = migration.to_str().expect("fixture path is UTF-8");
+    git(repo.path(), &["apply", "--index", migration]);
     // A clone does not inherit the source repository's config (see `TestRepo::new`).
     git(repo.path(), &["config", "core.excludesFile", "/dev/null"]);
     let deletions = git(repo.path(), &["for-each-ref", "--format=delete %(refname)"]);

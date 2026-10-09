@@ -67,7 +67,7 @@ All findings ('+' = new since baseline, '~' = accepted false positive):
    docs/project/developer-guide.md:1628 (also 1721): states 364 tests; shared/src has 543 #[test] functions
 
 [lock-order]
-   CLAUDE.md:100: lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src
+   .claude/CLAUDE.md:100: lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src
    docs/kernel/deadlock-prevention.md: production lock BOOT_LOG is not in §3.3/§3.4 (defined at kernel/src/observability/mod.rs:352)
    docs/kernel/deadlock-prevention.md: production lock COMPOSITOR_CHANNEL is not in §3.3/§3.4 (defined at kernel/src/compositor/service.rs:536)
    docs/kernel/deadlock-prevention.md: production lock CURSOR_POS is not in §3.3/§3.4 (defined at kernel/src/compositor/cursor.rs:68)

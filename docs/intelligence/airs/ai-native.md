@@ -23,7 +23,7 @@ Transformer decode is memory-bandwidth-bound on ARM hardware — the bottleneck 
 tokens/second ≈ memory_bandwidth_GB/s / model_size_GB
 ```
 
-On a Cortex-A76 (Pi 5) with ~18 GB/s sustained LPDDR4X bandwidth, a 7B Q4_K_M model (~3.5 GB effective) yields ~5 tok/s. This simple formula is within 20% of measured llama.cpp performance.
+On a Cortex-A76 (Pi 5), sustained LPDDR4X bandwidth is ~18 GB/s, so the decode ceiling for a model is that bandwidth divided by the model's size in RAM. The formula is a first-order bound, not a throughput estimate; the per-platform estimates AIRS plans against are in [inference.md §3.8.2](./inference.md), and Phase 11 (AIRS Inference Engine) measures them.
 
 AIRS maintains a runtime-calibrated predictor that corrects the roofline estimate using an EWMA (exponentially weighted moving average) of observed inference latency. The `roofline_tps` value is initially populated from the device's `ComputeCapabilityDescriptor` ([compute/classification.md](../../kernel/compute/classification.md) §4), which includes theoretical peak throughput, memory bandwidth, and supported precision formats. For multi-accelerator scenarios, the platform's `DeviceCostModel` ([accelerators/intelligence.md](../../platform/accelerators/intelligence.md) §12.3) provides per-device cost estimates that feed into placement decisions:
 
@@ -358,7 +358,7 @@ pub enum SpeculativeStrategy {
 
 Full continuous batching (Orca, Yu et al., OSDI 2022) interleaves multiple inference requests at the iteration level. This is primarily valuable for multi-tenant GPU servers and provides minimal benefit for a single-user edge device.
 
-The relevant technique for AIOS is **prefix caching**: reusing the computed KV cache for shared prompt prefixes across inference requests. Many AIRS services share a long system prompt (e.g., the intent verifier's security instructions, the context engine's classification schema). Without prefix caching, each invocation re-processes this prompt from scratch.
+The relevant technique for AIOS is **prefix caching**: reusing the computed KV cache for shared prompt prefixes across inference requests. Many AIRS services share a long system prompt (e.g., the intent verifier's security instructions). Without prefix caching, each invocation re-processes this prompt from scratch. The Context Engine is not one of them: its classifier takes a fixed-length feature vector ([context-engine/inference.md §4.1](../context-engine/inference.md)) and has no prompt, KV cache or decoding step.
 
 ```rust
 pub struct PrefixCache {
@@ -375,7 +375,7 @@ pub struct CachedPrefix {
     prompt_hash: u64,
     /// Number of tokens in the cached prefix
     token_count: u32,
-    /// Serialized KV cache state (loadable by GGML)
+    /// Serialized KV cache state (loadable by the candle runtime)
     kv_state: Vec<u8>,
     /// Last used timestamp for LRU eviction
     last_used: Timestamp,
@@ -386,11 +386,11 @@ pub struct CachedPrefix {
 
 **Impact:** A 2048-token system prompt for an 8B model consumes ~128 MB of KV cache and takes 1-5 seconds to process on ARM CPU. Prefix caching eliminates this cost for repeated invocations. For AIRS services that invoke inference 10-50 times per hour with the same system prompt, this saves 10-250 seconds of cumulative prefill time per hour.
 
-**Memory tradeoff:** Each cached prefix consumes its KV cache size in RAM. With 3-5 cached prefixes (~400-640 MB), the benefit is significant but the memory cost is substantial on 4-8 GB devices. AIRS should cache only the 2-3 most frequently used prefixes (intent verifier, conversation bar, context engine).
+**Memory tradeoff:** Each cached prefix consumes its KV cache size in RAM. With 3-5 cached prefixes (~400-640 MB), the benefit is significant but the memory cost is substantial on 4-8 GB devices. AIRS should cache only the 2-3 most frequently used prefixes (for example the intent verifier's and the conversation bar's).
 
 ### 14.3 Structured Output Generation
 
-AIRS intelligence services produce structured output — the intent verifier returns `VerificationResult` enums, the context engine returns `ContextState` structs, the attention manager returns urgency scores. Without constrained decoding, these services free-generate text and parse it, which is fragile and can produce malformed output requiring retries.
+AIRS intelligence services produce structured output — the intent verifier returns `VerificationResult` enums and the attention manager returns urgency scores. Without constrained decoding, these services free-generate text and parse it, which is fragile and can produce malformed output requiring retries.
 
 Constrained decoding (Outlines, Willard & Louf 2023) compiles a grammar into a finite-state automaton and masks invalid tokens at each decoding step, guaranteeing 100% valid output with zero retries:
 
@@ -422,14 +422,13 @@ pub struct DfaState {
 | Service | Grammar | Output Type | DFA States |
 |---|---|---|---|
 | Intent Verifier | `{ "result": "aligned" \| "suspicious" \| "violation", "confidence": float, "explanation": string }` | JSON | ~50 |
-| Context Engine | `{ "work_engagement": float, "ai_engagement": enum, "notification_threshold": enum }` | JSON | ~30 |
 | Attention Manager | `{ "urgency": enum, "reason": string }` | JSON | ~20 |
 | Tool Manager | `{ "function": string, "arguments": { ... } }` | JSON (tool call) | ~100 |
 | Metadata Generation | `{ "summary": string, "tags": [string], "entities": [...] }` | JSON | ~80 |
 
 **Performance:** llama.cpp's GBNF grammar implementation adds < 1 ms overhead per token for JSON schemas. The DFA pre-computation is a one-time cost of 100-500 ms per grammar. For AIOS, grammars are compiled at AIRS startup and cached.
 
-**Memory:** Each compiled grammar consumes 1-5 MB depending on DFA state count and vocabulary size. Total for 5 pre-compiled grammars: ~10-25 MB.
+**Memory:** Each compiled grammar consumes 1-5 MB depending on DFA state count and vocabulary size. Total for the 4 pre-compiled grammars: ~4-20 MB.
 
 ### 14.4 Retrieval-Augmented Generation Pipeline
 
@@ -706,7 +705,7 @@ pub enum ModalityFallback {
 }
 ```
 
-**Model sizes and performance on ARM64:**
+**Model sizes and performance on ARM64** (speeds are pre-benchmark estimates; the AIRS text-model throughput targets are in [inference.md §3.8.2](./inference.md)):
 
 | Model | Parameters | RAM (Q4) | ARM CPU Speed | Use Case |
 |---|---|---|---|---|
@@ -715,7 +714,7 @@ pub enum ModalityFallback {
 | Whisper base | 74M | ~74 MB | ~5x realtime | Better speech-to-text |
 | Whisper small | 244M | ~244 MB | ~2x realtime | Good speech-to-text |
 
-**Practical deployment:** On 8 GB devices, a vision-language model cannot coexist with the text model in RAM — one must be evicted. Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
+**Practical deployment:** The model pool is 8 GB at most: every device of 16 GB or more gets an 8 GB pool ([model-registry.md §4.3](./model-registry.md)). On every device, then, a full-size vision-language model such as LLaVA 1.5 7B cannot coexist with the 8B text model in RAM — one must be evicted. A smaller (~3B, ~2 GB) vision model fits beside it in an 8 GB pool only by giving up most of the KV-cache reservation (a quarter of the pool) that [model-registry.md §4.3 and §4.6](./model-registry.md) make. Below 16 GB the model pool (4 GB or less) is smaller than LLaVA 1.5 7B (~4.5 GB), which is why the summary table (§14.11) gives vision a 16 GB minimum. Keeping LLaVA 1.5 7B resident beside the primary model needs a pool larger than today's 8 GB cap, such as the 16 GB pool that [scaling.md §11.1](./scaling.md) projects for 32 GB devices, or the dynamic model pool ([reclamation.md §12.2](../../kernel/memory/reclamation.md)). Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
 
 **GGUF multimodal support:** The GGUF format supports vision-language models (LLaVA adapter + CLIP vision encoder packaged alongside the language model). llama.cpp's `llava` example demonstrates the inference pipeline. Integration requires the image preprocessor (CLIP-style patch encoding) to run before the language model forward pass.
 
@@ -726,7 +725,7 @@ pub enum ModalityFallback {
 | Speculative decoding (n-gram) | 0 | 1.1-1.3x tok/s | 4 GB | Production (llama.cpp) |
 | Speculative decoding (Medusa) | 10-50 MB | 1.5-2.5x tok/s | 8 GB | Research → production |
 | Prefix caching | 128-640 MB | Save 1-5s per invocation | 8 GB | Production (llama.cpp) |
-| Constrained decoding (GBNF) | 10-25 MB | Eliminate retries, 100% valid output | 4 GB | Production (llama.cpp) |
+| Constrained decoding (GBNF) | 4-20 MB | Eliminate retries, 100% valid output | 4 GB | Production (llama.cpp) |
 | RAG pipeline | 23 MB (embedding model) | Better search quality | 4 GB | Production |
 | Adaptive quantization | +10% model size | ~50% quality gap recovery | 4 GB | Research → production |
 | On-device LoRA | 800 MB-2 GB (training) | Personalized model | 8 GB (3B), 16 GB (8B) | Research |

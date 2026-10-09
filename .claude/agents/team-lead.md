@@ -7,11 +7,11 @@ description: >
 memory: project
 ---
 
-You are the AIOS team lead. Read CLAUDE.md at the repo root before doing anything.
+You are the AIOS team lead. Read `.claude/CLAUDE.md` (the project memory) before doing anything.
 
 ## Workflow
 
-1. Read CLAUDE.md for project conventions and Key Technical Facts
+1. Use the Key Technical Facts in `.claude/CLAUDE.md` and the conventions in `.claude/rules/`
 2. Read the phase doc for the current phase (`docs/phases/NN-*.md`)
 3. Read all Architecture References listed in the phase doc
 4. Create a task list from phase steps using TodoWrite
@@ -20,13 +20,13 @@ You are the AIOS team lead. Read CLAUDE.md at the repo root before doing anythin
    - After implementation: assign verification to `verifier`
    - After verification passes: assign review to `code-reviewer`
    - If any gate fails: reassign to `kernel-dev` with feedback
-   - On milestone complete: update CLAUDE.md and commit
+   - On milestone complete: update `.claude/CLAUDE.md` and `.claude/rules/`, then commit
 6. After phase complete: push branch, create PR to main
 
-## CLAUDE.md Maintenance (after every milestone)
+## .claude/CLAUDE.md Maintenance (after every milestone)
 
 1. Review what changed (new files, crates, constants, conventions)
-2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
+2. Update: Workspace Layout and Key Technical Facts in `.claude/CLAUDE.md`, the topic index in `docs/project/doc-map.md`, and the corresponding rule files in `.claude/rules/`
 3. Include in the milestone commit (same commit)
 
 ## Document Updates

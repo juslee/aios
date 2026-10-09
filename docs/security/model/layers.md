@@ -126,7 +126,7 @@ pub enum AirsRequestPriority {
 }
 ```
 
-The security path and resource path share no mutable state. A resource decision (e.g., "prefetch this object") never influences an intent verification result, and vice versa. If the resource path is under load — handling memory pressure, processing telemetry — the security path must still respond within its SLA (< 10 ms for synchronous intent checks). The kernel enforces this by routing security IPC on a dedicated high-priority channel separate from the resource directive channel.
+The security path and resource path share no mutable state. A resource decision (e.g., "prefetch this object") never influences an intent verification result, and vice versa. If the resource path is under load — handling memory pressure, processing telemetry — the security path must still respond within its SLA: the deadline of the verification path each synchronous intent check takes, which is < 10 ms for single-round verification on NPU hardware ([pipeline.md](../../intelligence/intent-verifier/pipeline.md) §10.2). The kernel enforces this by routing security IPC on a dedicated high-priority channel separate from the resource directive channel.
 
 ### 2.2 Layer 2: Capability Check
 
@@ -149,7 +149,8 @@ pub struct CapabilityTable {
 
 /// Opaque handle that agents use to reference tokens.
 /// The handle is an index into the kernel's CapabilityTable.
-/// Invalid handle → EPERM + audit log entry.
+/// Out-of-range handle (>= MAX_CAPS_PER_PROCESS) → EINVAL: malformed for
+/// every caller (ipc.md §3.2). Empty, revoked or expired slot → EPERM + audit.
 pub struct CapabilityHandle(u32);
 
 pub struct CapabilityToken {
@@ -180,7 +181,7 @@ pub struct CapabilityToken {
 ```mermaid
 flowchart TD
     A["Agent issues syscall with CapabilityHandle"] --> B{"1. Handle bounds check\nhandle < table.tokens.len?"}
-    B -- NO --> B_deny["EPERM + audit"]
+    B -- NO --> B_deny["EINVAL + audit\n(malformed, ipc.md §3.2)"]
     B -- YES --> C{"2. Slot occupied?\ntable.tokens[handle].is_some?"}
     C -- NO --> C_deny["EPERM + audit"]
     C -- YES --> D{"3. Token revoked?\ntoken.revoked?"}

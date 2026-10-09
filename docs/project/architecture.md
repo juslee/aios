@@ -1875,10 +1875,10 @@ Year    Phone       Tablet      Laptop (base)    Laptop (power)
 | RAM Available | Models That Fit | Experience |
 |---|---|---|
 | < 2 GB | No local model | Cloud-only or degraded — no local inference |
-| 2-4 GB | 1B Q4_K_M (~0.9 GB) | Minimal — simple completions, limited context |
+| 2-4 GB | No local model (no model pool below 4 GiB) | AI features that need inference disabled; rule-based fallbacks active |
 | 4-8 GB | 3B Q4_K_M (~2.0 GB) | Basic — simple queries, summarization |
 | 8-16 GB | 8B Q4_K_M (~4.5 GB) | Good — conversational AI, search |
-| ≥ 16 GB | 8B Q5_K_M (~4.5 GB, default) or Q6_K | Great — higher quality, room for vision model |
+| ≥ 16 GB | 8B Q5_K_M (~5.5 GB, default) or Q6_K | Great — higher quality, room for small specialist models (a 7B vision model still swaps with the primary) |
 | 32 GB+ | 13B Q6_K or 70B Q4_K_M | Excellent — near-cloud quality locally |
 | 64 GB+ | 70B Q6_K or multiple models loaded | Outstanding — full model library in RAM |
 
@@ -1893,8 +1893,9 @@ Compute trends relevant to on-device AI:
 
 Capability            2024                   2028†                  2030†
 ─────────────         ────                   ────                   ────
-CPU inference         ~10-15 tok/s (8B Q4)   ~25-40 tok/s (8B Q4)  ~40-60 tok/s
-  (laptop)            on M3/Snapdragon X     ISA improvements       Wider SIMD, more cores
+CPU inference         AIRS estimates in      ~2-3x today            ~4x today
+  (laptop)            inference.md §3.8.2    ISA improvements       Wider SIMD, more cores
+                      (pre-benchmark)
 
 NPU (dedicated AI)    Apple Neural Engine    Pervasive in all SoCs  Standard co-processor
                       Qualcomm Hexagon       40-100 TOPS            100-200+ TOPS
@@ -1913,7 +1914,7 @@ Memory bandwidth      50-100 GB/s (LPDDR5)   100-200 GB/s           200-400 GB/s
 
 - **NPUs are the game changer.** Current NPUs (10-40 TOPS) are used for image processing and simple ML. By 2028, dedicated AI accelerators at 40-100+ TOPS will be standard in every laptop, tablet, and phone SoC. AIOS should detect and use NPUs via the subsystem framework — the inference engine talks to an abstract `AcceleratorDevice`, and the subsystem driver handles the hardware specifics.
 - **Memory bandwidth, not raw compute, is the bottleneck for LLM inference.** Token generation speed is primarily limited by how fast model weights can be read from RAM. LPDDR5x (2024) provides ~50-100 GB/s. LPDDR6 (2027-2028) will push 100-200 GB/s. This directly translates to faster inference without any software changes — AIOS just gets faster on newer hardware.
-- **Inference speed improves ~2-3x per generation.** An 8B model that runs at 15 tok/s today will run at 30-45 tok/s on 2028 hardware. This makes the AI experience feel increasingly native and instantaneous.
+- **Inference speed improves ~2-3x per generation.** An 8B model will run 2-3x faster on 2028 hardware than today's pre-benchmark estimates in [inference.md §3.8.2](../intelligence/airs/inference.md). This makes the AI experience feel increasingly native and instantaneous.
 
 #### Architectural Implications
 

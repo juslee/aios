@@ -22,6 +22,14 @@ pub use crate::ipc::{
 /// `IpcKitError` provides richer, application-level error context than the
 /// syscall-level [`IpcError`]. Lossy conversions bridge the two layers:
 /// field values become placeholders when converting from `IpcError`.
+///
+/// `From<IpcError>` (and [`IpcKitError::from_code`], which decodes a raw
+/// code first) maps each errno to the least specific variant that is correct
+/// for every kernel path returning it, except EPERM and ENOSPC, for which no
+/// variant is correct on every path, and EPROTO, whose default is kept by
+/// choice (see `From<IpcError>`). A Kit wrapper that knows more, the channel
+/// id, which capability the kernel checked, or what an errno means for its
+/// operation, overrides that default (docs/kits/kernel/ipc.md §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcKitError {
     /// The channel does not exist or has been destroyed.
@@ -34,12 +42,52 @@ pub enum IpcKitError {
     Cancelled,
     /// The caller lacks the required capability.
     CapabilityDenied { required: Capability },
-    /// A shared memory operation failed.
+    /// A shared memory operation failed: the region does not exist, the
+    /// caller has no mapping of it, it is already mapped, or the calling
+    /// thread has no process.
     SharedMemoryError { reason: &'static str },
     /// The message payload exceeds the maximum size.
     MessageTooLarge { size: usize, max: usize },
     /// A synchronous call completed but no reply was received.
     NoReply,
+    /// The operation would have to block and did not: a non-blocking
+    /// receive found no message, or another thread is already receiving on
+    /// or calling through the channel.
+    WouldBlock,
+    /// The caller's process is SUSPENDED by the behavioral gate
+    /// (docs/kernel/ipc.md §9.1). It may still hold every capability.
+    Suspended,
+    /// An argument is invalid (an out-of-range id or a missing notification,
+    /// an undefined flag bit, a W^X request or flags beyond a region's
+    /// maximum, a size above a fixed limit, a bad buffer, or an empty,
+    /// oversized or unknown-kind select set; the full list is the EINVAL row
+    /// of docs/kernel/ipc.md §3.2), or the caller's state does not allow the
+    /// call: no current thread or process, or a reply with no pending call.
+    InvalidArgument { reason: &'static str },
+    /// A table, queue or memory pool is full.
+    ResourceExhausted { reason: &'static str },
+    /// The operation is not available.
+    Unsupported,
+    /// The channel or shared memory region the call names is gone: it was
+    /// never created or has been destroyed, or a channel endpoint is dead.
+    ObjectGone,
+}
+
+impl IpcKitError {
+    /// Decode a raw kernel return code through the one errno table:
+    /// `IpcError::try_from`, then `From<IpcError>`.
+    ///
+    /// Every kernel IPC path returns an `IpcError` code, so the fallback for
+    /// any other value, `InvalidArgument { reason: "unknown error code" }`,
+    /// is only reached through a kernel bug.
+    pub fn from_code(code: i64) -> IpcKitError {
+        match IpcError::try_from(code) {
+            Ok(e) => IpcKitError::from(e),
+            Err(_) => IpcKitError::InvalidArgument {
+                reason: "unknown error code",
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -53,10 +101,16 @@ impl From<IpcKitError> for IpcError {
             IpcKitError::ChannelFull { .. } => IpcError::Eagain,
             IpcKitError::Timeout { .. } => IpcError::Etimedout,
             IpcKitError::Cancelled => IpcError::Ecanceled,
-            IpcKitError::CapabilityDenied { .. } => IpcError::Eacces,
-            IpcKitError::SharedMemoryError { .. } => IpcError::Eperm,
+            IpcKitError::CapabilityDenied { .. } => IpcError::Eperm,
+            IpcKitError::SharedMemoryError { .. } => IpcError::Einval,
             IpcKitError::MessageTooLarge { .. } => IpcError::Enospc,
             IpcKitError::NoReply => IpcError::Eproto,
+            IpcKitError::WouldBlock => IpcError::Eagain,
+            IpcKitError::Suspended => IpcError::Eacces,
+            IpcKitError::InvalidArgument { .. } => IpcError::Einval,
+            IpcKitError::ResourceExhausted { .. } => IpcError::Enomem,
+            IpcKitError::Unsupported => IpcError::Enotsup,
+            IpcKitError::ObjectGone => IpcError::Epipe,
         }
     }
 }
@@ -64,38 +118,94 @@ impl From<IpcKitError> for IpcError {
 impl From<IpcError> for IpcKitError {
     /// Convert a syscall-level `IpcError` into an `IpcKitError`.
     ///
-    /// **Note:** Field values (e.g. `id`, `required`, `elapsed_ticks`) are
-    /// placeholders — only the error *kind* survives the conversion.
+    /// **Note:** Field values (e.g. `required`, `elapsed_ticks`) are
+    /// placeholders — only the error *kind* survives the conversion. No code
+    /// decodes to a variant that carries a channel id.
+    ///
+    /// Each errno maps to the least specific variant that is correct for
+    /// every kernel path that returns it:
+    /// - EACCES is the behavioral gate's SUSPENDED code, so it maps to
+    ///   `Suspended`, not to `CapabilityDenied`: a suspended agent may still
+    ///   hold every capability.
+    /// - EAGAIN is "would block" (a full ring on send is one case), so it
+    ///   maps to `WouldBlock`; `send` overrides it to `ChannelFull`.
+    /// - EINVAL comes from every subsystem, so it maps to `InvalidArgument`;
+    ///   channel wrappers override it to `InvalidChannel { id }`.
+    /// - EPIPE means the object the call names is gone: a destroyed channel
+    ///   or dead endpoint on the channel paths, a missing region on the
+    ///   shared memory paths (SharedMemoryMap, SharedMemoryShare, MemoryUnmap
+    ///   of a shared window address, and the in-kernel shared_memory_unmap
+    ///   behind `shmem_unmap`). It maps
+    ///   to `ObjectGone`, which names no id; channel wrappers override it to
+    ///   `InvalidChannel { id }`, shared memory wrappers to
+    ///   `SharedMemoryError`.
+    /// - EEXIST maps to `SharedMemoryError`: among IPC Kit paths only
+    ///   `shared_memory_map` returns it.
+    ///
+    /// Two codes have no variant that is correct for every path, so the
+    /// table's variant is wrong for some paths, and wrappers for those paths
+    /// must override it:
+    /// - EPERM maps to `CapabilityDenied`, since every capability check
+    ///   returns it (docs/kernel/ipc.md §3.2), but some EPERMs are not a
+    ///   missing capability. These syscalls check no capability but return
+    ///   EPERM when the caller has no current thread or no process:
+    ///   IpcReply, NotificationCreate, MemoryMap, MemoryUnmap,
+    ///   CapabilityAttenuate, CapabilityRevoke, CapabilityList, ProcessExit,
+    ///   ProcessWait, AuditLog and SharedMemoryShare. (NotificationSignal,
+    ///   DebugPrint and TimeGet look up no thread or process, nor do
+    ///   CapabilityTransfer and the other syscalls not implemented yet,
+    ///   which return ENOTSUP to every caller; TimeSleep with no current
+    ///   thread returns 0 without sleeping, and NotificationWait returns
+    ///   EINVAL without one.) Some of them also
+    ///   return it for other reasons: an unmap of a region the caller has
+    ///   not mapped (MemoryUnmap of a shared window address, or the
+    ///   in-kernel shared_memory_unmap behind `shmem_unmap`),
+    ///   SharedMemoryShare from a caller that is not the region's creator or
+    ///   to a target pid with no process, and ProcessWait for a child pid
+    ///   with no process or after a wake that finds no exit code. `reply`,
+    ///   `notification_create` and `shmem_unmap` override it; the other
+    ///   EPERM paths listed above have no Kit wrapper, so a plain decode of
+    ///   their EPERM reads as `CapabilityDenied`.
+    /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
+    ///   a request above a fixed limit, which releasing objects or retrying
+    ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
+    ///   IpcReply), an IpcCall or IpcRecv receive length above it, a
+    ///   DebugPrint above 256 bytes and an AuditLog event above 48 bytes. Kit
+    ///   wrappers reject an oversized payload as `MessageTooLarge` before the
+    ///   call and never pass a longer receive length; DebugPrint and AuditLog
+    ///   have no Kit wrapper, so a plain decode of their ENOSPC reads as
+    ///   `ResourceExhausted`.
+    ///
+    /// EPROTO is kept as `NoReply` by choice. Its only kernel path today is
+    /// `ipc_reply` with no pending call, the replier's side, where
+    /// `InvalidArgument` would be correct; `NoReply` stays the default so
+    /// that it survives the round trip through EPROTO, and `reply`
+    /// overrides it to `InvalidArgument`.
     fn from(e: IpcError) -> IpcKitError {
         match e {
             IpcError::Etimedout => IpcKitError::Timeout { elapsed_ticks: 0 },
-            IpcError::Epipe => IpcKitError::InvalidChannel { id: ChannelId(0) },
-            IpcError::Eagain => IpcKitError::ChannelFull {
-                id: ChannelId(0),
-                capacity: RING_CAPACITY,
-            },
+            IpcError::Epipe => IpcKitError::ObjectGone,
+            IpcError::Eagain => IpcKitError::WouldBlock,
             IpcError::Ecanceled => IpcKitError::Cancelled,
-            IpcError::Eacces => IpcKitError::CapabilityDenied {
+            IpcError::Eacces => IpcKitError::Suspended,
+            IpcError::Eperm => IpcKitError::CapabilityDenied {
                 required: Capability::ChannelCreate,
             },
-            IpcError::Eperm => IpcKitError::SharedMemoryError {
-                reason: "operation not permitted",
-            },
-            IpcError::Enospc => IpcKitError::SharedMemoryError {
+            IpcError::Enospc => IpcKitError::ResourceExhausted {
                 reason: "out of space",
             },
             IpcError::Eproto => IpcKitError::NoReply,
-            IpcError::Enotsup => IpcKitError::SharedMemoryError {
-                reason: "not supported",
-            },
+            IpcError::Enotsup => IpcKitError::Unsupported,
             IpcError::EcapDormant => IpcKitError::CapabilityDenied {
                 required: Capability::ChannelCreate,
             },
             IpcError::Eexist => IpcKitError::SharedMemoryError {
                 reason: "already exists",
             },
-            IpcError::Einval => IpcKitError::InvalidChannel { id: ChannelId(0) },
-            IpcError::Enomem => IpcKitError::SharedMemoryError {
+            IpcError::Einval => IpcKitError::InvalidArgument {
+                reason: "invalid argument",
+            },
+            IpcError::Enomem => IpcKitError::ResourceExhausted {
                 reason: "out of memory",
             },
         }
@@ -163,13 +273,17 @@ pub trait SelectOps {
 pub trait SharedMemoryOps {
     /// Create a new shared memory region of the specified size.
     ///
-    /// `flags` encodes permission bits (bit 0 = read, bit 1 = write,
-    /// bit 2 = execute, bit 3 = user). W^X is enforced.
+    /// `flags` encodes the region's maximum permissions: bit 0 = read,
+    /// bit 1 = write, bit 2 = execute (`crate::syscall::MEMORY_FLAGS_MASK`).
+    /// Any other bit is an error, including bit 3 (user), which the kernel
+    /// sets itself on every user mapping. W^X is enforced.
     fn shmem_create(&mut self, size: usize, flags: u64) -> Result<SharedMemoryId, IpcKitError>;
 
     /// Map a shared memory region into the caller's address space.
     ///
-    /// `vaddr` is a hint (the kernel may choose the actual address).
+    /// `vaddr` is a hint (the kernel may choose the actual address). `flags`
+    /// takes the same bits as `shmem_create` and must be a subset of the
+    /// region's maximum permissions.
     fn shmem_map(
         &mut self,
         id: SharedMemoryId,
@@ -195,9 +309,9 @@ mod tests {
 
     // -- IpcKitError --
 
-    #[test]
-    fn ipc_kit_error_debug_all_variants() {
-        let variants: &[IpcKitError] = &[
+    /// One value of every variant.
+    fn all_variants() -> [IpcKitError; 14] {
+        [
             IpcKitError::InvalidChannel { id: ChannelId(0) },
             IpcKitError::ChannelFull {
                 id: ChannelId(1),
@@ -216,12 +330,21 @@ mod tests {
                 max: 256,
             },
             IpcKitError::NoReply,
-        ];
-        for v in variants {
+            IpcKitError::WouldBlock,
+            IpcKitError::Suspended,
+            IpcKitError::InvalidArgument { reason: "test" },
+            IpcKitError::ResourceExhausted { reason: "test" },
+            IpcKitError::Unsupported,
+            IpcKitError::ObjectGone,
+        ]
+    }
+
+    #[test]
+    fn ipc_kit_error_debug_all_variants() {
+        for v in all_variants() {
             let s = format!("{:?}", v);
             assert!(!s.is_empty());
         }
-        assert_eq!(variants.len(), 8);
     }
 
     #[test]
@@ -240,6 +363,7 @@ mod tests {
             IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(5) }),
             IpcError::Epipe
         );
+        assert_eq!(IpcError::from(IpcKitError::ObjectGone), IpcError::Epipe);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
                 id: ChannelId(0),
@@ -252,15 +376,16 @@ mod tests {
             IpcError::Etimedout
         );
         assert_eq!(IpcError::from(IpcKitError::Cancelled), IpcError::Ecanceled);
+        // A missing capability is EPERM (ipc.md §3.1), not EACCES.
         assert_eq!(
             IpcError::from(IpcKitError::CapabilityDenied {
                 required: Capability::ChannelCreate
             }),
-            IpcError::Eacces
+            IpcError::Eperm
         );
         assert_eq!(
             IpcError::from(IpcKitError::SharedMemoryError { reason: "x" }),
-            IpcError::Eperm
+            IpcError::Einval
         );
         assert_eq!(
             IpcError::from(IpcKitError::MessageTooLarge {
@@ -270,6 +395,18 @@ mod tests {
             IpcError::Enospc
         );
         assert_eq!(IpcError::from(IpcKitError::NoReply), IpcError::Eproto);
+        assert_eq!(IpcError::from(IpcKitError::WouldBlock), IpcError::Eagain);
+        // The behavioral gate's SUSPENDED code is EACCES (ipc.md §9.1).
+        assert_eq!(IpcError::from(IpcKitError::Suspended), IpcError::Eacces);
+        assert_eq!(
+            IpcError::from(IpcKitError::InvalidArgument { reason: "x" }),
+            IpcError::Einval
+        );
+        assert_eq!(
+            IpcError::from(IpcKitError::ResourceExhausted { reason: "x" }),
+            IpcError::Enomem
+        );
+        assert_eq!(IpcError::from(IpcKitError::Unsupported), IpcError::Enotsup);
     }
 
     // -- IpcError -> IpcKitError --
@@ -282,13 +419,11 @@ mod tests {
             IpcKitError::from(IpcError::Etimedout),
             IpcKitError::Timeout { .. }
         ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::Epipe),
-            IpcKitError::InvalidChannel { .. }
-        ));
+        // EPIPE names no channel id: a region path returns it too.
+        assert_eq!(IpcKitError::from(IpcError::Epipe), IpcKitError::ObjectGone);
         assert!(matches!(
             IpcKitError::from(IpcError::Eagain),
-            IpcKitError::ChannelFull { .. }
+            IpcKitError::WouldBlock
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Ecanceled),
@@ -296,15 +431,15 @@ mod tests {
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Eacces),
-            IpcKitError::CapabilityDenied { .. }
+            IpcKitError::Suspended
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Eperm),
-            IpcKitError::SharedMemoryError { .. }
+            IpcKitError::CapabilityDenied { .. }
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Enospc),
-            IpcKitError::SharedMemoryError { .. }
+            IpcKitError::ResourceExhausted { .. }
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Eproto),
@@ -312,7 +447,7 @@ mod tests {
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Enotsup),
-            IpcKitError::SharedMemoryError { .. }
+            IpcKitError::Unsupported
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::EcapDormant),
@@ -324,74 +459,106 @@ mod tests {
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Einval),
-            IpcKitError::InvalidChannel { .. }
+            IpcKitError::InvalidArgument { .. }
         ));
         assert!(matches!(
             IpcKitError::from(IpcError::Enomem),
-            IpcKitError::SharedMemoryError { .. }
+            IpcKitError::ResourceExhausted { .. }
         ));
+    }
+
+    // -- Raw code -> IpcKitError --
+
+    #[test]
+    fn from_code_agrees_with_from_ipc_error_for_every_errno() {
+        for e in IpcError::ALL {
+            assert_eq!(IpcKitError::from_code(e as i64), IpcKitError::from(e));
+        }
+    }
+
+    #[test]
+    fn from_code_capability_denial_is_capability_denied() {
+        // Every kernel capability check returns EPERM (-6).
+        assert!(matches!(
+            IpcKitError::from_code(-6),
+            IpcKitError::CapabilityDenied { .. }
+        ));
+    }
+
+    #[test]
+    fn from_code_unknown_code_is_invalid_argument() {
+        for code in [0, 1, -14, -4001, i64::MIN] {
+            assert_eq!(
+                IpcKitError::from_code(code),
+                IpcKitError::InvalidArgument {
+                    reason: "unknown error code"
+                }
+            );
+        }
     }
 
     // -- Round-trip: IpcKitError -> IpcError -> IpcKitError --
 
     #[test]
     fn ipc_kit_error_round_trip_preserves_variant_kind() {
-        // Only variants with 1:1 mappings survive round-trip.
-        // MessageTooLarge -> Enospc -> SharedMemoryError (lossy — excluded).
-        // SharedMemoryError -> Eperm -> SharedMemoryError (survives now).
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::InvalidChannel {
-                id: ChannelId(42)
-            })),
-            IpcKitError::InvalidChannel { .. }
-        ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::ChannelFull {
-                id: ChannelId(7),
-                capacity: 16
-            })),
-            IpcKitError::ChannelFull { .. }
-        ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::Timeout {
-                elapsed_ticks: 5000
-            })),
-            IpcKitError::Timeout { .. }
-        ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::Cancelled)),
-            IpcKitError::Cancelled
-        ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::CapabilityDenied {
-                required: Capability::ChannelCreate
-            })),
-            IpcKitError::CapabilityDenied { .. }
-        ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::SharedMemoryError {
-                reason: "test"
-            })),
-            IpcKitError::SharedMemoryError { .. }
-        ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::from(IpcKitError::NoReply)),
-            IpcKitError::NoReply
-        ));
+        // Only variants whose errno maps back to them survive the round trip.
+        // Lossy (tested below): InvalidChannel -> Epipe -> ObjectGone,
+        // ChannelFull -> Eagain -> WouldBlock,
+        // MessageTooLarge -> Enospc -> ResourceExhausted,
+        // SharedMemoryError -> Einval -> InvalidArgument.
+        let survivors = [
+            IpcKitError::ObjectGone,
+            IpcKitError::Timeout {
+                elapsed_ticks: 5000,
+            },
+            IpcKitError::Cancelled,
+            IpcKitError::CapabilityDenied {
+                required: Capability::ChannelCreate,
+            },
+            IpcKitError::NoReply,
+            IpcKitError::WouldBlock,
+            IpcKitError::Suspended,
+            IpcKitError::InvalidArgument { reason: "x" },
+            IpcKitError::ResourceExhausted { reason: "x" },
+            IpcKitError::Unsupported,
+        ];
+        for v in survivors {
+            let back = IpcKitError::from(IpcError::from(v.clone()));
+            assert_eq!(
+                core::mem::discriminant(&back),
+                core::mem::discriminant(&v),
+                "{v:?}"
+            );
+        }
     }
 
     #[test]
-    fn ipc_kit_error_message_too_large_lossy_round_trip() {
-        // MessageTooLarge maps to Enospc, which now maps back to SharedMemoryError.
-        // This is expected — the conversion is intentionally lossy for this variant.
-        let orig = IpcKitError::MessageTooLarge {
-            size: 500,
-            max: 256,
-        };
-        let ipc_err = IpcError::from(orig);
-        assert_eq!(ipc_err, IpcError::Enospc);
-        let back = IpcKitError::from(ipc_err);
-        assert!(matches!(back, IpcKitError::SharedMemoryError { .. }));
+    fn ipc_kit_error_lossy_round_trips() {
+        // Each of these shares its errno with a less specific variant, which
+        // is what the errno decodes to. A wrapper with context restores them.
+        let back = |v: IpcKitError| IpcKitError::from(IpcError::from(v));
+        assert_eq!(
+            back(IpcKitError::InvalidChannel { id: ChannelId(42) }),
+            IpcKitError::ObjectGone
+        );
+        assert!(matches!(
+            back(IpcKitError::ChannelFull {
+                id: ChannelId(7),
+                capacity: 16
+            }),
+            IpcKitError::WouldBlock
+        ));
+        assert!(matches!(
+            back(IpcKitError::MessageTooLarge {
+                size: 500,
+                max: 256
+            }),
+            IpcKitError::ResourceExhausted { .. }
+        ));
+        assert!(matches!(
+            back(IpcKitError::SharedMemoryError { reason: "test" }),
+            IpcKitError::InvalidArgument { .. }
+        ));
     }
 
     // -- Trait dyn-compatibility --
@@ -435,6 +602,7 @@ mod tests {
             IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(0) }) as i64,
             -2
         );
+        assert_eq!(IpcError::from(IpcKitError::ObjectGone) as i64, -2);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
                 id: ChannelId(0),
@@ -451,11 +619,12 @@ mod tests {
             IpcError::from(IpcKitError::CapabilityDenied {
                 required: Capability::ChannelCreate
             }) as i64,
-            -5
+            -6
         );
+        assert_eq!(IpcError::from(IpcKitError::Suspended) as i64, -5);
         assert_eq!(
             IpcError::from(IpcKitError::SharedMemoryError { reason: "x" }) as i64,
-            -6
+            -12
         );
         assert_eq!(
             IpcError::from(IpcKitError::MessageTooLarge { size: 0, max: 256 }) as i64,

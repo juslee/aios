@@ -1,7 +1,7 @@
 //! `lock-order`, ported from check.py `code_mutex_statics` and `check_lock_order`
 //! (L813-925): production `Mutex` statics in `kernel/src` versus the lock table of
 //! `docs/kernel/deadlock-prevention.md` sections 3.3-3.4, the `Lock ordering` chain in
-//! `CLAUDE.md`, and `lock ordering` comment blocks in kernel code.
+//! [`CLAUDE_MD`], and `lock ordering` comment blocks in kernel code.
 //!
 //! `split_outside_braces` replaces check.py's `re.split(r">(?![^{]*})", ...)` (the regex
 //! crate has no lookaround). The patterns are check.py's, compiled with
@@ -25,7 +25,7 @@ use regex::Regex;
 use super::Check;
 use crate::cmd::docs_check::markdown::{section_body, table_rows};
 use crate::cmd::docs_check::model::{Finding, Skip};
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::{paths, pyre, pystr};
 
 /// Test-only locks named as excluded in deadlock-prevention.md section 3.3.
@@ -188,14 +188,14 @@ impl Check for LockOrder {
     }
 }
 
-/// The first `Lock ordering ...:` line of CLAUDE.md and its continuation lines (check.py
-/// L864-897): unknown names, then pairs of groups ranked in the wrong order.
+/// The first `Lock ordering ...:` line of [`CLAUDE_MD`] and its continuation lines
+/// (check.py L864-897): unknown names, then pairs of groups ranked in the wrong order.
 fn chain_findings(
     repo: &Repo,
     statics: &BTreeMap<String, (String, usize)>,
     ranks: &HashMap<String, u64>,
 ) -> Vec<Finding> {
-    let text = repo.text("CLAUDE.md");
+    let text = repo.text(CLAUDE_MD);
     let lines = pystr::splitlines(&text);
     let Some((first, head)) = lines.iter().copied().enumerate().find_map(|(i, line)| {
         CHAIN_RE
@@ -244,7 +244,7 @@ fn chain_findings(
             if !statics.contains_key(name) {
                 out.push(Finding::new(
                     "lock-order",
-                    "CLAUDE.md",
+                    CLAUDE_MD,
                     format!("unknown:{name}"),
                     format!(
                         "lock ordering names {name}, which is not a Mutex static in kernel/src"
@@ -264,7 +264,7 @@ fn chain_findings(
                     if rank_a > rank_b {
                         out.push(Finding::new(
                             "lock-order",
-                            "CLAUDE.md",
+                            CLAUDE_MD,
                             format!("order:{a}>{b}"),
                             format!(
                                 "CLAUDE.md orders {a} before {b}, §3.3 ranks them \

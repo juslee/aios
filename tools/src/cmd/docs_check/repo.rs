@@ -46,9 +46,15 @@ use crate::cmd::docs_check::markdown::{self, Heading};
 use crate::cmd::docs_check::model::Skip;
 use crate::{paths, proc, pyre, pystr};
 
-/// Docs that describe the current state of the repository (check.py L52-58).
-pub const CURRENT_STATE_DOCS: [&str; 5] = [
-    "CLAUDE.md",
+/// Claude Code's project memory, which the CLAUDE.md checks read and report
+/// against. Claude Code loads `./.claude/CLAUDE.md` exactly like `./CLAUDE.md`;
+/// check.py read the root file, which moved here.
+pub const CLAUDE_MD: &str = ".claude/CLAUDE.md";
+
+/// Docs that describe the current state of the repository (check.py L52-58,
+/// whose root `CLAUDE.md` entry is now [`CLAUDE_MD`], covered by
+/// [`CURRENT_STATE_PREFIX`]).
+pub const CURRENT_STATE_DOCS: [&str; 4] = [
     "README.md",
     "CONTRIBUTING.md",
     "docs/project/developer-guide.md",

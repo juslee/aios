@@ -58,7 +58,7 @@ Layer 1 (Intent Verification) and Layer 3 (Behavioral Monitor) operate on differ
 | **Scope** | Per-action | Aggregate (across time) |
 | **Timing** | Synchronous (blocks action until verified) | Asynchronous (updates state periodically) |
 | **Intelligence** | Requires LLM inference (semantic) | Statistical + optional LLM |
-| **Latency** | ~50ms per action | ~10ns (cached state byte) |
+| **Latency** | <10ms (LLM, NPU); 50–100ms CPU-only ([pipeline.md §10.1](../intent-verifier/pipeline.md)) | ~10ns (cached state byte) |
 | **Catches** | Single malicious action | Patterns of anomalous behavior |
 
 **How they coordinate:**

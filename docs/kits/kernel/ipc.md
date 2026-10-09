@@ -66,7 +66,7 @@ pub fn ipc_call(
     request: &[u8],
     reply_buf: &mut [u8],
     timeout: Duration,
-) -> Result<usize, IpcError>;
+) -> Result<usize, IpcKitError>;
 
 /// Wait for an incoming message on a channel.
 ///
@@ -76,14 +76,14 @@ pub fn ipc_recv(
     channel: ChannelId,
     buf: &mut [u8],
     timeout: Duration,
-) -> Result<(usize, CallerId), IpcError>;
+) -> Result<(usize, CallerId), IpcKitError>;
 
 /// Reply to the last received call.
 ///
 /// No capability check required — the kernel tracks which caller is
 /// waiting for a reply on this channel. Can only be called once per
 /// received message.
-pub fn ipc_reply(reply: &[u8]) -> Result<(), IpcError>;
+pub fn ipc_reply(reply: &[u8]) -> Result<(), IpcKitError>;
 
 /// Asynchronous send: post a message without waiting for a reply.
 ///
@@ -91,7 +91,7 @@ pub fn ipc_reply(reply: &[u8]) -> Result<(), IpcError>;
 pub fn ipc_send(
     channel: ChannelId,
     message: &[u8],
-) -> Result<(), IpcError>;
+) -> Result<(), IpcKitError>;
 
 /// Lightweight notification object (seL4-style bitmap signals).
 ///
@@ -105,11 +105,12 @@ pub struct Notification {
 
 impl Notification {
     /// Signal specific bits (atomic OR into the notification word).
-    pub fn signal(&self, bits: u64);
+    /// A missing notification is `InvalidArgument` (the kernel's EINVAL).
+    pub fn signal(&self, bits: u64) -> Result<(), IpcKitError>;
 
     /// Wait until any bit in mask is set. Returns the matched bits
     /// and atomically clears them.
-    pub fn wait(&self, mask: u64, timeout: Duration) -> Result<u64, IpcError>;
+    pub fn wait(&self, mask: u64, timeout: Duration) -> Result<u64, IpcKitError>;
 }
 
 /// Multi-wait on channels and notifications simultaneously.
@@ -124,7 +125,7 @@ impl IpcSelect {
     pub fn wait(
         entries: &[SelectEntry],
         timeout: Duration,
-    ) -> Result<(usize, u64), IpcError>;
+    ) -> Result<(usize, u64), IpcKitError>;
 }
 
 /// An entry in an IpcSelect wait set.
@@ -152,17 +153,17 @@ pub struct SharedMemoryRegion {
 
 impl SharedMemoryRegion {
     /// Create a new shared memory region.
-    pub fn create(size: usize, flags: MemoryFlags) -> Result<Self, IpcError>;
+    pub fn create(size: usize, flags: MemoryFlags) -> Result<Self, IpcKitError>;
 
     /// Map the region into another agent's address space.
-    pub fn share_with(&self, agent: AgentId, flags: MemoryFlags) -> Result<(), IpcError>;
+    pub fn share_with(&self, agent: AgentId, flags: MemoryFlags) -> Result<(), IpcKitError>;
 
     /// Get a pointer to the mapped region.
     pub fn as_ptr(&self) -> *const u8;
     pub fn as_mut_ptr(&self) -> *mut u8;
 
     /// Unmap and destroy the region.
-    pub fn destroy(self) -> Result<(), IpcError>;
+    pub fn destroy(self) -> Result<(), IpcKitError>;
 }
 ```
 
@@ -328,9 +329,10 @@ fn grant_storage_access(
 | --- | --- | --- |
 | `ChannelCreate` | Creating new IPC channels | Granted to all agents |
 | `ChannelAccess(id)` | Sending/receiving on a specific channel | Per-channel, on creation |
-| `CapabilityTransfer` | Transferring tokens over a channel | Requires delegatable token |
 | `SharedMemoryCreate` | Creating shared memory regions | Granted to all agents |
-| `SharedMemoryShare` | Mapping a region into another agent | Requires both agents' consent |
+| `SharedMemoryAccess(id)` | Mapping a specific region (`shmem_map`) | Granted to the creator on creation; to another agent by the `SharedMemoryShare` syscall |
+
+Two operations are syscalls, not capabilities of their own. `SharedMemoryShare` lets a region's creator grant `SharedMemoryAccess(id)` to another agent (the target design requires both agents' consent). `CapabilityTransfer` moves a token over a channel and requires a delegatable token.
 
 ### Agent manifest example
 
@@ -349,19 +351,19 @@ shared_memory = true      # Large payload support (graceful degradation without)
 ## 6. Error Handling
 
 ```rust
-/// Errors returned by IPC Kit operations.
-pub enum IpcError {
+/// Errors returned by IPC Kit operations (`shared/src/kits/ipc.rs`).
+pub enum IpcKitError {
     /// The channel does not exist or was destroyed.
     /// Recovery: re-lookup the service.
-    InvalidChannel,
+    InvalidChannel { id: ChannelId },
 
     /// The message ring is full (16 slots).
     /// Recovery: back off and retry, or use shared memory for bulk transfer.
-    ChannelFull,
+    ChannelFull { id: ChannelId, capacity: usize },
 
     /// The operation timed out (mandatory timeout expired).
     /// Recovery: the service may be overloaded — retry with backoff.
-    Timeout,
+    Timeout { elapsed_ticks: u64 },
 
     /// The operation was cancelled (by IpcCancel or process exit).
     /// Recovery: clean up partial state, optionally retry.
@@ -369,11 +371,13 @@ pub enum IpcError {
 
     /// The agent does not hold the required capability.
     /// Recovery: request the capability or degrade gracefully.
-    CapabilityDenied,
+    CapabilityDenied { required: Capability },
 
-    /// The shared memory region does not exist or access is denied.
-    /// Recovery: verify the region ID and permissions.
-    SharedMemoryError,
+    /// A shared memory operation failed: the region does not exist, the
+    /// caller has no mapping of it, it is already mapped, or the calling
+    /// thread has no process.
+    /// Recovery: verify the region ID and the mapping state.
+    SharedMemoryError { reason: &'static str },
 
     /// The message exceeds the 256-byte inline limit.
     /// Recovery: use SharedMemoryRegion for large payloads.
@@ -382,8 +386,65 @@ pub enum IpcError {
     /// No reply was received (server did not call ipc_reply).
     /// Recovery: the service may have crashed — check service health.
     NoReply,
+
+    /// The operation would have to block: a non-blocking receive found no
+    /// message, or another thread is already receiving on or calling
+    /// through the channel.
+    /// Recovery: retry later, or wait with a timeout.
+    WouldBlock,
+
+    /// The agent is SUSPENDED by the behavioral gate. It may still hold
+    /// every capability; requesting more does not help.
+    /// Recovery: none from the agent; the gate is lifted by AIRS or the user.
+    Suspended,
+
+    /// An argument is invalid (an out-of-range id or a missing notification,
+    /// an undefined flag bit, a W^X request or flags beyond a region's
+    /// maximum, a size above a fixed limit, a bad buffer, or an empty,
+    /// oversized or unknown-kind select set; the full list is the EINVAL row
+    /// of docs/kernel/ipc.md §3.2), or the caller's state does not allow the
+    /// call: no current thread or process, or a reply with no pending call.
+    /// Recovery: for an argument error, fix the call; retrying unchanged
+    /// fails the same way. A reply with no pending call can succeed once a
+    /// call arrives.
+    InvalidArgument { reason: &'static str },
+
+    /// A table, queue or memory pool is full.
+    /// Recovery: release objects the agent no longer needs, or retry later.
+    ResourceExhausted { reason: &'static str },
+
+    /// The operation is not available.
+    Unsupported,
+
+    /// The channel or shared memory region the call names is gone: it was
+    /// never created or has been destroyed, or a channel endpoint is dead.
+    /// Recovery: re-lookup the service or the region; retrying the same id
+    /// fails the same way.
+    ObjectGone,
 }
 ```
+
+### Mapping kernel error codes
+
+The kernel returns the syscall-level codes of [`docs/kernel/ipc.md` §3.1](../../kernel/ipc.md) (`IpcError`, negative `i64`). The Kit decodes them through one table, `IpcKitError::from_code` in `shared/src/kits/ipc.rs`: `IpcError::try_from(i64)`, then `From<IpcError>`. The kernel's `KernelIpc` and a future EL0 Kit share it, so the two cannot drift. The table maps each code to the least specific variant that is correct for every kernel path returning it. `EPERM` and `ENOSPC` have no such variant, so their default is wrong for some paths, which their rows below name; a syscall on such a path with no Kit wrapper decodes to the wrong variant. `EPROTO` is a deliberate exception: its only kernel path today, `ipc_reply` with no pending call, would fit `InvalidArgument`, but the default stays `NoReply` so that `NoReply` survives the round trip through `EPROTO`, and `reply` overrides it. Each wrapper then overrides with what it knows (the lesson in `docs/knowledge/lessons/2026-03-24-cl-phase-5-m17-lossy-error-conversions.md`).
+
+| Code | Default variant | Wrapper overrides |
+|---|---|---|
+| `EPERM` (missing capability or right) | `CapabilityDenied` (placeholder capability) | Every wrapper names the capability the kernel checks: `ChannelCreate` (`channel_create`), `ChannelAccess(id)` (`channel_destroy`, `send`, `recv`, `call`; `select` names the first channel entry the caller lacks, or the first channel entry if a grant lands between the kernel's check and the wrapper's lookup), `SharedMemoryCreate` (`shmem_create`), `SharedMemoryAccess(id)` (`shmem_map`). Where the kernel checks none: `reply` → `InvalidArgument` (no current thread), `notification_create` → `InvalidArgument` (no current process), `shmem_unmap` → `SharedMemoryError` (not mapped). The default is wrong wherever the `EPERM` is not a missing capability: these syscalls check no capability but return `EPERM` when the caller has no current thread or no process: `IpcReply`, `NotificationCreate`, `MemoryMap`, `MemoryUnmap`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList`, `ProcessExit`, `ProcessWait`, `AuditLog` and `SharedMemoryShare` (`NotificationSignal`, `DebugPrint` and `TimeGet` look up no thread or process, nor do `CapabilityTransfer` and the other syscalls not implemented yet, which return `ENOTSUP` to every caller; `TimeSleep` with no current thread returns 0 without sleeping, and `NotificationWait` returns `EINVAL` without one), and so does an unmap of a region the caller has not mapped (`MemoryUnmap` of a shared window address, or the in-kernel `shared_memory_unmap` behind `shmem_unmap`), `SharedMemoryShare` from a caller that is not the region's creator or to a target pid whose slot holds no process, and `ProcessWait` for a child pid whose slot holds no process or after a wake that finds no exit code ([`docs/kernel/ipc.md` §3.2](../../kernel/ipc.md)). Of the `EPERM` paths above, only those behind `reply`, `notification_create` and `shmem_unmap` have Kit wrappers; nothing overrides the others' `EPERM` |
+| `EACCES` (SUSPENDED) | `Suspended` | — |
+| `EINVAL` | `InvalidArgument` | Channel wrappers → `InvalidChannel { id }` (an out-of-range id) |
+| `EPIPE` (the named object is gone) | `ObjectGone` | Channel wrappers → `InvalidChannel { id }` with the real `id`; shared memory wrappers → `SharedMemoryError` (region not found). The default names no id, so it is correct on the channel paths and on the region paths (`SharedMemoryMap`, `SharedMemoryShare`, `MemoryUnmap` of a shared window address and the in-kernel `shared_memory_unmap` behind `shmem_unmap`). `SharedMemoryShare` has no Kit wrapper, so a plain decode of its `EPIPE` reads as `ObjectGone` |
+| `EAGAIN` | `WouldBlock` | `send` → `ChannelFull { id }` (its EAGAIN is a full ring) |
+| `ENOSPC` | `ResourceExhausted` | The default is wrong wherever `ENOSPC` rejects a request above a fixed limit, where releasing objects or retrying cannot help: a payload above `MAX_MESSAGE_SIZE` (`IpcSend`, `IpcCall`, `IpcReply`), an `IpcCall` or `IpcRecv` receive length above `MAX_MESSAGE_SIZE`, a `DebugPrint` above 256 bytes and an `AuditLog` event above 48 bytes. `send`, `call`, `reply` → `MessageTooLarge` for an oversized payload (checked before the call); `recv` and `call` receive into a `MAX_MESSAGE_SIZE` buffer, so they never pass a longer receive length. `DebugPrint` and `AuditLog` have no Kit wrapper, so a plain decode of their fixed-limit `ENOSPC` reads as `ResourceExhausted`. (`MemoryMap` above 64 pages and `SharedMemoryCreate` above 4 MiB return `EINVAL`, so their `ENOSPC` is only a full table, [`docs/kernel/ipc.md` §4.7](../../kernel/ipc.md).) `call` → `ChannelFull { id }` for a full ring; `channel_create` → `ResourceExhausted` ("channel table full") |
+| `ENOMEM` | `ResourceExhausted` | `notification_create` → "notification table full" |
+| `ETIMEDOUT` | `Timeout` | — |
+| `ECANCELED` | `Cancelled` | — |
+| `EPROTO` | `NoReply` | `reply` → `InvalidArgument` (no call is pending on the channel). That is the only kernel path that returns `EPROTO` today, the replier's side, where `InvalidArgument` is correct. The default is kept as `NoReply` by choice, so that `NoReply` survives the round trip, and `reply`'s override corrects it on that path |
+| `ENOTSUP` | `Unsupported` | — |
+| `ECAPDORMANT` | `CapabilityDenied` | — |
+| `EEXIST` | `SharedMemoryError` (only `shmem_map` returns it) | — |
+
+A wrapper whose calling thread has no process reports the variant it reports for the kernel's `EPERM`: `CapabilityDenied` for the capability the operation checks, `InvalidArgument` for `notification_create` and `SharedMemoryError` for `shmem_unmap`, which check none. The syscalls return `EPERM` for a caller with no process ([`docs/kernel/ipc.md` §3.2](../../kernel/ipc.md)), so an EL0 wrapper applies the `EPERM` overrides above. (`ipc_select` and `notification_wait` called with no current thread at all, which only in-kernel code can do, return `EINVAL`, so `select` and `wait` then report `InvalidArgument`.) `KernelIpc` reports the same variants, whether the kernel function returns `EPERM` or the wrapper finds no process itself. The reverse conversion, `From<IpcKitError> for IpcError`, maps `CapabilityDenied` to `EPERM`, `Suspended` to `EACCES`, `InvalidChannel` and `ObjectGone` to `EPIPE` and `SharedMemoryError` to `EINVAL`; `InvalidChannel`, `ChannelFull`, `MessageTooLarge` and `SharedMemoryError` do not survive a round trip, because their codes decode to the less specific `ObjectGone`, `WouldBlock`, `ResourceExhausted` and `InvalidArgument`.
 
 ## 7. Platform & AI Availability
 
@@ -419,6 +480,12 @@ pub enum MyKitMessage {
     Subscribe = 3,
 }
 
+/// Reply codes of your Kit's protocol (not kernel errnos).
+#[repr(u8)]
+pub enum MyKitReply {
+    UnknownMessage = 0xFF,
+}
+
 /// 2. Your Kit's service loop receives raw IPC messages,
 ///    deserializes, validates capabilities, then dispatches.
 fn service_loop(channel: ChannelId) {
@@ -435,7 +502,7 @@ fn service_loop(channel: ChannelId) {
                 let status = query_status();
                 ipc_reply(&status).unwrap();
             }
-            _ => ipc_reply(&[IpcError::UnknownMessage as u8]).unwrap(),
+            _ => ipc_reply(&[MyKitReply::UnknownMessage as u8]).unwrap(),
         }
     }
 }

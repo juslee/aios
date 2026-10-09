@@ -304,9 +304,11 @@ fn upload_texture(
 | Capability | What It Gates | Default Grant |
 | --- | --- | --- |
 | `SharedMemoryCreate` | Creating shared memory regions | Granted to all agents |
-| `SharedMemoryShare` | Mapping a region into another agent | Requires both agents' consent |
+| `SharedMemoryAccess(id)` | Mapping a specific region | Granted to the creator on creation; to another agent by the `SharedMemoryShare` syscall |
 | `MemoryQuery` | Querying pressure levels and pool stats | Granted to all agents |
 | `LargeAllocation` | Allocations above 1 MiB in the user pool | Prompt user on first use |
+
+`SharedMemoryShare` is a syscall, not a capability of its own: it lets a region's creator grant `SharedMemoryAccess(id)` to another agent (the target design requires both agents' consent). See the [IPC Kit](./ipc.md) §5.
 
 ### Agent manifest example
 

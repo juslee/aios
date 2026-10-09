@@ -49,15 +49,6 @@
             "if": "Edit(**/docs/**/*.md)"
           }
         ]
-      },
-      {
-        "matcher": "mcp__obsidian__write_note|mcp__obsidian__patch_note",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'doc-audit-needed'"
-          }
-        ]
       }
     ]
   },
@@ -66,6 +57,14 @@
       "Bash(cargo *)",
       "Bash(rustup *)",
       "Bash(just *)",
+      "Bash(AIOS_TOOLS_BIN=target/tools/release/aios just docs-check)",
+      "Bash(/usr/bin/python3 -m unittest discover -s .claude/hooks/tests)",
+      "Bash(bash -n .claude/hooks/setup-dev-env.sh)",
+      "Bash(bash -n .claude/hooks/precompact-save.sh)",
+      "Bash(sh -n .claude/hooks/aios)",
+      "Bash(bash -n scripts/agent/brief.sh)",
+      "Bash(bash -n scripts/agent/checkpoint.sh)",
+      "Bash(bash -n scripts/soak-qemu.sh)",
       "Bash(.claude/hooks/aios *)",
       "Bash(objdump *)",
       "Bash(qemu-system-aarch64 *)",
@@ -76,6 +75,9 @@
       "Bash(git status *)",
       "Bash(git log *)",
       "Bash(git diff *)",
+      "Bash(rust-analyzer --version)",
+      "Bash(claude plugin --help)",
+      "Bash(claude plugin list *)",
       "Bash(git fetch)",
       "Bash(git fetch origin *)",
       "Bash(git fetch --prune origin *)",
@@ -163,7 +165,8 @@
       "Bash(echo *)",
       "Bash(cp *)",
       "Bash(pkill -f \"qemu-system-aarch64*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python3 -m json.tool .claude/settings.json)"
     ],
     "ask": [
       "Bash(gh pr merge*)",
@@ -244,6 +247,8 @@
     ],
     "deny": [
       "Bash(rm -rf /)",
+      "Bash(git log *--output*)",
+      "Bash(git diff *--output*)",
       "Bash(git push *--force)",
       "Bash(git push *--force *)",
       "Bash(git push -f*)",
@@ -271,15 +276,26 @@
       "mcp__*__delete_repository"
     ]
   },
-  "enabledMcpjsonServers": [
-    "obsidian"
-  ],
+  "extraKnownMarketplaces": {
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills",
+        "ref": "v0.5.7"
+      }
+    }
+  },
   "enabledPlugins": {
     "railway@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": false,
     "gitkraken@claude-plugins-official": false,
     "gitkraken-hooks@gitkraken": false,
     "manage-worktrees-skill@claude-skills-engineering": false,
-    "typesafe@typesafe-ai": true
+    "typesafe@typesafe-ai": true,
+    "superpowers@claude-plugins-official": true,
+    "remember@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true
   }
 }

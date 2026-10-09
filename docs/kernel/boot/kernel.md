@@ -106,7 +106,7 @@ mov  x19, x0                // save BootInfo pointer (callee-saved)
 
 **boot.S Step 3: Park secondary cores.** Read `MPIDR_EL1[7:0]` to get the core ID. If non-zero, branch to a `wfe` parking loop. Only core 0 (the boot CPU) continues.
 
-**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top` (128 KiB stack at end of BSS, defined in linker.ld).
+**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top`, the end of the 128 KiB boot stack. linker.ld places the stack in its own `.stack (NOLOAD)` output section right after `.bss`, so it lies inside the RW PT_LOAD segment: the UEFI stub allocates it with `.data`/`.bss`, and `BootInfo.kernel_size` covers it. Step 5 does not zero it (it lies past `__bss_end`); the stub zero-fills the whole segment.
 
 **boot.S Step 5: Zero BSS.** Loop from `__bss_start` to `__bss_end`, writing zero in 8-byte strides.
 
@@ -201,7 +201,7 @@ The PL011 UART is the first and last resort for debugging. It's initialized befo
 1. **Pre-init (boot.S → Step 3):** The UART works because edk2 left PL011 configured. The `kinfo!()` macro writes directly to the UART data register at the hardcoded base `0x0900_0000`. No baud rate programming, no lock.
 2. **Full init (Step 4):** `init_pl011()` disables the UART, programs IBRD=13/FBRD=1 (115200 baud at 24 MHz APB clock), sets LCR_H for 8N1 with FIFOs, re-enables TX+RX+UART via CR. Updates the global `UART_BASE_ADDR: AtomicUsize`.
 
-The kernel's structured logging macros (`kinfo!`, `kwarn!`, `kerror!` from `observability/mod.rs`) format into a 48-byte `LogEntry` message field and write to UART character-by-character via `UartWriter` (implements `core::fmt::Write`). No heap allocation — all formatting happens on the stack. Output is unprotected by locks in early boot (see `uart.rs` header comment: `spin::Mutex` hangs on NC memory); brief interleaving during SMP bringup is accepted.
+The kernel's structured logging macros (`kinfo!`, `kwarn!`, `kerror!` from `observability/mod.rs`) format each line into a 160-byte stack buffer and write it to the UART character-by-character via `UartWriter` (implements `core::fmt::Write`) while the boot phase is before `LogRingsReady`; after that they format into a 96-byte stack buffer (`LogMessageBuf`) and go to the per-core rings as one `LogEntry` (48-byte message), or a head entry and a continuation for a longer line ([observability.md](../observability.md) §2.4). No heap allocation — all formatting happens on the stack. Output is unprotected by locks in early boot (see `uart.rs` header comment: `spin::Mutex` hangs on NC memory); brief interleaving during SMP bringup is accepted.
 
 After Step 6b (full TTBR1), the UART base is switched from the TTBR0 identity-mapped physical address to the TTBR1 MMIO virtual address (`MMIO_BASE + UART_PHYS`) via `uart::update_base()`. This must happen before TTBR0 is repurposed for user address spaces.
 
