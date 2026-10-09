@@ -68,7 +68,8 @@ jobs:
     # its Unicode version or the history is ever wrong or missing here.
     # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in
     # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
-    # no longer prove the shim is POSIX.
+    # no longer prove the shim is POSIX. The shim tests build through the real
+    # justfile `tools` recipe (with a fake cargo), so they need `just`.
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
@@ -79,6 +80,7 @@ jobs:
           toolchain: nightly
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"

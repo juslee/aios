@@ -3,124 +3,411 @@
 #
 # The binary comes from the MAIN checkout (the parent of git's common dir), so
 # by default hooks, skills and recipes run main's code, not a PR's, even when
-# called from a PR worktree. That binary is an unprotected build artifact: a
-# session that writes the main checkout's target/tools can replace it, and the
-# mtime-only freshness test below does not notice (an R5 open question in
-# docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md). AIOS_TOOLS_BIN
-# overrides it, to test a PR's own build explicitly (a bare name is taken
-# relative to the current directory, not looked up on PATH). When git cannot
-# name the common dir from a linked worktree, the shim fails closed rather than
-# run the worktree's own build: guard asks, --prebuild does nothing, other
-# subcommands exit 3.
+# called from a PR worktree. `just tools` installs it at
+# target/tools/installed/aios, a path cargo never writes, by renaming a complete
+# copy into place, then writes installed/aios.stamp the same way. The stamp
+# records HEAD's tree entries for the build inputs (tools/, Cargo.lock,
+# Cargo.toml, rust-toolchain.toml, a legacy rust-toolchain file if there is
+# one, .cargo/, and the justfile, whose recipe writes the stamp), the git hash
+# of the installed binary, and whether those inputs were dirty: changed but not
+# committed (untracked and gitignored files included, except the OS and editor
+# files no build reads: .DS_Store, *.swp, *.swo, *~ and *.rs.bk), or tracked
+# input files the index marks assume-unchanged or skip-worktree (these two
+# tested before the build and after it, so a file the build read and then
+# removed still counts), or committed on HEAD but not on origin/main
+# (refs/remotes/origin/main, which a plain fetch moves only to what was merged
+# on GitHub), or origin/main is missing. This
+# repository squash-merges, so a commit made in the main checkout never reaches
+# origin/main itself: once its change has merged, resetting the main checkout
+# onto origin/main clears it. The shim recomputes the entries and the hash from
+# the main checkout, and on a dirty stamp repeats the dirty test.
+# AIOS_TOOLS_BIN overrides the binary, to test a PR's own build explicitly (a
+# bare name is taken relative to the current directory, not looked up on
+# PATH); an override has no stamp and no freshness test. When git cannot name
+# the common dir from a linked worktree, the shim fails closed rather than run
+# the worktree's own build.
 #
-# Fresh means newer than every file under the main checkout's tools/ and than
-# its Cargo.lock, Cargo.toml and rust-toolchain.toml, so a pull that only bumps
-# the pinned nightly still rebuilds. `just tools` stamps the binary with the
-# time its build started, so an edit made during a build still counts as newer.
-#   aios guard ...    fresh: run. stale: run it and start one background
-#                     `just tools` (lock dir target/tools/.building). missing:
-#                     fail closed with a PreToolUse "ask" decision, exit 0.
-#   aios <other> ...  fresh: run. stale: rebuild in the foreground, then run
-#                     (a failed rebuild prints a warning and runs the stale
-#                     binary instead, see below). missing: build, then run;
-#                     exit 3 naming `just tools` if the build fails.
+# The main checkout's binary is, in order:
+#   missing  not a non-empty regular executable file.
+#   stale    a build input file, other than those OS and editor files, is
+#            newer than the binary (it carries its build's start time, so an
+#            edit made during a build counts, and so do uncommitted edits),
+#            or the stamp is missing or does not match
+#            the main checkout's HEAD and the binary: a binary built
+#            elsewhere, or replaced after its build, even one future-dated to
+#            pass the mtime test. Also a dirty stamp whose cause is gone
+#            since the build (origin/main fetched, or the main checkout reset
+#            onto origin/main once its input commits merged): a rebuild stamps
+#            it clean.
+#   dirty    matches, but was built from dirty inputs (above), and they are
+#            still dirty.
+#   fresh    matches, built from inputs merged on origin/main, nothing newer.
+#
+#   aios guard ...    PreToolUse hook. Checks and runs one file: a hard link
+#                     to the binary made for the call, which a `just tools`
+#                     rename in between cannot swap. Runs a fresh binary as a
+#                     child: its own
+#                     exit 0 (decision on stdout) and 2 (block) pass through,
+#                     any other exit becomes "ask". Claude Code runs the tool on
+#                     a hook exit other than 0 or 2, so every path that does not
+#                     end that way prints a PreToolUse "ask" decision and exits 0
+#                     (#203): missing (no build), stale (and one background
+#                     `just tools`, lock dir target/tools/.building; the reason
+#                     says whether it started, one was already running, or
+#                     none could start), dirty (no build; the reason names the
+#                     cause the dirty test finds now: uncommitted, untracked or
+#                     ignored input files, input files index flags hide from
+#                     git status, input commits origin/main lacks, or no
+#                     origin/main), a hard link that cannot be made, an
+#                     override that is not a runnable
+#                     file, and a shim that cannot find its own directory or
+#                     the main checkout. A runnable override is the
+#                     exception: it runs as a child like a fresh binary, with
+#                     no stamp or freshness test.
+#   aios <other> ...  fresh or dirty: run. stale: rebuild in the foreground,
+#                     then run (a failed rebuild prints a warning and runs the
+#                     stale binary instead). missing: build, then run; exit 3
+#                     naming `just tools` if the build fails. Exit 3 when the
+#                     shim cannot find its own directory or the main checkout.
 #   aios --prebuild   (SessionStart) start a background build when the binary
 #                     is missing or stale; always exits 0.
+#
+# The stamp shows that `just tools` installed the binary from inputs merged on
+# origin/main. It is not tamper-proof: a session that can write target/tools
+# can also write a matching stamp, or poison cargo's artifacts there before the
+# next build; one that edits the justfile's `tools` recipe to write its own
+# clean stamp has forged one too (the recipe runs before it stamps, and a
+# background rebuild here runs it); and one that can rewrite
+# refs/remotes/origin/main can make unmerged commits look merged. Keeping
+# sessions out of target/tools is the permission rules' job, and they are a
+# speed bump with known gaps: among them, a session started in a worktree is
+# not denied Edit or Write on the main checkout's target/tools, which holds the
+# binary this shim runs
+# (docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md, §2). Nor is
+# the main checkout itself pinned: git's common-dir resolution reads files a
+# session can rewrite with allowed commands (the main checkout's
+# .git/commondir, a linked worktree's .git gitdir file and its
+# .git/worktrees/<name>/commondir), and no rule covers them. Pointed at a
+# repository the session controls, they make this shim run that repository's
+# binary, stamped clean by its own `just tools` against its own origin/main.
+# The dirty test trusts the main checkout's .git/config and index the same
+# way: it pins the work tree, turns off the config that lets git status skip
+# reading files, and reads the index flags, but a clean filter (a
+# filter.<driver>.clean command in the config, given to input files by an
+# attributes file) still makes git status see the committed content. Every git
+# call here and in the recipe runs with replace refs and the grafts file off
+# (GIT_NO_REPLACE_OBJECTS, GIT_GRAFT_FILE), which plain file writes under .git
+# could otherwise use to show an unmerged commit as merged; the object store
+# itself (a rewritten object file or commit-graph) is trusted like the rest.
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
 # never to stdout, so JSON on stdout stays parseable.
 
 set -u
 
-here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 3
+# Replace refs (a file under .git/refs/replace/) and a grafts file
+# (.git/info/grafts) change the commits git sees: one naming origin/main's
+# commit can make an unmerged input commit look merged. Turn both off for every
+# git call, the recipe's included (it sets the same). A grafts file under
+# /dev/null cannot exist, so git reads none and gives no warning.
+GIT_NO_REPLACE_OBJECTS=1
+GIT_GRAFT_FILE=/dev/null/no-grafts
+export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
+
+sub=${1:-}
+
+# Print a PreToolUse "ask" decision with reason $1 and exit 0. Reasons are
+# fixed text plus digits: nothing that needs JSON escaping.
+ask() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$1"
+    exit 0
+}
+
+# Give up without running a binary: guard asks with reason $1, --prebuild exits
+# 0, anything else prints $2 and exits 3.
+stop() {
+    case $sub in
+    guard) ask "$1" ;;
+    --prebuild) exit 0 ;;
+    esac
+    printf 'aios: %s\n' "$2" >&2
+    exit 3
+}
+
+# `[ -x ]` alone is true for a directory, and an empty executable file runs as
+# an empty script that exits 0.
+runnable() {
+    [ -f "$1" ] && [ -x "$1" ] && [ -s "$1" ]
+}
+
+# Run the guard binary $1 as a child rather than exec it, so a start failure
+# (a vanished or half-written file: 126, 127, and under macOS /bin/sh also 1,
+# or 137 when the kernel kills it) still ends in a decision. The binary's own
+# exit 0 (decision on stdout) and 2 (block, reason on stderr) pass through with
+# its stdout. Any other exit, the binary's own included, means the guard did
+# not decide, so it becomes an ask and the binary's stdout is dropped: Claude
+# Code would run the tool on it, and partial output next to the ask would not
+# parse as a decision. $1 names the binary in the ask reason, $2 is the advice
+# that follows it, $3 is the binary and the rest are its arguments.
+run_guard() {
+    guard_name=$1
+    guard_advice=$2
+    guard_bin=$3
+    shift 3
+    out=$("$guard_bin" "$@")
+    status=$?
+    case $status in
+    0 | 2)
+        [ -z "$out" ] || printf '%s\n' "$out"
+        exit "$status"
+        ;;
+    esac
+    ask "$guard_name failed (exit $status); $guard_advice"
+}
+
+if ! dir=$(dirname -- "$0") || ! here=$(CDPATH='' cd -- "$dir" && pwd -P); then
+    stop "aios shim cannot find its own directory; check that .claude/hooks exists and is accessible" \
+        "cannot find the directory of $0"
+fi
+# These stops, like the one above, come before the AIOS_TOOLS_BIN override, so
+# setting it does not get past them.
 unresolved=
 if common=$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    main=$(dirname -- "$common")
+    main=$(dirname -- "$common") ||
+        stop "aios shim cannot find the main checkout (dirname failed on the git common dir); retry" \
+            "cannot find the main checkout from $common (dirname failed); retry"
 else
-    main=$(CDPATH='' cd -- "$here/../.." && pwd -P) || exit 3
+    main=$(CDPATH='' cd -- "$here/../.." && pwd -P) ||
+        stop "aios shim cannot find the main checkout (git failed and the checkout root is not accessible); fix git or the checkout's permissions" \
+            "git cannot name the main checkout and $here/../.. is not accessible; fix git or the checkout's permissions"
     # A linked worktree's .git is a `gitdir:` file, and its root is not the
     # main checkout: acted on after the AIOS_TOOLS_BIN override below.
     [ -f "$main/.git" ] && unresolved=1
 fi
-bin="$main/target/tools/release/aios"
+bin="$main/target/tools/installed/aios"
+stamp="$main/target/tools/installed/aios.stamp"
 lock="$main/target/tools/.building"
+install_lock="$main/target/tools/.install.lock"
 log="$main/target/tools/build.log"
-ask='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"aios tools not built; run just tools"}}'
+# The binary's build inputs, relative to the checkout root. The `tools` recipe
+# in the justfile stamps the same list in the same format, with the same dirty
+# test: change both. The legacy rust-toolchain file is not in the repository,
+# but rustup prefers it to rust-toolchain.toml when both exist, so an untracked
+# one must count as an input (and make a build dirty). The justfile counts
+# because its `tools` recipe builds the binary and writes the stamp. A missing
+# path is harmless to find (its error is discarded), git ls-tree and git status.
+inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
 
-is_stale() {
-    [ -n "$(find "$main/tools" "$main/Cargo.lock" "$main/Cargo.toml" "$main/rust-toolchain.toml" -newer "$bin" -print 2>/dev/null | head -n 1)" ]
+# Print why the main checkout's inputs are dirty now, by the `tools` recipe's
+# test: changes (uncommitted, untracked or gitignored input files: an ignored
+# tools/build.rs or .cargo/config still changes the build), hidden (input
+# files the index marks assume-unchanged or skip-worktree, which git status
+# skips: `git ls-files -v` tags them in lowercase or S, every other file H),
+# no-origin, or unmerged (HEAD has input changes that origin/main lacks: a
+# squash merge leaves the main checkout's own commits off origin/main, so this
+# holds until the main checkout is reset onto it). Print nothing when they are
+# clean. A failing git command counts as changes or hidden, so it never starts
+# a build. git status runs with the work tree pinned to the main checkout
+# (over core.worktree) and with the config that lets it skip reading files
+# turned off (core.fsmonitor, core.untrackedCache, core.checkStat,
+# core.trustctime), which a session could otherwise set in the main
+# checkout's .git/config. The
+# exclude pathspecs leave out OS and editor files that no build reads, which
+# Finder or an editor leaves in the main checkout: counted, one would hold
+# guard at a dirty ask that starts no build. They are anchored under the
+# directory inputs, because an exclude that can match at the top level (such
+# as `**/.DS_Store`) makes git status list the ignored target/ directory.
+dirty_cause() {
+    # shellcheck disable=SC2086
+    if ! changes=$(git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false \
+        -c core.checkStat=default -c core.trustctime=true -C "$main" --work-tree="$main" \
+        status --porcelain --untracked-files=all --ignored=matching -- $inputs \
+        ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
+        ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
+        ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
+        ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk' 2>/dev/null) ||
+        [ -n "$changes" ]; then
+        echo changes
+    elif ! flags=$(git -C "$main" --work-tree="$main" ls-files -v -- $inputs 2>/dev/null) ||
+        [ -n "$(printf '%s\n' "$flags" | sed '/^H /d;/^$/d')" ]; then
+        echo hidden
+    elif ! git -C "$main" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1; then
+        echo no-origin
+    elif ! base=$(git -C "$main" merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
+        ! git -C "$main" diff-tree --quiet -r "$base" HEAD -- $inputs >/dev/null 2>&1; then
+        echo unmerged
+    fi
+}
+
+# Print fresh, stale, or dirty-<cause> (see dirty_cause) for the runnable
+# installed binary $1, $bin or a hard link to it (see the header). The mtime
+# test skips directories and the OS and editor
+# files the dirty test leaves out: Finder or an editor rewrites them (a swap
+# file every few seconds), and creating one moves its directory's mtime, so
+# either would start rebuild after rebuild. A file removed since the build
+# changes no mtime it reads. Uncommitted, the removal leaves a clean build
+# valid, since the recipe runs its dirty test before the build as well as
+# after it, so a clean stamp means the build started without the file (a
+# dirty one is tested again below). Committed, it changes HEAD's entries in
+# the stamp.
+verdict() {
+    # shellcheck disable=SC2086 # $inputs is a list of plain relative paths.
+    if [ -n "$(cd "$main" && find $inputs ! -type d ! -name .DS_Store ! -name '*.swp' ! -name '*.swo' \
+        ! -name '*~' ! -name '*.rs.bk' -newer "$1" -print 2>/dev/null | head -n 1)" ]; then
+        echo stale
+        return
+    fi
+    # shellcheck disable=SC2086
+    if ! src=$(git -C "$main" ls-tree HEAD -- $inputs 2>/dev/null) ||
+        ! sum=$(git -C "$main" hash-object --no-filters -- "$1" 2>/dev/null) ||
+        ! have=$(cat -- "$stamp" 2>/dev/null); then
+        echo stale
+        return
+    fi
+    want="aios-tools-stamp 1
+$src
+bin $sum
+source"
+    case $have in
+    "$want clean") echo fresh ;;
+    "$want dirty")
+        # The stamp records only that the build was dirty. Its cause may be
+        # gone since (a fetch of origin/main rewrites no input file, and a
+        # reset onto origin/main once the input commits merged need not):
+        # then a rebuild stamps it clean.
+        cause=$(dirty_cause)
+        if [ -n "$cause" ]; then
+            echo "dirty-$cause"
+        else
+            echo stale
+        fi
+        ;;
+    *) echo stale ;;
+    esac
 }
 
 build_fg() {
     (cd "$main" && just tools) >&2
 }
 
+# Succeed when a `just tools` recipe holds its kernel lock on
+# target/tools/.install.lock, as a recipe does from before its build until
+# after its renames. It tries the lock without waiting, through flock(1) or
+# lockf(1) as the recipe does (lockf -k keeps the file, which lockf would
+# otherwise remove). A lock that cannot be tried counts as held. With neither
+# tool no recipe can run, since the recipe exits at once without one.
+recipe_running() {
+    [ -e "$install_lock" ] || return 1
+    if command -v flock >/dev/null 2>&1; then
+        ! flock -n "$install_lock" true 2>/dev/null
+    elif command -v lockf >/dev/null 2>&1; then
+        ! lockf -k -s -t 0 "$install_lock" true 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# Start one background `just tools` and return 0. Return 1 when a background
+# build is already running, and 2 when none can start: no `just` on PATH, or
+# neither flock(1) nor lockf(1), without which the recipe exits at once, or no
+# lock directory (target/tools cannot be created, or something other than a
+# directory holds the lock path). The lock directory
+# .building (mkdir takes it atomically) covers a background build from before
+# its recipe starts until after it ends. A build killed with its subshell
+# leaves it behind, so it is taken over once `find -mmin +1` matches it (after
+# a minute or two, by how find rounds: time enough for the recipe to take its
+# own lock) and no recipe holds the recipe's lock.
+# A takeover that is wrong, or two at once, only starts a redundant build,
+# which the recipe's lock runs after the other.
 build_bg() {
-    mkdir -p "$main/target/tools" 2>/dev/null || return 0
-    # A lock older than 30 minutes belongs to a build that died: take it over.
-    if [ -n "$(find "$lock" -prune -mmin +30 2>/dev/null)" ]; then
+    command -v just >/dev/null 2>&1 || return 2
+    command -v flock >/dev/null 2>&1 || command -v lockf >/dev/null 2>&1 || return 2
+    mkdir -p "$main/target/tools" 2>/dev/null || return 2
+    if [ -n "$(find "$lock" -prune -mmin +1 2>/dev/null)" ] && ! recipe_running; then
         rmdir "$lock" 2>/dev/null
     fi
-    mkdir "$lock" 2>/dev/null || return 0
+    if ! mkdir "$lock" 2>/dev/null; then
+        [ -d "$lock" ] && return 1
+        return 2
+    fi
     (
         cd "$main" && just tools >"$log" 2>&1
         rmdir "$lock" 2>/dev/null
     ) </dev/null >/dev/null 2>&1 &
+    return 0
 }
 
 if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
-    [ "${1:-}" = "--prebuild" ] && exit 0
+    [ "$sub" = --prebuild ] && exit 0
     # `[ -x ]` tests a bare name relative to the cwd but exec searches PATH:
     # make both name the same file.
     case $AIOS_TOOLS_BIN in
     */*) ;;
     *) AIOS_TOOLS_BIN=./$AIOS_TOOLS_BIN ;;
     esac
-    [ -x "$AIOS_TOOLS_BIN" ] && exec "$AIOS_TOOLS_BIN" "$@"
-    if [ "${1:-}" = "guard" ]; then
-        printf '%s\n' "$ask"
-        exit 0
-    fi
-    echo "aios: AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not an executable file" >&2
-    exit 3
+    runnable "$AIOS_TOOLS_BIN" ||
+        stop "AIOS_TOOLS_BIN is not a non-empty regular executable file" \
+            "AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not a non-empty regular executable file"
+    [ "$sub" = guard ] &&
+        run_guard "AIOS_TOOLS_BIN guard" "fix or unset AIOS_TOOLS_BIN" "$AIOS_TOOLS_BIN" "$@"
+    exec "$AIOS_TOOLS_BIN" "$@"
 fi
 
 if [ -n "$unresolved" ]; then
-    case "${1:-}" in
-    --prebuild) exit 0 ;;
-    guard)
-        printf '%s\n' "$ask"
-        exit 0
-        ;;
-    esac
-    echo "aios: git cannot name the main checkout of the linked worktree $main (git rev-parse --git-common-dir failed); fix git or set AIOS_TOOLS_BIN" >&2
-    exit 3
+    stop "aios shim cannot find the main checkout (git failed); fix git or set AIOS_TOOLS_BIN" \
+        "git cannot name the main checkout of the linked worktree $main (git rev-parse --git-common-dir failed); fix git or set AIOS_TOOLS_BIN"
 fi
 
-case "${1:-}" in
+case $sub in
 --prebuild)
-    if [ ! -x "$bin" ] || is_stale; then
+    if ! runnable "$bin" || [ "$(verdict "$bin")" = stale ]; then
         build_bg
     fi
     exit 0
     ;;
 guard)
-    if [ ! -x "$bin" ]; then
-        printf '%s\n' "$ask"
-        exit 0
+    runnable "$bin" || ask "aios tools not built; run just tools"
+    # Check and run one file: a hard link to the binary, named aios (clap takes
+    # the program name from it) in a directory made for this call. A `just
+    # tools` rename after the check replaces only the directory entry at $bin,
+    # so it cannot swap in a binary that was never checked.
+    run_dir=
+    trap 'if [ -n "$run_dir" ]; then rm -f "$run_dir/aios"; rmdir "$run_dir"; fi 2>/dev/null' EXIT
+    trap 'exit 1' HUP INT TERM
+    if ! run_dir=$(mktemp -d "$main/target/tools/.guard.XXXXXX" 2>/dev/null) ||
+        ! ln "$bin" "$run_dir/aios" 2>/dev/null; then
+        ask "aios shim cannot hard-link the binary into target/tools to check and run it; check that target/tools is writable, then retry"
     fi
-    if is_stale; then
-        build_bg
-    fi
-    exec "$bin" "$@"
+    runnable "$run_dir/aios" || ask "aios tools not built; run just tools"
+    case $(verdict "$run_dir/aios") in
+    fresh) run_guard "aios guard" "run just tools" "$run_dir/aios" "$@" ;;
+    dirty-changes)
+        ask "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; revert or remove them (merge any you need through a PR first), then run just tools"
+        ;;
+    dirty-hidden)
+        ask "aios tools were built while assume-unchanged or skip-worktree flags in the main checkout's index hid input files from git status; clear the flags (git ls-files -v shows them as lowercase tags or S), then run just tools"
+        ;;
+    dirty-no-origin)
+        ask "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools"
+        ;;
+    dirty-unmerged)
+        ask "aios tools were built from input commits in the main checkout that are not on origin/main; once they have merged through a PR, or if they are not wanted, reset the main checkout onto origin/main (git reset --keep origin/main), then run just tools"
+        ;;
+    esac
+    build_bg
+    case $? in
+    0) ask "aios tools are stale or unverified; rebuilding in the background (just tools)" ;;
+    1) ask "aios tools are stale or unverified; a background build (just tools) is already running" ;;
+    esac
+    ask "aios tools are stale or unverified, and a background build could not start; run just tools"
     ;;
 esac
 
-if [ ! -x "$bin" ]; then
-    if ! build_fg || [ ! -x "$bin" ]; then
+if ! runnable "$bin"; then
+    if ! build_fg || ! runnable "$bin"; then
         echo "aios: $bin is missing and the build failed; run: just tools" >&2
         exit 3
     fi
-elif is_stale; then
+elif [ "$(verdict "$bin")" = stale ]; then
     build_fg || echo "aios: rebuilding $bin failed; running the stale binary (run: just tools)" >&2
 fi
 exec "$bin" "$@"
