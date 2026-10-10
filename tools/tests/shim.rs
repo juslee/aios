@@ -60,22 +60,32 @@ fn ask_json(reason: &str) -> String {
 /// tests see whether the shim keeps build output off its own stdout.
 /// `FAKE_CARGO_FAIL` makes it fail, `FAKE_CARGO_DELAY` slows it down,
 /// `FAKE_CARGO_NOOP` leaves release/aios alone (a no-op build on Linux) and
-/// `FAKE_CARGO_SOURCE` names a file to build instead. `FAKE_CARGO_WRITE_DELAY`
-/// leaves release/aios half-written for that many seconds, like the uplift of a
-/// large binary, and creates `FAKE_CARGO_MARK` once the half is written.
-/// `FAKE_CARGO_PIDS` names a file to write the recipe's pid and its own to.
-/// `FAKE_CARGO_EXCLUSIVE` logs `overlap` to overlap.log when another build is
-/// running at the same time. `FAKE_CARGO_REMOVE` names a file to remove during
-/// the build, as a build script that deletes itself would. `FAKE_CARGO_HOLD`
-/// names a file: while it exists the build waits, after logging and before it
-/// writes release/aios (for a minute at most, so a test killed before it
-/// releases the build leaves none behind for long).
+/// `FAKE_CARGO_SOURCE` names a file to build instead. `FAKE_CARGO_WRITE_HOLD`
+/// names a file: while it exists, release/aios stays half-written, like the
+/// uplift of a large binary, and `FAKE_CARGO_MARK` is created once the half is
+/// written. `FAKE_CARGO_PIDS` names a file to write the recipe's pid and its
+/// own to. `FAKE_CARGO_EXCLUSIVE` logs `overlap` to overlap.log when another
+/// build is running at the same time. `FAKE_CARGO_REMOVE` names a file to
+/// remove during the build, as a build script that deletes itself would.
+/// `FAKE_CARGO_HOLD` names a file: while it exists the build waits, after
+/// logging and before it writes release/aios. Each hold lasts a minute at most,
+/// by the clock, so a test killed before it releases the build leaves none
+/// behind for long.
 const FAKE_CARGO: &str = r#"#!/bin/sh
 set -u
 if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
     echo "fake cargo: unexpected arguments: $*" >&2
     exit 2
 fi
+# Waits while the file $1 exists, for a minute at most by the clock. POSIX
+# sleep takes whole seconds; a fractional sleep only shortens the poll where
+# the system's sleep supports it.
+hold_while() {
+    deadline=$(($(date +%s) + 60))
+    while [ -e "$1" ] && [ "$(date +%s)" -lt "$deadline" ]; do
+        sleep 0.1 2>/dev/null || sleep 1
+    done
+}
 echo "fake cargo: building the aios binary"
 printf 'build\n' >> cargo.log
 [ -z "${FAKE_CARGO_REMOVE:-}" ] || rm -f "$FAKE_CARGO_REMOVE"
@@ -88,13 +98,7 @@ if [ -n "${FAKE_CARGO_FAIL:-}" ]; then
     echo "fake cargo: the build failed" >&2
     exit 1
 fi
-if [ -n "${FAKE_CARGO_HOLD:-}" ]; then
-    held=0
-    while [ -e "$FAKE_CARGO_HOLD" ] && [ "$held" -lt 1200 ]; do
-        sleep 0.05
-        held=$((held + 1))
-    done
-fi
+[ -z "${FAKE_CARGO_HOLD:-}" ] || hold_while "$FAKE_CARGO_HOLD"
 sleep "${FAKE_CARGO_DELAY:-0}"
 [ -z "${FAKE_CARGO_NOOP:-}" ] || exit 0
 mkdir -p target/tools/release
@@ -109,11 +113,11 @@ BIN
 fi
 # Like cargo's uplift: remove the old file, then write the new one.
 rm -f target/tools/release/aios
-if [ -n "${FAKE_CARGO_WRITE_DELAY:-}" ]; then
+if [ -n "${FAKE_CARGO_WRITE_HOLD:-}" ]; then
     head -c 16 target/tools/aios.next > target/tools/release/aios
     chmod 755 target/tools/release/aios
     : > "$FAKE_CARGO_MARK"
-    sleep "$FAKE_CARGO_WRITE_DELAY"
+    hold_while "$FAKE_CARGO_WRITE_HOLD"
 fi
 cat target/tools/aios.next > target/tools/release/aios
 rm -f target/tools/aios.next
@@ -205,16 +209,27 @@ fn set_age(path: &Path, age: Duration) {
 /// minutes fails the test.
 const DEAD_LOCK_AGE: Duration = Duration::from_secs(180);
 
+/// How long `wait_for` waits: long enough for a loaded machine to start a
+/// recipe, and shorter than the fake cargo's minute-long hold, so a held build
+/// never runs out while a test waits on it.
+const WAIT_FOR: Duration = Duration::from_secs(30);
+
 fn wait_for(label: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + WAIT_FOR;
     while Instant::now() < deadline {
         if ready() {
             return;
         }
         sleep(Duration::from_millis(50));
     }
-    panic!("timed out after 10 s waiting for {label}");
+    panic!(
+        "timed out after {} s waiting for {label}",
+        WAIT_FOR.as_secs()
+    );
 }
+
+/// What `just tools` prints when another recipe holds its lock.
+const WAITING: &str = "waiting for another just tools to finish";
 
 fn stdout(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -342,13 +357,19 @@ impl Sandbox {
         )
     }
 
-    /// Runs the real `tools` recipe through `just`, as the shim does.
-    fn just_tools(&self, envs: &[(&str, &str)]) -> Output {
+    /// The real `tools` recipe through `just`, as the shim runs it.
+    fn just_tools_command(&self) -> Command {
         let mut cmd = Command::new("just");
         isolated(&mut cmd);
         cmd.env("PATH", self.path_env())
             .current_dir(self.repo.path())
             .arg("tools");
+        cmd
+    }
+
+    /// Runs the real `tools` recipe through `just`, as the shim does.
+    fn just_tools(&self, envs: &[(&str, &str)]) -> Output {
+        let mut cmd = self.just_tools_command();
         for (key, value) in envs {
             cmd.env(key, value);
         }
@@ -442,16 +463,35 @@ impl Sandbox {
         self.run_at(&self.shim(), args, envs)
     }
 
-    /// Releases a build `hold_builds` holds, then waits for the background
-    /// build to finish.
-    fn wait_for_background_build(&self) {
+    /// Releases builds `hold_builds` holds.
+    fn release_builds(&self) {
         match std::fs::remove_file(self.hold()) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => panic!("remove the build hold: {err}"),
         }
+    }
+
+    /// Releases a build `hold_builds` holds, then waits for the background
+    /// build to finish.
+    fn wait_for_background_build(&self) {
+        self.release_builds();
         wait_for("the background build to log a line", || self.built());
         wait_for("the build lock to be released", || !self.lock().exists());
+    }
+
+    /// The shim call that just returned left its background build running:
+    /// with `hold_builds` holding it, the build cannot finish (and release its
+    /// lock) until the test releases it, or for a minute, so a call that
+    /// waited for its build would return only after the lock is gone.
+    fn assert_returned_before_its_build(&self) {
+        assert!(self.hold().exists(), "hold_builds holds the build");
+        assert!(
+            self.lock().exists(),
+            "the call returned after its background build finished: it waited for the build"
+        );
+        wait_for("the background build's cargo to start", || self.built());
+        assert!(self.lock().exists(), "the held build is still running");
     }
 }
 
@@ -604,18 +644,13 @@ fn a_newer_toolchain_pin_manifest_cargo_config_or_justfile_makes_the_binary_stal
 fn a_stale_guard_asks_at_once_and_rebuilds_in_the_background() {
     let sandbox = Sandbox::new("shim-stale-guard");
     sandbox.install_bin(false);
-    let started = Instant::now();
-    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("FAKE_CARGO_DELAY", "3")]);
+    // Held, the background build cannot finish until the test releases it:
+    // guard must not wait for it.
+    sandbox.hold_builds();
+    let out = sandbox.run(&["guard", "PreToolUse"]);
     assert_asks(&out, STALE);
     assert!(stderr(&out).is_empty(), "{}", stderr(&out));
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "guard must not wait for the background build"
-    );
-    assert!(
-        sandbox.lock().exists(),
-        "a background build takes the lock before the shim returns"
-    );
+    sandbox.assert_returned_before_its_build();
     sandbox.wait_for_background_build();
     assert_eq!(read(&sandbox.cargo_log()), "build\n");
 
@@ -641,13 +676,11 @@ fn a_dead_background_build_lock_is_taken_over() {
 
     // An old lock while a recipe holds the recipe's lock: still running.
     set_age(&sandbox.lock(), DEAD_LOCK_AGE);
-    let mut cmd = Command::new("just");
-    isolated(&mut cmd);
-    let mut recipe = cmd
-        .env("PATH", sandbox.path_env())
-        .env("FAKE_CARGO_DELAY", "3")
-        .current_dir(sandbox.repo.path())
-        .arg("tools")
+    // Held, the recipe holds the recipe's lock until the test releases it.
+    sandbox.hold_builds();
+    let mut recipe = sandbox
+        .just_tools_command()
+        .env("FAKE_CARGO_HOLD", sandbox.hold())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -655,6 +688,7 @@ fn a_dead_background_build_lock_is_taken_over() {
     wait_for("the recipe's cargo to start", || sandbox.built());
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE_RUNNING);
     assert!(sandbox.lock().exists(), "a running recipe's build keeps it");
+    sandbox.release_builds();
     assert!(recipe.wait().expect("wait for just tools").success());
 
     // An old lock and no recipe: dead, so guard takes it over and builds.
@@ -750,17 +784,13 @@ fn a_stale_guard_without_just_or_a_lock_tool_starts_no_build() {
 #[test]
 fn prebuild_returns_at_once_and_builds_in_the_background() {
     let sandbox = Sandbox::new("shim-prebuild");
-    let started = Instant::now();
-    let out = sandbox.run_env(&["--prebuild"], &[("FAKE_CARGO_DELAY", "3")]);
+    // Held, the background build cannot finish until the test releases it:
+    // --prebuild must not wait for it.
+    sandbox.hold_builds();
+    let out = sandbox.run(&["--prebuild"]);
     assert_eq!(code(&out), 0);
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "--prebuild must not wait for the build"
-    );
-    assert!(
-        sandbox.lock().exists(),
-        "a background build takes the lock before the shim returns"
-    );
+    sandbox.assert_returned_before_its_build();
+    assert!(!sandbox.bin().exists(), "the held build installed nothing");
     sandbox.wait_for_background_build();
     assert!(sandbox.bin().exists() && sandbox.stamp().exists());
     let out = sandbox.run(&["guard", "PreToolUse"]);
@@ -997,20 +1027,20 @@ fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
 fn overlapping_just_tools_runs_never_install_a_half_written_binary() {
     let sandbox = Sandbox::new("shim-install-overlap");
     sandbox.install_bin(true);
+    let old = read(&sandbox.bin());
 
-    // The first recipe's cargo leaves release/aios half-written for 2 s.
+    // The first recipe's cargo leaves release/aios half-written until the test
+    // removes the write hold.
     let mark = sandbox.bin_dir.path().join("half-uplifted");
+    let write_hold = sandbox.bin_dir.path().join("hold-uplift");
+    std::fs::write(&write_hold, "").expect("write the uplift hold");
     let v2 = sandbox.bin_dir.path().join("aios-v2");
     std::fs::write(&v2, "#!/bin/sh\nprintf 'v2:%s\\n' \"$*\"\n").expect("write v2");
-    let mut cmd = Command::new("just");
-    isolated(&mut cmd);
-    let mut first = cmd
-        .env("PATH", sandbox.path_env())
+    let mut first = sandbox
+        .just_tools_command()
         .env("FAKE_CARGO_SOURCE", &v2)
-        .env("FAKE_CARGO_WRITE_DELAY", "2")
+        .env("FAKE_CARGO_WRITE_HOLD", &write_hold)
         .env("FAKE_CARGO_MARK", &mark)
-        .current_dir(sandbox.repo.path())
-        .arg("tools")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -1021,16 +1051,29 @@ fn overlapping_just_tools_runs_never_install_a_half_written_binary() {
 
     // The second recipe's build is a no-op, so without the lock it would copy
     // the half-written file at once and install it with a matching stamp. It
-    // waits for the first recipe instead, so when it returns, the complete
-    // binary is in place.
-    let out = sandbox.just_tools(&[("FAKE_CARGO_NOOP", "1")]);
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(read(&sandbox.bin()), read(&v2), "the complete binary");
+    // waits for the first recipe instead, which stays half-written until the
+    // second is seen waiting, so when it returns, the complete binary is in
+    // place.
+    let second_stderr = sandbox.bin_dir.path().join("second-recipe.stderr");
+    let mut second = sandbox
+        .just_tools_command()
+        .env("FAKE_CARGO_NOOP", "1")
+        .stdout(Stdio::null())
+        .stderr(std::fs::File::create(&second_stderr).expect("create the stderr file"))
+        .spawn()
+        .expect("run just tools");
+    wait_for("the second recipe to wait for the first", || {
+        std::fs::read_to_string(&second_stderr).is_ok_and(|text| text.contains(WAITING))
+    });
     assert!(
-        stderr(&out).contains("waiting for another just tools to finish"),
-        "{}",
-        stderr(&out)
+        second.try_wait().expect("poll just tools").is_none(),
+        "the second recipe returned while the first held the lock"
     );
+    assert_eq!(read(&sandbox.bin()), old, "nothing installed the half");
+    std::fs::remove_file(&write_hold).expect("remove the uplift hold");
+    let status = second.wait().expect("wait for just tools");
+    assert!(status.success(), "{}", read(&second_stderr));
+    assert_eq!(read(&sandbox.bin()), read(&v2), "the complete binary");
     assert!(first.wait().expect("wait for just tools").success());
     assert_eq!(read(&sandbox.bin()), read(&v2));
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
@@ -1047,17 +1090,15 @@ fn overlapping_just_tools_runs_never_install_a_half_written_binary() {
 fn concurrent_and_killed_just_tools_runs_never_overlap() {
     let sandbox = Sandbox::new("shim-install-race");
     sandbox.install_bin(true);
+    // Every build below waits in its cargo until the test releases it.
+    sandbox.hold_builds();
 
     // A recipe killed mid-build, with its cargo, leaves the lock file behind.
     let pids = sandbox.bin_dir.path().join("pids");
-    let mut cmd = Command::new("just");
-    isolated(&mut cmd);
-    let mut killed = cmd
-        .env("PATH", sandbox.path_env())
-        .env("FAKE_CARGO_DELAY", "30")
+    let mut killed = sandbox
+        .just_tools_command()
+        .env("FAKE_CARGO_HOLD", sandbox.hold())
         .env("FAKE_CARGO_PIDS", &pids)
-        .current_dir(sandbox.repo.path())
-        .arg("tools")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -1079,34 +1120,42 @@ fn concurrent_and_killed_just_tools_runs_never_overlap() {
         .join("target/tools/.install.lock")
         .exists());
 
-    // Three recipes at once: none waits on the dead recipe's lock for long,
-    // and their builds never overlap.
-    let spawn = || {
-        let mut cmd = Command::new("just");
-        isolated(&mut cmd);
-        cmd.env("PATH", sandbox.path_env())
-            .env("FAKE_CARGO_DELAY", "1")
-            .env("FAKE_CARGO_EXCLUSIVE", "1")
-            .current_dir(sandbox.repo.path())
-            .arg("tools")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("run just tools")
-    };
-    let started = Instant::now();
-    let recipes: Vec<_> = (0..3).map(|_| spawn()).collect();
-    let outputs: Vec<Output> = recipes
-        .into_iter()
-        .map(|child| child.wait_with_output().expect("wait for just tools"))
+    // Three recipes at once: the first to take the lock is not held up by the
+    // killed recipe's lock file, and its build is held until the other two
+    // are seen waiting for it. No two builds overlap.
+    let recipes: Vec<_> = (0..3)
+        .map(|n| {
+            let errors = sandbox.bin_dir.path().join(format!("recipe-{n}.stderr"));
+            let child = sandbox
+                .just_tools_command()
+                .env("FAKE_CARGO_HOLD", sandbox.hold())
+                .env("FAKE_CARGO_DELAY", "1")
+                .env("FAKE_CARGO_EXCLUSIVE", "1")
+                .stdout(Stdio::null())
+                .stderr(std::fs::File::create(&errors).expect("create a stderr file"))
+                .spawn()
+                .expect("run just tools");
+            (child, errors)
+        })
         .collect();
-    for out in &outputs {
-        assert!(out.status.success(), "{}", stderr(out));
-    }
-    assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "the killed recipe's lock held the others up"
+    wait_for(
+        "a recipe's cargo to start past the killed recipe's lock",
+        || read(&sandbox.cargo_log()).lines().count() == 2,
     );
+    let waited = || {
+        recipes
+            .iter()
+            .filter(|(_, errors)| {
+                std::fs::read_to_string(errors).is_ok_and(|text| text.contains(WAITING))
+            })
+            .count()
+    };
+    wait_for("the other two recipes to wait for it", || waited() == 2);
+    sandbox.release_builds();
+    for (mut child, errors) in recipes {
+        let status = child.wait().expect("wait for just tools");
+        assert!(status.success(), "{}", read(&errors));
+    }
     assert_eq!(
         read(&sandbox.cargo_log()).lines().count(),
         4,
@@ -1116,11 +1165,6 @@ fn concurrent_and_killed_just_tools_runs_never_overlap() {
         !sandbox.repo.path().join("overlap.log").exists(),
         "two builds ran at the same time"
     );
-    let waited = outputs
-        .iter()
-        .filter(|out| stderr(out).contains("waiting for another just tools to finish"))
-        .count();
-    assert!(waited >= 1, "at least one recipe waited for another");
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
     assert_eq!(
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
@@ -1964,17 +2008,13 @@ fn hook_link_dirs(sandbox: &Sandbox) -> Vec<String> {
 #[test]
 fn a_hook_with_no_binary_starts_a_background_build_and_returns_at_once() {
     let sandbox = Sandbox::new("shim-hook-missing");
-    let started = Instant::now();
-    let out = sandbox.run_stdin(
-        &["hook", "repeat-error"],
-        &[("FAKE_CARGO_DELAY", "5")],
-        "{}",
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "the hook waited for the build"
-    );
+    // Held, the background build cannot finish until the test releases it:
+    // the hook must not wait for it.
+    sandbox.hold_builds();
+    let out = sandbox.run_stdin(&["hook", "repeat-error"], &[], "{}");
     assert_silent(&out);
+    sandbox.assert_returned_before_its_build();
+    assert!(!sandbox.bin().exists(), "the held build installed nothing");
     sandbox.wait_for_background_build();
 }
 
@@ -2133,21 +2173,18 @@ fn a_hook_runs_a_fresh_binary() {
 fn a_stale_binary_is_treated_as_missing_by_a_hook() {
     let sandbox = Sandbox::new("shim-hook-stale");
     sandbox.install_bin(false);
-    let envs = [("FAKE_CARGO_DELAY", "5")];
     // The first call starts a background build: held, it installs no fresh
-    // binary for the second call to run, however slowly the calls run.
+    // binary for the second call to run, however slowly the calls run, and
+    // it cannot finish before the test releases it, so the first call must
+    // return while it still runs.
     sandbox.hold_builds();
 
-    let started = Instant::now();
-    let out = sandbox.run_stdin(&["hook", "route-shadow"], &envs, "{}");
-    assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "the hook waited for the build"
-    );
+    let out = sandbox.run_stdin(&["hook", "route-shadow"], &[], "{}");
     assert_silent(&out);
     assert!(!sandbox.no_build_started(), "a background build starts");
+    sandbox.assert_returned_before_its_build();
 
-    assert_denies(&sandbox.run_stdin(&PG, &envs, &worker()));
+    assert_denies(&sandbox.run_stdin(&PG, &[], &worker()));
     sandbox.wait_for_background_build();
 }
 
