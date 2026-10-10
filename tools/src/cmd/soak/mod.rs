@@ -401,6 +401,9 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let Some(stall_n) = positive(&stall) else {
         bail!("--stall-secs must be a positive integer");
     };
+    if arms.is_empty() && allow_mixed {
+        bail!("--allow-mixed-toolchains needs --arm");
+    }
     if classify {
         if !arms.is_empty() {
             bail!("--arm cannot be combined with --classify");
@@ -437,9 +440,6 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let mode = show(mode.as_bytes());
     if mode != "text" && mode != "gpu" {
         bail!("--mode must be text or gpu, got '{mode}'");
-    }
-    if arms.is_empty() && allow_mixed {
-        bail!("--allow-mixed-toolchains needs --arm");
     }
     if !arms.is_empty() {
         if !(interleave::MIN_ARMS..=interleave::MAX_ARMS).contains(&arms.len()) {
@@ -853,6 +853,10 @@ mod tests {
         assert_eq!(
             error(&["--arm", "a", "--classify", "x.log"]),
             "--arm cannot be combined with --classify"
+        );
+        assert_eq!(
+            error(&["--classify", "--allow-mixed-toolchains", "x.log"]),
+            "--allow-mixed-toolchains needs --arm"
         );
         // The shared options are checked first, as in single mode.
         assert_eq!(

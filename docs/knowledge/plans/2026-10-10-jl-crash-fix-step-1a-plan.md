@@ -671,6 +671,7 @@ The verdict is reported. The harness never stops a running soak over it.
 - T8: the Settings "Harness" row is the git rev (with `-dirty`) of the checkout that holds the running `aios` binary, and the binary's path. The arm-base override prints a stderr warning and names both SHAs in Settings.
 - T8: shared setup in `runner.rs`: `build_esp` (appends to `build.log`, takes the variables to unset), `snapshot_esp`, `esp_kernel_sha` and `write_summary_file`; `host.rs` gains `sha256`, `qemu_version`, `toolchain_channel`, `rustc_version` and `contains_commit`. The single-mode goldens are unchanged.
 - T8: the fake environment: one fake QEMU picks `boot-N.sh`, else `boot-<arm>.sh` for the arm its ESP image names (`ESP image arm=<name>`, written by the fake `just disk` from the checkout's `.fake-arm`), else `boot.sh`; it copies the top-level `summary.md` to `summary-before-N.md` (the S3 check) and changes its own file under `qemu-changes-at-N`. The fake repository's commits have fixed dates, so the goldens' commit ids and `AIOS_SOAK_MIN_ARM_BASE` are the same on every run. 24 interleave goldens under `tools/tests/golden/soak/interleave/`.
+- T8 (review fix): the `--allow-mixed-toolchains needs --arm` check now runs before the `--classify` branch, so `--classify --allow-mixed-toolchains` is refused too instead of being ignored; `arm_usage_errors` covers it. In a plain soak it now precedes the `--runs`, `--secs` and `--mode` checks (only `--stall-secs` comes first); no golden passes the flag without `--arm`.
 
 ## Lessons Learned
 
