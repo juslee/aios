@@ -191,7 +191,8 @@ install_lock="$main/target/tools/.install.lock"
 log="$main/target/tools/build.log"
 # The binary's build inputs, relative to the checkout root. The `tools` recipe
 # in the justfile stamps the same list in the same format, with the same dirty
-# test: change both. The legacy rust-toolchain file is not in the repository,
+# test, and tools/src/cmd/soak/host.rs (TOOLS_INPUTS) checks a soak harness
+# against it: change all three. The legacy rust-toolchain file is not in the repository,
 # but rustup prefers it to rust-toolchain.toml when both exist, so an untracked
 # one must count as an input (and make a build dirty). The justfile counts
 # because its `tools` recipe builds the binary and writes the stamp. A missing
