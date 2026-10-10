@@ -12,13 +12,13 @@
 //! `match()` (RSTART) except for the heartbeat, whose `[0-9]+` is greedy in both
 //! engines. Accepted divergences: none known beyond those in `awk`.
 //!
-//! Crash-fix step 1a refines two of the script's classes after its rules ran:
+//! Crash-fix step 1a refines three of the script's classes after its rules ran:
 //! WEDGE splits into WEDGE-STUCK (the heartbeat never printed, stayed at tick 0
 //! or stopped) and WEDGE-ALIVE (the heartbeat kept running but the Gate 1 bench
-//! never completed, or a gpu marker is missing), and a PANIC whose joined first
-//! fatal line contains `lock re-entry:` is PANIC-LOCK. A boot the script calls
-//! CLEAN is DEGRADED unless its Gate 1 IPC line reports [`IPC_ITERATIONS`]
-//! iterations ([`Ipc`]). Every other field is the script's, so
+//! never completed, or a gpu marker is missing), a PANIC whose joined first
+//! fatal line contains `lock re-entry:` is PANIC-LOCK, and a boot the script
+//! calls CLEAN is DEGRADED unless its Gate 1 IPC line reports
+//! [`IPC_ITERATIONS`] iterations ([`Ipc`]). Every other field is the script's, so
 //! [`Classification::base_line`], which prints the base class, is
 //! byte-identical to the script's output line. The same scan also collects
 //! step 1b's tripwire output ([`super::tripwire`]), which no class depends on.

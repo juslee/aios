@@ -199,13 +199,13 @@ worktree is fine) in one host session. They are labelled A to D in the order
 given; every two arms form a pair, the earlier one the "previous" arm and the
 later one the "new" arm. The same DIR twice is an A/A control, built once.
 Each arm is built once (`rustup toolchain install`, then `just disk`, in
-DIR, without RUSTUP_TOOLCHAIN or CARGO_TARGET_DIR; both skipped with
---no-build, which boots the ESP image already in DIR: the summary's Build
-row says so, and the arm-base and toolchain checks then cover DIR's HEAD
-and pinned toolchain, not that image or the compiler that built it)
-and its ESP snapshotted; then --runs rounds boot every arm once,
-the arm order moving by one each round (A B, B A, A B, ...), each boot on a
-fresh data disk (--reuse-data is refused). This harness boots and
+DIR, without RUSTUP_TOOLCHAIN, CARGO_TARGET_DIR or CARGO_BUILD_TARGET_DIR;
+both steps skipped with --no-build, which boots the ESP image already in
+DIR: the summary's Build row says so, and the arm-base and toolchain checks
+then cover DIR's HEAD and pinned toolchain, not that image or the compiler
+that built it) and its ESP snapshotted; then --runs rounds boot every arm
+once, the arm order moving by one each round (A B, B A, A B, ...), each boot
+on a fresh data disk (--reuse-data is refused). This harness boots and
 classifies every arm, with its own QEMU arguments (an arm's justfile `run`
 recipe is not used).
 Before any build, it refuses (exit 2):

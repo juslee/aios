@@ -52,7 +52,7 @@ Owner decisions, 2026-09-22:
 - Package `aios-tools`, one binary `aios`, edition 2021, license BSD-2-Clause.
 - It is in `members` but not in `default-members`, so a plain `cargo build` still builds only the kernel crates.
 - It always builds for the host and uses the pinned nightly.
-- Dependencies (MIT/Apache, audited by the existing Security CI job):
+- Dependencies (the third-party ones MIT/Apache, audited by the existing Security CI job; `shared` is the workspace's own BSD-2-Clause crate):
   - `clap` (derive)
   - `anyhow`
   - `serde`, `serde_json`

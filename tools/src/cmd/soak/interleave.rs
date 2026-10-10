@@ -88,8 +88,15 @@ const HOST_TOOLS: [&str; 6] = [
 ];
 
 /// Variables an arm's build must not inherit: they would pick the harness's
-/// toolchain or target directory instead of the arm's own.
-const BUILD_ENV_REMOVE: [&str; 2] = ["RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"];
+/// toolchain or target directory instead of the arm's own. The arm's `just
+/// disk` copies the kernel from its checkout's `target/`, so a target
+/// directory elsewhere (`CARGO_TARGET_DIR`, or cargo's config-variable form
+/// `CARGO_BUILD_TARGET_DIR`) would package whatever stale kernel is there.
+const BUILD_ENV_REMOVE: [&str; 3] = [
+    "RUSTUP_TOOLCHAIN",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
+];
 
 /// An interleaved soak request: the boot settings (`runs` boots per arm), the
 /// arm directories as given, and the interleave-only options.
@@ -431,7 +438,10 @@ fn tsv_cell(v: &[u8]) -> Vec<u8> {
 /// binary, and its path. The rev is `-dirty` when that checkout's host-tools
 /// build inputs differ from its `HEAD`, untracked and ignored files included
 /// ([`host::tools_inputs_dirty`]), since cargo builds from those too; a
-/// checkout git cannot test is said so rather than shown clean.
+/// checkout git cannot test is said so rather than shown clean. Read once,
+/// at the start of the soak and before any arm build, so a commit or branch
+/// switch in that checkout while the arms build cannot be named as the
+/// classifier's.
 fn harness_rev() -> Vec<u8> {
     let Ok(exe) = std::env::current_exe() else {
         return b"unknown".to_vec();
@@ -487,6 +497,10 @@ fn run_with_base(
 ) -> Result<u8> {
     let cfg = &req.cfg;
     let shown = |d: &OsStr| String::from_utf8_lossy(d.as_bytes()).into_owned();
+    // Read first, while the harness checkout is most likely still what the
+    // running binary was built from (`just soak` builds it just before), and
+    // never after the arm builds, which can take minutes.
+    let harness = harness_rev();
 
     // The checkouts, each once, in label order.
     let mut checkouts: Vec<Checkout> = Vec::new();
@@ -655,6 +669,7 @@ fn run_with_base(
         load_before,
         load_check,
         parent_configs,
+        harness,
         out_dir,
     };
     // As in single mode: a child that a terminal signal ended makes its step
@@ -673,6 +688,8 @@ struct Setup {
     load_check: LoadCheck,
     /// The cargo configs above each arm's checkout, for the summary.
     parent_configs: Vec<u8>,
+    /// The Harness row ([`harness_rev`]), read before anything else.
+    harness: Vec<u8>,
     out_dir: PathBuf,
 }
 
@@ -746,6 +763,7 @@ fn build_and_boot(
         load_before,
         load_check,
         parent_configs,
+        harness,
         out_dir,
     } = setup;
     let n_arms = req.arms.len();
@@ -999,7 +1017,7 @@ fn build_and_boot(
         ("Build".into(), build.to_vec()),
         ("Parent cargo config".into(), parent_configs),
         ("Arm base".into(), arm_base.into_bytes()),
-        ("Harness".into(), harness_rev()),
+        ("Harness".into(), harness),
         ("Logs".into(), [&b"`"[..], bytes(&out_dir), b"`"].concat()),
     ];
     let mut report = Report {

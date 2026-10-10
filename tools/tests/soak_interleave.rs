@@ -351,7 +351,9 @@ fn check(sc: &ArmScenario, o: &ArmOutcome) {
             assert!(o
                 .just_log
                 .lines()
-                .all(|l| l.ends_with(" RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset")));
+                .all(|l| l.ends_with(
+                    " RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset CARGO_BUILD_TARGET_DIR=unset"
+                )));
             // The arm-base override, on stderr and in Settings.
             assert!(stderr.contains("AIOS_SOAK_MIN_ARM_BASE overrides the arm base"));
             let md = o.text("summary.md");

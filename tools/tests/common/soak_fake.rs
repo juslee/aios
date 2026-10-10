@@ -79,7 +79,7 @@ case "$*" in
     "--evaluate data_img") printf 'data.img' ;;
     "--evaluate kernel_elf") printf 'target/aarch64-unknown-none/debug/kernel' ;;
     disk)
-        echo "disk in $PWD RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN-unset} CARGO_TARGET_DIR=${CARGO_TARGET_DIR-unset}" >>"$AIOS_FAKE_ROOT/just.log"
+        echo "disk in $PWD RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN-unset} CARGO_TARGET_DIR=${CARGO_TARGET_DIR-unset} CARGO_BUILD_TARGET_DIR=${CARGO_BUILD_TARGET_DIR-unset}" >>"$AIOS_FAKE_ROOT/just.log"
         if [ -f "$AIOS_FAKE_ROOT/build-fails" ]; then
             i=1
             while [ "$i" -le 40 ]; do echo "build line $i"; i=$((i + 1)); done
@@ -1136,6 +1136,7 @@ pub fn run_arm_scenario(sc: &ArmScenario) -> ArmOutcome {
         .env("AIOS_SOAK_LOADAVG", sc.loadavg)
         .env("RUSTUP_TOOLCHAIN", "the-harness-toolchain")
         .env("CARGO_TARGET_DIR", "/the-harness-target")
+        .env("CARGO_BUILD_TARGET_DIR", "/the-harness-build-target")
         .env_remove("AIOS_EDK2_FW")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

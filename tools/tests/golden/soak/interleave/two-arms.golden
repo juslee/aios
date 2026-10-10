@@ -306,5 +306,5 @@ No boot has a complete `v=1` tripwire line.
 toolchain install --no-self-update in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset
 toolchain install --no-self-update in <ROOT>/arms/b RUSTUP_TOOLCHAIN=unset
 --- just.log
-disk in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset
-disk in <ROOT>/arms/b RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset
+disk in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset CARGO_BUILD_TARGET_DIR=unset
+disk in <ROOT>/arms/b RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset CARGO_BUILD_TARGET_DIR=unset

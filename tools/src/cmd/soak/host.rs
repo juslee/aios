@@ -4,13 +4,15 @@
 //! helpers run the same utilities as the script, so `summary.md` reads the
 //! same on each host. Crash-fix step 1a adds the interleave preflight's probes
 //! (toolchain channel, `rustc --version`, HEAD and arm-base checks, the QEMU
-//! version line and full sha256) and the debug-only `AIOS_SOAK_LOADAVG`
-//! override.
+//! version line and full sha256), the harness checkout's build-input dirty
+//! test ([`tools_inputs_dirty`]), the parent cargo config scan
+//! ([`cargo_home`], [`parent_cargo_configs`]), the [`git`] wrapper every git
+//! call goes through, and the debug-only `AIOS_SOAK_LOADAVG` override.
 //! Every program `aios soak` runs starts from [`command`], in the C locale,
 //! except the `kill` that `proc::Supervisor` signals QEMU's process group with
 //! (its output is discarded).
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -54,6 +56,20 @@ pub fn chomp(s: &[u8]) -> &[u8] {
     &s[..end]
 }
 
+/// `git`, from [`command`], with replace refs and the grafts file off, as the
+/// justfile's `tools` recipe and the `.claude/hooks/aios` shim run it. A file
+/// under `.git/refs/replace/` or `.git/info/grafts` changes the commits and
+/// trees git sees, so it could otherwise make a staged edit read as committed
+/// (a dirty harness as clean) or an arm without the base commit read as
+/// containing it. A grafts file under `/dev/null` cannot exist, so git reads
+/// none and gives no warning. Every git call `aios soak` makes starts here.
+pub fn git() -> Command {
+    let mut cmd = command("git");
+    cmd.env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_GRAFT_FILE", "/dev/null/no-grafts");
+    cmd
+}
+
 /// `$(program args)` run in `cwd`, with stderr discarded: stdout without its
 /// trailing newlines, or `None` when the program cannot start or exits non-zero.
 pub fn output_of<S: AsRef<OsStr>>(
@@ -61,7 +77,16 @@ pub fn output_of<S: AsRef<OsStr>>(
     args: &[S],
     cwd: Option<&Path>,
 ) -> Option<Vec<u8>> {
-    let mut cmd = command(program);
+    stdout_of(command(program), args, cwd)
+}
+
+/// [`output_of`] for `git`, run through [`git`].
+pub fn git_output<S: AsRef<OsStr>>(args: &[S], cwd: Option<&Path>) -> Option<Vec<u8>> {
+    stdout_of(git(), args, cwd)
+}
+
+/// `cmd` with `args` added, run as [`output_of`] runs its program.
+fn stdout_of<S: AsRef<OsStr>>(mut cmd: Command, args: &[S], cwd: Option<&Path>) -> Option<Vec<u8>> {
     cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
@@ -288,8 +313,7 @@ pub fn rustc_version(dir: &Path) -> Result<String> {
 /// The full commit id `HEAD` names in the checkout `root` (`git rev-parse
 /// --verify HEAD`), or `None` when git cannot tell.
 pub fn head_commit(root: &Path) -> Option<String> {
-    let out = output_of(
-        "git",
+    let out = git_output(
         &[
             OsStr::new("-C"),
             root.as_os_str(),
@@ -306,7 +330,7 @@ pub fn head_commit(root: &Path) -> Option<String> {
 /// (`git merge-base --is-ancestor`): `Err` when git cannot tell (an unknown
 /// commit, or not a checkout).
 pub fn contains_commit(root: &Path, base: &str, commit: &str) -> Result<bool> {
-    let status = command("git")
+    let status = git()
         .arg("-C")
         .arg(root)
         .args(["merge-base", "--is-ancestor", base, commit])
@@ -335,8 +359,7 @@ pub fn git_rev(root: &Path) -> String {
 /// whatever `HEAD` names now; the `-dirty` test still reads the work tree.
 pub fn git_rev_of(root: &Path, commit: &str) -> String {
     let root_arg = root.as_os_str();
-    let mut rev = output_of(
-        "git",
+    let mut rev = git_output(
         &[
             OsStr::new("-C"),
             root_arg,
@@ -348,8 +371,7 @@ pub fn git_rev_of(root: &Path, commit: &str) -> String {
     )
     .map(|v| String::from_utf8_lossy(&v).into_owned())
     .unwrap_or_else(|| "unknown".to_string());
-    let status = output_of(
-        "git",
+    let status = git_output(
         &[
             OsStr::new("-C"),
             root_arg,
@@ -387,37 +409,56 @@ const TOOLS_INPUTS: [&str; 8] = [
 /// here too. `git status --untracked-files=all --ignored=matching` over
 /// [`TOOLS_INPUTS`], less the editor and Finder files the recipe excludes,
 /// plus any file `git ls-files -v` flags (assume-unchanged, skip-worktree),
-/// which `git status` does not show. `None` when git cannot tell.
+/// which `git status` does not show. Both run as the recipe runs them: through
+/// [`git`] (replace refs and grafts off), with the work tree pinned to `root`,
+/// no optional locks, and the config that lets `git status` skip reading
+/// files (fsmonitor, the untracked cache, a minimal `checkStat`, an ignored
+/// ctime) turned off. `None` when git cannot tell.
 pub fn tools_inputs_dirty(root: &Path) -> Option<bool> {
     const JUNK: [&str; 5] = [".DS_Store", "*.swp", "*.swo", "*~", "*.rs.bk"];
-    let mut status: Vec<String> = [
+    let mut work_tree = OsString::from("--work-tree=");
+    work_tree.push(root.as_os_str());
+    let mut status: Vec<OsString> = [
+        "--no-optional-locks",
         "-c",
         "core.fsmonitor=false",
         "-c",
         "core.untrackedCache=false",
-        "status",
-        "--porcelain",
-        "--untracked-files=all",
-        "--ignored=matching",
-        "--",
+        "-c",
+        "core.checkStat=default",
+        "-c",
+        "core.trustctime=true",
     ]
     .iter()
-    .map(|s| (*s).to_string())
+    .map(OsString::from)
     .collect();
-    status.extend(TOOLS_INPUTS.iter().map(|s| (*s).to_string()));
+    status.push(work_tree.clone());
+    status.extend(
+        [
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored=matching",
+            "--",
+        ]
+        .iter()
+        .map(OsString::from),
+    );
+    status.extend(TOOLS_INPUTS.iter().map(OsString::from));
     for dir in ["tools", "shared", ".cargo"] {
         status.extend(
             JUNK.iter()
-                .map(|junk| format!(":(exclude,glob){dir}/**/{junk}")),
+                .map(|junk| OsString::from(format!(":(exclude,glob){dir}/**/{junk}"))),
         );
     }
-    let listed = output_of("git", &status, Some(root))?;
+    let listed = git_output(&status, Some(root))?;
     if !listed.is_empty() {
         return Some(true);
     }
-    let mut ls = vec!["ls-files", "-v", "--"];
-    ls.extend(TOOLS_INPUTS);
-    let flags = output_of("git", &ls, Some(root))?;
+    let mut ls = vec![work_tree];
+    ls.extend(["ls-files", "-v", "--"].iter().map(OsString::from));
+    ls.extend(TOOLS_INPUTS.iter().map(OsString::from));
+    let flags = git_output(&ls, Some(root))?;
     Some(
         flags
             .split(|&b| b == b'\n')
@@ -478,8 +519,7 @@ pub fn just_evaluate(root: &Path, var: &str) -> Result<Vec<u8>> {
 /// The repository `aios soak` boots: the git checkout containing `cwd`, resolved
 /// to its physical path (the script's `cd .. && pwd -P`).
 pub fn repo_root(cwd: &Path) -> Result<PathBuf> {
-    let top = output_of(
-        "git",
+    let top = git_output(
         &[
             OsStr::new("-C"),
             cwd.as_os_str(),
@@ -632,17 +672,15 @@ mod tests {
         std::fs::write(dir.join("f"), "1").expect("write");
         git(&["add", "f"]);
         git(&["commit", "-q", "-m", "one"]);
-        let first = String::from_utf8(
-            output_of("git", &["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"),
-        )
-        .expect("hex");
+        let first =
+            String::from_utf8(git_output(&["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"))
+                .expect("hex");
         std::fs::write(dir.join("g"), "1").expect("write");
         git(&["add", "g"]);
         git(&["commit", "-q", "-m", "two"]);
-        let second = String::from_utf8(
-            output_of("git", &["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"),
-        )
-        .expect("hex");
+        let second =
+            String::from_utf8(git_output(&["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"))
+                .expect("hex");
         assert!(contains_commit(&dir, &first, "HEAD").expect("known"));
         assert!(contains_commit(&dir, &second, "HEAD").expect("known"));
         assert!(!contains_commit(&dir, &second, &first).expect("known"));
@@ -689,6 +727,66 @@ mod tests {
         git(&["update-index", "--no-assume-unchanged", "tools/src/main.rs"]);
         assert_eq!(tools_inputs_dirty(&dir), Some(false));
         assert_eq!(tools_inputs_dirty(Path::new("/")), None);
+
+        // Replace refs are off: one that swaps HEAD for a commit holding a
+        // staged tools/ edit hides that edit from a plain git status, but not
+        // from the dirty tests, and one that cuts HEAD's parents does not hide
+        // an ancestor from the arm-base check.
+        let plain = |args: &[&str]| -> Vec<u8> {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env_remove("GIT_NO_REPLACE_OBJECTS")
+                .env_remove("GIT_GRAFT_FILE")
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?}");
+            chomp(&out.stdout).to_vec()
+        };
+        let clean_rev = git_rev(&dir);
+        std::fs::write(dir.join("tools/src/main.rs"), "fn main() { }").expect("write");
+        git(&["add", "tools/src/main.rs"]);
+        let tree = String::from_utf8(plain(&["write-tree"])).expect("hex");
+        let fake = String::from_utf8(plain(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit-tree",
+            &tree,
+            "-p",
+            "HEAD",
+            "-m",
+            "fake",
+        ]))
+        .expect("hex");
+        git(&["replace", "HEAD", &fake]);
+        assert!(
+            plain(&[
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+                "--",
+                "tools"
+            ])
+            .is_empty(),
+            "the replace ref hides the staged edit from a plain git status"
+        );
+        assert_eq!(tools_inputs_dirty(&dir), Some(true), "replaced HEAD");
+        assert_eq!(git_rev(&dir), format!("{clean_rev}-dirty"));
+        git(&["replace", "-d", &head_commit(&dir).expect("head")]);
+        git(&["reset", "-q", "--hard", "HEAD"]);
+        assert_eq!(tools_inputs_dirty(&dir), Some(false));
+        git(&["replace", "--graft", "HEAD"]);
+        assert_eq!(
+            plain(&["rev-list", "--count", "HEAD"]),
+            b"1",
+            "the replace ref cuts HEAD's parents for a plain git"
+        );
+        assert!(contains_commit(&dir, &first, "HEAD").expect("known"));
+        git(&["replace", "-d", &head_commit(&dir).expect("head")]);
 
         // A checkout nested in another sees the outer one's cargo config
         // (the legacy name too), but not the cargo home's.
