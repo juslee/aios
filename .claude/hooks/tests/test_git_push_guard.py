@@ -1632,6 +1632,85 @@ class WrappedCommands(TeamCase):
         self.check("deny", "only the verifier starts QEMU", copy + tail + "just soak runs=1",
                    cwd=self.temp, agent_id="x", agent_type="kernel-dev")
 
+    def runs(self):
+        """(payload, wrapper prefix) for the main thread and the verifier."""
+        return [(self.main, self.RUN), (self.verifier, self.RUN.replace("solo", "team-fix"))]
+
+    def test_expansions_in_the_wrapped_command_stay_expansions(self):
+        # T17 fix round: the wrapped words keep the expansion flags they had
+        # on the wrapper call, so the checks keyed on them fire as unwrapped.
+        name = "the command name comes from a shell expansion"
+        for inner in ["\"$SHELL\" -c 'git push origin HEAD:main'",
+                      "$SHELL -c 'gh pr merge 5 --squash'", "$SHELL -c 'pkill -f qemu'",
+                      "$(echo git) push origin HEAD:main", "`which git` push origin HEAD:main",
+                      "${GIT:-git} push origin HEAD:main", "$GIT push origin HEAD:main"]:
+            for kw, run in self.runs():
+                self.check("ask", name, inner, **kw)
+                self.check("ask", name, run + inner, **kw)
+                self.check("ask", name, "bash " + run + inner, **kw)
+        # Typed alone these mention neither git nor a team rule; the wrapper
+        # call mentions QEMU, so the command string from an expansion asks.
+        for inner, text in [("sh -c \"$CMD\"", "a shell runs a command string"),
+                            ("bash -c \"$CMD\"", "a shell runs a command string"),
+                            ("eval \"$X\"", "eval runs a command string")]:
+            for kw, run in self.runs():
+                self.check("none", None, inner, **kw)
+                self.check("ask", text, run + inner, **kw)
+        # A refspec from an expansion was already denied, and still is.
+        self.check("deny", "main", self.RUN + "git push origin $BR:main")
+
+    def test_the_expansion_finding_through_the_hook_process(self):
+        command = ("bash scripts/agent/qemu-lock.sh run --team solo --mode boot --label x "
+                   "--eta-min 5 -- \"$SHELL\" -c 'git push origin HEAD:main'")
+        self.check_hook("ask", "shell expansion", command)
+        self.check_hook("ask", "shell expansion", command.replace("solo", "team-fix"),
+                        **self.verifier)
+
+    def test_argument_wrappers_supply_wrapped_words(self):
+        # xargs, find and parallel append words to the wrapper call, so to the
+        # command after its `--`: the nested analysis sees them in front.
+        for kw, run in self.runs():
+            self.check("ask", "supplied by xargs",
+                       "printf 'HEAD:main\\n' | xargs " + run + "git push origin", **kw)
+            self.check("ask", "supplied by xargs",
+                       "printf 'HEAD:main\\n' | xargs bash " + run + "git push origin", **kw)
+            self.check("ask", "supplied by find",
+                       "find refs -name main -exec " + run + "git push origin {} \\;", **kw)
+            # `--` with nothing after it, or no `--` at all: xargs supplies
+            # the whole command.
+            self.check("ask", "supplied by xargs",
+                       "printf 'git push origin HEAD:main\\n' | xargs " + run.rstrip(), **kw)
+            self.check("ask", "supplied by xargs",
+                       "printf -- '-- git push origin HEAD:main\\n' | xargs "
+                       + run[:-len("-- ")].rstrip(), **kw)
+            # Unwrapped, the same asks.
+            self.check("ask", "supplied by xargs", "printf 'HEAD:main\\n' | xargs git push origin",
+                       **kw)
+        self.check("ask", "pids found by pattern", "pgrep qemu | xargs " + self.RUN + "kill")
+        self.check("deny", "agents never pattern-kill",
+                   "pgrep qemu | xargs " + self.RUN.replace("solo", "team-fix") + "kill",
+                   **self.verifier)
+        self.check_hook("ask", "supplied by xargs",
+                        "printf 'HEAD:main\\n' | xargs bash " + self.RUN + "git push origin")
+
+    def test_an_unparseable_wrapped_command_keeps_the_rest(self):
+        # A wrapped command the guard cannot parse asks, and the commands
+        # after the wrapper call keep their own decisions.
+        bad = "sh -c 'echo \"x'"
+        self.check("ask", "could not parse the command qemu-lock.sh run wraps", self.RUN + bad)
+        self.check("deny", "push would update main", self.RUN + bad + "; git push origin HEAD:main")
+        self.check("deny", "never pattern-kill QEMU", self.RUN + bad + "; pkill -f qemu")
+        self.check("deny", "every QEMU start goes through", self.RUN + bad + "; just run")
+        run = self.RUN.replace("solo", "team-fix")
+        self.check("deny", "agents never commit in the main checkout",
+                   run + bad + " && git -C %s commit -m x" % self.repo, **self.verifier)
+        self.check("deny", "never pattern-kill QEMU", run + bad + "; pkill -f qemu",
+                   cwd=self.temp, agent_id="x", agent_type="kernel-dev")
+        # Nesting too deep inside the wrapped command: the same.
+        deep = "eval " * (guard.MAX_DEPTH + 2) + "true"
+        self.check("deny", "push would update main",
+                   self.RUN + deep + "; git push origin HEAD:main")
+
 
 class WorkflowWorktrees(TeamCase):
     """T7b: rule 4 for the temporary worktrees of workflow agents

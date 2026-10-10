@@ -65,7 +65,11 @@ subagent, AIOS_TEAM from the lead's launch line):
      command after a `run`'s `--` (found the way the wrapper reads its
      options) is analysed like one typed on its own, so rules 1-4 and the
      push, merge and gh rules apply to it; only a QEMU start in it, the
-     wrapper's job, gets no rule 1 decision of its own. The settings
+     wrapper's job, gets no rule 1 decision of its own. Its words keep
+     the expansion state they had on the wrapper call, words that xargs,
+     find or parallel append to the call are seen as supplied by them, and
+     a wrapped command the guard cannot parse asks without stopping the
+     analysis of the rest. The settings
      allow only the wrapper's `status` and `clear-stale`: a `run` goes
      through the permission prompt (refused in background and -p runs).
        deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
@@ -1086,13 +1090,10 @@ class Analyzer:
 
     # -- shell level ------------------------------------------------------
 
-    def analyze_text(self, text, cwd, depth, script=False, typed=None):
-        """`typed` is the text that opaque() and check_kill() read as the whole
-        command typed, when it is not `text` itself (analyze_wrapped)."""
+    def analyze_text(self, text, cwd, depth, script=False):
         if depth > MAX_DEPTH:
             raise ParseError("nesting too deep")
-        state = {"cwd": cwd, "vars": {}, "text": text if typed is None else typed,
-                 "script": script, "pid_vars": set()}
+        state = {"cwd": cwd, "vars": {}, "text": text, "script": script, "pid_vars": set()}
         for cmd in parse_commands(text, depth):
             self.analyze_command(cmd, state, depth)
 
@@ -1159,7 +1160,8 @@ class Analyzer:
             return
         if head in ("source", "."):
             if idx + 1 < len(words):
-                self.analyze_script(words[idx + 1], state, depth, cmd, argv=words[idx + 2:])
+                self.analyze_script(words[idx + 1], state, depth, cmd, argv=words[idx + 2:],
+                                    flags=flags[idx + 2:])
             return
         if head == "command" and command_lookup(words[idx + 1:]):
             return  # command -v / -V only prints what a name resolves to
@@ -1168,6 +1170,7 @@ class Analyzer:
             if k > idx and head == "env" and ASSIGNMENT.match(words[k]):
                 frame.add(assignment_name(words[k]))
                 continue
+            via = {basename(w) for w in words[idx:k]}
             if k == idx or head in WRAPPERS:
                 if name == "env":
                     split = env_split_string(words[k + 1:])
@@ -1182,8 +1185,7 @@ class Analyzer:
                     for text in words[k + 1:][words[k + 1:].index("stuff") + 1:]:
                         self.analyze_text(text, state["cwd"], depth + 1)
                     return
-                via = {basename(w) for w in words[idx:k]}
-                if self.check_team_command(words, k, cmd, state, depth, via):
+                if self.check_team_command(words, flags, k, cmd, state, depth, via):
                     return
             if name == "git":
                 wrapper = head if k > idx else None
@@ -1194,7 +1196,7 @@ class Analyzer:
                                 runs=k == idx or head in WRAPPERS)
                 return
             if name in SHELLS:
-                self.analyze_shell(words[k + 1:], flags[k + 1:], cmd, state, depth)
+                self.analyze_shell(words[k + 1:], flags[k + 1:], cmd, state, depth, via)
                 return
             if name in INTERPRETERS:
                 program = words[k + 1:] + cmd.heredocs
@@ -1210,7 +1212,7 @@ class Analyzer:
                 return
             if k == idx and "/" in words[k]:
                 self.analyze_script(words[k], state, depth, cmd, shebang=True,
-                                    argv=words[k + 1:])
+                                    argv=words[k + 1:], flags=flags[k + 1:])
                 return
 
     def awk_runs_commands(self, args, cwd):
@@ -1258,7 +1260,9 @@ class Analyzer:
         for n, value in zip(names, parts + [""] * len(names)):
             state["vars"][n] = value
 
-    def analyze_shell(self, args, flags, cmd, state, depth):
+    def analyze_shell(self, args, flags, cmd, state, depth, via=frozenset()):
+        """A shell run with `args` (`flags`: their expansion state). `via`
+        holds the wrappers that run it (xargs appends to a script's argv)."""
         cwd = state["cwd"]
         i = 0
         while i < len(args):
@@ -1288,7 +1292,8 @@ class Analyzer:
                 continue
             break
         if i < len(args) and args[i] != "-":
-            self.analyze_script(args[i], state, depth, cmd, argv=args[i + 1:])
+            self.analyze_script(args[i], state, depth, cmd, argv=args[i + 1:],
+                                flags=flags[i + 1:], via=via)
             return
         if cmd.heredocs:
             for body in cmd.heredocs:
@@ -1300,9 +1305,13 @@ class Analyzer:
             self.verdict.ask("a shell reads commands from a pipe; the guard cannot "
                              "see what it runs")
 
-    def analyze_script(self, path, state, depth, cmd, shebang=False, argv=()):
+    def analyze_script(self, path, state, depth, cmd, shebang=False, argv=(), flags=(),
+                       via=frozenset()):
+        """A script run with `argv`; `flags` is their expansion state, `via`
+        the wrappers that run it."""
         if is_qemu_script(path, list(argv)):
-            self.check_qemu_script(path, list(argv), cmd, state, depth, shebang)
+            self.check_qemu_script(path, list(argv), list(flags), cmd, state, depth, shebang,
+                                   via)
             return
         if unresolved(path):
             self.opaque(state, cmd, f"runs a script whose path ({path}) comes from a "
@@ -1335,8 +1344,9 @@ class Analyzer:
     def is_agent(self):
         return self.ctx.get("agent_id") is not None
 
-    def check_team_command(self, words, k, cmd, state, depth, via=frozenset()):
-        """Rules 1 and 2 for the command whose name is words[k]; `via` holds
+    def check_team_command(self, words, flags, k, cmd, state, depth, via=frozenset()):
+        """Rules 1 and 2 for the command whose name is words[k] (`flags`: the
+        words' expansion state); `via` holds
         the names of the wrappers that run it (xargs, timeout, ...). Returns True when
         the command is fully handled and nothing after it must be read (a
         recognised QEMU start or script)."""
@@ -1365,12 +1375,14 @@ class Analyzer:
             kind = aios_starts_qemu(args)
             return self.qemu_decision(kind) if kind else False
         elif is_qemu_script(word, args):
-            return self.check_qemu_script(word, args, cmd, state, depth, shebang=True)
+            return self.check_qemu_script(word, args, flags[k + 1:], cmd, state, depth,
+                                          shebang=True, via=via)
         if kind:
             self.qemu_decision(kind)
         return False
 
-    def check_qemu_script(self, path, argv, cmd, state, depth, shebang):
+    def check_qemu_script(self, path, argv, flags, cmd, state, depth, shebang,
+                          via=frozenset()):
         """A script that starts QEMU: the soak scripts, and the lock wrapper
         (only its `run`). The wrapper is recognised by what it is, not by its
         name: only scripts/agent/qemu-lock.sh of the main checkout, the
@@ -1378,8 +1390,9 @@ class Analyzer:
         body is not read. Any other qemu-lock.sh, and any script called the
         wrapper's way (`run --team ...`, a renamed copy), gets the wrapper's
         caller rules and has its body read like any other script. For every
-        `run`, the command after its `--` is analysed as a command line
-        (analyze_wrapped). Returns True (handled)."""
+        `run`, the command after its `--` is analysed (analyze_wrapped;
+        `flags` is the argv words' expansion state, `via` the wrappers that
+        run the call). Returns True (handled)."""
         name = basename(path)
         if name in QEMU_SCRIPTS:
             if not (name == "soak-qemu.sh" and classify_only(argv)):
@@ -1390,26 +1403,50 @@ class Analyzer:
                 self.verdict.ask(f"the QEMU lock wrapper's path ({path}) comes from a shell "
                                  "expansion; the guard cannot tell it is scripts/agent/qemu-lock.sh (rule 11)")
             self.qemu_decision("wrapper")
-            self.analyze_wrapped(argv, cmd, state, depth)
+            self.analyze_wrapped(argv, flags, cmd, state, depth, via)
         if not unresolved(path) and not self.genuine_wrapper(path, state["cwd"]):
             self.read_script(path, state, depth, shebang)
         return True
 
-    def analyze_wrapped(self, argv, cmd, state, depth):
-        """The command a qemu-lock.sh `run` executes (wrapped_command) is
-        analysed like one typed on its own, so every rule applies to it,
-        except that a QEMU start in it is the wrapper's: rule 1 decided it on
-        the wrapper call (qemu_decision skips it while self.wrapped holds).
-        Its words hold `$(...)` placeholders, so the wrapper call's own text
-        stays the text opaque() and check_kill() read (`kill $(pgrep ...)`)."""
-        words = wrapped_command(argv)
-        if not words:
-            return
+    def analyze_wrapped(self, argv, flags, cmd, state, depth, via):
+        """The command a qemu-lock.sh `run` executes (the words after the `--`
+        that ends its options, wrapped_start) is analysed like one typed on
+        its own, so every rule applies to it, except that a QEMU start in it
+        is the wrapper's: rule 1 decided it on the wrapper call
+        (qemu_decision skips it while self.wrapped holds).
+
+        The wrapper runs it as "$@", an argument vector, so its words go to
+        analyze_command as they are, each with the expansion state it had on
+        the wrapper call (`"$SHELL" -c ...` is still a command name from an
+        expansion), at the call's cwd and variables, in the call's own text
+        and source (what opaque() and check_kill() read: `kill $(pgrep ...)`).
+        An argument wrapper that runs the call (xargs, find, parallel)
+        appends its words to the wrapped command, so it is analysed with
+        that wrapper in front; with no wrapped words the whole command is
+        the wrapper's. A wrapped command the guard cannot parse (a `sh -c`
+        string, nesting too deep) asks, and the commands after the call are
+        still read."""
+        start = wrapped_start(argv)
+        supplier = min(set(via) & ARG_WRAPPERS, default=None)
+        if start is None or start == len(argv):
+            if supplier:
+                self.verdict.ask(f"the command qemu-lock.sh run wraps is supplied by {supplier}; "
+                                 "the guard cannot see it")
+            return  # no command: the wrapper refuses to run
+        inner = Command()
+        inner.words = ([supplier] if supplier else []) + argv[start:]
+        inner.expanded = ([False] if supplier else []) + flags[start:]
+        inner.src = cmd.src
+        sub = {"cwd": state["cwd"], "vars": dict(state["vars"]), "text": state["text"],
+               "script": state["script"], "pid_vars": set(state["pid_vars"])}
         outer = self.wrapped
         self.wrapped = True
         try:
-            self.analyze_text(shell_join(words), state["cwd"], depth + 1,
-                              typed=cmd.src if state["script"] else state["text"])
+            if depth + 1 > MAX_DEPTH:
+                raise ParseError("nesting too deep")
+            self.analyze_command(inner, sub, depth + 1)
+        except (ParseError, RecursionError) as exc:
+            self.verdict.ask(f"could not parse the command qemu-lock.sh run wraps ({exc})")
         finally:
             self.wrapped = outer
 
@@ -2421,20 +2458,20 @@ def is_qemu_script(path, argv):
     return any(a == "--team" or a.startswith("--team=") for a in opts)
 
 
-def wrapped_command(argv):
-    """The command qemu-lock.sh `run` executes (argv[0] is "run"): the words
-    after the `--` that ends its options, read the way the wrapper reads them
-    (each option takes the next word as its value, so `--label --` is a
-    label). Where the options stop reading that way (an unknown option, which
-    the wrapper refuses, or a word from an expansion), the words after the
-    next `--`. None without one: the wrapper refuses a missing command."""
+def wrapped_start(argv):
+    """Where the command qemu-lock.sh `run` executes starts in argv (argv[0]
+    is "run"): just after the `--` that ends its options, read the way the
+    wrapper reads them (each option takes the next word as its value, so
+    `--label --` is a label). Where the options stop reading that way (an
+    unknown option, which the wrapper refuses, or a word from an expansion),
+    just after the next `--`. None without one: the wrapper refuses a
+    missing command."""
     i = 1
     while i + 1 < len(argv) and argv[i] in WRAPPER_VALUE_OPTS:
         i += 2
-    rest = argv[i:]
-    if "--" not in rest:
+    if "--" not in argv[i:]:
         return None
-    return rest[rest.index("--") + 1:]
+    return argv.index("--", i) + 1
 
 
 def command_lookup(args):
