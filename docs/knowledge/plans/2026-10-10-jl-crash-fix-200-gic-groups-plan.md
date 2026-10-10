@@ -361,6 +361,8 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 
 ## Open questions for the owner
 
+**Answered 2026-10-10 16:29 (owner): every recommendation taken: Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A (B as the fallback), Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A.** The questions stay below as the record of the options.
+
 **Q1. What does this step's acceptance gate on, beyond the regression guard?** The ADR says only "A/B-measured like the other steps".
 - A. The regression guard, plus the mechanical fix check: every arm-B boot whose last complete tripwire line has `tick[0]` > 0 also has `tick[1..3]` > 0. A boot that dies before the scheduler starts reads `tick=0,0,0,0` whatever the fix does, so it is out of scope and listed in the report ("What gates", item 1). Everything else (`irqsw`, `starved`, `pcphys`, classes) is reported, not gated.
 - B. A, plus `irqsw[1..3]` > 0 and a fall in `starved[Normal]` as gates.
@@ -473,6 +475,8 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
    - Coordination: per the owner's relayed instruction, the lead tells team-build that #240 is handled by this step when it is time, so team-build stops its own #240 work and restarts it after this step completes. Recorded under "Dependencies & Risks"; the message is the lead's to send, and this revision did not send it.
 
 ## Decisions Made
+
+- Owner, 2026-10-10 16:29: every recommendation in "Open questions" taken (Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A with B as fallback, Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A).
 
 (to be filled during implementation)
 
