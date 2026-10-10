@@ -229,9 +229,8 @@ if [ "$GH_OK" = 1 ]; then
                   elif $open_threads > 0 then "\($open_threads) unresolved review thread(s)" else empty end)
                ]) as $blockers
             | "- #\(.number) \(.title | clean) [`\(.headRefName | clean)`, \(.author.login // "?" | clean)]\(if .isDraft then " (draft)" else "" end)"
-              + (if ([.labels[]?.name] | map(select(. == "team-build" or . == "team-fix")) | length) > 0
-                 then " {" + ([.labels[].name] | map(select(. == "team-build" or . == "team-fix")) | join(",")) + "}"
-                 else " {no team}" end)
+              + ([.labels[]?.name | select(. == "team-build" or . == "team-fix")] as $teams
+                 | if ($teams | length) > 0 then " {\($teams | join(","))}" else " {no team}" end)
               + "\n"
               + "  checks: \($pass) pass, \($failed | length) fail, \($pend) pending"
               + (if ($failed | length) > 0 then " (failing: \($failed | map(.name | clean) | unique | join(", ")))" else "" end)
