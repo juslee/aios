@@ -20,6 +20,32 @@ pub const MAX_MESSAGE_SIZE: usize = 256;
 /// Default IPC timeout in ticks (5 seconds at 1 kHz).
 pub const DEFAULT_TIMEOUT_TICKS: u64 = 5_000;
 
+/// The deadline tick of a wait for `timeout_ticks` ticks that starts at tick
+/// `now`, in the form the timeout queue and the notification deadlines store.
+///
+/// `u64::MAX` means no deadline: the wait is unbounded and the result is
+/// `None`. Any other value gives `now + timeout_ticks`, so a timeout taken
+/// straight from a syscall register cannot overflow (#217) and never gives a
+/// deadline before `now`. A sum that reaches or passes `u64::MAX` is also
+/// `None`: `check_timeouts` can never reach tick `u64::MAX` (2^64 ms is about
+/// 585 million years), so such a deadline bounds nothing, and calling it
+/// "no deadline" keeps the tripwire scans, which treat a `u64::MAX` entry as
+/// no waker, consistent with the wait's `timed` flag.
+///
+/// `0` gives `Some(now)`, a deadline the next timer tick passes. A caller for
+/// which 0 means something else decides that before calling: `ipc_call`
+/// treats 0 as no deadline, `ipc_recv` as a poll, and `sleep_ticks` returns
+/// at once.
+pub const fn deadline_after(now: u64, timeout_ticks: u64) -> Option<u64> {
+    if timeout_ticks == u64::MAX {
+        return None;
+    }
+    match now.checked_add(timeout_ticks) {
+        Some(deadline) if deadline != u64::MAX => Some(deadline),
+        _ => None,
+    }
+}
+
 /// Maximum priority inheritance depth (ipc.md §9.2).
 ///
 /// Bounds transitive inheritance chains to prevent runaway elevation.
@@ -342,6 +368,77 @@ mod tests {
     #[test]
     fn default_timeout_is_5_seconds() {
         assert_eq!(DEFAULT_TIMEOUT_TICKS, 5_000);
+    }
+
+    // --- deadline_after tests (#217) ---
+
+    #[test]
+    fn deadline_after_max_is_unbounded() {
+        assert_eq!(deadline_after(0, u64::MAX), None);
+        assert_eq!(deadline_after(12_345, u64::MAX), None);
+        assert_eq!(deadline_after(u64::MAX, u64::MAX), None);
+    }
+
+    #[test]
+    fn deadline_after_zero_is_now() {
+        assert_eq!(deadline_after(0, 0), Some(0));
+        assert_eq!(deadline_after(12_345, 0), Some(12_345));
+        // At tick u64::MAX even a 0 timeout gives a deadline that can never fire.
+        assert_eq!(deadline_after(u64::MAX, 0), None);
+    }
+
+    #[test]
+    fn deadline_after_adds_when_it_fits() {
+        assert_eq!(deadline_after(0, 100), Some(100));
+        assert_eq!(deadline_after(12_345, DEFAULT_TIMEOUT_TICKS), Some(17_345));
+        assert_eq!(deadline_after(1, u64::MAX - 2), Some(u64::MAX - 1));
+    }
+
+    #[test]
+    fn deadline_after_max_minus_one_is_unbounded_once_it_overflows() {
+        // The issue's failing input: a timeout of u64::MAX - 1 once the tick
+        // count is above 1.
+        assert_eq!(deadline_after(0, u64::MAX - 1), Some(u64::MAX - 1));
+        assert_eq!(deadline_after(1, u64::MAX - 1), None);
+        assert_eq!(deadline_after(12_345, u64::MAX - 1), None);
+    }
+
+    #[test]
+    fn deadline_after_now_near_max_is_unbounded_at_max() {
+        assert_eq!(deadline_after(u64::MAX - 10, 5), Some(u64::MAX - 5));
+        assert_eq!(deadline_after(u64::MAX - 1, 1), None);
+        assert_eq!(deadline_after(u64::MAX - 1, 2), None);
+        assert_eq!(deadline_after(u64::MAX, 1), None);
+    }
+
+    #[test]
+    fn deadline_after_is_never_before_now_nor_late() {
+        let nows = [
+            0,
+            1,
+            2,
+            12_345,
+            u64::MAX / 2,
+            u64::MAX - 2,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+        let timeouts = [0, 1, 100, u64::MAX / 2, u64::MAX - 2, u64::MAX - 1];
+        for &now in &nows {
+            for &t in &timeouts {
+                match deadline_after(now, t) {
+                    Some(d) => {
+                        assert!(d >= now, "deadline {d} before now {now} (timeout {t})");
+                        assert!(d - now == t, "deadline {d} is not {t} after {now}");
+                        assert!(d != u64::MAX, "deadline {d} can never fire");
+                    }
+                    None => assert!(
+                        now.checked_add(t).is_none_or(|s| s == u64::MAX),
+                        "no deadline for {now} + {t}, which fits below u64::MAX"
+                    ),
+                }
+            }
+        }
     }
 
     #[test]

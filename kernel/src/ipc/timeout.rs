@@ -11,6 +11,7 @@ use crate::observability::tripwire;
 use crate::sched;
 use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use shared::deadline_after;
 use shared::lock::LockClass;
 use shared::tripwire::{ClearResult, WakeSource};
 use spin::Mutex;
@@ -201,6 +202,10 @@ pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
 ///
 /// Uses the IPC timeout infrastructure to wake the thread after the deadline.
 /// error_code=0 distinguishes sleep wake from error wake.
+///
+/// 0 returns at once. The deadline comes from `shared::deadline_after`, so a
+/// large `ticks` cannot overflow (#217); `u64::MAX`, no deadline there, is
+/// stored as the entry at `u64::MAX`, which the tick count never reaches.
 pub fn sleep_ticks(ticks: u64) {
     if ticks == 0 {
         return;
@@ -209,7 +214,7 @@ pub fn sleep_ticks(ticks: u64) {
         Some(t) => t,
         None => return,
     };
-    let deadline = TICK_COUNT.load(Ordering::Relaxed) + ticks;
+    let deadline = deadline_after(TICK_COUNT.load(Ordering::Relaxed), ticks).unwrap_or(u64::MAX);
     {
         let mut tq = TIMEOUT_QUEUE.lock();
         tq[tid.0 as usize] = Some(TimeoutEntry {
