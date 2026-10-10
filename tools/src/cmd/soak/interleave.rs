@@ -180,15 +180,37 @@ struct Fixed {
 }
 
 impl Fixed {
-    /// Why the soak must stop, if QEMU or the firmware changed.
-    fn changed(&self) -> Option<&'static str> {
-        let qemu_same = host::sha256(&self.qemu).is_ok_and(|s| s == self.qemu_sha)
-            && host::qemu_version(self.qemu.as_os_str()) == self.qemu_version;
-        if !qemu_same {
-            return Some("the QEMU binary changed");
-        }
-        if !host::sha256(&self.firmware).is_ok_and(|s| s == self.firmware_sha) {
-            return Some("the firmware changed");
+    /// Why the soak must stop, if QEMU or the firmware changed. A probe that
+    /// could not run (no digest, no version line) while a signal is pending is
+    /// not a change: a terminal Ctrl-C reaches the probe's child too, and the
+    /// caller's pending check stops the soak with the signal instead, as single
+    /// mode does after its probes.
+    fn changed(&self, interrupts: &Interrupts) -> Option<&'static str> {
+        // Each probe: whether it found the value unchanged, `None` when it could not run.
+        let version = host::qemu_version(self.qemu.as_os_str());
+        let probes = [
+            (
+                "the QEMU binary changed",
+                host::sha256(&self.qemu).ok().map(|s| s == self.qemu_sha),
+            ),
+            (
+                "the QEMU binary changed",
+                (!version.is_empty()).then(|| version == self.qemu_version),
+            ),
+            (
+                "the firmware changed",
+                host::sha256(&self.firmware)
+                    .ok()
+                    .map(|s| s == self.firmware_sha),
+            ),
+        ];
+        for (reason, same) in probes {
+            match same {
+                Some(true) => {}
+                Some(false) => return Some(reason),
+                None if interrupts.pending().is_some() => return None,
+                None => return Some(reason),
+            }
         }
         None
     }
@@ -782,11 +804,16 @@ fn build_and_boot(
     let mut errors_in_a_row = 0u64;
     for round in 0..cfg.runs {
         for (position, label) in round_order(n_arms, round).into_iter().enumerate() {
+            let changed = match interrupts.pending() {
+                None => fixed.changed(interrupts),
+                Some(_) => None,
+            };
+            // A signal before the probes, or one that ended a probe.
             if let Some(code) = interrupts.pending() {
                 report.stopped(&name_of_exit(code))?;
                 return Ok(code);
             }
-            if let Some(reason) = fixed.changed() {
+            if let Some(reason) = changed {
                 report.stopped(reason)?;
                 bail!(
                     "{reason} during the soak; see {}",
@@ -804,8 +831,10 @@ fn build_and_boot(
                     return Ok(code);
                 }
             };
-            // A change during the boot: the boot is not counted.
-            if let Some(reason) = fixed.changed() {
+            // A change during the boot: the boot is not counted. A signal that
+            // ended a probe is no change: the boot is counted, and the next
+            // pending check stops the soak with the signal.
+            if let Some(reason) = fixed.changed(interrupts) {
                 report.stopped(reason)?;
                 bail!(
                     "{reason} during boot {} of arm {} (not counted); see {}",

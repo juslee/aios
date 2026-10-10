@@ -119,6 +119,20 @@ kill -INT $$
 exit 130
 "#;
 
+/// Fake `sha256sum` for an interleaved soak, installed by the
+/// `sha256-interrupted-after-1` flag: a fixed digest until the first boot has
+/// run, then, once, a terminal Ctrl-C while it runs (SIGINT reaches the
+/// harness and ends this child), as in the probe after boot 1.
+const FAKE_SHA256SUM_AFTER_FIRST_BOOT: &str = r#"#!/bin/sh
+if [ -f "$AIOS_FAKE_ROOT/boot-count" ] && [ ! -f "$AIOS_FAKE_ROOT/sha256-interrupted" ]; then
+    : >"$AIOS_FAKE_ROOT/sha256-interrupted"
+    kill -INT "$PPID"
+    kill -INT $$
+    exit 130
+fi
+echo "f6881a5e580c7942f6881a5e580c7942f6881a5e580c7942f6881a5e580c7942  $1"
+"#;
+
 /// Fake `mcopy`: writes a fixed kernel to its last argument, or fails when the
 /// scenario says the ESP cannot be read.
 const FAKE_MCOPY: &str = r#"#!/bin/sh
@@ -825,8 +839,10 @@ impl FakeArm {
 /// One interleave scenario: arguments (run in `<root>/repo`, the arms at
 /// `../arms/<name>`), boot scripts by file name (`boot.sh`, `boot-<arm>.sh`,
 /// `boot-<N>.sh` for the N-th QEMU boot), flag files in the fake root
-/// (`rustup-fails`, `build-fails`, `qemu-changes-at-N`), the fake arms, and
-/// whether rustup is on PATH.
+/// (`rustup-fails`, `build-fails`, `qemu-changes-at-N`;
+/// `sha256-interrupted-after-1` also installs
+/// [`FAKE_SHA256SUM_AFTER_FIRST_BOOT`]), the fake arms, and whether rustup is
+/// on PATH.
 pub struct ArmScenario {
     pub name: &'static str,
     pub args: Vec<String>,
@@ -995,6 +1011,9 @@ pub fn run_arm_scenario(sc: &ArmScenario) -> ArmOutcome {
     write_exec(&bin.join("rustc"), FAKE_RUSTC);
     if !sc.no_rustup {
         write_exec(&bin.join("rustup"), FAKE_RUSTUP);
+    }
+    if sc.flags.iter().any(|f| f == "sha256-interrupted-after-1") {
+        write_exec(&bin.join("sha256sum"), FAKE_SHA256SUM_AFTER_FIRST_BOOT);
     }
     for (name, script) in &sc.boots {
         std::fs::write(root.join(name), script).expect("boot script");

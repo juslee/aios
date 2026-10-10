@@ -10,7 +10,9 @@
 //!   properties: the rotation, the refusals before any boot, the build
 //!   skipped with `--no-build`, the status line after every boot, the stops
 //!   for harness errors and a changed QEMU, and the per-arm single-run files.
-//! - `sigint_mid_round_leaves_a_stopped_report` covers a signal during a boot.
+//! - `sigint_mid_round_leaves_a_stopped_report` covers a signal during a boot,
+//!   and `sigint_during_a_probe_after_a_boot_is_the_signal_not_a_change` one
+//!   that ends the QEMU check after a boot.
 //! - `brief_lists_an_interleaved_run_once_and_never_as_main_soak` runs
 //!   `scripts/agent/brief.sh` on a fixture `target/soak/`.
 
@@ -440,6 +442,29 @@ fn sigint_mid_round_leaves_a_stopped_report() {
     assert_eq!(boot_order(&o), "AB");
     let md = o.text("summary.md");
     assert_eq!(status(&md), "stopped (SIGINT) after 2 of 4 boots");
+    assert_eq!(md_counts(&md), tsv_counts(&o));
+    assert_eq!(column(&o.text("arm-A/summary.tsv"), "class"), ["PANIC"]);
+}
+
+#[test]
+fn sigint_during_a_probe_after_a_boot_is_the_signal_not_a_change() {
+    // A terminal Ctrl-C ends the sha256sum that checks QEMU after boot 1: the
+    // signal stops the soak, boot 1 (which ran to its end) is counted, and
+    // nothing says QEMU changed.
+    let mut sc = two_arms(
+        "interrupt-sha256",
+        &["a", "b"],
+        &["--no-build", "runs=2", "secs=35", "out=out"],
+    );
+    sc.flags = vec!["sha256-interrupted-after-1".into()];
+    let o = run_arm_scenario(&sc);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.code, 130, "{stderr}");
+    assert!(!stderr.contains("soak: error:"), "{stderr}");
+    assert_eq!(o.boots, 1);
+    assert_eq!(boot_order(&o), "A");
+    let md = o.text("summary.md");
+    assert_eq!(status(&md), "stopped (SIGINT) after 1 of 4 boots");
     assert_eq!(md_counts(&md), tsv_counts(&o));
     assert_eq!(column(&o.text("arm-A/summary.tsv"), "class"), ["PANIC"]);
 }
