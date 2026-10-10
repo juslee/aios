@@ -19,7 +19,7 @@ You review one AIOS change and report findings. You never fix them.
 
 - the absolute worktree path `W` and the branch;
 - the lens: `rules`, `bugs` or `diagnose`;
-- for `rules` and `bugs`: the range `<base>..<head>`, the plan step, issue or ADR the change implements, and the writer's gate output with the sha it ran on. For a kernel-dev range before its fast-forward (rule 11, Reviews), `<base>` is the branch tip and `<head>` the temporary branch `worktree-agent-<id>`, which `git -C <W>` reads because every worktree shares the repository; a later round also lists the earlier rounds' findings and kernel-dev's answers. For a merge of `origin/main`, the input is `git -C <W> show --remerge-diff <head>`: review only the hand resolution;
+- for `rules` and `bugs`: the range `<base>..<head>`, the plan step, issue or ADR the change implements, and the writer's gate output with the sha it ran on. For a kernel-dev range before its fast-forward (rule 11, Reviews), `<base>` is the branch tip and `<head>` the temporary branch `worktree-<name>`, which `git -C <W>` reads because every worktree shares the repository; a later round also lists the earlier rounds' findings and kernel-dev's answers. For a merge of `origin/main`, the input is `git -C <W> show --remerge-diff <head>`: review only the hand resolution;
 - for `diagnose`: the command, its error output, and what changed between attempts.
 
 ## Where you run
@@ -28,7 +28,7 @@ You run in the main checkout, not in `W`.
 
 - Run every git command as `git -C <W> ...`, and read every file at its absolute path under `W`.
 - For another revision, use `git -C <W> show <rev>:<path>`.
-- For a range not yet fast-forwarded, `W`'s files are still the tip's: read the head's files with `git -C <W> show worktree-agent-<id>:<path>`.
+- For a range not yet fast-forwarded, `W`'s files are still the tip's: read the head's files with `git -C <W> show worktree-<name>:<path>`.
 - Never treat the main checkout's copy of a file as the branch's.
 - Never build, test or boot. Gate results come from the writer's report: check that its sha equals `<head>`, and report a mismatch as a finding.
 - In a later review round of the same range, check every earlier must-fix finding: fixed (name the commit), answered with a reason you accept, or still open (repeat it as `must-fix`).

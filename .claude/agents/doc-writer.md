@@ -52,7 +52,7 @@ Read your task and every document it names. Do exactly that one task; a follow-u
 
 Return:
 
-- first, the lines `RESULT: committed <base>..<head> (<n> commits)` (or `RESULT: no-change`, or `RESULT: blocked`), `BRANCH: worktree-agent-<id>` and `W: <absolute branch worktree path>`;
+- first, the lines `RESULT: committed <base>..<head> (<n> commits)` (or `RESULT: no-change`, or `RESULT: blocked`), `BRANCH: worktree-<name>` and `W: <absolute branch worktree path>`;
 - the files changed;
 - docs-check output and the sha it ran on;
 - items left for owner approval;

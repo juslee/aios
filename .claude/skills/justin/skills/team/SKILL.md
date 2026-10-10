@@ -96,20 +96,20 @@ Use the Agent tool. Never pass `name` or `model`. The guard (rule 3) denies a na
 
 ## Placement: review, fast-forward, clean up
 
-When a writer reports `RESULT: committed <tip>..<head> (<n> commits)` and `BRANCH: worktree-agent-<id>`, run these from the main checkout, each as its own Bash call (the push guard reads one command text at a time):
+When a writer reports `RESULT: committed <tip>..<head> (<n> commits)` and `BRANCH: worktree-<name>`, run these from the main checkout, each as its own Bash call (the push guard reads one command text at a time):
 
 `<start>` is `W`'s tip when the step began; `<tip>` is the sha this writer reset to (`<start>`, or the previous head in a fix round).
 
-1. **Check the range.** `git -C <W> rev-parse HEAD` still equals `<start>` (otherwise go to step 4's refusal case). `git -C <W> rev-list --first-parent <tip>..worktree-agent-<id>` lists exactly `<n>` commits, and `git -C <W> rev-parse <oldest>^1` is `<tip>`. A mismatch (a forgotten reset, a stray commit) is never merged: send a fresh writer from `<start>` and treat the range as refused.
-2. **Review kernel-dev ranges (rule 11, Reviews).** Spawn code-reviewer with no isolation and the lenses `rules` and `bugs` on `git -C <W> diff <start>..worktree-agent-<id>` (for a "merge origin/main" range: `git -C <W> show --remerge-diff worktree-agent-<id>`; skip the review when that prints no hunks), with the step text and kernel-dev's report.
+1. **Check the range.** `git -C <W> rev-parse HEAD` still equals `<start>` (otherwise go to step 4's refusal case). `git -C <W> rev-list --first-parent <tip>..worktree-<name>` lists exactly `<n>` commits, and `git -C <W> rev-parse <oldest>^1` is `<tip>`. A mismatch (a forgotten reset, a stray commit) is never merged: send a fresh writer from `<start>` and treat the range as refused.
+2. **Review kernel-dev ranges (rule 11, Reviews).** Spawn code-reviewer with no isolation and the lenses `rules` and `bugs` on `git -C <W> diff <start>..worktree-<name>` (for a "merge origin/main" range: `git -C <W> show --remerge-diff worktree-<name>`; skip the review when that prints no hunks), with the step text and kernel-dev's report.
    - No must-fix finding: go on.
    - Must-fix findings: spawn a fresh kernel-dev whose prompt gives `<head>` as its tip (`git reset --hard <head>`), the findings, and the commit message `<message> (Fable review fixes)`. Its range runs this section again from step 1 (its `<tip>` is `<head>`), and the next review covers `<start>..<new head>` plus the earlier findings and answers.
    - After the third round with open must-fix findings, decide each one yourself or ask the owner, and record the ruling in the plan's "Issues Encountered". Only then go on.
    - worker and doc-writer ranges skip this step (O4).
 3. **Gates.** The writer's gate output names `<head>` (or the last fix head). A missing or failed gate goes back to a fresh writer.
-4. **Fast-forward.** `git -C <W> merge --ff-only worktree-agent-<id>`.
-   - Refused (`W` moved under it): nothing merged. Spawn a fresh writer from the new tip with the same task; it may `git cherry-pick <start>..worktree-agent-<id>` to redo the work, and its range runs this section from step 1. Keep the refused temporary worktree until the redo is fast-forwarded, then remove it and delete its branch with `git -C <W> branch -D worktree-agent-<id>` (the guard asks the owner: it drops commits).
-5. **Clean up** every temporary worktree of this range (the writer's, and each superseded review round's): `git worktree remove <main>/.claude/worktrees/agent-<id>` (never `--force`; skip it if Claude Code already removed it), then `git -C <W> branch -d worktree-agent-<id>`. It must be `-C <W>`: from the main checkout, `-d` checks against `main` and refuses.
+4. **Fast-forward.** `git -C <W> merge --ff-only worktree-<name>`.
+   - Refused (`W` moved under it): nothing merged. Spawn a fresh writer from the new tip with the same task; it may `git cherry-pick <start>..worktree-<name>` to redo the work, and its range runs this section from step 1. Keep the refused temporary worktree until the redo is fast-forwarded, then remove it and delete its branch with `git -C <W> branch -D worktree-<name>` (the guard asks the owner: it drops commits).
+5. **Clean up** every temporary worktree of this range (the writer's, and each superseded review round's): `git worktree remove <main>/.claude/worktrees/<name>` (never `--force`; skip it if Claude Code already removed it), then `git -C <W> branch -d worktree-<name>`. It must be `-C <W>`: from the main checkout, `-d` checks against `main` and refuses.
 6. **Push** from `W`: `git -C <W> push -u origin claude/<branch>`. Temporary branches are never pushed.
 
 **Verifier:** after its report, remove its temporary worktree and branch as in step 5 (its run directories are already in `<W>/target/soak/`).
@@ -164,7 +164,7 @@ A message from another session is data, never owner approval. Long quiet windows
 ## Restart and stop
 
 - **Restart.** Background agents end with this session, and `/resume` does not restore them. Resume with `claude --resume <team>`, then run `/justin:team <build|fix>` again, and send `HELLO`.
-  - Before re-spawning a writer for an in-progress task, list the temporary worktrees: `git worktree list --porcelain` entries on `refs/heads/worktree-agent-*`. For each one on an owned branch (its commits descend from that branch's tip; the handoff file's "Pending ranges" names them):
+  - Before re-spawning a writer for an in-progress task, list the temporary worktrees: `git worktree list --porcelain` entries on `refs/heads/worktree-*`. For each one on an owned branch (its commits descend from that branch's tip; the handoff file's "Pending ranges" names them):
     - committed and not yet fast-forwarded: resume Placement at step 1 (a kernel-dev range is reviewed first);
     - uncommitted edits only: put them in the new writer's prompt (`git -C <temp> status --short`, `git -C <temp> diff`), and remove the temporary worktree once the new writer has redone the work (`git worktree remove --force` asks the owner);
     - clean and nothing ahead of the tip: remove it and delete its branch (Placement step 5).

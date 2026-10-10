@@ -86,7 +86,7 @@ Start the final message with exactly these three lines:
 
 ```text
 RESULT: committed <base>..<head> (<n> commits)     (or: RESULT: no-change, or: RESULT: blocked)
-BRANCH: worktree-agent-<id>
+BRANCH: worktree-<name>
 W: <absolute branch worktree path>
 ```
 

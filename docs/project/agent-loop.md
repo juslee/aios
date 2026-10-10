@@ -153,10 +153,10 @@ Then type `/justin:team build` in `team-build` and `/justin:team fix` in `team-f
 Agents never work in the branch worktree `W` itself, and never call EnterWorktree (Claude Code 2.1.292 refuses it from an isolated agent). For every writer task the lead:
 
 1. records `W`'s tip and puts it in the prompt; the agent's first command is `git reset --hard <tip>` in its own temporary worktree (guard rule 4 allows resets and commits only in the temporary worktree the agent's cwd is in);
-2. on its report, checks the range (`git -C <W> rev-list --first-parent <tip>..worktree-agent-<id>` is exactly the commits it reported, the oldest one's parent is the tip);
+2. on its report, checks the range (`git -C <W> rev-list --first-parent <tip>..worktree-<name>` is exactly the commits it reported, the oldest one's parent is the tip);
 3. for kernel-dev, runs the Fable review (Reviews, below);
-4. fast-forwards: `git -C <W> merge --ff-only worktree-agent-<id>`. A refusal merges nothing; a fresh writer redoes the work from the new tip;
-5. removes the temporary worktree (`git worktree remove`) and branch (`git -C <W> branch -d worktree-agent-<id>`: from the main checkout `-d` refuses, because `main` does not contain the commits);
+4. fast-forwards: `git -C <W> merge --ff-only worktree-<name>`. A refusal merges nothing; a fresh writer redoes the work from the new tip;
+5. removes the temporary worktree (`git worktree remove`) and branch (`git -C <W> branch -d worktree-<name>`: from the main checkout `-d` refuses, because `main` does not contain the commits);
 6. pushes from `W`.
 
 One writer works on a branch at a time; the second of two would lose the fast-forward. Each temporary worktree builds cold: `CARGO_TARGET_DIR` is never pointed at `W`'s `target/`, because the justfile reads `target/` relative to its checkout and `W`'s artifacts must describe `W`'s head. `/justin:pause` records ranges not yet fast-forwarded under "Pending ranges", and `/justin:team` resumes them after a restart.
@@ -164,7 +164,7 @@ One writer works on a branch at a time; the second of two would lose the fast-fo
 ### Reviews
 
 - **Plan:** every working plan is written in plan mode. ExitPlanMode runs the Fable plan gate (code-reviewer's `plan` lens, at most two blocks per session); then you approve, and worker commits that plan file unchanged.
-- **Step (kernel-dev):** before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only in the main checkout with the `rules` and `bugs` lenses on `git -C <W> diff <tip>..worktree-agent-<id>`. Must-fix findings go to a fresh kernel-dev that resets to the reviewed head and adds a fix commit; at most three rounds, then the lead or you decide. Only an approved range is fast-forwarded. It is not a hook: Claude Code discards a `SubagentStop` block for a subagent (2.1.292). worker and doc-writer steps get no Fable step review.
+- **Step (kernel-dev):** before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only in the main checkout with the `rules` and `bugs` lenses on `git -C <W> diff <tip>..worktree-<name>`. Must-fix findings go to a fresh kernel-dev that resets to the reviewed head and adds a fix commit; at most three rounds, then the lead or you decide. Only an approved range is fast-forwarded. It is not a hook: Claude Code discards a `SubagentStop` block for a subagent (2.1.292). worker and doc-writer steps get no Fable step review.
 - **Simplify (once per PR):** after the last task and before the audit, the lead spawns simplifier over the PR's whole diff (merge-base with `origin/main` to head) and runs Placement on its range. It keeps behaviour and never boots QEMU; when it reports `KERNEL-BYTES: yes`, the verifier runs a gate boot on the range before the fast-forward. Its range gets no Fable review, because the audit follows.
 - **Audit:** `/audit-loop` before `gh pr ready`, on the simplified head, at most one per team at a time. A round is complete only with no lens failures and no unverified findings; unverified ones (the workflow's `uncertain` arg) are carried into the next round, and a PR stops after 4 rounds or 2 incomplete rounds in a row.
 

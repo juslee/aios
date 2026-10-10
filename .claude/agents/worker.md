@@ -74,7 +74,7 @@ Read your task and the branch plan under `docs/knowledge/plans/`. When the task 
 
 Return:
 
-- first, the lines `RESULT: committed <base>..<head> (<n> commits)` (or `RESULT: no-change`, or `RESULT: blocked`), `BRANCH: worktree-agent-<id>` and `W: <absolute branch worktree path>`;
+- first, the lines `RESULT: committed <base>..<head> (<n> commits)` (or `RESULT: no-change`, or `RESULT: blocked`), `BRANCH: worktree-<name>` and `W: <absolute branch worktree path>`;
 - the files changed;
 - each gate command with its last output lines and the sha it ran on;
 - proposed settings diffs;

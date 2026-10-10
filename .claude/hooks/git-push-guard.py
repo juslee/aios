@@ -108,9 +108,12 @@ subagent, AIOS_TEAM from the lead's launch line):
              others in a directory from a shell expansion
 
 Threat model: the team rules stop accidents by cooperative agents (a wrong
--C, a wrong cwd, writes to the main checkout or a branch worktree, QEMU
-outside the lock, pattern kills, toolchain changes, spawn shape). They are
-not a sandbox against an agent that deliberately cd's into a peer's
+-C, commits, resets and ref moves (rule 4's list) in the main checkout or
+a branch worktree, QEMU outside the lock, pattern kills, toolchain
+changes, spawn shape). An agent whose cwd is inside a peer's wf_ worktree
+owns it. Rule 4 follows only a plain cd/pushd and git -C when it resolves
+a target; the known gaps are in issue #241 (R5, the Rust port). The rules
+are not a sandbox against an agent that deliberately cd's into a peer's
 worktree or rewrites git metadata (a gitfile, worktree config) earlier in
 the same command; that is out of model, and the lead's range check before
 every fast-forward and the reviews are the backstop. The guard keeps no
