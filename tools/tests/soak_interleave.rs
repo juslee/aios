@@ -16,6 +16,11 @@
 //! - `sigint_mid_round_leaves_a_stopped_report` covers a signal during a boot,
 //!   and `sigint_during_a_probe_after_a_boot_is_the_signal_not_a_change` one
 //!   that ends the QEMU check after a boot.
+//! - `a_retargeted_firmware_link_never_changes_what_boots` boots the resolved
+//!   firmware file, so a link moved mid-soak swaps nothing behind the probe;
+//!   `an_error_after_the_boots_start_leaves_a_stopped_report` covers a failed
+//!   row append; `a_head_that_moves_during_a_build_is_refused` covers an arm
+//!   checkout switched after the arm-base check.
 //! - `brief_lists_an_interleaved_run_once_and_never_as_main_soak` runs
 //!   `scripts/agent/brief.sh` on a fixture `target/soak/`.
 
@@ -355,7 +360,12 @@ fn check(sc: &ArmScenario, o: &ArmOutcome) {
             // check before the builds.
             let l = DEFAULT_LOADAVG;
             assert!(md.contains(&format!("| Load average | before the builds {l}; after the builds {l}; at the end {l} (AIOS_SOAK_LOADAVG override: every load reads '{l}') |\n")), "{md}");
-            assert!(md.contains("| Load check | passed: load1 0.50 before the builds, not above the host's CPU count |\n"), "{md}");
+            assert!(md.contains(&format!("| Load check | passed: load1 0.50 before the builds, not above the host's CPU count (AIOS_SOAK_LOADAVG override: every load reads '{l}') |\n")), "{md}");
+            // The override is named from the first running summary on.
+            for (n, before) in &o.before {
+                assert!(before.contains(&format!("| Load average | before the builds {l}; after the builds {l} (AIOS_SOAK_LOADAVG override: every load reads '{l}') |\n")), "before boot {n}: {before}");
+                assert!(before.contains("(AIOS_SOAK_LOADAVG override: every load reads '0.50 0.40 0.30') |\n| Toolchains"), "before boot {n}: {before}");
+            }
             assert!(stderr.contains("AIOS_SOAK_LOADAVG replaces the host's load average with '0.50 0.40 0.30'"), "{stderr}");
             // The pair report: both arms 0 CLEAN, so the guard passes.
             assert!(md.contains("**Regression guard:** CLEAN 0/3 in A, 0/3 in B; one-sided p (fewer CLEAN in B) = 1: passes\n"), "{md}");
@@ -429,7 +439,7 @@ fn check(sc: &ArmScenario, o: &ArmOutcome) {
             assert_eq!(o.code, 0, "{stderr}");
             assert_eq!(boot_order(o), "AB");
             let md = o.text("summary.md");
-            assert!(md.contains("| Load check | skipped (--ignore-load): load1 100000.00 before the builds, above the host's CPU count |\n"), "{md}");
+            assert!(md.contains("| Load check | skipped (--ignore-load): load1 100000.00 before the builds, above the host's CPU count (AIOS_SOAK_LOADAVG override: every load reads '100000.00 1.00 1.00') |\n"), "{md}");
             assert!(md.contains("| Load average | before the builds 100000.00 1.00 1.00; after the builds 100000.00 1.00 1.00; at the end 100000.00 1.00 1.00 "), "{md}");
         }
         "harness-errors-two" => {
@@ -502,6 +512,82 @@ fn interleave_goldens_match_aios() {
         check(sc, o);
     }
     assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
+}
+
+#[test]
+fn a_retargeted_firmware_link_never_changes_what_boots() {
+    // fw.fd links to fw-real.fd; during boot 2 the link moves to fw2.fd.
+    // Every boot loads the file the harness hashed, so nothing changed for
+    // the soak, which runs to its end.
+    let mut sc = two_arms(
+        "firmware-link",
+        &["a", "b"],
+        &["--no-build", "runs=2", "secs=35", "out=out"],
+    );
+    sc.flags = vec!["firmware-symlink".into(), "firmware-retargeted-at-2".into()];
+    let o = run_arm_scenario(&sc);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.code, 0, "{stderr}");
+    assert_eq!(o.boots, 4);
+    let real = std::fs::canonicalize(o.root.join("fw-real.fd")).expect("fw-real.fd");
+    for n in 1..=4 {
+        let argv = std::fs::read_to_string(o.root.join(format!("argv-{n}"))).expect("argv");
+        let bios: Vec<&str> = argv.lines().skip_while(|a| *a != "-bios").take(2).collect();
+        assert_eq!(bios, ["-bios", &*real.to_string_lossy()], "boot {n}");
+    }
+    let md = o.text("summary.md");
+    assert_eq!(status(&md), "finished (4 boots)");
+    let link = o.root.join("fw.fd");
+    assert!(
+        md.contains(&format!(
+            "| Firmware | `{}` -> `{}` (sha256 ",
+            link.display(),
+            real.display()
+        )),
+        "{md}"
+    );
+    // The reports name the justfile's path; the QEMU arguments, the file.
+    assert_eq!(
+        column(&o.text("arms.tsv"), "firmware"),
+        [link.to_string_lossy(), link.to_string_lossy()]
+    );
+}
+
+#[test]
+fn an_error_after_the_boots_start_leaves_a_stopped_report() {
+    // boots.tsv turns read-only during boot 2: appending its row fails.
+    let mut sc = two_arms(
+        "row-append-fails",
+        &["a", "b"],
+        &["--no-build", "runs=2", "secs=35", "out=out"],
+    );
+    sc.flags = vec!["boots-tsv-readonly-at-2".into()];
+    let o = run_arm_scenario(&sc);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.code, 2, "{stderr}");
+    assert_eq!(o.boots, 2);
+    let md = o.text("summary.md");
+    let status = status(&md);
+    assert!(
+        status.starts_with("stopped (error: cannot ") && status.ends_with(") after 1 of 4 boots"),
+        "{status}"
+    );
+    assert!(status.contains("boots.tsv"), "{status}");
+}
+
+#[test]
+fn a_head_that_moves_during_a_build_is_refused() {
+    // Arm A's `just disk` checks out the commit before HEAD, which lacks the
+    // arm base: the soak stops before any boot.
+    let mut sc = two_arms("head-moves", &["a", "b"], &["runs=1", "secs=35", "out=out"]);
+    sc.flags = vec!["head-moves-in-build".into()];
+    let o = run_arm_scenario(&sc);
+    assert_refused(&o, sc.name, "arm A (../arms/a): HEAD moved from ");
+    assert_refused(
+        &o,
+        sc.name,
+        "after the preflight checked it; soak checkouts that stay on one commit",
+    );
 }
 
 #[test]

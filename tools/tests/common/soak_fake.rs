@@ -21,7 +21,11 @@ use super::unique_dir;
 /// it boots, else `boot.sh`, as the QEMU process itself. Before that, in an
 /// interleaved soak, it copies the top-level `summary.md` to
 /// `summary-before-N.md`, and with the flag `qemu-changes-at-N` it changes
-/// its own file, as an upgrade during the boot would.
+/// its own file, as an upgrade during the boot would; with
+/// `firmware-retargeted-at-N` it points the `fw.fd` link at `fw2.fd`, as a
+/// package upgrade that moves a firmware symlink would; with
+/// `boots-tsv-readonly-at-N` it makes the soak's `boots.tsv` read-only, so
+/// the harness's next row append fails (a full disk, say).
 const FAKE_QEMU: &str = r##"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "QEMU emulator version 99.1.0 (aios test fake)"
@@ -45,6 +49,12 @@ fi
 if [ -f "$AIOS_FAKE_ROOT/qemu-changes-at-$n" ]; then
     echo "# changed during boot $n" >>"$AIOS_FAKE_ROOT/bin/qemu-system-aarch64"
 fi
+if [ -f "$AIOS_FAKE_ROOT/firmware-retargeted-at-$n" ]; then
+    ln -sfn fw2.fd "$AIOS_FAKE_ROOT/fw.fd"
+fi
+if [ -f "$AIOS_FAKE_ROOT/boots-tsv-readonly-at-$n" ]; then
+    chmod a-w "$out/boots.tsv"
+fi
 arm=$(sed -n 's/^ESP image arm=//p' "$esp" 2>/dev/null)
 script="$AIOS_FAKE_ROOT/boot-$n.sh"
 if [ ! -f "$script" ]; then
@@ -58,7 +68,8 @@ exec sh "$script"
 /// it runs. In a fake arm checkout, `.fake-fw` names its firmware, `.fake-arm`
 /// its name (written into the ESP image), and every `just disk` is logged to
 /// `just.log` with the directory and the two variables an arm's build must
-/// not inherit.
+/// not inherit. With the flag `head-moves-in-build`, `just disk` checks out
+/// the commit before HEAD, as a user switching branches during a build would.
 const FAKE_JUST: &str = r#"#!/bin/sh
 case "$*" in
     "--evaluate edk2_fw")
@@ -73,6 +84,9 @@ case "$*" in
             i=1
             while [ "$i" -le 40 ]; do echo "build line $i"; i=$((i + 1)); done
             exit 1
+        fi
+        if [ -f "$AIOS_FAKE_ROOT/head-moves-in-build" ]; then
+            git checkout -q --detach HEAD~1
         fi
         echo "fake build"
         if [ -f .fake-arm ]; then
@@ -842,7 +856,10 @@ impl FakeArm {
 /// One interleave scenario: arguments (run in `<root>/repo`, the arms at
 /// `../arms/<name>`), boot scripts by file name (`boot.sh`, `boot-<arm>.sh`,
 /// `boot-<N>.sh` for the N-th QEMU boot), flag files in the fake root
-/// (`rustup-fails`, `build-fails`, `qemu-changes-at-N`;
+/// (`rustup-fails`, `build-fails`, `qemu-changes-at-N`,
+/// `firmware-retargeted-at-N`, `boots-tsv-readonly-at-N`,
+/// `head-moves-in-build`; `firmware-symlink` makes `fw.fd` a link to
+/// `fw-real.fd`;
 /// `sha256-interrupted-after-1` also installs
 /// [`FAKE_SHA256SUM_AFTER_FIRST_BOOT`]), the fake arms, and whether rustup is
 /// on PATH, and the load average every probe reads ([`DEFAULT_LOADAVG`]
@@ -1021,7 +1038,12 @@ fn files_under(dir: &Path) -> Vec<(String, Vec<u8>)> {
 /// `<root>/repo`.
 pub fn run_arm_scenario(sc: &ArmScenario) -> ArmOutcome {
     let root = unique_dir(&format!("soak-arms-{}", sc.name));
-    std::fs::write(root.join("fw.fd"), "firmware").expect("fw");
+    if sc.flags.iter().any(|f| f == "firmware-symlink") {
+        std::fs::write(root.join("fw-real.fd"), "firmware").expect("fw-real");
+        std::os::unix::fs::symlink("fw-real.fd", root.join("fw.fd")).expect("fw link");
+    } else {
+        std::fs::write(root.join("fw.fd"), "firmware").expect("fw");
+    }
     std::fs::write(root.join("fw2.fd"), "other firmware").expect("fw2");
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");

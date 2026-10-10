@@ -98,8 +98,8 @@ save each boot's serial log, and classify every boot as exactly one of:
                   than shown to be stuck
   DEGRADED      CLEAN by every other rule, but the Gate 1 IPC line
                 ("[bench] IPC round-trip (same core): avg=N us, ...
-                (N iters)", the first one in the log) reports fewer than
-                10000 iterations, is missing, or is cut before its count.
+                (N iters)", the first one in the log) reports a count other
+                than 10000 iterations, is missing, or is cut before its count.
                 The count is shown where a CLEAN boot shows its detail, and
                 in summary.tsv's ipc_iters column ("-" when unreadable)
   CLEAN         no fatal report; the heartbeat advanced past tick 0 and a new
@@ -219,11 +219,13 @@ Before any build, it refuses (exit 2):
     --ignore-load): boots on a loaded host measure the host as much as the
     arms. The load is read again after the builds and at the end, and
     before every boot; all are recorded.
-After each arm's build: its `rustc --version`, run in DIR, must match arm
-A's (unless --allow-mixed-toolchains), and a failed `rustup toolchain
-install` is refused. The QEMU binary PATH resolves to (its version line and
-sha256) and the firmware's sha256 are checked again before and after every
-boot; a change stops the soak (exit 2), and the boot it happened during is
+After each arm's build: its HEAD must still be the commit the arm-base
+check saw, its `rustc --version`, run in DIR, must match arm A's (unless
+--allow-mixed-toolchains), and a failed `rustup toolchain install` is
+refused. Every boot runs the QEMU binary PATH resolves to and the firmware
+file edk2_fw resolves to (links followed once, before the builds); both
+(QEMU's version line and sha256, the firmware's sha256) are checked again
+before and after every boot; a change stops the soak (exit 2), and the boot it happened during is
 not counted. A boot on which the UEFI stub never ran is a harness error: on
 an arm's first boot it stops the soak at once (exit 2), as in single mode;
 after that, 3 such boots in a row (in boot order, across arms) stop it
@@ -272,10 +274,11 @@ stopped QEMU, 137 when SIGKILL was needed). Ctrl-Z (SIGTSTP) stops the running
 QEMU along with the harness; on resume, the time limit and the boot's
 timings are moved back by the time spent stopped.
 
-Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
-boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
-build failure, the UEFI stub never running on the first boot) -- setup errors
-exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
+Exit status without --arm (a single soak, or --classify): 0 when every boot
+is CLEAN (or with --report-only), 1 when some boot is not CLEAN, 2 on a usage
+or setup error (bad arguments, unusable --out, build failure, the UEFI stub
+never running on the first boot) -- setup errors exit 2 even with
+--report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
 131 on SIGQUIT; QEMU is stopped first. SIGKILL cannot be caught: a harness
 killed by it leaves the running QEMU behind until it is killed by hand, so
 stop a soak with one of the four signals above. Likewise SIGSTOP, or SIGTTIN

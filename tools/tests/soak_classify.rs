@@ -23,7 +23,11 @@
 //!   (colon-separated; real soak logs are never committed, owner decision
 //!   2026-09-29), prints the transition matrix (oracle class -> class) and every
 //!   boot whose class changed, and checks each log's class under the same fold
-//!   against the `class` column of the `summary.tsv` beside it, if any.
+//!   against the `class` column of the `summary.tsv` beside it, if any. With
+//!   `AIOS_SOAK_EXPECT_CHANGES` (`FROM->TO=N,...`, e.g.
+//!   `WEDGE->WEDGE-STUCK=10,WEDGE->WEDGE-ALIVE=2` for run 167) it also asserts
+//!   that the boots whose class changed are exactly those transitions and
+//!   counts, so a wrong split within a base class fails too.
 
 mod common;
 
@@ -281,6 +285,32 @@ fn classify_differential_on_real_logs() {
                     got.class.name()
                 ));
             }
+        }
+    }
+    if let Some(spec) = std::env::var_os("AIOS_SOAK_EXPECT_CHANGES") {
+        let spec = spec.to_string_lossy().into_owned();
+        let want: BTreeMap<String, usize> =
+            spec.split(',')
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| {
+                    let (edge, n) = t.trim().rsplit_once('=').unwrap_or_else(|| {
+                        panic!("AIOS_SOAK_EXPECT_CHANGES: '{t}' is not FROM->TO=N")
+                    });
+                    let n = n
+                        .parse()
+                        .unwrap_or_else(|_| panic!("AIOS_SOAK_EXPECT_CHANGES: bad count in '{t}'"));
+                    (edge.to_string(), n)
+                })
+                .collect();
+        let got: BTreeMap<String, usize> = transitions
+            .iter()
+            .filter(|((from, to), _)| from.as_str() != to.name())
+            .map(|((from, to), n)| (format!("{from}->{}", to.name()), *n))
+            .collect();
+        if got != want {
+            diffs.push(format!(
+                "AIOS_SOAK_EXPECT_CHANGES: expected changes {want:?}, got {got:?}"
+            ));
         }
     }
     let names: BTreeMap<&str, usize> = counts.iter().map(|(c, n)| (c.name(), *n)).collect();

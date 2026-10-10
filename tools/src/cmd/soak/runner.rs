@@ -320,14 +320,14 @@ fn secs_since(start: Instant) -> i64 {
     i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX)
 }
 
-/// One ESP image under test, as its boots need it: the checkout it was built
-/// in, the QEMU program and the firmware it loads (the justfile's `edk2_fw`,
-/// as evaluated), the private snapshot of the ESP that every boot uses, and
+/// One ESP image under test, as its boots need it: the QEMU program and the
+/// firmware it loads (single mode: the justfile's `edk2_fw`, as evaluated;
+/// interleave mode: that path resolved once, so every boot loads the file the
+/// harness hashed), the private snapshot of the ESP that every boot uses, and
 /// what the reports identify it by (the kernel ELF sha256 line and the git
 /// rev, with `-dirty`). Single mode runs `qemu-system-aarch64` from `PATH`;
 /// interleave mode, the one binary it resolved and checks before every boot.
 pub struct Arm {
-    pub root: PathBuf,
     pub qemu: OsString,
     pub firmware: Vec<u8>,
     pub esp: PathBuf,
@@ -758,7 +758,6 @@ fn build_and_boot(
         err,
     )?;
     let arm = Arm {
-        root,
         qemu: OsString::from("qemu-system-aarch64"),
         firmware,
         esp,

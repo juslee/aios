@@ -170,11 +170,11 @@ round	position	arm	run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	l
 | Design | 2 arms (A, B), 2 rounds of one boot per arm: 4 boots |
 | Rotation | the arm order moves by one each round: A B; B A |
 | Boots | 35s each, stall limit 15s, data disk fresh per boot |
-| QEMU | QEMU emulator version 99.1.0 (aios test fake) (`<ROOT>/bin/qemu-system-aarch64`, sha256 `f6881a5e580c7942`) |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) (`<ROOT>/bin/qemu-system-aarch64`, sha256 `83bc1911cc1b14e1`) |
 | Firmware | `<ROOT>/fw.fd` (sha256 `c3bf47ea1f4a4a60`) |
 | Host | <HOST> |
 | Load average | <L> |
-| Load check | passed: load1 0.50 before the builds, not above the host's CPU count |
+| Load check | passed: load1 0.50 before the builds, not above the host's CPU count (AIOS_SOAK_LOADAVG override: every load reads '0.50 0.40 0.30') |
 | Toolchains | one channel and one rustc for every arm |
 | Arm base | every arm contains `244166f03dbd262e5ed2921769fb515ee7dd0652` (AIOS_SOAK_MIN_ARM_BASE override; the release base is `7167d408f6a43ca9859fb6238f608ca6bdee37d6`, #196) |
 | Harness | <HARNESS> |
@@ -253,7 +253,7 @@ Each boot's avg= is whole us, as the kernel truncates it.
 | A | n/a (no tripwire line in any boot) |
 | B | n/a (no tripwire line in any boot) |
 
-That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every conclusive non-CLEAN boot without a fatal report counts. INCONCLUSIVE boots (no kernel result) are never counted.
+That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); an arm with no tripwire line in any boot shows n/a. INCONCLUSIVE boots (no kernel result) are never counted.
 
 No boot has a complete `v=1` tripwire line.
 

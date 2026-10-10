@@ -273,6 +273,23 @@ pub fn rustc_version(dir: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(first_line(&out.stdout)).into_owned())
 }
 
+/// The full commit id `HEAD` names in the checkout `root` (`git rev-parse
+/// --verify HEAD`), or `None` when git cannot tell.
+pub fn head_commit(root: &Path) -> Option<String> {
+    let out = output_of(
+        "git",
+        &[
+            OsStr::new("-C"),
+            root.as_os_str(),
+            OsStr::new("rev-parse"),
+            OsStr::new("--verify"),
+            OsStr::new("HEAD"),
+        ],
+        None,
+    )?;
+    Some(String::from_utf8_lossy(&out).into_owned())
+}
+
 /// Whether commit `base` is an ancestor of `HEAD` in the checkout `root`
 /// (`git merge-base --is-ancestor`): `Err` when git cannot tell (an unknown
 /// commit, or not a checkout).
@@ -517,7 +534,9 @@ mod tests {
         .expect("hex");
         assert!(contains_commit(&dir, &first).expect("known"));
         assert!(contains_commit(&dir, &second).expect("known"));
+        assert_eq!(head_commit(&dir).as_deref(), Some(second.as_str()));
         git(&["checkout", "-q", "--detach", &first]);
+        assert_eq!(head_commit(&dir).as_deref(), Some(first.as_str()));
         assert!(!contains_commit(&dir, &second).expect("known"));
         assert!(contains_commit(&dir, &"0".repeat(40)).is_err());
         git(&["checkout", "-q", "main"]);

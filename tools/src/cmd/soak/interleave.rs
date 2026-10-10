@@ -1,5 +1,5 @@
 //! `aios soak --arm DIR --arm DIR [--arm DIR [--arm DIR]]`: an interleaved
-//! soak (crash-fix step 1a, D5). Two to four git checkouts ("arms", labelled
+//! soak (crash-fix step 1a). Two to four git checkouts ("arms", labelled
 //! A-D in the order given) are each built and snapshotted once, then booted in
 //! rounds of one boot per arm, the arm order moving by one each round (A B,
 //! B A, A B, ...), all in one host session with one QEMU binary and one
@@ -234,6 +234,10 @@ struct Checkout {
     /// The directory as the first `--arm` naming it gave it.
     dir: OsString,
     root: PathBuf,
+    /// The commit `HEAD` named when the preflight checked the arm base. The
+    /// checkout must still be on it after its build and snapshot, or the
+    /// arm-base claim in the report would not hold for what boots.
+    head: String,
     channel: String,
     /// The labels (indices into [`LABELS`]) that boot it.
     labels: Vec<usize>,
@@ -246,7 +250,9 @@ struct Built {
 }
 
 /// What every boot must find unchanged: the QEMU binary (its version line and
-/// sha256) and the firmware (its sha256).
+/// sha256) and the firmware (its sha256). Both are canonical paths, and every
+/// boot runs exactly these files, so a symlink retargeted mid-soak (a `brew
+/// upgrade qemu`, say) cannot swap what boots behind the probes.
 struct Fixed {
     qemu: PathBuf,
     qemu_version: Vec<u8>,
@@ -305,6 +311,8 @@ struct Report {
     combine: Vec<Vec<Class>>,
     total: u64,
     out_dir: PathBuf,
+    /// Whether a final status (`stopped` or `finished`) has been written.
+    closed: bool,
 }
 
 impl Report {
@@ -387,7 +395,8 @@ impl Report {
         ))
     }
 
-    fn stopped(&self, reason: &str) -> Result<()> {
+    fn stopped(&mut self, reason: &str) -> Result<()> {
+        self.closed = true;
         self.write(&format!(
             "stopped ({reason}) after {} of {} boots",
             self.counted(),
@@ -462,6 +471,11 @@ fn run_with_base(
         }
         let channel = host::toolchain_channel(&root)
             .with_context(|| format!("arm {label} ({})", shown(dir)))?;
+        // Read before the arm-base check, so a HEAD that moves after this
+        // read fails the check after the build.
+        let head = host::head_commit(&root).with_context(|| {
+            format!("arm {label} ({}): cannot read its HEAD commit", shown(dir))
+        })?;
         match host::contains_commit(&root, &base.sha) {
             Ok(true) => {}
             Ok(false) => bail!(
@@ -478,6 +492,7 @@ fn run_with_base(
         checkouts.push(Checkout {
             dir: dir.clone(),
             root,
+            head,
             channel,
             labels: vec![i],
         });
@@ -701,6 +716,15 @@ fn build_and_boot(
             host::just_evaluate(&c.root, "kernel_elf").with_context(|| format!("arm {label}"))?;
         let esp = scratch.path().join(format!("esp-{label}.img"));
         runner::snapshot_esp(&c.root, &disk_rel, &esp).with_context(|| format!("arm {label}"))?;
+        let head = host::head_commit(&c.root);
+        if head.as_deref() != Some(c.head.as_str()) {
+            bail!(
+                "arm {label} ({}): HEAD moved from {} to {} after the preflight checked it; soak checkouts that stay on one commit",
+                String::from_utf8_lossy(c.dir.as_bytes()),
+                c.head,
+                head.as_deref().unwrap_or("an unreadable commit")
+            );
+        }
         let git_rev = host::git_rev(&c.root);
         out.flush()?;
         let kernel_sha = runner::esp_kernel_sha(
@@ -714,9 +738,8 @@ fn build_and_boot(
         )?;
         built.push(Built {
             arm: Arm {
-                root: c.root.clone(),
                 qemu: fixed.qemu.clone().into_os_string(),
-                firmware: firmware_raw.clone(),
+                firmware: bytes(&fixed.firmware).to_vec(),
                 esp,
                 kernel_sha,
                 git_rev,
@@ -764,7 +787,7 @@ fn build_and_boot(
             c.channel.as_bytes().to_vec(),
             b.rustc.as_bytes().to_vec(),
             b.arm.kernel_sha.as_bytes().to_vec(),
-            b.arm.firmware.clone(),
+            firmware_raw.clone(),
             bytes(&fixed.qemu).to_vec(),
             args.join(&b' '),
         ];
@@ -809,6 +832,21 @@ fn build_and_boot(
         format!("every arm contains `{}` (#196)", base.sha)
     };
     let short = |s: &str| s.chars().take(16).collect::<String>();
+    // The file every boot loads, when the justfile's path goes through a link.
+    let firmware_via: Vec<u8> = if firmware_raw.as_slice() == bytes(&fixed.firmware) {
+        Vec::new()
+    } else {
+        [&b"` -> `"[..], bytes(&fixed.firmware)].concat()
+    };
+    // A debug build's forged load, named in every summary.md it reaches.
+    let load_override = host::loadavg_override()
+        .map(|fixed| {
+            format!(
+                " ({} override: every load reads '{fixed}')",
+                host::LOADAVG_VAR
+            )
+        })
+        .unwrap_or_default();
     let settings: Vec<(String, Vec<u8>)> = vec![
         (
             "Design".into(),
@@ -845,6 +883,7 @@ fn build_and_boot(
             [
                 &b"`"[..],
                 &firmware_raw,
+                &firmware_via,
                 format!("` (sha256 `{}`)", short(&fixed.firmware_sha)).as_bytes(),
             ]
             .concat(),
@@ -852,9 +891,15 @@ fn build_and_boot(
         ("Host".into(), host_line.clone()),
         (
             "Load average".into(),
-            format!("before the builds {load_before}; after the builds {load_after}").into_bytes(),
+            format!(
+                "before the builds {load_before}; after the builds {load_after}{load_override}"
+            )
+            .into_bytes(),
         ),
-        ("Load check".into(), load_check.text().into_bytes()),
+        (
+            "Load check".into(),
+            format!("{}{load_override}", load_check.text()).into_bytes(),
+        ),
         ("Toolchains".into(), toolchains.to_vec()),
         ("Arm base".into(), arm_base.into_bytes()),
         ("Harness".into(), harness_rev()),
@@ -869,91 +914,96 @@ fn build_and_boot(
         combine: req.combine.clone(),
         total,
         out_dir: out_dir.clone(),
+        closed: false,
     };
     report.running()?;
 
-    out.write_all(
-        format!(
-            "soak: interleaved, {n_arms} arms x {} rounds x {}s, mode={}, data=fresh\n",
-            cfg.runs_raw, cfg.secs_raw, cfg.mode
-        )
-        .as_bytes(),
-    )?;
-    for (i, &k) in arm_of.iter().enumerate() {
+    // From here on summary.md exists. An error that wrote no final status
+    // (a full disk on a log or a row, say) marks it stopped before it ends
+    // the soak, so the status never stays "running".
+    let result = (|| -> Result<u8> {
+        out.write_all(
+            format!(
+                "soak: interleaved, {n_arms} arms x {} rounds x {}s, mode={}, data=fresh\n",
+                cfg.runs_raw, cfg.secs_raw, cfg.mode
+            )
+            .as_bytes(),
+        )?;
+        for (i, &k) in arm_of.iter().enumerate() {
+            out.write_all(
+                &[
+                    format!("soak: arm {}: ", LABELS[i]).as_bytes(),
+                    bytes(&checkouts[k].root),
+                    format!(" commit={}\n", built[k].arm.git_rev).as_bytes(),
+                ]
+                .concat(),
+            )?;
+        }
+        out.write_all(&[&b"soak: qemu="[..], bytes(&fixed.qemu), b"\n"].concat())?;
+        out.write_all(&[&b"soak: firmware="[..], &firmware_raw, b"\n"].concat())?;
         out.write_all(
             &[
-                format!("soak: arm {}: ", LABELS[i]).as_bytes(),
-                bytes(&checkouts[k].root),
-                format!(" commit={}\n", built[k].arm.git_rev).as_bytes(),
+                &b"soak: logs in "[..],
+                bytes(&out_dir),
+                format!(" (load average after the builds: {load_after})\n").as_bytes(),
             ]
             .concat(),
         )?;
-    }
-    out.write_all(&[&b"soak: qemu="[..], bytes(&fixed.qemu), b"\n"].concat())?;
-    out.write_all(&[&b"soak: firmware="[..], &firmware_raw, b"\n"].concat())?;
-    out.write_all(
-        &[
-            &b"soak: logs in "[..],
-            bytes(&out_dir),
-            format!(" (load average after the builds: {load_after})\n").as_bytes(),
-        ]
-        .concat(),
-    )?;
 
-    let width = cfg.runs_raw.len().max(2);
-    let mut seen_first = vec![false; n_arms];
-    let mut errors_in_a_row = 0u64;
-    for round in 0..cfg.runs {
-        for (position, label) in round_order(n_arms, round).into_iter().enumerate() {
-            let changed = match interrupts.pending() {
-                None => fixed.changed(interrupts),
-                Some(_) => None,
-            };
-            // A signal before the probes, or one that ended a probe.
-            if let Some(code) = interrupts.pending() {
-                report.stopped(&name_of_exit(code))?;
-                return Ok(code);
-            }
-            if let Some(reason) = changed {
-                report.stopped(reason)?;
-                bail!(
-                    "{reason} during the soak; see {}",
-                    out_dir.join("summary.md").display()
-                );
-            }
-            let arm = &built[arm_of[label]].arm;
-            let idx = format!("{:0width$}", round + 1);
-            let log_name = format!("run-{idx}.log");
-            let log = arm_dirs[label].join(&log_name);
-            let boot = match boot_once(arm, cfg, &log, &data, interrupts)? {
-                BootOutcome::Booted(boot) => boot,
-                BootOutcome::Interrupted(code) => {
+        let width = cfg.runs_raw.len().max(2);
+        let mut seen_first = vec![false; n_arms];
+        let mut errors_in_a_row = 0u64;
+        for round in 0..cfg.runs {
+            for (position, label) in round_order(n_arms, round).into_iter().enumerate() {
+                let changed = match interrupts.pending() {
+                    None => fixed.changed(interrupts),
+                    Some(_) => None,
+                };
+                // A signal before the probes, or one that ended a probe.
+                if let Some(code) = interrupts.pending() {
                     report.stopped(&name_of_exit(code))?;
                     return Ok(code);
                 }
-            };
-            // A change during the boot: the boot is not counted. A signal that
-            // ended a probe is no change: the boot is counted, and the next
-            // pending check stops the soak with the signal.
-            if let Some(reason) = fixed.changed(interrupts) {
-                report.stopped(reason)?;
-                bail!(
-                    "{reason} during boot {} of arm {} (not counted); see {}",
-                    round + 1,
-                    LABELS[label],
-                    out_dir.join("summary.md").display()
-                );
-            }
-            let stub_ran = contains(&boot.text, b"AIOS UEFI stub");
-            if !seen_first[label] {
-                seen_first[label] = true;
-                if !stub_ran {
-                    report.stopped(&format!(
-                        "the UEFI stub never ran on arm {}'s first boot",
-                        LABELS[label]
-                    ))?;
-                    err.write_all(host::tail_lines(&boot.text, 20))?;
+                if let Some(reason) = changed {
+                    report.stopped(reason)?;
                     bail!(
+                        "{reason} during the soak; see {}",
+                        out_dir.join("summary.md").display()
+                    );
+                }
+                let arm = &built[arm_of[label]].arm;
+                let idx = format!("{:0width$}", round + 1);
+                let log_name = format!("run-{idx}.log");
+                let log = arm_dirs[label].join(&log_name);
+                let boot = match boot_once(arm, cfg, &log, &data, interrupts)? {
+                    BootOutcome::Booted(boot) => boot,
+                    BootOutcome::Interrupted(code) => {
+                        report.stopped(&name_of_exit(code))?;
+                        return Ok(code);
+                    }
+                };
+                // A change during the boot: the boot is not counted. A signal that
+                // ended a probe is no change: the boot is counted, and the next
+                // pending check stops the soak with the signal.
+                if let Some(reason) = fixed.changed(interrupts) {
+                    report.stopped(reason)?;
+                    bail!(
+                        "{reason} during boot {} of arm {} (not counted); see {}",
+                        round + 1,
+                        LABELS[label],
+                        out_dir.join("summary.md").display()
+                    );
+                }
+                let stub_ran = contains(&boot.text, b"AIOS UEFI stub");
+                if !seen_first[label] {
+                    seen_first[label] = true;
+                    if !stub_ran {
+                        report.stopped(&format!(
+                            "the UEFI stub never ran on arm {}'s first boot",
+                            LABELS[label]
+                        ))?;
+                        err.write_all(host::tail_lines(&boot.text, 20))?;
+                        bail!(
                         "arm {}: the UEFI stub never ran on its first boot (QEMU exit status {} after {}s): check QEMU, the firmware ({}) and the ESP image; see {}",
                         LABELS[label],
                         boot.rc,
@@ -961,111 +1011,122 @@ fn build_and_boot(
                         String::from_utf8_lossy(&arm.firmware),
                         log.display()
                     );
+                    }
                 }
-            }
 
-            let c = classify(&boot.text, None);
-            out.write_all(&report::format_result(
-                format!("{} run {idx}/{}", LABELS[label], cfg.runs_raw).as_bytes(),
-                &c,
-            ))?;
-            let timing = boot.timing();
-            append(
-                &arm_dirs[label].join("summary.tsv"),
-                &report::tsv_row(&idx, &cfg.mode, &c, &timing, &log_name),
-            )?;
-            let boots_log = format!("arm-{}/{log_name}", LABELS[label]);
-            append(
-                &boots_tsv,
-                &[
-                    format!("{}\t{}\t{}\t", round + 1, position + 1, LABELS[label]).as_bytes(),
-                    &report::tsv_row(&idx, &cfg.mode, &c, &timing, &boots_log),
-                ]
-                .concat(),
-            )?;
-            report.tallies[label].add(&idx, &c, &timing);
-            report
-                .boots
-                .push(Boot::new(round + 1, label, &c, &timing, boots_log));
+                let c = classify(&boot.text, None);
+                out.write_all(&report::format_result(
+                    format!("{} run {idx}/{}", LABELS[label], cfg.runs_raw).as_bytes(),
+                    &c,
+                ))?;
+                let timing = boot.timing();
+                append(
+                    &arm_dirs[label].join("summary.tsv"),
+                    &report::tsv_row(&idx, &cfg.mode, &c, &timing, &log_name),
+                )?;
+                let boots_log = format!("arm-{}/{log_name}", LABELS[label]);
+                append(
+                    &boots_tsv,
+                    &[
+                        format!("{}\t{}\t{}\t", round + 1, position + 1, LABELS[label]).as_bytes(),
+                        &report::tsv_row(&idx, &cfg.mode, &c, &timing, &boots_log),
+                    ]
+                    .concat(),
+                )?;
+                report.tallies[label].add(&idx, &c, &timing);
+                report
+                    .boots
+                    .push(Boot::new(round + 1, label, &c, &timing, boots_log));
 
-            errors_in_a_row = if stub_ran { 0 } else { errors_in_a_row + 1 };
-            if errors_in_a_row >= MAX_HARNESS_ERRORS_IN_A_ROW {
-                let reason = format!(
+                errors_in_a_row = if stub_ran { 0 } else { errors_in_a_row + 1 };
+                if errors_in_a_row >= MAX_HARNESS_ERRORS_IN_A_ROW {
+                    let reason = format!(
                     "{MAX_HARNESS_ERRORS_IN_A_ROW} boots in a row where the UEFI stub never ran"
                 );
-                report.stopped(&reason)?;
-                bail!(
-                    "{reason}: check QEMU, the firmware and the host; see {}",
-                    out_dir.join("summary.md").display()
-                );
+                    report.stopped(&reason)?;
+                    bail!(
+                        "{reason}: check QEMU, the firmware and the host; see {}",
+                        out_dir.join("summary.md").display()
+                    );
+                }
+                report.running()?;
             }
-            report.running()?;
         }
-    }
-    drop(scratch); // the ESP snapshots and the fresh data disk
-    let load_end = host::loadavg();
-    if let Some(code) = interrupts.pending() {
-        report.stopped(&name_of_exit(code))?;
-        return Ok(code);
-    }
+        drop(scratch); // the ESP snapshots and the fresh data disk
+        let load_end = host::loadavg();
+        if let Some(code) = interrupts.pending() {
+            report.stopped(&name_of_exit(code))?;
+            return Ok(code);
+        }
 
-    // Each arm's summary.md, as a single soak writes it.
-    for (i, &k) in arm_of.iter().enumerate() {
-        let b = &built[k];
-        let info = SummaryInfo {
-            mode: &cfg.mode,
-            runs: &cfg.runs_raw,
-            secs: &cfg.secs_raw,
-            stall_secs: &cfg.stall_raw,
-            fresh_data: Some(true),
-            git_rev: &b.arm.git_rev,
-            kernel_sha: &b.arm.kernel_sha,
-            qemu_version: &fixed.qemu_version,
-            firmware: &b.arm.firmware,
-            host: &host_line,
-            load_start: &load_after,
-            load_end: &load_end,
-            out: bytes(&arm_dirs[i]),
-        };
-        let head = report::summary_head(&info, &report.tallies[i]);
-        runner::write_summary_file(&arm_dirs[i], &head, &report.tallies[i])?;
-    }
-    report.settings.iter_mut().for_each(|(name, value)| {
+        // Each arm's summary.md, as a single soak writes it.
+        for (i, &k) in arm_of.iter().enumerate() {
+            let b = &built[k];
+            let info = SummaryInfo {
+                mode: &cfg.mode,
+                runs: &cfg.runs_raw,
+                secs: &cfg.secs_raw,
+                stall_secs: &cfg.stall_raw,
+                fresh_data: Some(true),
+                git_rev: &b.arm.git_rev,
+                kernel_sha: &b.arm.kernel_sha,
+                qemu_version: &fixed.qemu_version,
+                firmware: &firmware_raw,
+                host: &host_line,
+                load_start: &load_after,
+                load_end: &load_end,
+                out: bytes(&arm_dirs[i]),
+            };
+            let head = report::summary_head(&info, &report.tallies[i]);
+            runner::write_summary_file(&arm_dirs[i], &head, &report.tallies[i])?;
+        }
+        report.settings.iter_mut().for_each(|(name, value)| {
         if name == "Load average" {
-            value.extend(format!("; at the end {load_end}").into_bytes());
-            if let Some(fixed) = host::loadavg_override() {
-                value.extend(
-                    format!(
-                        " ({} override: every load reads '{fixed}')",
-                        host::LOADAVG_VAR
-                    )
-                    .into_bytes(),
-                );
-            }
+            *value = format!(
+                "before the builds {load_before}; after the builds {load_after}; at the end {load_end}{load_override}"
+            )
+            .into_bytes();
         }
     });
-    report.write(&format!("finished ({} boots)", report.counted()))?;
-    if let Some(code) = interrupts.pending() {
-        return Ok(code);
+        report.closed = true;
+        report.write(&format!("finished ({} boots)", report.counted()))?;
+        if let Some(code) = interrupts.pending() {
+            return Ok(code);
+        }
+        let labels = &LABELS[..n_arms];
+        out.write_all(b"\n")?;
+        out.write_all(&pair::console(labels, &report.boots))?;
+        out.write_all(
+            &[
+                &b"soak: interleaved report in "[..],
+                bytes(&out_dir.join("summary.md")),
+                b", rows in ",
+                bytes(&boots_tsv),
+                b", each arm's single-run files in arm-X/\n",
+            ]
+            .concat(),
+        )?;
+        if req.fail_on_regression && pair::regression(n_arms, &report.boots) {
+            out.write_all(
+                b"soak: a pair's regression guard failed (--fail-on-regression): exit 1\n",
+            )?;
+            return Ok(1);
+        }
+        Ok(0)
+    })();
+    match result {
+        Err(e) if !report.closed => {
+            let reason = match interrupts.pending() {
+                Some(code) => name_of_exit(code),
+                None => format!("error: {e:#}").replace('\n', " "),
+            };
+            // The original error is what the caller reports; a failure to
+            // write the stopped status adds nothing to it.
+            let _ = report.stopped(&reason);
+            Err(e)
+        }
+        result => result,
     }
-    let labels = &LABELS[..n_arms];
-    out.write_all(b"\n")?;
-    out.write_all(&pair::console(labels, &report.boots))?;
-    out.write_all(
-        &[
-            &b"soak: interleaved report in "[..],
-            bytes(&out_dir.join("summary.md")),
-            b", rows in ",
-            bytes(&boots_tsv),
-            b", each arm's single-run files in arm-X/\n",
-        ]
-        .concat(),
-    )?;
-    if req.fail_on_regression && pair::regression(n_arms, &report.boots) {
-        out.write_all(b"soak: a pair's regression guard failed (--fail-on-regression): exit 1\n")?;
-        return Ok(1);
-    }
-    Ok(0)
 }
 
 #[cfg(test)]
@@ -1165,6 +1226,7 @@ mod tests {
             combine: Vec::new(),
             total: 4,
             out_dir: PathBuf::from("/nonexistent"),
+            closed: false,
         };
         let md = String::from_utf8(report.render("running (0 of 4 boots)")).expect("UTF-8");
         assert!(md.starts_with(
@@ -1179,7 +1241,7 @@ mod tests {
             md.contains("| **Total** | 0 | 0 |\n| CLEAN rate | n/a | n/a |\n"),
             "{md}"
         );
-        // The pair report follows the class table, in D4's order.
+        // The pair report follows the class table, in USAGE's order.
         let at = |h: &str| md.find(h).unwrap_or_else(|| panic!("no {h} in\n{md}"));
         let order = [
             "### Classes per arm",

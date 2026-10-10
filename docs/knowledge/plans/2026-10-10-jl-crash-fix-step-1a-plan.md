@@ -105,7 +105,7 @@ Expected:
 - PANIC → PANIC-LOCK: 0.
 - Every other boot keeps its class.
 
-That matches the ADR's "Soak evidence" table (main text 5/0, main gpu 1/1, #161 text 4/1). The test fails on any other transition or any `base_line()` difference. The PR body carries the matrix and the 12-row list from `--nocapture`.
+That matches the ADR's "Soak evidence" table (main text 5/0, main gpu 1/1, #161 text 4/1). The test fails on any `base_line()` difference or summary.tsv fold mismatch; with `AIOS_SOAK_EXPECT_CHANGES=WEDGE->WEDGE-STUCK=10,WEDGE->WEDGE-ALIVE=2` it also fails on any other set of class changes (audit round 1: before that, the 10/2 split was checked by eye from `--nocapture`). The PR body carries the matrix and the 12-row list from `--nocapture`.
 
 The transition matrix also needs the recorded classes. A second check, independent of the oracle, compares each log's new class with the `class` column of the `summary.tsv` beside it, under the same fold. It runs as part of the same ignored test for any directory that has a `summary.tsv`.
 

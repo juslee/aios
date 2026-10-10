@@ -1,4 +1,5 @@
-//! The interleaved soak's pair report (crash-fix step 1a, D4 sections 4 to 8):
+//! The interleaved soak's pair report (crash-fix step 1a; the sections after
+//! the class table, in the order `aios soak --help` lists them):
 //! the per-arm load and its 25% rule, the pair tests, the Gate 1 IPC means,
 //! the tripwire counters per arm with the "non-CLEAN boot without a tripwire
 //! line or fatal report" count, and the non-CLEAN boots. Everything here is
@@ -19,8 +20,8 @@
 //!   p toward more < [`ALPHA`]).
 //!
 //! The load rule: a pair whose arms' mean per-boot load1 differ by more than
-//! [`LOAD_LIMIT`] of the lower mean is redone (owner's Q6: |a − b| / min(a, b),
-//! the stricter reading).
+//! [`LOAD_LIMIT`] of the lower mean is redone (|a − b| / min(a, b), the stricter
+//! reading; owner decision 2026-10-10).
 
 use anyhow::{bail, Result};
 
@@ -484,12 +485,14 @@ fn ipc_section(labels: &[&str], boots: &[Boot]) -> String {
     md
 }
 
-/// R16's count for one arm: its conclusive non-CLEAN boots with neither a
-/// complete tripwire line nor a fatal report, or `n/a` when no boot of the arm
-/// has a complete tripwire line. INCONCLUSIVE boots are left out, as in every
-/// other test of the report: they carry no kernel result (the stub never ran,
-/// QEMU was killed by a signal, or the boot was cut short), so counting them
-/// would charge a harness error to the arm's kernel.
+/// The unexplained-boot count for one arm (step 1b's "every non-CLEAN boot
+/// has a tripwire line or fatal report", as a count): its conclusive
+/// non-CLEAN boots with neither a complete tripwire line nor a fatal report,
+/// or `n/a` when no boot of the arm has a complete tripwire line.
+/// INCONCLUSIVE boots are left out, as in every other test of the report:
+/// they carry no kernel result (the stub never ran, QEMU was killed by a
+/// signal, or the boot was cut short), so counting them would charge a
+/// harness error to the arm's kernel.
 pub fn unexplained(boots: &[Boot], arm: usize) -> String {
     let mine: Vec<&Boot> = boots.iter().filter(|b| b.arm == arm).collect();
     if !mine.iter().any(|b| b.has_line) {
@@ -503,10 +506,10 @@ pub fn unexplained(boots: &[Boot], arm: usize) -> String {
         .to_string()
 }
 
-/// The note under R16's count.
-pub const UNEXPLAINED_NOTE: &str = "That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every conclusive non-CLEAN boot without a fatal report counts. INCONCLUSIVE boots (no kernel result) are never counted.";
+/// The note under the unexplained-boot count.
+pub const UNEXPLAINED_NOTE: &str = "That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); an arm with no tripwire line in any boot shows n/a. INCONCLUSIVE boots (no kernel result) are never counted.";
 
-/// Section 7: R16's count, then the tripwire counters with arms as columns.
+/// Section 7: the unexplained-boot count, then the tripwire counters with arms as columns.
 fn tripwire_section(labels: &[&str], boots: &[Boot]) -> Vec<u8> {
     let mut md = b"\n### Tripwire per arm\n\n| Arm | Conclusive non-CLEAN boots with neither a complete tripwire line nor a fatal report |\n|---|---:|\n".to_vec();
     for (arm, label) in labels.iter().enumerate() {

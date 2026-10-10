@@ -144,8 +144,10 @@ jobs:
     # A newer push to a branch or PR cancels its soak still running. On main
     # each commit has its own group and nothing is cancelled, so back-to-back
     # merges each keep their soak (and their CI run is not marked cancelled).
+    # Each manual dispatch has a group of its own (its run id), so it neither
+    # cancels nor is cancelled by a push soak or another dispatch on that ref.
     concurrency:
-      group: qemu-soak-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+      group: qemu-soak-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     # Pinned: the QEMU and edk2 versions come from the runner image, and soak
     # results are only comparable across runs on the same image.
