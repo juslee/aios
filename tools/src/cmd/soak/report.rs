@@ -25,6 +25,7 @@ use shared::tripwire::{BadchanSite, Key, N2Kind, WakeSource, Width, CLASS_COUNT}
 
 use super::awk::to_num;
 use super::classify::{Base, Class, Classification, Ipc, Reentry};
+use super::stats::wilson;
 use super::tripwire::{Line, V1};
 
 /// The script's `summary.tsv` columns.
@@ -198,27 +199,6 @@ pub fn md_cell(s: &[u8]) -> Vec<u8> {
         out.push(b);
     }
     out
-}
-
-/// `wilson K N`: the CLEAN rate with its 95% Wilson score interval, or `n/a`.
-pub fn wilson(k: u64, n: u64) -> String {
-    if n == 0 {
-        return "n/a".to_string();
-    }
-    let (k, n) = (k as f64, n as f64);
-    let z = 1.96;
-    let p = k / n;
-    let d = 1.0 + z * z / n;
-    let c = (p + z * z / (2.0 * n)) / d;
-    let h = z * (p * (1.0 - p) / n + z * z / (4.0 * n * n)).sqrt() / d;
-    let lo = (c - h).max(0.0);
-    let hi = (c + h).min(1.0);
-    format!(
-        "{:.0}% (95% Wilson interval {:.0}%-{:.0}%)",
-        100.0 * p,
-        100.0 * lo,
-        100.0 * hi
-    )
 }
 
 /// A class's share of all boots: awk `printf "%.0f%%", 100 * a / b`.
@@ -895,16 +875,10 @@ mod tests {
         assert_eq!(md_cell(b"a|b||c"), b"a\\|b\\|\\|c");
     }
 
-    // Values printed by the script's wilson and the awk share one-liner.
+    // Values printed by the script's awk share one-liner (`wilson` is in
+    // `stats`).
     #[test]
-    fn wilson_and_share_match_awk() {
-        assert_eq!(wilson(0, 0), "n/a");
-        assert_eq!(wilson(0, 5), "0% (95% Wilson interval 0%-43%)");
-        assert_eq!(wilson(1, 8), "12% (95% Wilson interval 2%-47%)");
-        assert_eq!(wilson(3, 8), "38% (95% Wilson interval 14%-69%)");
-        assert_eq!(wilson(5, 5), "100% (95% Wilson interval 57%-100%)");
-        assert_eq!(wilson(6, 20), "30% (95% Wilson interval 15%-52%)");
-        assert_eq!(wilson(12, 20), "60% (95% Wilson interval 39%-78%)");
+    fn share_matches_awk() {
         // %.0f rounds an exact tie to even, as C does: 12.5 -> 12, 37.5 -> 38.
         assert_eq!(share(1, 8), "12%");
         assert_eq!(share(3, 8), "38%");

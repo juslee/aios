@@ -339,7 +339,7 @@ One commit each, `Crash fix step 1a: <desc>`, pushed after its checks pass (rule
     - goldens re-blessed.
   - Tests: `tsv_row` field count equals the header count (22 + 39 + `Key::COUNT`); unit tests of the table on synthetic classifications; CLI goldens for `--classify --out`; a test that `--classify --out` and a fake soak of the same logs write identical `summary.tsv` rows apart from the timing columns.
   - Check: A2 in full, meaning the projection diff is empty for 30 of 30 rows and the per-class table matches the note's.
-- [ ] **T7. Statistics module.**
+- [x] **T7. Statistics module.**
   - Files: new `stats.rs` (`fisher_low`, `fisher_high`, `fisher_two`, `wilson` moved from `report.rs`).
   - Tests: as in D6.
   - Check: `cargo test -p aios-tools stats`.
@@ -659,6 +659,7 @@ The verdict is reported. The harness never stops a running soak over it.
 - T6: `--classify --out` numbers the boots in the order given, puts each path as given in `log`, takes `mode`, `--secs` and the stall limit from the footers when they agree (`mixed` when they differ, `-` when none has it; `--stall-secs` wins), and names the logs' directory in the Logs row when they share one (`-` otherwise). The harness test compares the whole `summary.tsv` of a fake soak with `--classify --out` over its logs, timing columns included (they come from the footers), plus both `summary.md` tables, which is stronger than the plan's "apart from the timing columns".
 - T6: a tab inside a stored whole line (`g1_line`, `tw_line`) becomes a space, since the parser splits tokens at blanks and tabs alike and a raw tab would break the row. A table value that is not a decimal `u64` counts as 0 there; `summary.tsv` keeps it as printed.
 - T6: three corpus cases with tripwire output (`tripwire-panic-lock-with-events`, `tripwire-clean-g1-then-hb` with a torn last line, `tripwire-other-schema-last-wedge-alive`), so the fold differential also covers logs with `[tripwire]` and `[tripwire-ev]` lines and the `--classify --out` CLI golden shows populated columns; corpus 127 cases. A fake-QEMU `tripwire` scenario (a PANIC-LOCK boot, then a CLEAN one with `g1` and `hb` lines) gives the harness golden the same.
+- T7: `fisher_low`, `fisher_high` and `fisher_two` take the table as `(a, b, c, d)` = `[[a, b], [c, d]]`, `soak-matrix.sh`'s argument order, with one row per arm and the class (or group) count first; T9 puts the new arm in row 1, so the regression guard and "removed" are `fisher_low` and "new" is `fisher_high`. The log-factorials are built per call up to the table's n (a few dozen `ln`s per test at soak sizes). The exact oracle's two-sided p compares the integer weights C(r1, x)·C(r2, c1 − x) with no tolerance; it agrees with the float version's R tolerance within 1e−9 on all 246,016 tables up to 30 + 30, so no tie within 1e−7 that is not exact occurs there. The developer guide's 6/20 vs 18/20 figure is 0.000244 (2.444e−4), pinned to six decimals.
 
 ## Lessons Learned
 

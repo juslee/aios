@@ -23,6 +23,7 @@ pub mod host;
 pub mod report;
 pub mod runner;
 pub mod signals;
+pub mod stats;
 pub mod tripwire;
 
 use std::ffi::OsString;
