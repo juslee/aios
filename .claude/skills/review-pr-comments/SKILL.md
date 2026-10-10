@@ -19,7 +19,7 @@ If this fails, ask the user for the PR number.
 
 ## Step 2: Wait for reviewer comments
 
-Poll every 60 seconds for up to 10 minutes. Stop early if any comments appear.
+Wait with a Monitor until-loop on the combined comment count, bounded at 10 minutes (load Monitor with ToolSearch if needed). The loop ends as soon as any comment appears.
 
 Check all three comment sources and use their **combined count** as the stop condition:
 
@@ -59,10 +59,9 @@ Present a summary to the user:
 
 For each actionable comment:
 1. Read the relevant file and understand the context
-2. Implement the fix
-3. Stage the change
+2. Spawn the writer for the file's area (rule 11) with the comments to fix and the worktree's tip; it commits on its temporary branch, and you run `/justin:team`'s Placement on its range. A solo session already inside the PR's worktree may still edit directly and stage the change.
 
-After all fixes, create a single commit:
+After all fixes, the commit message is:
 ```
 Address PR review comments
 
@@ -147,5 +146,7 @@ Push the PR branch by its explicit name (the `branch` from Step 1, a `claude/*` 
 ```bash
 git push origin <branch>
 ```
+
+From the main checkout, after the fast-forward, push with `git -C <W> push origin <branch>`.
 
 Report final summary: how many comments addressed, commits pushed, threads resolved. Do not merge the PR; merging is user-only via `/merge-and-cleanup`.

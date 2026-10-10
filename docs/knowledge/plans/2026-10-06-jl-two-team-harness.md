@@ -627,12 +627,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
     then `doc-writer.md kernel-dev.md verifier.md worker.md ` (the writer marker guard rule 3 reads); a count of 1 or more for each of the four files; `4`; nothing; nothing. The docs gate shows only `plans-not-empty` (harness-tables and pointer-doctor clean).
 
-- [ ] **T11: skills, and the Skills table**
+- [x] **T11: skills, and the Skills table**
 
   **Files:** Create `.claude/skills/justin/skills/team/SKILL.md` (from `SKILL.md.v5`). Replace `.claude/skills/justin/skills/{pause,brief,start}/SKILL.md` (pause from `SKILL.md.v5`), `.claude/skills/justin/.claude-plugin/plugin.json`, `.claude/skills/audit-loop/SKILL.md` (from `SKILL.md.v5`). Delete `.claude/skills/build-team/`. Modify `.claude/skills/merge-and-cleanup/SKILL.md` (`D/.claude/skills/merge-and-cleanup/SKILL.md.delta-notes.md`) and `implement-phase`, `verify-phase`, `review-pr-comments`, `write-arch-doc`, `generate-phase-doc` (`D/.claude/skills/skills.patch-notes.md.v5`). Modify `.claude/CLAUDE.md`: the Skills table and the layout `skills/` lines (`D/.claude/CLAUDE.md.patch-notes.md.v5`, "Lines 230–241" and the `skills/` lines).
 
-  - [ ] Step 1: apply the files and notes. The team SKILL's Placement section and Restart bullet cover temporary worktrees (H1: Claude Code removes unchanged ones; ones with commits stay until the lead's clean-up), so no conditional edit remains.
-  - [ ] Acceptance:
+  - [x] Step 1: apply the files and notes. The team SKILL's Placement section and Restart bullet cover temporary worktrees (H1: Claude Code removes unchanged ones; ones with commits stay until the lead's clean-up), so no conditional edit remains.
+  - [x] Acceptance:
     ```bash
     cd "$W"
     rg -n 'remember:remember|TodoWrite|build-team|team-lead|just run 2>&1|cargo objdump|brew upgrade|agent-memory|agent memory' .claude/skills
@@ -970,3 +970,10 @@ T10: deviations and gate result (2026-10-10):
 - T10: the seven agent files are the drafts verbatim; `team-lead.md` is removed. CLAUDE.md: the layout `agents/` line and the Agents table (with the Model / effort column and the effort note) changed; the "Team & Agent Architecture" opening line ("Single team lead + specialist agents...") is left as is, because the task limited the edit to the table and the layout line.
 - T10: the docs gate shows, beyond `plans-not-empty`: pointer-doctor `.claude/rules/11-teams.md:12 /justin:team` (T11) and `.claude/skills/build-team/SKILL.md:16: agent team-lead is not defined` (T11 deletes build-team); and one repo-paths finding, `.claude/agents/verifier.md:76: path does not exist: scripts/soak-qemu.sh` (the draft's own text naming the pre-R4 script; unresolved, owner call).
 - T10: verifier.md re-worded the pre-R4 soak-script mention (v5 draft named the deleted `scripts/soak-qemu.sh`; repo-paths).
+
+T11: deviations and gate result (2026-10-10):
+- T11: the six full-file drafts (team, pause, brief, start, plugin.json, audit-loop) are copied byte for byte, except two one-line edits that keep T11's own acceptance and the docs gate clean: pause SKILL line 19 no longer names `team-lead` (the `team-` prefix rule already covers it; acceptance 1 greps `team-lead`), and the team SKILL's Name step says "Rename this session to `<team>` (the rename command)" instead of `/rename <team>` (pointer-doctor does not know `/rename`, and `BUILTIN_COMMANDS` is in `tools/`, out of T11's scope).
+- T11: merge-and-cleanup: the delta notes' line numbers were f12dbc7's; anchored by text. Also dropped the sentence in check 3 about the remember plugin's `.remember/remember.md` fallback (remember is retired). Add 1 and Add 2 went at the end of Step 2; Add 3 at the end of Step 6; Add 4 is the new Step 8, the report Step 9, and Step 1's "Steps 5 to 8" became "Steps 5 to 9".
+- T11: implement-phase: the Phase 3 plan copy uses the dated `*-jl-phase-$ARGUMENTS-*.md` name from the notes, so the plan globs elsewhere in the skill follow it; steps after 6 are renumbered 7–19 (the notes keep "step 10" but deleting steps 4–9 leaves a gap). Phase 7's `gh pr create` gets `--draft` and the team label; step 18 is `gh pr ready` then `/review-pr-comments`.
+- T11: the CLAUDE.md edit touched only the Skills table rows (`/justin:pause`, `/justin:team` added, `/build-team` removed, `/audit-loop`, `/merge-and-cleanup`) and the layout `skills/` lines; the "Team & Agent Architecture" opening, "Document Lifecycle" and "Existing skills reused" stay for T15.
+- T11: docs gate: only `plans-not-empty` new (plus the resolved BOOT_LOG baseline entry); both earlier pointer-doctor findings are gone. Acceptance: first two greps print nothing, `brief doctor pause start team`, description names the five skills, merge-and-cleanup count 5, `EnterPlanMode|ExitPlanMode` count 3, fifth grep nothing, team SKILL count 3. `rg` was missing, so `grep -E` ran with the same patterns.
