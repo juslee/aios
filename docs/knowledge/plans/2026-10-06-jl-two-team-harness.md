@@ -817,6 +817,10 @@ The writer's `git reset --hard <tip>` ran without a permission prompt in that se
 
 **Step 5 writer (2026-10-10):** two of its Bash calls were refused by Claude Code's worktree-isolation check, not by a permission rule: a compound command that set a shell variable to a path under `.git/` ("this command names git in a form too complex to verify that it stays inside the worktree"), and a `sed -i` whose file argument was an unquoted variable ("runs sed with a value computed at runtime (the variable P) where an option may stand ... so what it runs cannot be shown not to be git"). Both were redone as plain commands or with the Read and Edit tools. Recorded in lesson `2026-10-06-jl-isolated-writers-fast-forward.md`.
 
+### T4 review fixes (2026-10-10)
+
+The guard-attacking review of 103047e found two ways the `worker` agent could still write under a denied prefix, and one ordering nit. (1) `target_path` read `file_path` and only fell back to `notebook_path`, so `NotebookEdit` with `file_path: docs/a.md` and `notebook_path: kernel/n.ipynb` was allowed. Fix: every path field present (`file_path`, `notebook_path`) is checked and any one under a prefix denies; a present field that is not a non-empty string, or no field at all, is an error (deny). (2) A leading `~` was joined to `cwd` as a relative name, so `~/<repo>/kernel/src/x.rs` was allowed. Fix: a path whose first component starts with `~` (`~`, `~/...`, `~user/...`) is denied unexpanded, because whether Claude Code expands it is not verified. Nit: `run` now filters by tool name, then agent type (`scope`), then reads paths, so a malformed call from a non-worker gets no decision and the same call from the worker or an unidentified subagent is denied. Tests were written first and failed (5 failures), then passed.
+
 ## Decisions Made
 
 (T0 records the owner's answers to Q1 and Q3–Q7; rulings during execution follow)

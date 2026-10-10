@@ -976,3 +976,108 @@ fn without_the_flag_every_caller_is_still_checked() {
     );
     deny_reason(&guard(&[], &payload, &dir));
 }
+
+/// A checked-tool payload with the given `tool_input`.
+fn tool_call(cwd: &Path, tool: &str, tool_input: Value) -> Value {
+    json!({ "cwd": cwd, "tool_name": tool, "tool_input": tool_input })
+}
+
+#[test]
+fn notebook_edit_checks_both_path_fields_in_either_position() {
+    let dir = repo("both-fields");
+    for (file_path, notebook_path, denied) in [
+        ("docs/a.md", "kernel/n.ipynb", "kernel/n.ipynb"),
+        ("kernel/f.rs", "docs/n.ipynb", "kernel/f.rs"),
+    ] {
+        let payload = tool_call(
+            &dir,
+            "NotebookEdit",
+            json!({ "file_path": file_path, "notebook_path": notebook_path }),
+        );
+        let reason = deny_reason(&guard(&[], &payload, &dir));
+        assert!(reason.contains(&format!("`{denied}`")), "{reason}");
+    }
+    let payload = tool_call(
+        &dir,
+        "NotebookEdit",
+        json!({ "file_path": "docs/a.md", "notebook_path": "docs/n.ipynb" }),
+    );
+    assert_no_decision(&guard(&[], &payload, &dir));
+}
+
+#[test]
+fn an_extra_notebook_path_under_a_denied_prefix_is_denied_for_every_tool() {
+    let dir = repo("extra-notebook");
+    for tool in ["Edit", "Write", "MultiEdit"] {
+        let payload = tool_call(
+            &dir,
+            tool,
+            json!({ "file_path": "docs/a.md", "notebook_path": "kernel/n.ipynb" }),
+        );
+        let reason = deny_reason(&guard(&[], &payload, &dir));
+        assert!(reason.contains("`kernel/n.ipynb`"), "{tool}: {reason}");
+    }
+}
+
+#[test]
+fn an_unreadable_path_field_is_denied_even_beside_a_good_one() {
+    let dir = repo("bad-field");
+    for bad in [json!(5), json!(null), json!(""), json!(["kernel/x"])] {
+        for key in ["file_path", "notebook_path"] {
+            let mut input = json!({ "file_path": "docs/a.md", "notebook_path": "docs/n.ipynb" });
+            input[key] = bad.clone();
+            deny_reason(&guard(&[], &tool_call(&dir, "NotebookEdit", input), &dir));
+        }
+    }
+    // A checked tool with no path field at all.
+    let payload = tool_call(&dir, "Edit", json!({ "old_string": "a" }));
+    deny_reason(&guard(&[], &payload, &dir));
+}
+
+#[test]
+fn a_leading_tilde_is_denied_not_joined_to_the_cwd() {
+    let dir = repo("tilde");
+    for path in [
+        "~",
+        "~/kernel/src/x.rs",
+        "~user/x",
+        "~/",
+        "~root/kernel/y.rs",
+    ] {
+        let reason = deny_reason(&guard(&[], &edit(&dir, path), &dir));
+        assert!(reason.contains('~'), "{path}: {reason}");
+    }
+    let payload = tool_call(
+        &dir,
+        "NotebookEdit",
+        json!({ "file_path": "docs/a.md", "notebook_path": "~/n.ipynb" }),
+    );
+    deny_reason(&guard(&[], &payload, &dir));
+    // A tilde that is not the first component is an ordinary name.
+    assert_no_decision(&guard(&[], &edit(&dir, "docs/~/a.md"), &dir));
+}
+
+#[test]
+fn the_agent_decision_comes_before_path_extraction() {
+    let dir = repo("order");
+    let malformed = |agent_type: Option<&str>| {
+        let mut v = tool_call(&dir, "Edit", json!({ "old_string": "a" }));
+        if let Some(t) = agent_type {
+            v["agent_type"] = json!(t);
+            v["agent_id"] = json!("a1");
+        }
+        v
+    };
+    assert_no_decision(&guard(WORKER, &malformed(Some("kernel-dev")), &dir));
+    assert_no_decision(&guard(WORKER, &malformed(None), &dir));
+    deny_reason(&guard(WORKER, &malformed(Some("worker")), &dir));
+    // Same for a tilde path from a non-worker.
+    let mut tilde = edit(&dir, "~/x");
+    tilde["agent_type"] = json!("kernel-dev");
+    tilde["agent_id"] = json!("a1");
+    assert_no_decision(&guard(WORKER, &tilde, &dir));
+    // An unidentified subagent is still denied.
+    let mut unidentified = malformed(None);
+    unidentified["agent_id"] = json!("a1");
+    deny_reason(&guard(WORKER, &unidentified, &dir));
+}

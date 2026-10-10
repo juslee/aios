@@ -4,11 +4,18 @@
 //!
 //! `--agent-type` (repeatable) limits the guard to the named agent types, compared
 //! exactly (case-sensitive). Another type, or the main thread of a session not
-//! launched with `--agent`, gets no decision, before any path is resolved. The
+//! launched with `--agent`, gets no decision, before any path is read. The
 //! filter fails closed on identity: a payload with an `agent_id` or an `agent_type`
 //! key whose `agent_type` is missing, empty or not a string cannot be told from the
 //! guarded agent, so it is denied wherever it writes. An empty `--agent-type` value
 //! is a registration mistake and an error, so it denies instead of guarding nobody.
+//!
+//! The tool name and then the agent type are decided first, so a malformed call from
+//! another tool or agent type is skipped, not denied. After that, every path field of
+//! the call (`file_path` and `notebook_path`) is checked, and the call is denied if any
+//! one is under a prefix. A present field that is not a non-empty string, or a checked
+//! tool with no path field, is an error. A path whose first component starts with `~`
+//! is denied unexpanded: whether the tool expands it is not known.
 //!
 //! The target is resolved before it is compared: a relative path is joined to the
 //! input `cwd` and walked component by component, each symlink replaced by its
@@ -55,34 +62,45 @@ const CHECKED_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 /// unresolvable (the kernel allows 40 per lookup).
 const MAX_LINK_DEPTH: usize = 40;
 
-/// The path a checked tool is about to write: `tool_input.file_path`, or
-/// `tool_input.notebook_path` when that is absent. `Ok(None)` for any other tool;
-/// an error when a checked tool names no path.
-pub fn target_path(input: &HookInput) -> Result<Option<&str>> {
-    let Some(tool) = input.tool_name.as_deref() else {
-        return Ok(None);
-    };
-    if !CHECKED_TOOLS.contains(&tool) {
-        return Ok(None);
+/// The `tool_input` fields that name a file a checked tool writes. `NotebookEdit`
+/// writes `notebook_path`; the others write `file_path`. Every one present is
+/// checked, whatever the tool, so a second field cannot carry the write past a guard
+/// that read only the first.
+const PATH_FIELDS: [&str; 2] = ["file_path", "notebook_path"];
+
+/// Whether `input` is a call to a tool whose target path this hook checks.
+fn is_checked_tool(input: &HookInput) -> bool {
+    input
+        .tool_name
+        .as_deref()
+        .is_some_and(|tool| CHECKED_TOOLS.contains(&tool))
+}
+
+/// Every path a checked tool is about to write: each of `PATH_FIELDS` present in
+/// `tool_input`. An error when a present field is not a non-empty string, or when no
+/// field is present.
+fn target_paths(input: &HookInput) -> Result<Vec<&str>> {
+    let tool = input.tool_name.as_deref().unwrap_or_default();
+    let mut paths = Vec::new();
+    for field in PATH_FIELDS {
+        if let Some(value) = input.tool_input.get(field) {
+            match value.as_str() {
+                Some(path) if !path.is_empty() => paths.push(path),
+                _ => bail!("{tool} has a {field} that is not a non-empty string"),
+            }
+        }
     }
-    match input
-        .tool_str("file_path")
-        .or_else(|| input.tool_str("notebook_path"))
-    {
-        Some(path) => Ok(Some(path)),
-        None => bail!("{tool} carries neither file_path nor notebook_path"),
+    if paths.is_empty() {
+        bail!("{tool} carries neither file_path nor notebook_path");
     }
+    Ok(paths)
 }
 
 pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> {
-    let Some(target) = target_path(input)? else {
+    // Filter first: another tool, or another agent type, never has its path read.
+    if !is_checked_tool(input) {
         return Ok(None);
-    };
-    let prefixes = args
-        .deny
-        .iter()
-        .map(|raw| normalise_prefix(raw))
-        .collect::<Result<Vec<_>>>()?;
+    }
     match scope(&args.agent_type, input)? {
         Scope::Check => {}
         Scope::Skip => return Ok(None),
@@ -95,13 +113,45 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
             ))))
         }
     }
+    let targets = target_paths(input)?;
+    let prefixes = args
+        .deny
+        .iter()
+        .map(|raw| normalise_prefix(raw))
+        .collect::<Result<Vec<_>>>()?;
     let cwd = input
         .cwd
         .as_deref()
         .map(PathBuf::from)
         .or_else(|| ctx.process_cwd.clone())
         .context("the hook input has no cwd and the process has no working directory")?;
+    for target in targets {
+        if let Some(mut reason) = check_target(target, &cwd, &prefixes)? {
+            if let Some(extra) = args.reason.as_deref().filter(|extra| !extra.is_empty()) {
+                reason.push(' ');
+                reason.push_str(extra);
+            }
+            return Ok(Some(pre_tool_use_deny(&reason)));
+        }
+    }
+    Ok(None)
+}
+
+/// The deny reason for one target path, or `None` when it is allowed.
+fn check_target(target: &str, cwd: &Path, prefixes: &[String]) -> Result<Option<String>> {
     let target = Path::new(target);
+    if let Some(Component::Normal(first)) = target.components().next() {
+        if first.as_encoded_bytes().starts_with(b"~") {
+            // A shell expands a leading `~` to a home directory; this guard would join
+            // it to `cwd` as a relative name. Whether the tool expands it is not known,
+            // so the path cannot be placed and is denied.
+            return Ok(Some(format!(
+                "`{}` starts with `~`, which path-guard cannot place (it may mean a home \
+                 directory); give an absolute path or one relative to the working directory.",
+                target.display()
+            )));
+        }
+    }
     let joined = if target.is_absolute() {
         target.to_path_buf()
     } else {
@@ -128,7 +178,7 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
         )
     })?;
     let folded = relative.to_ascii_lowercase();
-    let mut reason = if folded.split('/').any(|part| part == ".git") {
+    let reason = if folded.split('/').any(|part| part == ".git") {
         // A `.git` entry at any depth decides where git puts the repository root:
         // the gitfile of a linked worktree, the git directory, or a gitfile planted
         // in a subdirectory so the root lands below a multi-component deny prefix.
@@ -148,11 +198,7 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
     } else {
         return Ok(None);
     };
-    if let Some(extra) = args.reason.as_deref().filter(|extra| !extra.is_empty()) {
-        reason.push(' ');
-        reason.push_str(extra);
-    }
-    Ok(Some(pre_tool_use_deny(&reason)))
+    Ok(Some(reason))
 }
 
 /// Who this call is for, under `--agent-type`.
@@ -409,9 +455,9 @@ mod tests {
     use super::*;
     use crate::cmd::hook::parse_input;
 
-    fn target(json: &str) -> Result<Option<String>> {
+    fn targets(json: &str) -> Result<Vec<String>> {
         let input = parse_input(json.as_bytes()).unwrap();
-        target_path(&input).map(|path| path.map(str::to_string))
+        target_paths(&input).map(|paths| paths.into_iter().map(str::to_string).collect())
     }
 
     #[test]
@@ -429,34 +475,44 @@ mod tests {
 
     #[test]
     fn checked_tools_yield_their_path() {
-        let got = target(r#"{"tool_name":"Edit","tool_input":{"file_path":"/r/a.rs"}}"#);
-        assert_eq!(got.unwrap().as_deref(), Some("/r/a.rs"));
+        let got = targets(r#"{"tool_name":"Edit","tool_input":{"file_path":"/r/a.rs"}}"#);
+        assert_eq!(got.unwrap(), ["/r/a.rs"]);
         let got =
-            target(r#"{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"/r/n.ipynb"}}"#);
-        assert_eq!(got.unwrap().as_deref(), Some("/r/n.ipynb"));
+            targets(r#"{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"/r/n.ipynb"}}"#);
+        assert_eq!(got.unwrap(), ["/r/n.ipynb"]);
     }
 
     #[test]
-    fn file_path_wins_over_notebook_path() {
-        let got = target(
+    fn every_present_path_field_is_yielded() {
+        let got = targets(
             r#"{"tool_name":"Write","tool_input":{"file_path":"/r/a","notebook_path":"/r/b"}}"#,
         );
-        assert_eq!(got.unwrap().as_deref(), Some("/r/a"));
+        assert_eq!(got.unwrap(), ["/r/a", "/r/b"]);
     }
 
     #[test]
     fn a_checked_tool_without_a_path_is_an_error() {
-        let err = target(r#"{"tool_name":"MultiEdit","tool_input":{}}"#).unwrap_err();
+        let err = targets(r#"{"tool_name":"MultiEdit","tool_input":{}}"#).unwrap_err();
         assert!(err.to_string().contains("MultiEdit"), "{err}");
     }
 
     #[test]
-    fn other_tools_are_not_checked() {
-        assert_eq!(
-            target(r#"{"tool_name":"Read","tool_input":{}}"#).unwrap(),
-            None
-        );
-        assert_eq!(target(r#"{}"#).unwrap(), None);
+    fn a_present_field_that_is_not_a_non_empty_string_is_an_error() {
+        for bad in ["5", "null", "\"\"", "[\"/r/a\"]"] {
+            let json = format!(
+                r#"{{"tool_name":"Edit","tool_input":{{"file_path":"/r/a","notebook_path":{bad}}}}}"#
+            );
+            assert!(targets(&json).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn only_checked_tools_are_checked() {
+        let read = parse_input(br#"{"tool_name":"Read","tool_input":{}}"#).unwrap();
+        assert!(!is_checked_tool(&read));
+        assert!(!is_checked_tool(&parse_input(b"{}").unwrap()));
+        let edit = parse_input(br#"{"tool_name":"Edit","tool_input":{}}"#).unwrap();
+        assert!(is_checked_tool(&edit));
     }
 
     #[test]
