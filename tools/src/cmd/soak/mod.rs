@@ -248,9 +248,10 @@ and CLEAN rate, and the pair report:
     one-sided p < 0.05); with more than one pair, a Bonferroni note;
   - Gate 1 IPC: each arm's mean ipc_avg_us over its CLEAN boots, and its
     G1PASS count;
-  - Tripwire per arm: the non-CLEAN boots with neither a complete tripwire
-    line nor a fatal report (meaningful only for kernels that print tripwire
-    lines; "n/a" for an arm with none), and the tripwire counters by arm;
+  - Tripwire per arm: the conclusive non-CLEAN boots with neither a
+    complete tripwire line nor a fatal report (INCONCLUSIVE boots are not
+    counted; meaningful only for kernels that print tripwire lines; "n/a"
+    for an arm with none), and the tripwire counters by arm;
   - Non-CLEAN boots: round, arm, class, last tick, first fatal line or
     detail, tripwire source and log.
 Exit status: 0 when every boot ran, whatever the classes; 1 with

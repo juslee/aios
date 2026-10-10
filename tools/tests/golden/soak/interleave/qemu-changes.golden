@@ -135,12 +135,12 @@ Each boot's avg= is whole us, as the kernel truncates it.
 
 ### Tripwire per arm
 
-| Arm | Non-CLEAN boots with neither a complete tripwire line nor a fatal report |
+| Arm | Conclusive non-CLEAN boots with neither a complete tripwire line nor a fatal report |
 |---|---:|
 | A | n/a (no tripwire line in any boot) |
 | B | n/a (no tripwire line in any boot) |
 
-That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every non-CLEAN boot without a fatal report counts.
+That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every conclusive non-CLEAN boot without a fatal report counts. INCONCLUSIVE boots (no kernel result) are never counted.
 
 No boot has a complete `v=1` tripwire line.
 

@@ -485,26 +485,31 @@ fn ipc_section(labels: &[&str], boots: &[Boot]) -> String {
     md
 }
 
-/// R16's count for one arm: its non-CLEAN boots with neither a complete
-/// tripwire line nor a fatal report, or `n/a` when no boot of the arm has a
-/// complete tripwire line.
+/// R16's count for one arm: its conclusive non-CLEAN boots with neither a
+/// complete tripwire line nor a fatal report, or `n/a` when no boot of the arm
+/// has a complete tripwire line. INCONCLUSIVE boots are left out, as in every
+/// other test of the report: they carry no kernel result (the stub never ran,
+/// QEMU was killed by a signal, or the boot was cut short), so counting them
+/// would charge a harness error to the arm's kernel.
 pub fn unexplained(boots: &[Boot], arm: usize) -> String {
     let mine: Vec<&Boot> = boots.iter().filter(|b| b.arm == arm).collect();
     if !mine.iter().any(|b| b.has_line) {
         return "n/a (no tripwire line in any boot)".to_string();
     }
     mine.iter()
-        .filter(|b| b.class != Class::Clean && !b.has_line && !b.fatal())
+        .filter(|b| {
+            !matches!(b.class, Class::Clean | Class::Inconclusive) && !b.has_line && !b.fatal()
+        })
         .count()
         .to_string()
 }
 
 /// The note under R16's count.
-pub const UNEXPLAINED_NOTE: &str = "That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every non-CLEAN boot without a fatal report counts.";
+pub const UNEXPLAINED_NOTE: &str = "That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every conclusive non-CLEAN boot without a fatal report counts. INCONCLUSIVE boots (no kernel result) are never counted.";
 
 /// Section 7: R16's count, then the tripwire counters with arms as columns.
 fn tripwire_section(labels: &[&str], boots: &[Boot]) -> Vec<u8> {
-    let mut md = b"\n### Tripwire per arm\n\n| Arm | Non-CLEAN boots with neither a complete tripwire line nor a fatal report |\n|---|---:|\n".to_vec();
+    let mut md = b"\n### Tripwire per arm\n\n| Arm | Conclusive non-CLEAN boots with neither a complete tripwire line nor a fatal report |\n|---|---:|\n".to_vec();
     for (arm, label) in labels.iter().enumerate() {
         md.extend(row(&[label.to_string(), unexplained(boots, arm)]).into_bytes());
     }
@@ -931,13 +936,15 @@ mod tests {
             boot(0, Class::Degraded, None),
             // Not counted: a fatal report.
             boot(0, Class::Panic, None),
+            // Not counted: no kernel result, so not the kernel's to explain.
+            boot(0, Class::Inconclusive, None),
             // Arm B has no tripwire line in any boot.
             boot(1, Class::WedgeAlive, None),
         ];
         assert_eq!(unexplained(&boots, 0), "2");
         assert_eq!(unexplained(&boots, 1), "n/a (no tripwire line in any boot)");
         let md = text(sections(&LABELS[..2], &boots, &[]));
-        assert!(md.contains("| Arm | Non-CLEAN boots with neither a complete tripwire line nor a fatal report |\n|---|---:|\n| A | 2 |\n| B | n/a (no tripwire line in any boot) |\n"), "{md}");
+        assert!(md.contains("| Arm | Conclusive non-CLEAN boots with neither a complete tripwire line nor a fatal report |\n|---|---:|\n| A | 2 |\n| B | n/a (no tripwire line in any boot) |\n"), "{md}");
         assert!(md.contains(UNEXPLAINED_NOTE), "{md}");
         assert!(
             md.contains("No boot has a complete `v=1` tripwire line.\n"),
