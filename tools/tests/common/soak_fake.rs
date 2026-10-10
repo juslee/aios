@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use aios_tools::cmd::soak::report::TSV_HEADER;
 use regex::bytes::Regex;
 
 use super::isolated;
@@ -97,7 +98,7 @@ exit 1
 ";
 
 /// Gate 1 completes and the heartbeat advances: CLEAN if QEMU runs to the limit.
-const CLEAN_TAIL: &str = r"printf '[bench] === Gate 1 Benchmark ===\r\nGate 1: IPC < 10 us: PASS\r\n=== Gate 1 Complete ===\r\n[heartbeat] tick=1000\r\n'
+const CLEAN_TAIL: &str = r"printf '[bench] === Gate 1 Benchmark ===\r\n[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)\r\nGate 1: IPC < 10 us: PASS\r\n=== Gate 1 Complete ===\r\n[heartbeat] tick=1000\r\n'
 ";
 
 /// The heartbeat goes on advancing until QEMU is stopped.
@@ -634,11 +635,12 @@ pub fn normalize(data: &[u8], root: &Path) -> Vec<u8> {
         text = re.replace_all(&text, *to).into_owned();
     }
     // summary.tsv rows: the stall, elapsed, load1 and harness-time columns.
+    let tsv_columns = TSV_HEADER.split(|&b| b == b'\t').count();
     let lines: Vec<Vec<u8>> = text
         .split(|&b| b == b'\n')
         .map(|line| {
             let mut cells: Vec<&[u8]> = line.split(|&b| b == b'\t').collect();
-            if cells.len() == 22 && cells[0] != b"run" {
+            if cells.len() == tsv_columns && cells[0] != b"run" {
                 for i in [5, 6, 8, 9, 10, 11, 12, 13] {
                     cells[i] = b"<N>";
                 }

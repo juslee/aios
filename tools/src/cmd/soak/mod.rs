@@ -90,19 +90,26 @@ save each boot's serial log, and classify every boot as exactly one of:
                   --stall-secs after the boot's last progress (kernel start,
                   heartbeat, bench start), so the boot was cut short rather
                   than shown to be stuck
+  DEGRADED      CLEAN by every other rule, but the Gate 1 IPC line
+                ("[bench] IPC round-trip (same core): avg=N us, ...
+                (N iters)", the first one in the log) reports fewer than
+                10000 iterations, is missing, or is cut before its count.
+                The count is shown where a CLEAN boot shows its detail, and
+                in summary.tsv's ipc_iters column ("-" when unreadable)
   CLEAN         no fatal report; the heartbeat advanced past tick 0 and a new
                 heartbeat arrived within the last --stall-secs of the run;
-                "=== Gate 1 Complete ===" was printed; and in gpu mode the
-                GpuReady, InputReady and "display handoff complete" markers
-                were printed
+                "=== Gate 1 Complete ===" was printed; the Gate 1 IPC line
+                reports 10000 iterations; and in gpu mode the GpuReady,
+                InputReady and "display handoff complete" markers were
+                printed
 
 Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC-LOCK/PANIC/EXCEPTION
 > QEMU killed by a signal (INCONCLUSIVE) > WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE
-(cut short) > CLEAN. When a log holds several fatal reports, the earliest one
-decides the class (later ones are usually fallout, e.g. a data abort after a
-panic, so a "lock re-entry:" panic after an exception stays EXCEPTION); the
-count is kept in the detail. Soaks from before crash-fix step 1a report
-both wedge classes as WEDGE, and PANIC-LOCK as PANIC.
+(cut short) > DEGRADED > CLEAN. When a log holds several fatal reports, the
+earliest one decides the class (later ones are usually fallout, e.g. a data
+abort after a panic, so a "lock re-entry:" panic after an exception stays
+EXCEPTION); the count is kept in the detail. Soaks from before crash-fix step 1a report
+both wedge classes as WEDGE, PANIC-LOCK as PANIC, and DEGRADED as CLEAN.
 
 Heartbeat timing comes from the harness: it polls the log every second and
 appends a "[soak] meta" line recording when the kernel started, when the first
@@ -141,8 +148,10 @@ relative out= and --classify paths resolve against that directory. The soak
 boots the git checkout that contains that directory.
 
 Output directory: run-NN.log (raw serial output plus a trailing "[soak] meta"
-line), summary.tsv (one row per boot), summary.md (counts, 95% interval for
-the CLEAN rate, per-boot table) and build.log. The ESP snapshot and the fresh
+line), summary.tsv (one row per boot; its last two columns are the Gate 1
+IPC average in whole us, as the kernel truncates it, and the iteration
+count), summary.md (counts, 95% interval for the CLEAN rate, per-boot table)
+and build.log. The ESP snapshot and the fresh
 data disks live in a private .scratch.* subdirectory that is removed at exit.
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.

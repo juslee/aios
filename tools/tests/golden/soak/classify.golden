@@ -114,3 +114,11 @@ lock-reentry-two-cpus	PANIC-LOCK	0	1	-	-	-	after heartbeat tick 0; 2 fatal repor
 lock-reentry-split-by-output	PANIC-LOCK	0	1	-	-	-	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[   6.7] [2] INFO  Ipc   interleaved output from CPU 2	-	-	-
 lock-reentry-after-exception	EXCEPTION	0	1	-	-	-	after heartbeat tick 0; 2 fatal reports	EXCEPTION[CPU 1]: Synchronous exception / ESR=0x96000004 EC=0x25 FAR=0x0000000000000010 ELR=0xffff000000091234	-	-	-
 lock-reentry-after-other-panic	PANIC	0	1	-	-	-	after heartbeat tick 0; 2 fatal reports	PANIC: panicked at kernel/src/mm/frame.rs:51:9: / out of frames	-	-	-
+ipc-10000-iters-clean	CLEAN	1000	2	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-0-iters-gate1-fail-degraded	DEGRADED	1000	2	1	EL1,BOOT,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-9999-iters-degraded	DEGRADED	1000	2	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-no-line-degraded	DEGRADED	1000	2	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-line-cut-degraded	DEGRADED	2000	3	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-0-iters-log-only-degraded	DEGRADED	1000	2	-	G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	-
+ipc-first-line-decides-degraded	DEGRADED	1000	3	1	G1DONE	-	guest booted 2 times	-	-	-	-
+ipc-0-iters-pczero-stays-fatal	PCZERO	1000	2	24	EL1,BOOT,G1PASS,G1DONE	no	after heartbeat tick 1000	EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete

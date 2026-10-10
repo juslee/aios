@@ -366,9 +366,9 @@ print_soak() { # $1 = label, $2 = run dir, $3 = worktree, $4 = mtime
                 if (n == 0) { print "  - summary.tsv has no rows yet"; exit }
                 # A run from before crash-fix step 1a records WEDGE, not WEDGE-STUCK/-ALIVE.
                 old = c["WEDGE"] ? sprintf(", WEDGE %d", c["WEDGE"]) : ""
-                printf "  - %s mode%s: CLEAN %d/%d, PCZERO %d, PANIC-LOCK %d, PANIC %d, EXCEPTION %d, WEDGE-STUCK %d, WEDGE-ALIVE %d%s\n",
+                printf "  - %s mode%s: CLEAN %d/%d, PCZERO %d, PANIC-LOCK %d, PANIC %d, EXCEPTION %d, WEDGE-STUCK %d, WEDGE-ALIVE %d, DEGRADED %d%s\n",
                     mode, partial, c["CLEAN"], n, c["PCZERO"], c["PANIC-LOCK"], c["PANIC"], c["EXCEPTION"],
-                    c["WEDGE-STUCK"], c["WEDGE-ALIVE"], old
+                    c["WEDGE-STUCK"], c["WEDGE-ALIVE"], c["DEGRADED"], old
             }' "$d/summary.tsv"
     elif [ -f "$d/summary.md" ]; then
         grep -m 1 '^CLEAN rate:' "$d/summary.md" | sed 's/^/  - /'

@@ -8,10 +8,13 @@
 //!   `AIOS_BLESS_GOLDENS=1` rewrites it from aios.
 //! - `classify_differential_against_oracle` is the fold differential: on every
 //!   case, `base_line()` (the line with the base class, WEDGE-STUCK and
-//!   WEDGE-ALIVE read as WEDGE, PANIC-LOCK as PANIC) is byte-identical to the
-//!   oracle's line. So crash-fix step 1a's refinements changed nothing else.
+//!   WEDGE-ALIVE read as WEDGE, PANIC-LOCK as PANIC, DEGRADED as CLEAN) is
+//!   byte-identical to the oracle's line. So crash-fix step 1a's refinements
+//!   changed nothing else.
 //! - `line_and_base_line_differ_in_the_class_only` checks that `line()` and
 //!   `base_line()` differ in field 1 alone, on every case.
+//! - `ipc_iterations_match_the_kernel_bench` keeps the classifier's CLEAN
+//!   threshold equal to `IPC_ITERATIONS` in `kernel/src/bench.rs`.
 //! - `classify_differential_on_real_logs` (ignored) runs the fold differential
 //!   for every `*.log` but `build.log` under the directories in `AIOS_SOAK_REAL_LOGS`
 //!   (colon-separated; real soak logs are never committed, owner decision
@@ -21,7 +24,8 @@
 
 mod common;
 
-use aios_tools::cmd::soak::classify::{classify, Class};
+use aios_tools::cmd::soak::classify::{classify, Class, IPC_ITERATIONS};
+use common::fixture::repo_root;
 use common::soak::{check_golden, oracle_classify, synthetic_cases, write_cases};
 use common::unique_dir;
 use std::collections::{BTreeMap, HashMap};
@@ -46,7 +50,7 @@ fn class_field(line: &[u8]) -> String {
 }
 
 /// A class name read as its base class: WEDGE-STUCK and WEDGE-ALIVE as WEDGE,
-/// PANIC-LOCK as PANIC; the script's names as themselves.
+/// PANIC-LOCK as PANIC, DEGRADED as CLEAN; the script's names as themselves.
 fn fold(name: &str) -> &str {
     Class::from_name(name).map_or(name, |c| c.base().name())
 }
@@ -54,7 +58,7 @@ fn fold(name: &str) -> &str {
 #[test]
 fn corpus_covers_every_class_and_stays_public_safe() {
     let cases = synthetic_cases();
-    assert_eq!(cases.len(), 116, "update this count with the corpus");
+    assert_eq!(cases.len(), 124, "update this count with the corpus");
     for class in Class::ALL {
         let n = cases
             .iter()
@@ -73,6 +77,27 @@ fn corpus_covers_every_class_and_stays_public_safe() {
     assert!(
         !text.windows(6).any(|w| w == b"/home/"),
         "a local path in the corpus"
+    );
+}
+
+#[test]
+fn ipc_iterations_match_the_kernel_bench() {
+    let path = repo_root().join("kernel/src/bench.rs");
+    let text = std::fs::read_to_string(&path).expect("kernel/src/bench.rs");
+    let decl = "const IPC_ITERATIONS: usize = ";
+    let values: Vec<u64> = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix(decl))
+        .map(|v| {
+            let v = v.strip_suffix(';').expect("a `;` after the value");
+            v.replace('_', "").parse().expect("a decimal literal")
+        })
+        .collect();
+    assert_eq!(
+        values,
+        [IPC_ITERATIONS],
+        "{}: one `{decl}...;` declaration, equal to the classifier's",
+        path.display()
     );
 }
 

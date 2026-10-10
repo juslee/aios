@@ -15,7 +15,7 @@ UEFI firmware (fake)
 
 [soak] meta mode=text secs=5 elapsed=<N> qemu_rc=0 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=0 hb_last_advance=<N> hb_max_gap=<N> stall_limit=1 load1=<L>
 --- file summary.tsv
-run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters
 --- argv-1
 -machine
 virt,gic-version=3

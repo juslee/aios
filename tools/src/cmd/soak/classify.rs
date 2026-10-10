@@ -16,9 +16,11 @@
 //! WEDGE splits into WEDGE-STUCK (the heartbeat never printed, stayed at tick 0
 //! or stopped) and WEDGE-ALIVE (the heartbeat kept running but the Gate 1 bench
 //! never completed, or a gpu marker is missing), and a PANIC whose joined first
-//! fatal line contains `lock re-entry:` is PANIC-LOCK. Every other field is the
-//! script's, so [`Classification::base_line`], which prints the base class,
-//! is byte-identical to the script's output line.
+//! fatal line contains `lock re-entry:` is PANIC-LOCK. A boot the script calls
+//! CLEAN is DEGRADED unless its Gate 1 IPC line reports [`IPC_ITERATIONS`]
+//! iterations ([`Ipc`]). Every other field is the script's, so
+//! [`Classification::base_line`], which prints the base class, is
+//! byte-identical to the script's output line.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -46,13 +48,16 @@ pub enum Class {
     WedgeAlive,
     /// Not a result about the kernel.
     Inconclusive,
+    /// Healthy by every other rule, but the Gate 1 IPC line does not report
+    /// [`IPC_ITERATIONS`] iterations, or cannot be read.
+    Degraded,
     /// A healthy boot.
     Clean,
 }
 
 impl Class {
     /// The number of classes.
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
 
     /// Every class, in the order the summary counts them.
     pub const ALL: [Class; Class::COUNT] = [
@@ -63,6 +68,7 @@ impl Class {
         Class::WedgeStuck,
         Class::WedgeAlive,
         Class::Inconclusive,
+        Class::Degraded,
         Class::Clean,
     ];
 
@@ -76,6 +82,7 @@ impl Class {
             Class::WedgeStuck => "WEDGE-STUCK",
             Class::WedgeAlive => "WEDGE-ALIVE",
             Class::Inconclusive => "INCONCLUSIVE",
+            Class::Degraded => "DEGRADED",
             Class::Clean => "CLEAN",
         }
     }
@@ -98,7 +105,7 @@ impl Class {
             Class::Exception => Base::Exception,
             Class::WedgeStuck | Class::WedgeAlive => Base::Wedge,
             Class::Inconclusive => Base::Inconclusive,
-            Class::Clean => Base::Clean,
+            Class::Degraded | Class::Clean => Base::Clean,
         }
     }
 }
@@ -141,6 +148,21 @@ pub struct Reentry {
     pub holder_irqs: Option<Vec<u8>>,
 }
 
+/// The Gate 1 IPC round-trip iterations a CLEAN boot reports:
+/// `IPC_ITERATIONS` in `kernel/src/bench.rs`, which a test keeps in step.
+pub const IPC_ITERATIONS: u64 = 10_000;
+
+/// The first `[bench] IPC round-trip (same core):` line's figures. A field is
+/// `None` when the boot printed no such line, or the line (cut short, or broken
+/// up by another CPU's output) does not carry it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Ipc {
+    /// `avg=`: the mean round trip in whole µs, as the kernel truncates it.
+    pub avg_us: Option<u64>,
+    /// `(N iters)`: the round trips the bench completed.
+    pub iters: Option<u64>,
+}
+
 /// One classified boot: the eleven fields of the awk program's output line,
 /// with the class refined, plus what step 1a parses beside them.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +187,8 @@ pub struct Classification {
     pub info: [Vec<u8>; 3],
     /// The `lock re-entry:` message's fields, for a PANIC-LOCK only.
     pub reentry: Option<Reentry>,
+    /// The Gate 1 IPC figures, read whatever the class.
+    pub ipc: Ipc,
 }
 
 impl Classification {
@@ -220,11 +244,28 @@ static ANSI: LazyLock<Regex> = LazyLock::new(|| re(r"\x1b\[[0-9;]*[A-Za-z]"));
 static REENTRY_LOCK: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Z][A-Z0-9_]*(\[[0-9]+\])?"));
 static REENTRY_CTX: LazyLock<Regex> = LazyLock::new(|| re(r" ctx=([a-z][a-z-]*)"));
 static REENTRY_IRQS: LazyLock<Regex> = LazyLock::new(|| re(r" holder_irqs=(on|off)\b"));
+static IPC_AVG: LazyLock<Regex> = LazyLock::new(|| re(r"^avg=([0-9]+) us\b"));
+static IPC_ITERS: LazyLock<Regex> = LazyLock::new(|| re(r" \(([0-9]+) iters\)"));
 
 const META: &[u8] = b"[soak] meta ";
 const ELR_ZERO: &[u8] = b"ELR=0x0000000000000000";
 const INST_ABORT_ZERO: &[u8] = b"Instruction Abort at 0x0000000000000000";
 const REENTRY: &[u8] = b"lock re-entry: ";
+const IPC_LINE: &[u8] = b"[bench] IPC round-trip (same core): ";
+
+/// The figures of an IPC line, from `msg`, the text after its
+/// [`IPC_LINE`] prefix. A number too large for `u64` is unreadable.
+fn ipc_of(msg: &[u8]) -> Ipc {
+    let number = |r: &Regex| {
+        r.captures(msg)
+            .and_then(|c| c.get(1))
+            .and_then(|m| std::str::from_utf8(m.as_bytes()).ok()?.parse().ok())
+    };
+    Ipc {
+        avg_us: number(&IPC_AVG),
+        iters: number(&IPC_ITERS),
+    }
+}
 
 /// The fields of the `lock re-entry:` message in a PANIC's joined first fatal
 /// line, or `None` when the line has no such message.
@@ -315,6 +356,7 @@ struct Scan {
     gpu: bool,
     input: bool,
     handoff: bool,
+    ipc: Option<Ipc>,
 }
 
 impl Default for Scan {
@@ -346,6 +388,7 @@ impl Default for Scan {
             gpu: false,
             input: false,
             handoff: false,
+            ipc: None,
         }
     }
 }
@@ -410,6 +453,11 @@ impl Scan {
         }
         if contains(line, b"display handoff complete") {
             self.handoff = true;
+        }
+        if self.ipc.is_none() {
+            if let Some(p) = find(line, IPC_LINE) {
+                self.ipc = Some(ipc_of(&line[p + IPC_LINE.len()..]));
+            }
         }
 
         // Fatal reports. The exception and panic handlers print without a lock,
@@ -735,7 +783,14 @@ impl Scan {
             class = Class::WedgeAlive;
             note(format!("gpu markers missing: {}", missing.join(",")).into_bytes());
         } else {
-            class = Class::Clean;
+            // Decided last, so it never masks a fatal report, a wedge or a cut
+            // short boot, and it adds no note: `detail` stays the script's.
+            let ipc = self.ipc.unwrap_or_default();
+            class = if ipc.iters == Some(IPC_ITERATIONS) {
+                Class::Clean
+            } else {
+                Class::Degraded
+            };
             if !timing {
                 note(
                     b"log-only: no harness timing, a late heartbeat stall is undetectable".to_vec(),
@@ -794,6 +849,7 @@ impl Scan {
             first: dash(self.first),
             info: [dash(i1), dash(i2), dash(i3)],
             reentry,
+            ipc: self.ipc.unwrap_or_default(),
         }
     }
 }
@@ -1077,6 +1133,7 @@ mod tests {
                 "WEDGE-STUCK",
                 "WEDGE-ALIVE",
                 "INCONCLUSIVE",
+                "DEGRADED",
                 "CLEAN"
             ]
         );
@@ -1095,10 +1152,100 @@ mod tests {
                 "WEDGE",
                 "WEDGE",
                 "INCONCLUSIVE",
+                "CLEAN",
                 "CLEAN"
             ]
         );
         assert_eq!(Class::from_name("WEDGE"), None);
+    }
+
+    /// The kernel's IPC line for `iters` round trips, CR byte included: 6 µs
+    /// on average, or the 0 the kernel prints without a round trip.
+    fn ipc_line(iters: u64) -> String {
+        let avg = if iters == 0 { 0 } else { 6 };
+        format!(
+            "[bench] IPC round-trip (same core): avg={avg} us, p99=8 us, min=4992 ns, max=754000 ns ({iters} iters)\r\n"
+        )
+    }
+
+    /// A boot that is healthy by every rule but rule 3's IPC count, with
+    /// `ipc` in place of the IPC line.
+    fn healthy(ipc: &str) -> String {
+        format!(
+            "{KERNEL}[heartbeat] tick=0\n[bench] === Gate 1 Benchmark ===\n{ipc}\
+             [bench] Gate 1: IPC < 10 us:           PASS\n[bench] === Gate 1 Complete ===\n\
+             [heartbeat] tick=1000\n{}",
+            footer("text", 74)
+        )
+    }
+
+    #[test]
+    fn a_full_ipc_count_is_clean_and_its_figures_are_read() {
+        let c = classify(healthy(&ipc_line(10_000)).as_bytes(), None);
+        assert_eq!(c.class, Class::Clean);
+        assert_eq!(
+            c.ipc,
+            Ipc {
+                avg_us: Some(6),
+                iters: Some(10_000)
+            }
+        );
+        assert_eq!(c.detail, b"-");
+    }
+
+    #[test]
+    fn a_short_or_unreadable_ipc_count_is_degraded_with_the_script_s_detail() {
+        let cases = [
+            // Step 1b's Gate 1 FAIL: no round trip completed.
+            (ipc_line(0), Some(0), Some(0)),
+            (ipc_line(9_999), Some(6), Some(9_999)),
+            (String::new(), None, None),
+            // Cut before `(N iters)`, by the end of the log or other output.
+            (
+                "[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=49[heartbeat] tick=500\n"
+                    .to_string(),
+                Some(6),
+                None,
+            ),
+            (
+                "[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=7 ns (99999999999999999999 iters)\n"
+                    .to_string(),
+                Some(6),
+                None,
+            ),
+        ];
+        for (ipc, avg_us, iters) in cases {
+            let log = healthy(&ipc);
+            let c = classify(log.as_bytes(), None);
+            assert_eq!(c.class, Class::Degraded, "{log}");
+            assert_eq!(c.ipc, Ipc { avg_us, iters }, "{log}");
+            // The reason lives in `ipc` alone: detail and lb are CLEAN's.
+            assert_eq!((c.detail.as_slice(), c.lb), (&b"-"[..], "-"), "{log}");
+            assert!(String::from_utf8(c.base_line())
+                .expect("ASCII")
+                .starts_with("CLEAN\t"));
+        }
+    }
+
+    #[test]
+    fn the_first_ipc_line_decides_and_no_ipc_line_never_masks_a_failure() {
+        // A guest that booted twice: the first boot's line is the one read.
+        let log = healthy(&format!("{}{}", ipc_line(0), ipc_line(10_000)));
+        let c = classify(log.as_bytes(), None);
+        assert_eq!((c.class, c.ipc.iters), (Class::Degraded, Some(0)));
+        // A fatal report wins over an IPC count of 0 (pr209-fix-198's shape).
+        let log = format!(
+            "{KERNEL}[heartbeat] tick=0\n{}PANIC: panicked at kernel/src/mm/frame.rs:51:9:\nout of frames\n",
+            ipc_line(0)
+        );
+        let c = classify(log.as_bytes(), None);
+        assert_eq!((c.class, c.ipc.iters), (Class::Panic, Some(0)));
+        // So does a wedge: the bench never completed.
+        let log = format!(
+            "{KERNEL}[heartbeat] tick=0\n=== Gate 1 Benchmark ===\n{}[heartbeat] tick=1000\n",
+            ipc_line(0)
+        );
+        assert_eq!(classify(log.as_bytes(), None).class, Class::WedgeAlive);
     }
 
     #[test]

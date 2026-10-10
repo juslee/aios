@@ -26,6 +26,7 @@ run 01/1  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
 | WEDGE-STUCK | 0 | 0% |
 | WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
 | CLEAN | 1 | 100% |
 | **Total** | 1 | |
 
@@ -43,6 +44,7 @@ AIOS kernel booting
 [   0.100000] [0] INFO  Boot  Boot sequence complete
 [heartbeat] tick=0
 [bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 Gate 1: IPC < 10 us: PASS
 === Gate 1 Complete ===
 [heartbeat] tick=1000
@@ -70,6 +72,7 @@ Gate 1: IPC < 10 us: PASS
 | WEDGE-STUCK | 0 | 0% |
 | WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
 | CLEAN | 1 | 100% |
 | **Total** | 1 | |
 
@@ -79,8 +82,8 @@ CLEAN rate: 100% (95% Wilson interval 21%-100%)
 |---:|---|---:|---:|---|---|---|
 | 01 | CLEAN | 1000 | <N> | EL1,BOOT,G1PASS,G1DONE | - | - |
 --- file summary.tsv
-run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log
-01	text	CLEAN	1000	2	<N>	<N>	137	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters
+01	text	CLEAN	1000	2	<N>	<N>	137	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log	6	10000
 --- argv-1
 -machine
 virt,gic-version=3

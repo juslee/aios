@@ -8,12 +8,17 @@
 //! divergence: a load average that is not a number takes part in awk's
 //! `$1 > m` as a string, and here counts as 0 (loads come from /proc/loadavg or
 //! `sysctl`, which print numbers).
+//!
+//! Crash-fix step 1a: where the script printed a CLEAN boot's detail, a
+//! DEGRADED boot shows why it is not CLEAN, from its [`Ipc`] figures, ahead of
+//! that detail; and `summary.tsv` gains the `ipc_avg_us` and `ipc_iters`
+//! columns after the script's 22.
 
 use super::awk::to_num;
-use super::classify::{Base, Class, Classification};
+use super::classify::{Base, Class, Classification, Ipc};
 
 /// `summary.tsv`'s header line.
-pub const TSV_HEADER: &[u8] = b"run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tg1done_s\thb_max_gap_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\n";
+pub const TSV_HEADER: &[u8] = b"run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tg1done_s\thb_max_gap_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\tipc_avg_us\tipc_iters\n";
 
 /// `s` padded with spaces to `width` bytes (`printf %-Ns` under `LC_ALL=C`).
 fn pad(s: &[u8], width: usize) -> Vec<u8> {
@@ -31,10 +36,40 @@ fn stall_text(c: &Classification) -> Vec<u8> {
     }
 }
 
+/// Why a DEGRADED boot is not CLEAN: its IPC iteration count, or that the
+/// count could not be read.
+pub fn ipc_text(ipc: &Ipc) -> String {
+    match ipc.iters {
+        Some(n) => format!("IPC {n} iters"),
+        None => "IPC iteration count unreadable".to_string(),
+    }
+}
+
+/// The text a boot of base class CLEAN shows where the script showed its
+/// detail: the detail itself for CLEAN; for DEGRADED, [`ipc_text`], then the
+/// detail after `; ` unless it is `-`.
+fn clean_text(c: &Classification) -> Vec<u8> {
+    if c.class != Class::Degraded {
+        return c.detail.clone();
+    }
+    let mut text = ipc_text(&c.ipc).into_bytes();
+    if c.detail != b"-" {
+        text.extend_from_slice(b"; ");
+        text.extend_from_slice(&c.detail);
+    }
+    text
+}
+
+/// A number cell of `summary.tsv`, or `-` when unreadable.
+fn opt_cell(v: Option<u64>) -> Vec<u8> {
+    v.map_or_else(|| b"-".to_vec(), |n| n.to_string().into_bytes())
+}
+
 /// `format_result LABEL`: the one-line summary of a classification, with its newline.
 pub fn format_result(label: &[u8], c: &Classification) -> Vec<u8> {
     let text: Vec<u8> = match c.class.base() {
-        Base::Clean | Base::Inconclusive => c.detail.clone(),
+        Base::Clean => clean_text(c),
+        Base::Inconclusive => c.detail.clone(),
         Base::Wedge => [b"lb_last=", c.lb.as_bytes(), b"  ", &c.detail[..]].concat(),
         Base::PcZero | Base::Panic | Base::Exception => {
             [b"lb_last=", c.lb.as_bytes(), b"  ", &c.first[..]].concat()
@@ -179,6 +214,8 @@ pub fn tsv_row(
         c.info[1].clone(),
         c.info[2].clone(),
         log_name.as_bytes().to_vec(),
+        opt_cell(c.ipc.avg_us),
+        opt_cell(c.ipc.iters),
     ];
     let mut row = cells.join(&b'\t');
     row.push(b'\n');
@@ -188,8 +225,9 @@ pub fn tsv_row(
 /// One row of `summary.md`'s per-boot table, with its newline.
 pub fn md_row(idx: &str, c: &Classification) -> Vec<u8> {
     let tail = match c.class.base() {
-        Base::Clean | Base::Wedge | Base::Inconclusive => &c.detail,
-        Base::PcZero | Base::Panic | Base::Exception => &c.first,
+        Base::Clean => clean_text(c),
+        Base::Wedge | Base::Inconclusive => c.detail.clone(),
+        Base::PcZero | Base::Panic | Base::Exception => c.first.clone(),
     };
     [
         b"| ",
@@ -205,7 +243,7 @@ pub fn md_row(idx: &str, c: &Classification) -> Vec<u8> {
         b" | ",
         c.lb.as_bytes(),
         b" | ",
-        &md_cell(tail),
+        &md_cell(&tail),
         b" |\n",
     ]
     .concat()
@@ -321,7 +359,33 @@ mod tests {
             first: b(fields[7]),
             info: [b(fields[8]), b(fields[9]), b(fields[10])],
             reentry: None,
+            ipc: Ipc {
+                avg_us: Some(6),
+                iters: Some(10_000),
+            },
         }
+    }
+
+    /// A DEGRADED boot with `detail` and the IPC iteration count `iters`.
+    fn degraded(detail: &str, iters: Option<u64>) -> Classification {
+        let mut d = c([
+            "DEGRADED",
+            "2000",
+            "3",
+            "1",
+            "EL1,BOOT,G1DONE",
+            "-",
+            detail,
+            "-",
+            "-",
+            "-",
+            "-",
+        ]);
+        d.ipc = Ipc {
+            avg_us: iters.map(|_| 0),
+            iters,
+        };
+        d
     }
 
     fn text(v: Vec<u8>) -> String {
@@ -374,6 +438,25 @@ mod tests {
         assert_eq!(
             text(format_result(b"panic-with-message", &c(PANIC))),
             "panic-with-message  PANIC        tick=1000   stall=-     [-]  lb_last=no  PANIC: panicked at kernel/src/sched/mod.rs:120:9: / assertion failed: thread.state == Ready\n"
+        );
+    }
+
+    #[test]
+    fn a_degraded_boot_shows_its_ipc_count_ahead_of_its_detail() {
+        assert_eq!(
+            text(format_result(b"r", &degraded("-", Some(0)))),
+            "r  DEGRADED     tick=2000   stall=1s    [EL1,BOOT,G1DONE]  IPC 0 iters\n"
+        );
+        assert_eq!(
+            text(format_result(
+                b"r",
+                &degraded("qemu exited before the time limit (rc=0)", None)
+            )),
+            "r  DEGRADED     tick=2000   stall=1s    [EL1,BOOT,G1DONE]  IPC iteration count unreadable; qemu exited before the time limit (rc=0)\n"
+        );
+        assert_eq!(
+            text(md_row("03", &degraded("-", Some(9_999)))),
+            "| 03 | DEGRADED | 2000 | 1s | EL1,BOOT,G1DONE | - | IPC 9999 iters |\n"
         );
     }
 
@@ -441,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn tsv_row_has_22_fields_in_header_order() {
+    fn tsv_row_has_24_fields_in_header_order() {
         let t = BootTiming {
             elapsed: 76,
             rc: 124,
@@ -458,10 +541,19 @@ mod tests {
             "07\ttext\tWEDGE-STUCK\t0\t1\t69\t76\t124\t1.50\t1\t2\t7\t8\t3\tEL1,BOOT\tno\t\
              heartbeat stuck at tick 0 after the Gate 1 bench started\t-\t-\t\
              [   0.200000] [0] INFO  Boot  Boot sequence complete\t\
-             [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark\trun-07.log\n"
+             [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark\trun-07.log\t6\t10000\n"
         );
-        assert_eq!(row.split('\t').count(), 22);
-        assert_eq!(TSV_HEADER.split(|&b| b == b'\t').count(), 22);
+        assert_eq!(row.split('\t').count(), 24);
+        assert_eq!(TSV_HEADER.split(|&b| b == b'\t').count(), 24);
+        // An unreadable figure is `-`.
+        let row = text(tsv_row(
+            "01",
+            "text",
+            &degraded("-", None),
+            &t,
+            "run-01.log",
+        ));
+        assert!(row.ends_with("\trun-01.log\t-\t-\n"), "{row}");
     }
 
     #[test]
@@ -483,7 +575,7 @@ mod tests {
         };
         let head = text(summary_head(
             &info,
-            &[0, 0, 1, 0, 0, 0, 1, 1],
+            &[0, 0, 1, 0, 0, 0, 1, 0, 1],
             3,
             &[b"1.00", b"2.00", b"4.00"],
         ));
@@ -501,7 +593,7 @@ mod tests {
              | Class | Count | Share |\n|---|---:|---:|\n\
              | PCZERO | 0 | 0% |\n| PANIC-LOCK | 0 | 0% |\n| PANIC | 1 | 33% |\n\
              | EXCEPTION | 0 | 0% |\n| WEDGE-STUCK | 0 | 0% |\n| WEDGE-ALIVE | 0 | 0% |\n\
-             | INCONCLUSIVE | 1 | 33% |\n| CLEAN | 1 | 33% |\n\
+             | INCONCLUSIVE | 1 | 33% |\n| DEGRADED | 0 | 0% |\n| CLEAN | 1 | 33% |\n\
              | **Total** | 3 | |\n\n\
              CLEAN rate: 50% (95% Wilson interval 9%-91%) over 2 conclusive boots (1 INCONCLUSIVE left out)\n"
         );

@@ -492,4 +492,40 @@ cases/lock-reentry-after-other-panic.txt  PANIC        tick=0      stall=-     [
     last INFO:   -
                  -
                  -
+cases/ipc-10000-iters-clean.txt  CLEAN        tick=1000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
+cases/ipc-0-iters-gate1-fail-degraded.txt  DEGRADED     tick=1000   stall=1s    [EL1,BOOT,G1DONE]  IPC 0 iters
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+cases/ipc-9999-iters-degraded.txt  DEGRADED     tick=1000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]  IPC 9999 iters
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+cases/ipc-no-line-degraded.txt  DEGRADED     tick=1000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]  IPC iteration count unreadable
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+cases/ipc-line-cut-degraded.txt  DEGRADED     tick=2000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]  IPC iteration count unreadable
+    first fatal: -
+    last INFO:   -
+                 -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
+cases/ipc-0-iters-log-only-degraded.txt  DEGRADED     tick=1000   stall=-     [G1DONE]  IPC 0 iters; log-only: no harness timing, a late heartbeat stall is undetectable
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/ipc-first-line-decides-degraded.txt  DEGRADED     tick=1000   stall=1s    [G1DONE]  IPC 0 iters; guest booted 2 times
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/ipc-0-iters-pczero-stays-fatal.txt  PCZERO       tick=1000   stall=24s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+    first fatal: EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+    last INFO:   -
+                 -
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete
 --- stderr
