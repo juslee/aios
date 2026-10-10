@@ -34,6 +34,7 @@ Classify `git -C <W> diff --name-only <base>..HEAD`, ignoring `*.md` files:
 - **tools**: any path under `tools/`, `scripts/`, `.github/` or `.claude/`, or `justfile` or `.gitattributes`.
 - **both**: kernel and tools paths both present; run both lens sets.
 - **docs**: no path left after ignoring `*.md`.
+- A non-`.md` path that matches none of the lists above counts as **tools**.
 
 The docs lens runs in every mode. Re-detect the mode after every fix round.
 
@@ -42,9 +43,9 @@ The docs lens runs in every mode. Re-detect the mode after every fix round.
 1. Record `head=$(git -C <W> rev-parse HEAD)`. If the other team holds or has requested a quiet window (`qemu-lock.sh status` shows `mode=quiet`, or a `QUIET-REQ` you acknowledged is open), wait for `QUIET-END` before starting the round.
 2. Run the `audit-loop` workflow with the Workflow tool, passing these args:
    - `worktree`, `branch`, `base`, `head`, `mode`, `context`, `gates`;
-   - the ledger from earlier rounds: `fixed` and `refuted` findings.
+   - the ledger from earlier rounds: `fixed` and `refuted` findings (never re-reported), and `uncertain`, the previous round's `uncertain` findings (re-checked, and re-reported if still present).
 3. The workflow returns:
-   - `complete`: false when any lens or skeptic returned nothing, or a finding stayed unverified;
+   - `complete`: false when any lens failed (`lens_failures` is not empty) or a finding stayed unverified (`uncertain` is not empty);
    - `in_diff`: confirmed findings in this branch's diff;
    - `pre_existing`: confirmed findings that were already there;
    - `refuted` and `uncertain`.
@@ -52,7 +53,7 @@ The docs lens runs in every mode. Re-detect the mode after every fix round.
 5. If `in_diff` is not empty, fix it:
    - Spawn the writer for the findings' area (kernel-dev, worker or doc-writer), as `/justin:team` describes, with the findings in its prompt and the commit message `Audit round <N>: fix <summary>`. Split by area when findings span areas.
    - When it reports gates passing, run `/justin:team`'s Placement on its range (a kernel-dev range gets the lead's Fable review before the fast-forward, rule 11), which ends with `git -C <W> push -u origin claude/<branch>`. Then start the next round with its gate output.
-6. Carry `uncertain` findings into the next round's ledger for re-verification.
+6. Pass this round's `uncertain` findings as the next round's `uncertain` arg for re-verification.
 
 ## Stop
 

@@ -22,6 +22,7 @@ const W = A.worktree
 const POOL = 6
 const fixedLedger = Array.isArray(A.fixed) ? A.fixed : []
 const refutedLedger = Array.isArray(A.refuted) ? A.refuted : []
+const uncertainLedger = Array.isArray(A.uncertain) ? A.uncertain : []
 
 const LOCATION = `You run in the main checkout. Use \`git -C ${W}\` for every git command and absolute paths under \`${W}\` for every file. The change is \`${A.base}..${A.head}\` on \`${A.branch}\`. Gate output (sha \`${A.head}\`): \`${A.gates || '(none given)'}\`.
 ${A.context ? `Context and owner decisions that limit scope: ${A.context}` : ''}`
@@ -34,6 +35,7 @@ function ledgerLine(x) {
 
 const MEMO = [
   fixedLedger.length ? `Already fixed in earlier rounds (do not re-report unless the fix is wrong or incomplete, and then say so):\n${fixedLedger.map(x => '- ' + ledgerLine(x)).join('\n')}` : '',
+  uncertainLedger.length ? `Unverified last round: re-check each one, and re-report it if it is still present:\n${uncertainLedger.map(x => '- ' + ledgerLine(x)).join('\n')}` : '',
   refutedLedger.length ? `Already refuted by skeptics (do not re-report without new evidence):\n${refutedLedger.map(x => '- ' + ledgerLine(x)).join('\n')}` : '',
 ].filter(Boolean).join('\n\n')
 
@@ -64,16 +66,9 @@ function docSet() {
 }
 
 function buildLenses() {
-  const kinds = A.mode === 'both' ? ['kernel', 'tools'] : A.mode === 'docs' ? [] : [A.mode]
-  const lenses = [...kinds.flatMap(codeSet), ...docSet()]
-  // Mode both runs the kernel and tools sets; an identical prompt runs once.
-  const seen = new Set()
-  return lenses.filter(l => {
-    const id = `${l.agentType}\n${l.prompt}`
-    if (seen.has(id)) return false
-    seen.add(id)
-    return true
-  })
+  // Mode both uses the kernel set: its rules text is a superset of the tools text, and bugs is identical.
+  const kinds = A.mode === 'docs' ? [] : [A.mode === 'tools' ? 'tools' : 'kernel']
+  return [...kinds.flatMap(codeSet), ...docSet()]
 }
 
 const FINDINGS = {
@@ -86,8 +81,8 @@ const FINDINGS = {
         properties: {
           severity: { type: 'string', enum: ['must-fix', 'should-fix', 'nit'] },
           scope: { type: 'string', enum: ['in-diff', 'pre-existing'] },
-          file: { type: 'string' },
-          line: { type: 'integer' },
+          file: { type: 'string', description: 'path relative to the repository root, never absolute' },
+          line: { type: 'integer', description: 'line number at the head; 0 when the finding has no line' },
           summary: { type: 'string' },
           evidence: { type: 'string' },
           failure_scenario: { type: 'string' },
@@ -114,7 +109,18 @@ const VERDICT = {
 
 const RANK = { 'must-fix': 3, 'should-fix': 2, nit: 1 }
 
-function keyOf(f) { return `${f.file}:${f.line}` }
+// Lenses sometimes return absolute paths under the worktree; the ledger and dedup use repo-relative ones.
+function relFile(f) {
+  const file = String(f.file || '')
+  const prefix = W.endsWith('/') ? W : W + '/'
+  return file.startsWith(prefix) ? file.slice(prefix.length) : file
+}
+
+// Same file, same line, same normalised summary: one finding. Two distinct issues on one line stay apart.
+function keyOf(f) {
+  const s = String(f.summary || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80)
+  return `${f.file}:${f.line}:${s}`
+}
 
 // agent() returns null when the subagent dies (API error, usage limit). A null
 // is never an empty result: retry, and let callers treat a final null as "no
@@ -159,12 +165,14 @@ const lens_failures = []
 const byKey = new Map()
 found.forEach((r, i) => {
   if (!r) { lens_failures.push(lenses[i].key); return }
-  for (const f of r.findings) {
+  for (const raw of r.findings) {
+    const f = { ...raw, file: relFile(raw) }
     const k = keyOf(f)
     const prev = byKey.get(k)
     if (!prev) byKey.set(k, { ...f, lenses: [lenses[i].key] })
     else {
-      prev.lenses.push(lenses[i].key)
+      log(`merged duplicate ${k} from ${lenses[i].key} into ${prev.lenses.join('+')}`)
+      if (!prev.lenses.includes(lenses[i].key)) prev.lenses.push(lenses[i].key)
       if ((RANK[f.severity] || 0) > (RANK[prev.severity] || 0)) {
         Object.assign(prev, { severity: f.severity, summary: f.summary, evidence: f.evidence, failure_scenario: f.failure_scenario, fix: f.fix })
       }
@@ -200,6 +208,7 @@ fresh.forEach((f, i) => {
   const detail = { ...f, votes: vs.map(x => ({ verdict: x.verdict, scope: x.scope, reachable: x.reachable, reason: x.reason, evidence: x.evidence })), skeptics_answered: vs.length, skeptics_asked: asked }
   if (count('CONFIRMED') >= need) {
     const confirming = vs.filter(x => x.verdict === 'CONFIRMED')
+    // A tie (for example 1 of 2 confirming skeptics) goes to pre-existing: an unfixed real defect becomes an issue, not a branch edit.
     const inDiffN = confirming.filter(x => x.scope === 'in-diff').length
     ;(inDiffN * 2 > confirming.length ? in_diff : pre_existing).push(detail)
   } else if (count('REFUTED') >= need) {
