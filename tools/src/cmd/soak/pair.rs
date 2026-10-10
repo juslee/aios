@@ -928,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn the_r16_count_and_its_label() {
+    fn the_unexplained_non_clean_count_and_its_label() {
         let mut lined = boot(0, Class::Clean, None);
         lined.has_line = true;
         let boots = vec![

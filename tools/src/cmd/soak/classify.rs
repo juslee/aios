@@ -254,7 +254,7 @@ static ANSI: LazyLock<Regex> = LazyLock::new(|| re(r"\x1b\[[0-9;]*[A-Za-z]"));
 // a token without its follower may be cut short and is not read.
 static REENTRY_LOCK: LazyLock<Regex> =
     LazyLock::new(|| re(r"^([A-Z][A-Z0-9_]*)(\[[0-9]+\])? on CPU "));
-static REENTRY_CTX: LazyLock<Regex> = LazyLock::new(|| re(r" ctx=([^ \t]+) "));
+static REENTRY_CTX: LazyLock<Regex> = LazyLock::new(|| re(r" ctx=([^ \t]+) holder="));
 static REENTRY_IRQS: LazyLock<Regex> = LazyLock::new(|| re(r" holder_irqs=(on|off)\b"));
 static IPC_AVG: LazyLock<Regex> = LazyLock::new(|| re(r"^avg=([0-9]+) us\b"));
 static IPC_ITERS: LazyLock<Regex> = LazyLock::new(|| re(r" \(([0-9]+) iters\)"));
@@ -1136,6 +1136,11 @@ mod tests {
             (
                 "lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq[heartbeat] tick=1000",
                 Some(b"CURRENT_THREAD[0]".to_vec()),
+                None,
+            ),
+            (
+                "lock re-entry: THREAD_TABLE on CPU 0 ctx=irq  ESR=0x96000004 EC=0x25",
+                Some(b"THREAD_TABLE".to_vec()),
                 None,
             ),
             ("lock re-entry: THREAD_TAB", None, None),

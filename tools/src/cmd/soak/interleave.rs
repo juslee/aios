@@ -14,14 +14,16 @@
 //! whose `--version` prints nothing, or (unless `--allow-mixed-toolchains`)
 //! arms whose `rust-toolchain.toml` channels differ. With `--no-build` no arm
 //! is built: each boots the ESP image already in its checkout, the arm-base
-//! check covers the checkout's `HEAD`, not that image, and `summary.md`'s
-//! Build row says so. It also refuses a host whose 1-minute load average is above its
-//! CPU count, unless `--ignore-load`: the check runs before the builds, which
-//! raise the load themselves. After each arm's build, its `rustc --version`
-//! must match the first arm's (same override). The QEMU binary's version line
-//! and sha256 and the firmware's sha256 are checked again before and after
-//! every boot: a change stops the soak (exit 2), and a boot during which the
-//! change happened is not counted.
+//! check covers the checkout's `HEAD` and the toolchain checks its pinned
+//! toolchain, not that image or the compiler that built it, and `summary.md`'s
+//! Arm base, Toolchains and Build rows say so. It also refuses a host whose
+//! 1-minute load average is above its CPU count, unless `--ignore-load`: the
+//! check runs before the builds, which raise the load themselves. After each
+//! arm's build, its `rustc --version` must match the first arm's (same
+//! override). The QEMU binary's version line and sha256 and the firmware's
+//! sha256 are checked again before and after every boot: a change stops the
+//! soak (exit 2), and a boot during which the change happened is not counted,
+//! even when a signal cut another probe short.
 //!
 //! The run is report-only: it exits 0 when every boot ran, whatever the
 //! classes, unless `--fail-on-regression` is given and some pair's regression
@@ -266,11 +268,8 @@ struct Fixed {
 }
 
 impl Fixed {
-    /// Why the soak must stop, if QEMU or the firmware changed. A probe that
-    /// could not run (no digest, no version line) while a signal is pending is
-    /// not a change: a terminal Ctrl-C reaches the probe's child too, and the
-    /// caller's pending check stops the soak with the signal instead, as single
-    /// mode does after its probes.
+    /// Why the soak must stop, if QEMU or the firmware changed; see
+    /// [`change_of`] for how the probes combine.
     fn changed(&self, interrupts: &Interrupts) -> Option<&'static str> {
         // Each probe: whether it found the value unchanged, `None` when it could not run.
         let version = host::qemu_version(self.qemu.as_os_str());
@@ -290,15 +289,27 @@ impl Fixed {
                     .map(|s| s == self.firmware_sha),
             ),
         ];
-        for (reason, same) in probes {
-            match same {
-                Some(true) => {}
-                Some(false) => return Some(reason),
-                None if interrupts.pending().is_some() => return None,
-                None => return Some(reason),
-            }
-        }
-        None
+        change_of(&probes, || interrupts.pending().is_some())
+    }
+}
+
+/// The change, if any, that a set of probes found: each probe is a reason and
+/// whether it found its value unchanged (`None` when it could not run). A probe
+/// that found a change wins, whatever the others did. Otherwise a probe that
+/// could not run is a change, unless a signal is pending: a terminal Ctrl-C
+/// reaches the probe's child too, and the caller's pending check stops the soak
+/// with the signal instead, as single mode does after its probes.
+fn change_of(
+    probes: &[(&'static str, Option<bool>)],
+    signal_pending: impl FnOnce() -> bool,
+) -> Option<&'static str> {
+    if let Some((reason, _)) = probes.iter().find(|(_, same)| *same == Some(false)) {
+        return Some(reason);
+    }
+    match probes.iter().find(|(_, same)| same.is_none()) {
+        Some(_) if signal_pending() => None,
+        Some((reason, _)) => Some(reason),
+        None => None,
     }
 }
 
@@ -833,10 +844,16 @@ fn build_and_boot(
 
     let host_line = [&host::uname()[..], b", ", &host::host_cpus(), b" CPUs"].concat();
     let labels = LABELS[..n_arms].join(", ");
-    let toolchains: &[u8] = if req.allow_mixed_toolchains {
-        b"mixed allowed (--allow-mixed-toolchains): the arms' channels and compilers may differ"
-    } else {
-        b"one channel and one rustc for every arm"
+    // Without builds, the check covered each checkout's pinned toolchain, not
+    // the compiler that built the image that boots.
+    let toolchains: &[u8] = match (req.allow_mixed_toolchains, cfg.build) {
+        (true, _) => {
+            b"mixed allowed (--allow-mixed-toolchains): the arms' channels and compilers may differ"
+        }
+        (false, true) => b"one channel and one rustc for every arm",
+        (false, false) => {
+            b"one channel and one rustc for every arm, checked on each checkout's pinned toolchain, not on the compiler that built the ESP image that boots (--no-build)"
+        }
     };
     let arm_base = if base.overridden {
         format!(
@@ -1154,6 +1171,28 @@ fn build_and_boot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_found_change_wins_over_a_probe_a_signal_cut_short() {
+        let qemu = "the QEMU binary changed";
+        let fw = "the firmware changed";
+        // Ctrl-C ended the QEMU digest, but the firmware probe saw a change.
+        assert_eq!(
+            change_of(&[(qemu, None), (fw, Some(false))], || true),
+            Some(fw)
+        );
+        // A probe that could not run is no change while a signal is pending,
+        // and a change otherwise.
+        assert_eq!(change_of(&[(qemu, None), (fw, Some(true))], || true), None);
+        assert_eq!(
+            change_of(&[(qemu, None), (fw, Some(true))], || false),
+            Some(qemu)
+        );
+        assert_eq!(
+            change_of(&[(qemu, Some(true)), (fw, Some(true))], || false),
+            None
+        );
+    }
 
     #[test]
     fn rounds_rotate_by_one() {
