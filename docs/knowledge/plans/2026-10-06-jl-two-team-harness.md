@@ -602,8 +602,8 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
 
   **Files:** Replace `.claude/agents/{kernel-dev,doc-writer,verifier,code-reviewer,doc-auditor}.md`; create `worker.md` and `skeptic.md` (all from `D/.claude/agents/`, using the `.v5` files for kernel-dev, worker, doc-writer, verifier and code-reviewer; doc-auditor and skeptic are the v3 drafts); delete `team-lead.md` (`D/.claude/agents/team-lead.md.DELETE.md`). Modify `.claude/CLAUDE.md`: the Agents table and the layout `agents/` line only (`D/.claude/CLAUDE.md.patch-notes.md.v5`, "Lines 165–175" agents line and "Lines 217–224"), because docs-check's harness-tables check compares them with the files.
 
-  - [ ] Step 1: copy the seven files; `git rm .claude/agents/team-lead.md`; apply the two CLAUDE.md edits.
-  - [ ] Acceptance:
+  - [x] Step 1: copy the seven files; `git rm .claude/agents/team-lead.md`; apply the two CLAUDE.md edits.
+  - [x] Acceptance:
     ```bash
     cd "$W"
     ls .claude/agents | tr '\n' ' '
@@ -965,3 +965,7 @@ T9: deviations and gate result (2026-10-10):
 - T9: applied the `.v5` drafts (rule 11 and the patch notes) as written; every anchor held against the current rule files. In rule 04 the UPDATE DOCS list is split into nested "In the change's own commit" and "In the ship pass" bullets; in rule 02 the three audit categories are kept as a "lens descriptions" list under the new paragraph.
 - T9: the docs gate shows one finding beyond `plans-not-empty` (knowledge-hygiene): pointer-doctor `.claude/rules/11-teams.md:12: /justin:team is not a project skill or built-in command`. The skill is created by T11, so the finding clears there; nothing in T9 can avoid it.
 - T9 review fix: rule 04 step 10 still demanded a second 0-issue audit; now `/verify-phase` only (patch notes missed the line).
+
+T10: deviations and gate result (2026-10-10):
+- T10: the seven agent files are the drafts verbatim; `team-lead.md` is removed. CLAUDE.md: the layout `agents/` line and the Agents table (with the Model / effort column and the effort note) changed; the "Team & Agent Architecture" opening line ("Single team lead + specialist agents...") is left as is, because the task limited the edit to the table and the layout line.
+- T10: the docs gate shows, beyond `plans-not-empty`: pointer-doctor `.claude/rules/11-teams.md:12 /justin:team` (T11) and `.claude/skills/build-team/SKILL.md:16: agent team-lead is not defined` (T11 deletes build-team); and one repo-paths finding, `.claude/agents/verifier.md:76: path does not exist: scripts/soak-qemu.sh` (the draft's own text naming the pre-R4 script; unresolved, owner call).

@@ -202,7 +202,8 @@ aios/
 ├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
 ├── .claude/
 │   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
-│   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
+│   ├── agents/           kernel-dev, worker, doc-writer, verifier, code-reviewer, doc-auditor,
+│   │                     skeptic (models and effort: the Agents table below)
 │   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
 │   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
 │   ├── rules/            01-code-conventions … 10-harness-mechanics (auto-loaded)
@@ -254,14 +255,17 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 **Agents** (defined in `.claude/agents/`):
 
-| Agent | Role | Spawned by |
-| --- | --- | --- |
-| `team-lead` | Orchestrates phases, manages tasks, commits, creates PRs | User or `/build-team` |
-| `kernel-dev` | Implements Rust/asm code per phase doc steps | team-lead |
-| `doc-writer` | Generates phase docs from architecture docs | team-lead |
-| `code-reviewer` | Runs quality gates, reviews code conventions | team-lead |
-| `verifier` | Boots QEMU, validates acceptance criteria | team-lead |
-| `doc-auditor` | Validates docs on every change, loops until clean | Hook (auto) or team-lead |
+| Agent | Model / effort | Role | Spawned by |
+| --- | --- | --- | --- |
+| `kernel-dev` | opus / high | Writes kernel/, shared/, uefi-stub/ code from a branch's tip; the lead's Fable review (code-reviewer) approves each range before the fast-forward | a lead (`isolation: "worktree"`) |
+| `worker` | sonnet / high | Writes tools/, scripts/, CI, harness files and docs/ work from a branch's tip; path-guard keeps it out of kernel code | a lead (`isolation: "worktree"`) |
+| `doc-writer` | opus / high | Writes phase docs, architecture docs and ADR amendments | a lead (`isolation: "worktree"`) |
+| `verifier` | sonnet / medium | The only QEMU booter: gate boots, rate and A/B soaks, objdump/EL, under the host lock | a lead (`isolation: "worktree"`) |
+| `code-reviewer` | fable / high | Read-only: rules, bugs and diagnose lenses; its plan lens drives the Fable plan gate | audit-loop lens; a lead for each kernel-dev range and for diagnose |
+| `doc-auditor` | sonnet / medium | Read-only: docs accuracy, format, leftovers | audit-loop lens |
+| `skeptic` | sonnet / medium | Read-only: confirms or refutes one finding | audit-loop; a lead before filing an issue |
+
+`CLAUDE_CODE_EFFORT_LEVEL` stays unset (it overrides every agent's effort); the leads' effort is `effortLevel: "high"` in `.claude/settings.json`.
 
 **Skills** (defined in `.claude/skills/`):
 
