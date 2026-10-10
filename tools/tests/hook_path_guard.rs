@@ -742,3 +742,237 @@ fn a_bad_deny_prefix_denies_a_checked_call() {
     );
     assert!(deny_reason(&run).contains("--deny"));
 }
+
+/// `edit` plus the subagent fields a payload from inside an agent carries.
+fn edit_by(cwd: &Path, path: &str, agent_type: Option<Value>, agent_id: Option<&str>) -> Value {
+    let mut v = edit(cwd, path);
+    if let Some(t) = agent_type {
+        v["agent_type"] = t;
+    }
+    if let Some(id) = agent_id {
+        v["agent_id"] = json!(id);
+    }
+    v
+}
+
+const WORKER: &[&str] = &["--agent-type", "worker"];
+
+#[test]
+fn the_named_agent_type_is_guarded() {
+    let dir = repo("at-worker");
+    let p = dir.join("kernel/src/lib.rs");
+    let run = guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), Some(json!("worker")), Some("a1")),
+        &dir,
+    );
+    assert!(deny_reason(&run).contains("kernel/src/lib.rs"));
+}
+
+#[test]
+fn another_agent_type_gets_no_decision() {
+    let dir = repo("at-kernel-dev");
+    let p = dir.join("kernel/src/lib.rs");
+    assert_no_decision(&guard(
+        WORKER,
+        &edit_by(
+            &dir,
+            p.to_str().unwrap(),
+            Some(json!("kernel-dev")),
+            Some("a1"),
+        ),
+        &dir,
+    ));
+}
+
+#[test]
+fn the_main_thread_gets_no_decision() {
+    let dir = repo("at-main");
+    let p = dir.join("kernel/src/lib.rs");
+    assert_no_decision(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), None, None),
+        &dir,
+    ));
+}
+
+#[test]
+fn a_subagent_without_an_agent_type_is_denied_anywhere() {
+    let dir = repo("at-unidentified");
+    let p = dir.join("docs/a.md");
+    let reason = deny_reason(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), None, Some("a1")),
+        &dir,
+    ));
+    assert!(reason.contains("agent_type"), "{reason}");
+}
+
+#[test]
+fn agent_types_are_exact_names() {
+    let dir = repo("at-case");
+    let p = dir.join("kernel/src/lib.rs");
+    assert_no_decision(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), Some(json!("Worker")), Some("a1")),
+        &dir,
+    ));
+}
+
+#[test]
+fn the_named_agent_type_may_edit_outside_the_prefixes() {
+    let dir = repo("at-docs");
+    let p = dir.join("docs/a.md");
+    assert_no_decision(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), Some(json!("worker")), Some("a1")),
+        &dir,
+    ));
+}
+
+#[test]
+fn the_filter_runs_before_path_resolution() {
+    let dir = repo("at-before-resolve");
+    let mut payload = edit_by(
+        &dir,
+        "kernel/src/lib.rs",
+        Some(json!("kernel-dev")),
+        Some("a1"),
+    );
+    payload["cwd"] = json!(dir.join("no-such-dir"));
+    assert_no_decision(&guard(WORKER, &payload, &dir));
+}
+
+#[test]
+fn an_empty_agent_type_flag_denies_every_checked_call() {
+    let dir = repo("at-empty-flag");
+    let p = dir.join("docs/a.md");
+    let reason = deny_reason(&guard(
+        &["--agent-type", " "],
+        &edit_by(
+            &dir,
+            p.to_str().unwrap(),
+            Some(json!("kernel-dev")),
+            Some("a1"),
+        ),
+        &dir,
+    ));
+    assert!(reason.contains("--agent-type"), "{reason}");
+}
+
+#[test]
+fn every_named_agent_type_is_guarded() {
+    let dir = repo("at-two");
+    let p = dir.join("kernel/src/lib.rs");
+    let flags = &["--agent-type", "worker", "--agent-type", "doc-writer"];
+    deny_reason(&guard(
+        flags,
+        &edit_by(
+            &dir,
+            p.to_str().unwrap(),
+            Some(json!("doc-writer")),
+            Some("a1"),
+        ),
+        &dir,
+    ));
+}
+
+#[test]
+fn a_wrong_typed_agent_type_counts_as_absent() {
+    let dir = repo("at-number");
+    let p = dir.join("docs/a.md");
+    deny_reason(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), Some(json!(7)), Some("a1")),
+        &dir,
+    ));
+}
+
+#[test]
+fn a_session_launched_as_the_agent_is_guarded() {
+    let dir = repo("at-dash-agent");
+    let p = dir.join("kernel/src/lib.rs");
+    deny_reason(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), Some(json!("worker")), None),
+        &dir,
+    ));
+}
+
+#[test]
+fn unchecked_tools_are_filtered_before_the_agent() {
+    let dir = repo("at-read");
+    let mut payload = edit_by(
+        &dir,
+        dir.join("kernel/src/lib.rs").to_str().unwrap(),
+        Some(json!("worker")),
+        Some("a1"),
+    );
+    payload["tool_name"] = json!("Read");
+    assert_no_decision(&guard(WORKER, &payload, &dir));
+}
+
+#[test]
+fn an_empty_agent_type_with_an_agent_id_is_denied() {
+    let dir = repo("at-empty-type");
+    let p = dir.join("docs/a.md");
+    deny_reason(&guard(
+        WORKER,
+        &edit_by(&dir, p.to_str().unwrap(), Some(json!("")), Some("a1")),
+        &dir,
+    ));
+}
+
+/// Attacks on the identity fields themselves: a payload that names a subagent in
+/// any shape must not be taken for the main thread.
+#[test]
+fn an_unusable_agent_id_does_not_pass_for_the_main_thread() {
+    let dir = repo("at-bad-id");
+    let p = dir.join("kernel/src/lib.rs");
+    for id in [json!(7), json!(""), json!(null), json!(["a1"]), json!({})] {
+        let mut payload = edit_by(&dir, p.to_str().unwrap(), None, None);
+        payload["agent_id"] = id.clone();
+        let reason = deny_reason(&guard(WORKER, &payload, &dir));
+        assert!(reason.contains("agent_type"), "agent_id {id}: {reason}");
+    }
+}
+
+#[test]
+fn an_unusable_agent_type_is_denied_even_without_an_agent_id() {
+    let dir = repo("at-bad-type");
+    let p = dir.join("docs/a.md");
+    for t in [
+        json!(7),
+        json!(""),
+        json!(null),
+        json!(["worker"]),
+        json!({"name": "worker"}),
+        json!(true),
+    ] {
+        let payload = edit_by(&dir, p.to_str().unwrap(), Some(t.clone()), None);
+        let reason = deny_reason(&guard(WORKER, &payload, &dir));
+        assert!(reason.contains("agent_type"), "agent_type {t}: {reason}");
+    }
+}
+
+#[test]
+fn a_named_other_type_stays_free_whatever_its_agent_id_looks_like() {
+    let dir = repo("at-other-bad-id");
+    let p = dir.join("kernel/src/lib.rs");
+    let mut payload = edit_by(&dir, p.to_str().unwrap(), Some(json!("kernel-dev")), None);
+    payload["agent_id"] = json!(7);
+    assert_no_decision(&guard(WORKER, &payload, &dir));
+}
+
+#[test]
+fn without_the_flag_every_caller_is_still_checked() {
+    let dir = repo("at-no-flag");
+    let p = dir.join("kernel/src/lib.rs");
+    let payload = edit_by(
+        &dir,
+        p.to_str().unwrap(),
+        Some(json!("kernel-dev")),
+        Some("a1"),
+    );
+    deny_reason(&guard(&[], &payload, &dir));
+}

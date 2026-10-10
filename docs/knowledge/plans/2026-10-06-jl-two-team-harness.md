@@ -227,13 +227,13 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
     Expected: no output from either command. The docs gate shows only `plans-not-empty`.
 
-- [ ] **T4: `path-guard --agent-type`** (TDD; implementer, then a guard-attacking reviewer)
+- [x] **T4: `path-guard --agent-type`** (TDD; implementer, then a guard-attacking reviewer)
 
   **Files:** Modify `tools/src/cmd/hook/path_guard.rs` (the `Args` struct at lines 31–38, `run` at line 66, the module doc at lines 1–3). Test `tools/tests/hook_path_guard.rs`. Draft: `D/tools/src/cmd/hook/path_guard.rs.patch-notes.md.v4`.
 
   **Interfaces:** Produces the CLI form `aios hook path-guard --agent-type <NAME> [--agent-type <NAME>...] --deny <PREFIX>...`, which T5's shim fallback parses and T8 registers.
 
-  - [ ] Step 1: write the failing tests, appended to `tools/tests/hook_path_guard.rs`:
+  - [x] Step 1: write the failing tests, appended to `tools/tests/hook_path_guard.rs`:
     ```rust
     /// `edit` plus the subagent fields a payload from inside an agent carries.
     fn edit_by(cwd: &Path, path: &str, agent_type: Option<Value>, agent_id: Option<&str>) -> Value {
@@ -346,8 +346,8 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
         deny_reason(&guard(WORKER, &edit_by(&dir, p.to_str().unwrap(), Some(json!("")), Some("a1")), &dir));
     }
     ```
-  - [ ] Step 2: `(cd "$W" && cargo test -p aios-tools --test hook_path_guard)`. Expected: the new tests fail (clap rejects `--agent-type`, so `guard` sees exit 2); the existing tests pass.
-  - [ ] Step 3: implement. In `Args`:
+  - [x] Step 2: `(cd "$W" && cargo test -p aios-tools --test hook_path_guard)`. Expected: the new tests fail (clap rejects `--agent-type`, so `guard` sees exit 2); the existing tests pass.
+  - [x] Step 3: implement. In `Args`:
     ```rust
     /// Agent type this guard decides for (repeatable). Without it, every caller is checked.
     #[arg(long = "agent-type", value_name = "NAME")]
@@ -400,8 +400,8 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     }
     ```
     Update the module doc's first lines to: "Registered on `PreToolUse` for the edit tools in `.claude/settings.json`, with `--agent-type worker`. Fails closed: an error becomes a deny (see `OnError`)." and add one paragraph on the filter and its fail-closed case.
-  - [ ] Step 4: `(cd "$W" && cargo fmt -p aios-tools && cargo test -p aios-tools --test hook_path_guard)`. Expected: all pass, the old tests unchanged.
-  - [ ] Acceptance: the tools gate; `(cd "$W" && just tools && target/tools/installed/aios hook path-guard --help | grep -- '--agent-type')` prints the flag's help line; `rg -n 'frontmatter of the' tools/src/cmd/hook/path_guard.rs` prints nothing; the docs gate (branch binary) shows only `plans-not-empty`.
+  - [x] Step 4: `(cd "$W" && cargo fmt -p aios-tools && cargo test -p aios-tools --test hook_path_guard)`. Expected: all pass, the old tests unchanged.
+  - [x] Acceptance: the tools gate; `(cd "$W" && just tools && target/tools/installed/aios hook path-guard --help | grep -- '--agent-type')` prints the flag's help line; `rg -n 'frontmatter of the' tools/src/cmd/hook/path_guard.rs` prints nothing; the docs gate (branch binary) shows only `plans-not-empty`.
 
 - [ ] **T5: the shim's `hook` branch** (TDD; implementer, then a guard-attacking reviewer)
 

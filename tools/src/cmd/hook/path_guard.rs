@@ -1,6 +1,14 @@
 //! `aios hook path-guard`: deny edits under configured repository prefixes.
-//! Registered on `PreToolUse` for the edit tools, in the frontmatter of the
-//! `worker` agent only. Fails closed: an error becomes a deny (see `OnError`).
+//! Registered on `PreToolUse` for the edit tools in `.claude/settings.json`, with
+//! `--agent-type worker`. Fails closed: an error becomes a deny (see `OnError`).
+//!
+//! `--agent-type` (repeatable) limits the guard to the named agent types, compared
+//! exactly (case-sensitive). Another type, or the main thread of a session not
+//! launched with `--agent`, gets no decision, before any path is resolved. The
+//! filter fails closed on identity: a payload with an `agent_id` or an `agent_type`
+//! key whose `agent_type` is missing, empty or not a string cannot be told from the
+//! guarded agent, so it is denied wherever it writes. An empty `--agent-type` value
+//! is a registration mistake and an error, so it denies instead of guarding nobody.
 //!
 //! The target is resolved before it is compared: a relative path is joined to the
 //! input `cwd` and walked component by component, each symlink replaced by its
@@ -32,6 +40,9 @@ pub struct Args {
     /// Repository-relative directory prefix, ending in `/`, that edits may not touch (repeatable)
     #[arg(long = "deny", value_name = "PREFIX", required = true)]
     pub deny: Vec<String>,
+    /// Agent type this guard decides for (repeatable). Without it, every caller is checked.
+    #[arg(long = "agent-type", value_name = "NAME")]
+    pub agent_type: Vec<String>,
     /// Text appended to the deny reason
     #[arg(long)]
     pub reason: Option<String>,
@@ -72,6 +83,18 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
         .iter()
         .map(|raw| normalise_prefix(raw))
         .collect::<Result<Vec<_>>>()?;
+    match scope(&args.agent_type, input)? {
+        Scope::Check => {}
+        Scope::Skip => return Ok(None),
+        Scope::Unidentified => {
+            return Ok(Some(pre_tool_use_deny(&format!(
+                "this call comes from a subagent (an agent_id or agent_type is set) whose \
+                 agent_type is missing, empty or not a string, so path-guard cannot tell whether \
+                 it applies (it applies to: {}); denied",
+                args.agent_type.join(", ")
+            ))))
+        }
+    }
     let cwd = input
         .cwd
         .as_deref()
@@ -132,6 +155,42 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
     Ok(Some(pre_tool_use_deny(&reason)))
 }
 
+/// Who this call is for, under `--agent-type`.
+enum Scope {
+    /// Check the target.
+    Check,
+    /// Not one of the named agent types: no decision.
+    Skip,
+    /// A payload that carries identity keys but no usable `agent_type`: deny.
+    Unidentified,
+}
+
+/// Without `--agent-type` every caller is checked. With it, only the named types
+/// are. A usable `agent_type` (a non-empty string) decides alone. Otherwise the
+/// payload is the main thread only if it has neither identity key; a present
+/// `agent_id` or `agent_type` that is empty, `null` or of another JSON type cannot
+/// be identified, so it is denied rather than read as absent. An empty flag value is
+/// an error, so a registration mistake denies every checked call instead of guarding
+/// nobody.
+fn scope(types: &[String], input: &HookInput) -> Result<Scope> {
+    if types.is_empty() {
+        return Ok(Scope::Check);
+    }
+    if let Some(bad) = types.iter().find(|t| t.trim().is_empty()) {
+        bail!("--agent-type {bad:?} is empty");
+    }
+    Ok(
+        match input.agent_type.as_deref().filter(|t| !t.is_empty()) {
+            Some(t) if types.iter().any(|name| name == t) => Scope::Check,
+            Some(_) => Scope::Skip,
+            None if input.identity_keys.agent_id || input.identity_keys.agent_type => {
+                Scope::Unidentified
+            }
+            None => Scope::Skip,
+        },
+    )
+}
+
 /// A `--deny` value as a directory prefix: a missing trailing `/` is added, so
 /// `kernel` cannot match `kernel-notes/`. An empty or absolute prefix, or one with
 /// an empty, `.` or `..` component (`kernel//`, `kernel/./`, `docs/../kernel/`), is
@@ -162,7 +221,7 @@ fn existing_dir(path: &Path) -> PathBuf {
 /// Whether a failed `git rev-parse` says the directory is in no repository: exit 128
 /// with git's "not a git repository (or any of the parent directories)" text, or its
 /// mount-point variant "not a git repository (or any parent up to mount point ...)".
-/// A pruned worktree says "not a git repository: <path>", which is neither.
+/// A pruned worktree says "not a git repository: `<path>`", which is neither.
 fn is_no_repository(stderr: &str, code: Option<i32>) -> bool {
     code == Some(128)
         && stderr.contains("not a git repository (or any")
