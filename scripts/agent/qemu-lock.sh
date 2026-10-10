@@ -72,7 +72,8 @@
 
 set -u
 
-common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+# The lock belongs to the repository this script lives in, not the caller's cwd.
+common=$(git -C "$(dirname -- "$0")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
     echo "qemu-lock: not in a git repository" >&2
     exit 2
 }
@@ -325,17 +326,26 @@ trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
 now=$(date +%s)
-{
-    echo "team=$team"
-    echo "worktree=$(git rev-parse --show-toplevel)"
-    echo "branch=$(git branch --show-current)"
-    echo "sha=$(git rev-parse HEAD)"
-    echo "mode=$mode"
-    echo "label=$label"
-    echo "started=$now"
-    echo "eta=$((now + eta_min * 60))"
-    echo "pid=$$"
-} >"$lock/owner.tmp" && mv "$lock/owner.tmp" "$lock/owner"
+# Fail closed: a lock without an owner file reads as dead after two minutes and
+# clear-stale would remove it under a live run. The EXIT trap releases the lock.
+write_owner() {
+    {
+        echo "team=$team"
+        echo "worktree=$(git rev-parse --show-toplevel)"
+        echo "branch=$(git branch --show-current)"
+        echo "sha=$(git rev-parse HEAD)"
+        echo "mode=$mode"
+        echo "label=$label"
+        echo "started=$now"
+        echo "eta=$((now + eta_min * 60))"
+        echo "pid=$$"
+    } >"$lock/owner.tmp" || return 1
+    mv "$lock/owner.tmp" "$lock/owner"
+}
+if ! write_owner; then
+    echo "qemu-lock: cannot write the owner file in $lock" >&2
+    exit 2
+fi
 
 # The lock is ours now, so any QEMU still running was started without it.
 # Refuse rather than measure two workloads at once; the trap releases the lock.

@@ -846,10 +846,11 @@ fn every_named_agent_type_is_guarded() {
 }
 
 #[test]
-fn a_wrong_typed_agent_type_counts_as_absent() {
+fn a_wrong_typed_agent_type_is_denied_as_unidentified() {
     let dir = repo("at-number");
     let payload = edit_in(&dir, "docs/a.md", Some(json!(7)), Some("a1"));
-    deny_reason(&guard(WORKER, &payload, &dir));
+    let reason = deny_reason(&guard(WORKER, &payload, &dir));
+    assert!(reason.contains("agent_type"), "{reason}");
 }
 
 #[test]

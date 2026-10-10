@@ -8,7 +8,7 @@ Every milestone must pass all applicable gates:
 | Check | `just check` (fmt-check + clippy + build) | Zero warnings, zero errors |
 | Test | `just test` (host-side unit tests) | All pass |
 | Tools | `cargo fmt --check -p aios-tools && cargo clippy -p aios-tools --all-targets -- -D warnings && cargo test -p aios-tools` | All pass, when `tools/` changed (`just test` excludes the crate) |
-| QEMU | `scripts/agent/qemu-lock.sh run ... -- just soak runs=1 secs=75 report_only=1` (`mode=gpu` when the phase needs the display), run by the verifier, or by a solo session's main thread with `--team solo` | `summary.tsv` classifies the boot CLEAN and the log holds the phase's UART lines; exit 77 (deferred under load) is not a pass and not a failure |
+| QEMU | `bash scripts/agent/qemu-lock.sh run ... -- just soak runs=1 secs=75 report_only=1` (`mode=gpu` when the phase needs the display), run by the verifier, or by a solo session's main thread with `--team solo` | `summary.tsv` classifies the boot CLEAN and the log holds the phase's UART lines; exit 77 (deferred under load) is not a pass and not a failure |
 | CI | Push to GitHub | All CI jobs pass |
 | Objdump | `"$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-objdump -h target/aarch64-unknown-none/debug/kernel` | Sections at expected addresses |
 | EL | Boot diagnostics | EL = 1, core ID = 0 |
