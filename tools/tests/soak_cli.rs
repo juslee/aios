@@ -193,14 +193,41 @@ fn out_of(case: &[&str]) -> Option<String> {
     })
 }
 
-/// `data` with `dir` (canonical or as given) replaced by `<DIR>`.
+/// `data` with every `needle` replaced by `with`, byte for byte: bytes that
+/// are not UTF-8 (a character clipped at a field limit) pass through as is.
+fn replace_bytes(data: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
+    if needle.is_empty() {
+        return data.to_vec();
+    }
+    let mut out = Vec::with_capacity(data.len());
+    let mut rest = data;
+    while let Some(at) = rest.windows(needle.len()).position(|w| w == needle) {
+        out.extend_from_slice(&rest[..at]);
+        out.extend_from_slice(with);
+        rest = &rest[at + needle.len()..];
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+/// `data` with `dir` (canonical or as given) replaced by `<DIR>`. Byte-based,
+/// so the goldens pin aios's output bytes exactly.
 fn without_dir(data: &[u8], dir: &Path) -> Vec<u8> {
     let canonical = std::fs::canonicalize(dir).expect("canonicalize the case dir");
-    let mut text = String::from_utf8_lossy(data).into_owned();
+    let mut g = data.to_vec();
     for form in [canonical.as_path(), dir] {
-        text = text.replace(&*form.to_string_lossy(), "<DIR>");
+        g = replace_bytes(&g, form.as_os_str().as_encoded_bytes(), b"<DIR>");
     }
-    text.into_bytes()
+    g
+}
+
+#[test]
+fn without_dir_keeps_bytes_that_are_not_utf8() {
+    let dir = unique_dir("soak-cli-without-dir");
+    let mut data = b"aa\xC3...\n".to_vec();
+    data.extend_from_slice(dir.as_os_str().as_encoded_bytes());
+    data.extend_from_slice(b"/x \xFF\n");
+    assert_eq!(without_dir(&data, &dir), b"aa\xC3...\n<DIR>/x \xFF\n");
 }
 
 /// `exit N`, stdout and stderr, then each file in `out` (a `--out`
