@@ -54,6 +54,47 @@ fn ask_json(reason: &str) -> String {
     )
 }
 
+/// The longest a fake's hold lasts, in seconds. A hold ends when the test
+/// releases it; the limit only keeps a test killed before it releases one from
+/// leaving a held process behind for long.
+macro_rules! hold_limit_secs {
+    () => {
+        120
+    };
+}
+
+/// A shell function `hold_while FILE` that waits while FILE exists, for
+/// `HOLD_LIMIT` at most by the clock. It polls once a second: POSIX sleep takes
+/// whole seconds, and a release seen a second late is fine.
+macro_rules! hold_while_sh {
+    () => {
+        concat!(
+            "hold_while() {\n",
+            "    deadline=$(($(date +%s) + ",
+            hold_limit_secs!(),
+            "))\n",
+            "    while [ -e \"$1\" ] && [ \"$(date +%s)\" -lt \"$deadline\" ]; do\n",
+            "        sleep 1\n",
+            "    done\n",
+            "}\n",
+        )
+    };
+}
+
+/// How long the fakes' holds last at most.
+const HOLD_LIMIT: Duration = Duration::from_secs(hold_limit_secs!());
+
+/// The most `wait_for` calls a test makes while one hold is set: the
+/// concurrent-recipes test makes three under its build hold.
+const MAX_WAITS_UNDER_A_HOLD: u64 = 3;
+
+// A slow machine fails a test in a `wait_for`, with its label, rather than
+// seeing a hold expire and the process it held run on under the test.
+const _: () = assert!(
+    WAIT_FOR.as_secs() * MAX_WAITS_UNDER_A_HOLD < HOLD_LIMIT.as_secs(),
+    "a hold outlasts every wait a test makes while it is set"
+);
+
 /// A `cargo` that only knows the `tools` recipe's build: it logs the build and
 /// writes target/tools/release/aios, by default a binary that echoes its
 /// arguments and exits `FAKE_EXIT`. Its progress line goes to stdout, so the
@@ -68,25 +109,19 @@ fn ask_json(reason: &str) -> String {
 /// build is running at the same time. `FAKE_CARGO_REMOVE` names a file to
 /// remove during the build, as a build script that deletes itself would.
 /// `FAKE_CARGO_HOLD` names a file: while it exists the build waits, after
-/// logging and before it writes release/aios. Each hold lasts a minute at most,
-/// by the clock, so a test killed before it releases the build leaves none
-/// behind for long.
-const FAKE_CARGO: &str = r#"#!/bin/sh
+/// logging and before it writes release/aios. Each hold lasts `HOLD_LIMIT` at
+/// most, by the clock, so a test killed before it releases the build leaves
+/// none behind for long.
+const FAKE_CARGO: &str = concat!(
+    r#"#!/bin/sh
 set -u
 if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
     echo "fake cargo: unexpected arguments: $*" >&2
     exit 2
 fi
-# Waits while the file $1 exists, for a minute at most by the clock. POSIX
-# sleep takes whole seconds; a fractional sleep only shortens the poll where
-# the system's sleep supports it.
-hold_while() {
-    deadline=$(($(date +%s) + 60))
-    while [ -e "$1" ] && [ "$(date +%s)" -lt "$deadline" ]; do
-        sleep 0.1 2>/dev/null || sleep 1
-    done
-}
-echo "fake cargo: building the aios binary"
+"#,
+    hold_while_sh!(),
+    r#"echo "fake cargo: building the aios binary"
 printf 'build\n' >> cargo.log
 [ -z "${FAKE_CARGO_REMOVE:-}" ] || rm -f "$FAKE_CARGO_REMOVE"
 [ -z "${FAKE_CARGO_PIDS:-}" ] || echo "$PPID $$" > "$FAKE_CARGO_PIDS"
@@ -122,21 +157,26 @@ fi
 cat target/tools/aios.next > target/tools/release/aios
 rm -f target/tools/aios.next
 chmod 755 target/tools/release/aios
-"#;
+"#
+);
 
-/// A `cp` that leaves the destination half-written for `FAKE_CP_DELAY` seconds,
-/// like a large binary in the middle of a copy, and creates `FAKE_CP_MARK` once
-/// the half is written.
-const SLOW_CP: &str = r#"#!/bin/sh
-if [ -n "${FAKE_CP_DELAY:-}" ] && [ "$#" -eq 2 ]; then
+/// A `cp` that leaves the destination half-written while the file
+/// `FAKE_CP_HOLD` names exists (for `HOLD_LIMIT` at most), like a large binary
+/// in the middle of a copy, and creates `FAKE_CP_MARK` once the half is
+/// written.
+const SLOW_CP: &str = concat!(
+    "#!/bin/sh\n",
+    hold_while_sh!(),
+    r#"if [ -n "${FAKE_CP_HOLD:-}" ] && [ "$#" -eq 2 ]; then
     head -c 16 "$1" > "$2"
     : > "$FAKE_CP_MARK"
-    sleep "$FAKE_CP_DELAY"
+    hold_while "$FAKE_CP_HOLD"
     cat "$1" > "$2"
     exit
 fi
 exec /bin/cp "$@"
-"#;
+"#
+);
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -210,8 +250,8 @@ fn set_age(path: &Path, age: Duration) {
 const DEAD_LOCK_AGE: Duration = Duration::from_secs(180);
 
 /// How long `wait_for` waits: long enough for a loaded machine to start a
-/// recipe, and shorter than the fake cargo's minute-long hold, so a held build
-/// never runs out while a test waits on it.
+/// recipe, and short enough that the waits a test makes while a hold is set
+/// end before the hold can (`HOLD_LIMIT`, checked above).
 const WAIT_FOR: Duration = Duration::from_secs(30);
 
 fn wait_for(label: &str, mut ready: impl FnMut() -> bool) {
@@ -482,13 +522,14 @@ impl Sandbox {
 
     /// The shim call that just returned left its background build running:
     /// with `hold_builds` holding it, the build cannot finish (and release its
-    /// lock) until the test releases it, or for a minute, so a call that
+    /// lock) until the test releases it, or for `HOLD_LIMIT`, so a call that
     /// waited for its build would return only after the lock is gone.
     fn assert_returned_before_its_build(&self) {
         assert!(self.hold().exists(), "hold_builds holds the build");
         assert!(
             self.lock().exists(),
-            "the call returned after its background build finished: it waited for the build"
+            "the background build had ended (its lock is gone) by the time the call returned: \
+             the call waited for it, or the build failed early"
         );
         wait_for("the background build's cargo to start", || self.built());
         assert!(self.lock().exists(), "the held build is still running");
@@ -966,10 +1007,13 @@ fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
     assert_eq!(read(&sandbox.stamp()), old_stamp);
 
     // A new version, copied slowly: while the copy is half-written, the shim
-    // still runs the complete old binary.
+    // still runs the complete old binary. The copy stays half-written until
+    // the test removes the copy hold, so the recipe cannot install v2 first.
     let slow = TestRepo::adopt(unique_dir("shim-install-cp"));
     write_executable(&slow.path().join("cp"), SLOW_CP);
     let mark = slow.path().join("half-copied");
+    let copy_hold = slow.path().join("hold-copy");
+    std::fs::write(&copy_hold, "").expect("write the copy hold");
     let v2 = sandbox.bin_dir.path().join("aios-v2");
     std::fs::write(&v2, "#!/bin/sh\nprintf 'v2:%s\\n' \"$*\"\n").expect("write v2");
     let mut cmd = Command::new("just");
@@ -980,7 +1024,7 @@ fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
             format!("{}:{}", slow.path().display(), sandbox.path_env()),
         )
         .env("FAKE_CARGO_SOURCE", &v2)
-        .env("FAKE_CP_DELAY", "2")
+        .env("FAKE_CP_HOLD", &copy_hold)
         .env("FAKE_CP_MARK", &mark)
         .current_dir(sandbox.repo.path())
         .arg("tools")
@@ -997,6 +1041,11 @@ fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
     let out = sandbox.run(&["docs-check"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(stdout(&out), "fake:docs-check\n");
+    assert!(
+        build.try_wait().expect("poll just tools").is_none(),
+        "the recipe returned while its copy was held"
+    );
+    std::fs::remove_file(&copy_hold).expect("remove the copy hold");
     assert!(build.wait().expect("wait for just tools").success());
 
     let out = sandbox.run(&["guard", "PreToolUse"]);
@@ -1122,7 +1171,9 @@ fn concurrent_and_killed_just_tools_runs_never_overlap() {
 
     // Three recipes at once: the first to take the lock is not held up by the
     // killed recipe's lock file, and its build is held until the other two
-    // are seen waiting for it. No two builds overlap.
+    // are seen waiting for it. No two builds overlap. Each build's one-second
+    // delay only widens the window in which a broken lock would show as an
+    // overlap; no assertion needs it to pass.
     let recipes: Vec<_> = (0..3)
         .map(|n| {
             let errors = sandbox.bin_dir.path().join(format!("recipe-{n}.stderr"));
@@ -1863,20 +1914,19 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     let out = sandbox.run_stdin_at(&shim, &["hook", "route-outcome"], &[("PATH", &path)], "{}");
     assert_silent(&out);
 
-    // A stale worktree binary and a slow build: a shim that took the worktree
-    // for the main checkout would hold the worktree's build lock on return.
+    // A stale worktree binary and a build held until the test releases it: a
+    // shim that took the worktree for the main checkout would hold the
+    // worktree's build lock on return.
     set_mtime(&other, STALE_STAMP);
-    let out = sandbox.run_at(
-        &shim,
-        &["--prebuild"],
-        &[("PATH", &path), ("FAKE_CARGO_DELAY", "3")],
-    );
+    sandbox.hold_builds();
+    let out = sandbox.run_at(&shim, &["--prebuild"], &[("PATH", &path)]);
     assert_eq!(code(&out), 0);
     assert!(!sandbox.lock().exists());
     assert!(
         !worktree.path().join("target/tools/.building").exists(),
         "--prebuild must not build the worktree's binary"
     );
+    sandbox.release_builds();
 
     // An explicit override still works.
     let out = sandbox.run_at(
