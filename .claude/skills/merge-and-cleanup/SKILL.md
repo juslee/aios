@@ -33,7 +33,7 @@ gh pr list --state open --json number,headRefName,title --jq '.[] | "\(.number) 
 Record the number and the branch name (`headRefName`). Then, by state:
 
 - `OPEN`: continue with Step 2.
-- `MERGED`: an earlier run stopped after the merge, or the PR was merged elsewhere. Report it and skip Steps 2 and 4: run Step 3 if a worktree still has the branch checked out (its copies skip what an earlier run already copied), then Steps 5 to 9.
+- `MERGED`: an earlier run stopped after the merge, or the PR was merged elsewhere. Report it and skip Steps 2 and 4: run Step 3 if a worktree still has the branch checked out (its copy skips what an earlier run already copied), then Steps 5 to 9.
 - `CLOSED`: report it and stop.
 
 ## Step 2: Pre-merge check
@@ -53,6 +53,7 @@ bash scripts/agent/brief.sh --no-fetch | awk -v n="- #<number> " 'index($0, n) =
 ```
 
 - `merge-ready: no` naming `gated by #N` or `named in needs-human #N`: report the issue and stop. The owner closes or edits it first. Cross-team merge order exists only as these gate issues (rule 11).
+- No `merge-ready:` line for this PR (GitHub unavailable, the PR beyond brief.sh's `--limit 30`, or not listed): the gate is unknown. Report it and stop unless the user confirms.
 - Other `no` reasons (draft, unresolved threads, changes requested): report them and stop unless the user confirms each by name.
 
 Then check the QEMU lock:
@@ -61,7 +62,7 @@ Then check the QEMU lock:
 bash scripts/agent/qemu-lock.sh status
 ```
 
-If it shows `mode=quiet`, stop: merging moves `main`, and the next hook call starts a background `aios` rebuild during a rate soak. Merge after `QUIET-END`.
+If it shows `mode=quiet`, stop: merging moves `main`, and the next hook call starts a background `aios` rebuild during a rate soak. Merge after `QUIET-END`. A `mode=quiet` lease with `state=dead` or `overdue=1` also stops the merge: if `state=dead`, run `qemu-lock.sh clear-stale` or ask the owner.
 
 ## Step 3: Preserve the PR's worktree (before merging)
 
@@ -299,8 +300,8 @@ The push guard (`.claude/hooks/git-push-guard.py`) asks before `gh pr merge` (St
 If this session runs with `AIOS_TEAM`, run ListAgents. If the other team's lead is listed under its team name, send it:
 
 ```text
-From <this team>: MAIN-MOVED <new main sha> #<number>
-<output of: git -C "<main-checkout>" diff --name-only <new main sha>^ <new main sha>>
+From <this team>: MAIN-MOVED <squash commit, $MERGED from Step 6> #<number>
+<output of: git -C "<main-checkout>" diff --name-only <squash commit>^ <squash commit>>
 expected conflicts: <owned branches of the receiver that change the same files, if this session knows them; else "check yours">
 <"harness changed: restart after your current step" when .claude/settings.json, .claude/hooks/, .claude/agents/ or .claude/rules/ changed>
 <the toolchain line from Step 6>

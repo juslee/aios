@@ -650,6 +650,12 @@ pub const CHECK_PY_MIGRATION: &str = "check-py-claude-md.patch";
 /// not apply.
 pub const CHECK_PY_IRQ_SPIN_LOCK: &str = "check-py-irq-spin-lock.patch";
 
+/// `tests/fixtures/docs-check/<this>`: a patch that adds `rename` to check.py's
+/// `BUILTIN_COMMANDS`, as `pointer_doctor::BUILTIN_COMMANDS` has it since T11 of the
+/// two-team harness (the team skill names `/rename`, a Claude Code built-in). Applied
+/// after `CHECK_PY_IRQ_SPIN_LOCK`; `materialize_check_py` panics if it does not apply.
+pub const CHECK_PY_RENAME_BUILTIN: &str = "check-py-rename-builtin.patch";
+
 /// The Unicode version (`unicodedata.unidata_version`) the oracle's interpreter must
 /// have: CPython 3.14's, the version `aios_tools::pyre`'s `\d` and `\s` classes were
 /// pinned against (its `digit_class_is_pythons` and `space_class_is_pythons` tests).
@@ -766,7 +772,11 @@ fn materialize_check_py() -> Result<CheckPy, String> {
     fs::write(&partial, &out.stdout)
         .map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
     git(&dir, &["init", "-q", work_name.as_str()]);
-    for patch in [CHECK_PY_MIGRATION, CHECK_PY_IRQ_SPIN_LOCK] {
+    for patch in [
+        CHECK_PY_MIGRATION,
+        CHECK_PY_IRQ_SPIN_LOCK,
+        CHECK_PY_RENAME_BUILTIN,
+    ] {
         let patch = fixtures_dir().join(patch);
         let patch = patch.to_str().expect("fixture path is UTF-8");
         // `git` panics with git's stderr when the patch does not apply.

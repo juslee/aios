@@ -35,7 +35,7 @@ Check each item in order. At the first failure, print the message and stop.
    - `git status --short` is empty. If it is not, print the dirty paths.
    - `.claude/rules/11-teams.md` exists.
 6. **Name.** Run ListAgents. "This session" must be listed as `<team>`.
-   Message: "Rename this session to `<team>` (the rename command), then `/justin:team <build|fix>` again." (Only the owner can rename.)
+   Message: "Run `/rename <team>` in this session, then `/justin:team <build|fix>` again." (Only the owner can rename.)
 7. **Peer.** If `<peer>` is not listed, run ListAgents again after 30 seconds. If it is still missing, announce **one-lead mode**: "Peer lead not reachable: one-lead mode (agent-loop.md, Teams)".
 
 ## 2. Restore state

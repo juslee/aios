@@ -84,7 +84,7 @@ git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-M
 
 The working plan is the plan file the user approved in plan mode (`<planFilePath>` from the `ExitPlanMode` call).
 
-4. Spawn worker with the task: copy the approved plan file `<planFilePath>` unchanged to `docs/knowledge/plans/<YYYY-MM-DD>-jl-phase-$ARGUMENTS-<description>.md` and commit `Phase $ARGUMENTS: working plan`.
+4. Spawn worker with the task: copy the approved plan file `<planFilePath>` unchanged to `docs/knowledge/plans/<YYYY-MM-DD>-jl-phase-$ARGUMENTS-<description>.md` and commit `Phase $ARGUMENTS: working plan`, with rule 08 frontmatter.
 5. Fast-forward the worktree to its commit and push (`/justin:team`, Placement).
 6. Apply the plan's Phase Doc Reconciliation notes through doc-writer.
 7. Compare the plan against the current phase doc (`docs/phases/`):
@@ -98,11 +98,12 @@ The working plan is the plan file the user approved in plan mode (`<planFilePath
     For each step within the milestone (including the shared crate refactoring step baked into the phase doc):
     a. Read the step's acceptance criteria from the phase doc BEFORE writing any code
     b. Consult your working plan doc (`docs/knowledge/plans/*-jl-phase-$ARGUMENTS-*.md`) for the approach, key decisions, and files to modify
-    c. Record the tip (`git -C <W> rev-parse HEAD`), then spawn kernel-dev (or worker or doc-writer for non-kernel steps) with the step text, the tip and the commit message — the full step, no partial work
+    c. Record the tip (`git -C <W> rev-parse HEAD`), then spawn kernel-dev (or worker or doc-writer for non-kernel steps) with the step text, the tip and the commit message `Phase $ARGUMENTS MN: Step X — <step description>` — the full step, no partial work
     d. Run `/justin:team`'s Placement on the writer's range: the range check, the Fable review (code-reviewer, `rules` and `bugs`) for a kernel-dev range, at most three rounds, then the writer's gate output at its head, the fast-forward and the clean-up. Route boots to the verifier on the new tip; a `DEFERRED` boot is retried later.
     e. If any gate fails: read the error, fix the root cause through a fresh writer, re-run — do not skip
-    f. Push from the worktree with the explicit refspec (Placement's last step): `Phase $ARGUMENTS MN: Step X — <step description>`
+    f. Push from the worktree with the explicit refspec (Placement's last step)
     g. Mark the task completed
+    (A lead never edits files in a worktree, rule 11: every update and commit below, and in Phase 5, is done by a spawned worker or doc-writer, then `/justin:team`'s Placement on its range.)
     h. **Update the working plan doc**: record any issues encountered, decisions made, or lessons learned in the corresponding sections — do this as you go, not at the end
     After all steps in milestone complete (follow the rule 04 split: change-describing docs go in each step's commit; inventory sections go in the ship pass, Phase 5):
     i. Update the docs that describe the milestone's change: Key Technical Facts in `.claude/CLAUDE.md`, the phase doc (check off completed tasks)
@@ -116,7 +117,7 @@ The working plan is the plan file the user approved in plan mode (`<planFilePath
 ⛔ **GATE: Do NOT proceed to Knowledge Distillation or PR until ALL of the following pass:**
 
 10. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
-11. Run `/audit-loop` (it converges or the PR stays a draft)
+11. Run `/audit-loop` (it must converge before the PR is marked ready)
 12. Ship pass: worker, in the foreground, updates the inventory sections (rule 11): Workspace Layout and the agent and skill tables in `.claude/CLAUDE.md`, `docs/project/doc-map.md`, README, developer-guide counts
 13. Update the phase doc Status to "Complete", check off all Phase Completion Criteria
 14. Update `docs/project/development-plan.md`: mark phase $ARGUMENTS as complete, update §8.1 Actual Progress with dates and deliverables

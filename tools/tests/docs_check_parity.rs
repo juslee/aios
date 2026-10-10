@@ -378,14 +378,15 @@ fn differential_against_check_py() {
     }
     eprintln!(
         "differential_against_check_py: compared {} cases and {} live modes, {} difference(s) \
-         ({} running {} with {} and {})",
+         ({} running {} with {}, {} and {})",
         cases.len(),
         LIVE_CASES.len(),
         failures.len(),
         oracle.version,
         fixture::check_py_object(),
         fixture::CHECK_PY_MIGRATION,
-        fixture::CHECK_PY_IRQ_SPIN_LOCK
+        fixture::CHECK_PY_IRQ_SPIN_LOCK,
+        fixture::CHECK_PY_RENAME_BUILTIN
     );
     assert!(
         failures.is_empty(),

@@ -1,0 +1,12 @@
+diff --git a/scripts/docs/check.py b/scripts/docs/check.py
+--- a/scripts/docs/check.py
++++ b/scripts/docs/check.py
+@@ -80,7 +80,7 @@
+ BUILTIN_COMMANDS = {
+     "add-dir", "agents", "clear", "compact", "config", "context", "cost", "doctor",
+     "exit", "goal", "help", "hooks", "init", "loop", "mcp", "memory", "model",
+-    "permissions", "plan", "resume", "review", "schedule", "security-review",
++    "permissions", "plan", "rename", "resume", "review", "schedule", "security-review",
+     "simplify", "code-review", "status", "statusline", "tasks", "todos",
+ }
+
