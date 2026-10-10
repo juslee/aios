@@ -10,7 +10,7 @@
 //! `sysctl`, which print numbers).
 
 use super::awk::to_num;
-use super::classify::{Classification, CLASSES};
+use super::classify::{Base, Class, Classification};
 
 /// `summary.tsv`'s header line.
 pub const TSV_HEADER: &[u8] = b"run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tg1done_s\thb_max_gap_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\n";
@@ -33,10 +33,12 @@ fn stall_text(c: &Classification) -> Vec<u8> {
 
 /// `format_result LABEL`: the one-line summary of a classification, with its newline.
 pub fn format_result(label: &[u8], c: &Classification) -> Vec<u8> {
-    let text: Vec<u8> = match c.class {
-        "CLEAN" | "INCONCLUSIVE" => c.detail.clone(),
-        "WEDGE" => [b"lb_last=", c.lb.as_bytes(), b"  ", &c.detail[..]].concat(),
-        _ => [b"lb_last=", c.lb.as_bytes(), b"  ", &c.first[..]].concat(),
+    let text: Vec<u8> = match c.class.base() {
+        Base::Clean | Base::Inconclusive => c.detail.clone(),
+        Base::Wedge => [b"lb_last=", c.lb.as_bytes(), b"  ", &c.detail[..]].concat(),
+        Base::PcZero | Base::Panic | Base::Exception => {
+            [b"lb_last=", c.lb.as_bytes(), b"  ", &c.first[..]].concat()
+        }
     };
     let text = if text.is_empty() || text == b"-" {
         Vec::new()
@@ -46,7 +48,7 @@ pub fn format_result(label: &[u8], c: &Classification) -> Vec<u8> {
     [
         label,
         b"  ",
-        &pad(c.class.as_bytes(), 12),
+        &pad(c.class.name().as_bytes(), 12),
         b" tick=",
         &pad(&c.tick, 6),
         b" stall=",
@@ -157,7 +159,7 @@ pub fn tsv_row(
     let cells: Vec<Vec<u8>> = vec![
         idx.as_bytes().to_vec(),
         mode.as_bytes().to_vec(),
-        c.class.as_bytes().to_vec(),
+        c.class.name().as_bytes().to_vec(),
         c.tick.clone(),
         c.hb.clone(),
         c.stall.clone(),
@@ -185,15 +187,15 @@ pub fn tsv_row(
 
 /// One row of `summary.md`'s per-boot table, with its newline.
 pub fn md_row(idx: &str, c: &Classification) -> Vec<u8> {
-    let tail = match c.class {
-        "CLEAN" | "WEDGE" | "INCONCLUSIVE" => &c.detail,
-        _ => &c.first,
+    let tail = match c.class.base() {
+        Base::Clean | Base::Wedge | Base::Inconclusive => &c.detail,
+        Base::PcZero | Base::Panic | Base::Exception => &c.first,
     };
     [
         b"| ",
         idx.as_bytes(),
         b" | ",
-        c.class.as_bytes(),
+        c.class.name().as_bytes(),
         b" | ",
         &c.tick,
         b" | ",
@@ -227,15 +229,15 @@ pub struct SummaryInfo<'a> {
 }
 
 /// `summary.md` up to the CLEAN rate (the part also printed to stdout), with
-/// its final newline. `counts` follows [`CLASSES`]; `runs_n` is the boot count.
+/// its final newline. `counts` follows [`Class::ALL`]; `runs_n` is the boot count.
 pub fn summary_head(
     info: &SummaryInfo,
-    counts: &[u64; 6],
+    counts: &[u64; Class::COUNT],
     runs_n: u64,
     load1: &[&[u8]],
 ) -> Vec<u8> {
-    let inconclusive = counts[4];
-    let clean = counts[5];
+    let inconclusive = counts[Class::Inconclusive.index()];
+    let clean = counts[Class::Clean.index()];
     let conclusive = runs_n - inconclusive;
     let rate_note = if inconclusive == 0 {
         String::new()
@@ -272,8 +274,15 @@ pub fn summary_head(
     );
     md.extend([&b"| Logs | `"[..], info.out, b"` |\n\n"].concat());
     md.extend_from_slice(b"| Class | Count | Share |\n|---|---:|---:|\n");
-    for (class, count) in CLASSES.iter().zip(counts) {
-        md.extend(format!("| {class} | {count} | {} |\n", share(*count, runs_n)).into_bytes());
+    for (class, count) in Class::ALL.iter().zip(counts) {
+        md.extend(
+            format!(
+                "| {} | {count} | {} |\n",
+                class.name(),
+                share(*count, runs_n)
+            )
+            .into_bytes(),
+        );
     }
     md.extend(format!("| **Total** | {} | |\n\n", info.runs).into_bytes());
     md.extend(format!("CLEAN rate: {}{rate_note}\n", wilson(clean, conclusive)).into_bytes());
@@ -295,10 +304,7 @@ mod tests {
 
     /// A classification built from the awk program's eleven fields.
     fn c(fields: [&str; 11]) -> Classification {
-        let class = CLASSES
-            .into_iter()
-            .find(|k| *k == fields[0])
-            .expect("a class");
+        let class = Class::from_name(fields[0]).expect("a class");
         let lb = ["yes", "no", "-"]
             .into_iter()
             .find(|v| *v == fields[5])
@@ -314,6 +320,7 @@ mod tests {
             detail: b(fields[6]),
             first: b(fields[7]),
             info: [b(fields[8]), b(fields[9]), b(fields[10])],
+            reentry: None,
         }
     }
 
@@ -322,7 +329,7 @@ mod tests {
     }
 
     const WEDGE: [&str; 11] = [
-        "WEDGE",
+        "WEDGE-STUCK",
         "0",
         "1",
         "69",
@@ -362,7 +369,7 @@ mod tests {
         );
         assert_eq!(
             text(format_result(b"tick0-after-bench", &c(WEDGE))),
-            "tick0-after-bench  WEDGE        tick=0      stall=69s   [EL1,BOOT]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started\n"
+            "tick0-after-bench  WEDGE-STUCK  tick=0      stall=69s   [EL1,BOOT]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started\n"
         );
         assert_eq!(
             text(format_result(b"panic-with-message", &c(PANIC))),
@@ -396,7 +403,7 @@ mod tests {
     fn md_row_escapes_pipes_and_picks_detail_or_first_line() {
         assert_eq!(
             text(md_row("07", &c(WEDGE))),
-            "| 07 | WEDGE | 0 | 69s | EL1,BOOT | no | heartbeat stuck at tick 0 after the Gate 1 bench started |\n"
+            "| 07 | WEDGE-STUCK | 0 | 69s | EL1,BOOT | no | heartbeat stuck at tick 0 after the Gate 1 bench started |\n"
         );
         assert_eq!(
             text(md_row("07", &c(PANIC))),
@@ -448,7 +455,7 @@ mod tests {
         let row = text(tsv_row("07", "text", &c(WEDGE), &t, "run-07.log"));
         assert_eq!(
             row,
-            "07\ttext\tWEDGE\t0\t1\t69\t76\t124\t1.50\t1\t2\t7\t8\t3\tEL1,BOOT\tno\t\
+            "07\ttext\tWEDGE-STUCK\t0\t1\t69\t76\t124\t1.50\t1\t2\t7\t8\t3\tEL1,BOOT\tno\t\
              heartbeat stuck at tick 0 after the Gate 1 bench started\t-\t-\t\
              [   0.200000] [0] INFO  Boot  Boot sequence complete\t\
              [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark\trun-07.log\n"
@@ -476,7 +483,7 @@ mod tests {
         };
         let head = text(summary_head(
             &info,
-            &[0, 1, 0, 0, 1, 1],
+            &[0, 0, 1, 0, 0, 0, 1, 1],
             3,
             &[b"1.00", b"2.00", b"4.00"],
         ));
@@ -492,8 +499,9 @@ mod tests {
              | Load average | start 1.00 2.00 3.00; end 4.00 5.00 6.00; per-boot 1-min mean 2.33, max 4.00 |\n\
              | Logs | `/out` |\n\n\
              | Class | Count | Share |\n|---|---:|---:|\n\
-             | PCZERO | 0 | 0% |\n| PANIC | 1 | 33% |\n| EXCEPTION | 0 | 0% |\n\
-             | WEDGE | 0 | 0% |\n| INCONCLUSIVE | 1 | 33% |\n| CLEAN | 1 | 33% |\n\
+             | PCZERO | 0 | 0% |\n| PANIC-LOCK | 0 | 0% |\n| PANIC | 1 | 33% |\n\
+             | EXCEPTION | 0 | 0% |\n| WEDGE-STUCK | 0 | 0% |\n| WEDGE-ALIVE | 0 | 0% |\n\
+             | INCONCLUSIVE | 1 | 33% |\n| CLEAN | 1 | 33% |\n\
              | **Total** | 3 | |\n\n\
              CLEAN rate: 50% (95% Wilson interval 9%-91%) over 2 conclusive boots (1 INCONCLUSIVE left out)\n"
         );

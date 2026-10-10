@@ -11,6 +11,14 @@
 //! Regex matches use the leftmost start, which is all the awk program reads from
 //! `match()` (RSTART) except for the heartbeat, whose `[0-9]+` is greedy in both
 //! engines. Accepted divergences: none known beyond those in `awk`.
+//!
+//! Crash-fix step 1a refines two of the script's classes after its rules ran:
+//! WEDGE splits into WEDGE-STUCK (the heartbeat never printed, stayed at tick 0
+//! or stopped) and WEDGE-ALIVE (the heartbeat kept running but the Gate 1 bench
+//! never completed, or a gpu marker is missing), and a PANIC whose joined first
+//! fatal line contains `lock re-entry:` is PANIC-LOCK. Every other field is the
+//! script's, so [`Classification::base_line`], which prints the base class,
+//! is byte-identical to the script's output line.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -19,21 +27,126 @@ use regex::bytes::Regex;
 
 use super::awk::{clip, contains, fields, find, num_str, to_num, trim};
 
-/// The classes, in the order the summary counts them.
-pub const CLASSES: [&str; 6] = [
-    "PCZERO",
-    "PANIC",
-    "EXCEPTION",
-    "WEDGE",
-    "INCONCLUSIVE",
-    "CLEAN",
-];
+/// A boot's class. The declaration order is the summary order ([`Class::ALL`]),
+/// with each subclass next to its base class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Class {
+    /// An exception report that shows a jump to PC 0.
+    PcZero,
+    /// A panic whose message is step 1b's `lock re-entry:`.
+    PanicLock,
+    /// Any other panic.
+    Panic,
+    /// Any other exception report.
+    Exception,
+    /// No fatal report; the heartbeat never printed, stayed at tick 0 or stopped.
+    WedgeStuck,
+    /// No fatal report; the heartbeat kept running, but the Gate 1 bench never
+    /// completed or (gpu mode) a gpu marker is missing.
+    WedgeAlive,
+    /// Not a result about the kernel.
+    Inconclusive,
+    /// A healthy boot.
+    Clean,
+}
 
-/// One classified boot: the eleven fields of the awk program's output line.
+impl Class {
+    /// The number of classes.
+    pub const COUNT: usize = 8;
+
+    /// Every class, in the order the summary counts them.
+    pub const ALL: [Class; Class::COUNT] = [
+        Class::PcZero,
+        Class::PanicLock,
+        Class::Panic,
+        Class::Exception,
+        Class::WedgeStuck,
+        Class::WedgeAlive,
+        Class::Inconclusive,
+        Class::Clean,
+    ];
+
+    /// The printed name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Class::PcZero => "PCZERO",
+            Class::PanicLock => "PANIC-LOCK",
+            Class::Panic => "PANIC",
+            Class::Exception => "EXCEPTION",
+            Class::WedgeStuck => "WEDGE-STUCK",
+            Class::WedgeAlive => "WEDGE-ALIVE",
+            Class::Inconclusive => "INCONCLUSIVE",
+            Class::Clean => "CLEAN",
+        }
+    }
+
+    /// The class called `name`, if any.
+    pub fn from_name(name: &str) -> Option<Class> {
+        Class::ALL.into_iter().find(|c| c.name() == name)
+    }
+
+    /// The position in [`Class::ALL`].
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The class the script reported for the same boot.
+    pub const fn base(self) -> Base {
+        match self {
+            Class::PcZero => Base::PcZero,
+            Class::PanicLock | Class::Panic => Base::Panic,
+            Class::Exception => Base::Exception,
+            Class::WedgeStuck | Class::WedgeAlive => Base::Wedge,
+            Class::Inconclusive => Base::Inconclusive,
+            Class::Clean => Base::Clean,
+        }
+    }
+}
+
+/// The six classes of the former `scripts/soak-qemu.sh`, which every [`Class`]
+/// refines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Base {
+    PcZero,
+    Panic,
+    Exception,
+    Wedge,
+    Inconclusive,
+    Clean,
+}
+
+impl Base {
+    /// The script's name for the class.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Base::PcZero => "PCZERO",
+            Base::Panic => "PANIC",
+            Base::Exception => "EXCEPTION",
+            Base::Wedge => "WEDGE",
+            Base::Inconclusive => "INCONCLUSIVE",
+            Base::Clean => "CLEAN",
+        }
+    }
+}
+
+/// What a PANIC-LOCK's `lock re-entry:` message names. A field is `None` when
+/// the message (cut short, or broken up by another CPU's output) does not carry it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reentry {
+    /// The lock static, with its `[index]` for a per-CPU array.
+    pub lock: Option<Vec<u8>>,
+    /// The waiter's context (`ctx=`).
+    pub ctx: Option<Vec<u8>>,
+    /// Whether the holder had IRQs on (`holder_irqs=`): `on` or `off`.
+    pub holder_irqs: Option<Vec<u8>>,
+}
+
+/// One classified boot: the eleven fields of the awk program's output line,
+/// with the class refined, plus what step 1a parses beside them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Classification {
-    /// One of [`CLASSES`].
-    pub class: &'static str,
+    /// The refined class; [`Class::base`] is the script's.
+    pub class: Class,
     /// The last heartbeat tick, or `-`.
     pub tick: Vec<u8>,
     /// The number of heartbeat lines.
@@ -50,13 +163,26 @@ pub struct Classification {
     pub first: Vec<u8>,
     /// The last three kernel INFO lines before the first fatal report, oldest first, each or `-`.
     pub info: [Vec<u8>; 3],
+    /// The `lock re-entry:` message's fields, for a PANIC-LOCK only.
+    pub reentry: Option<Reentry>,
 }
 
 impl Classification {
-    /// The awk program's output line, without its newline: the fields joined by tabs.
+    /// The classifier line, without its newline: the eleven fields joined by
+    /// tabs, with the refined class name first.
     pub fn line(&self) -> Vec<u8> {
+        self.fields(self.class.name())
+    }
+
+    /// The awk program's output line, without its newline: [`Self::line`] with
+    /// the base class name in field 1.
+    pub fn base_line(&self) -> Vec<u8> {
+        self.fields(self.class.base().name())
+    }
+
+    fn fields(&self, class: &str) -> Vec<u8> {
         let parts: [&[u8]; 11] = [
-            self.class.as_bytes(),
+            class.as_bytes(),
             &self.tick,
             &self.hb,
             &self.stall,
@@ -91,10 +217,30 @@ static ABORT_AT: LazyLock<Regex> = LazyLock::new(|| re(r"(Data|Instruction) Abor
 static INFO: LazyLock<Regex> = LazyLock::new(|| re(r"\[ *[0-9]+\.[0-9]+\] \[[0-9]+\] INFO "));
 static PC0_ABORT: LazyLock<Regex> = LazyLock::new(|| re(r"EC=0x0*2[01] FAR=0x0000000000000000"));
 static ANSI: LazyLock<Regex> = LazyLock::new(|| re(r"\x1b\[[0-9;]*[A-Za-z]"));
+static REENTRY_LOCK: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Z][A-Z0-9_]*(\[[0-9]+\])?"));
+static REENTRY_CTX: LazyLock<Regex> = LazyLock::new(|| re(r" ctx=([a-z][a-z-]*)"));
+static REENTRY_IRQS: LazyLock<Regex> = LazyLock::new(|| re(r" holder_irqs=(on|off)\b"));
 
 const META: &[u8] = b"[soak] meta ";
 const ELR_ZERO: &[u8] = b"ELR=0x0000000000000000";
 const INST_ABORT_ZERO: &[u8] = b"Instruction Abort at 0x0000000000000000";
+const REENTRY: &[u8] = b"lock re-entry: ";
+
+/// The fields of the `lock re-entry:` message in a PANIC's joined first fatal
+/// line, or `None` when the line has no such message.
+fn reentry_of(first: &[u8]) -> Option<Reentry> {
+    let msg = &first[find(first, REENTRY)? + REENTRY.len()..];
+    let group = |r: &Regex| {
+        r.captures(msg)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_bytes().to_vec())
+    };
+    Some(Reentry {
+        lock: REENTRY_LOCK.find(msg).map(|m| m.as_bytes().to_vec()),
+        ctx: group(&REENTRY_CTX),
+        holder_irqs: group(&REENTRY_IRQS),
+    })
+}
 
 /// `pc0_of(s)`: an EL1/EL0 exception report line that shows a jump to PC 0.
 fn pc0_of(line: &[u8]) -> bool {
@@ -149,7 +295,7 @@ struct Scan {
     boots: u64,
     bench_nr: i64,
     stub: bool,
-    fatal: &'static str,
+    fatal: Option<Class>,
     first: Vec<u8>,
     nfatal: u64,
     pend: bool,
@@ -180,7 +326,7 @@ impl Default for Scan {
             boots: 0,
             bench_nr: 0,
             stub: false,
-            fatal: "",
+            fatal: None,
             first: Vec::new(),
             nfatal: 0,
             pend: false,
@@ -298,7 +444,7 @@ impl Scan {
             } else {
                 kind = Some(exception_or_pc0(line));
                 head = !contains(line, b"(EL0)");
-                self.cutpfx = self.cutpfx || self.fatal.is_empty();
+                self.cutpfx = self.cutpfx || self.fatal.is_none();
             }
         } else if ABORT_AT.is_match(line) {
             // sync_exception_handler's second line: part of the EL1 report just
@@ -311,7 +457,7 @@ impl Scan {
                 } else {
                     Kind::Exception
                 });
-                self.cutpfx = self.cutpfx || self.fatal.is_empty();
+                self.cutpfx = self.cutpfx || self.fatal.is_none();
             }
         }
         if self.exwin > 0 {
@@ -320,7 +466,7 @@ impl Scan {
             self.exwin -= 1;
             if kind.is_none() && (contains(line, ELR_ZERO) || contains(line, INST_ABORT_ZERO)) {
                 if self.exfirst {
-                    self.fatal = "PCZERO";
+                    self.fatal = Some(Class::PcZero);
                     self.first.extend_from_slice(b" / ");
                     self.first.extend(clip(&trim(line), 100));
                 }
@@ -342,23 +488,23 @@ impl Scan {
             // A window still open for the first report keeps priority.
             if !contains(line, b"ELR=") && !(self.exwin > 0 && self.exfirst) {
                 self.exwin = 3;
-                self.exfirst = self.fatal.is_empty();
+                self.exfirst = self.fatal.is_none();
             }
         }
         if let Some(kind) = kind {
             self.nfatal += 1;
-            if self.fatal.is_empty() {
-                self.fatal = match kind {
-                    Kind::PcZero => "PCZERO",
-                    Kind::Exception | Kind::Edk2 => "EXCEPTION",
-                    Kind::Panic => "PANIC",
-                };
+            if self.fatal.is_none() {
+                self.fatal = Some(match kind {
+                    Kind::PcZero => Class::PcZero,
+                    Kind::Exception | Kind::Edk2 => Class::Exception,
+                    Kind::Panic => Class::Panic,
+                });
                 self.edk2 = kind == Kind::Edk2;
                 self.first = clip(&trim(&line[start..]), 200);
                 self.fatal_tick = self.tick;
                 self.pend = kind == Kind::Panic;
             }
-        } else if !cont && self.fatal.is_empty() {
+        } else if !cont && self.fatal.is_none() {
             // Kernel INFO lines, frozen at the first fatal report.
             if let Some(m) = INFO.find(line) {
                 self.info.rotate_left(1);
@@ -454,15 +600,21 @@ impl Scan {
         }
 
         let n = num_str;
-        let class: &'static str;
-        if !self.stub && self.boots == 0 && self.hb == 0 && (self.fatal.is_empty() || self.edk2) {
-            class = "INCONCLUSIVE";
+        let class: Class;
+        if !self.stub && self.boots == 0 && self.hb == 0 && (self.fatal.is_none() || self.edk2) {
+            class = Class::Inconclusive;
             note(b"UEFI stub never ran, not a boot result".to_vec());
-            if !self.fatal.is_empty() {
+            if self.fatal.is_some() {
                 note(b"edk2-format report from the firmware".to_vec());
             }
-        } else if !self.fatal.is_empty() {
-            class = self.fatal;
+        } else if let Some(fatal) = self.fatal {
+            // The earliest report decides, so a `lock re-entry:` after another
+            // report leaves that report's class.
+            class = if fatal == Class::Panic && contains(&self.first, REENTRY) {
+                Class::PanicLock
+            } else {
+                fatal
+            };
             if self.cutpfx {
                 note(b"report prefix split by other output".to_vec());
             }
@@ -479,7 +631,7 @@ impl Scan {
             }
         } else if signaled {
             // QEMU itself crashed or was killed; the silence is not the kernel's doing.
-            class = "INCONCLUSIVE";
+            class = Class::Inconclusive;
             let mut s = format!(
                 "QEMU killed by signal {} after {}s (rc=",
                 n(to_num(&rc) - 128.0),
@@ -499,7 +651,7 @@ impl Scan {
                 "no heartbeat; kernel never started"
             };
             if timing && stall <= limit {
-                class = "INCONCLUSIVE";
+                class = Class::Inconclusive;
                 let since_what = if kst >= 0.0 {
                     "the kernel started"
                 } else {
@@ -514,7 +666,7 @@ impl Scan {
                     .into_bytes(),
                 );
             } else {
-                class = "WEDGE";
+                class = Class::WedgeStuck;
                 note(what.as_bytes().to_vec());
             }
         } else if self.tick == 0.0 {
@@ -527,7 +679,7 @@ impl Scan {
                 "heartbeat never advanced past tick 0"
             };
             if timing && stall <= limit {
-                class = "INCONCLUSIVE";
+                class = Class::Inconclusive;
                 note(
                     format!(
                         "cut short: {what}, only {}s before the end (limit {}s)",
@@ -537,11 +689,11 @@ impl Scan {
                     .into_bytes(),
                 );
             } else {
-                class = "WEDGE";
+                class = Class::WedgeStuck;
                 note(what.as_bytes().to_vec());
             }
         } else if timing && stall > limit {
-            class = "WEDGE";
+            class = Class::WedgeStuck;
             note(
                 format!(
                     "heartbeat stopped at tick {}, silent {}s before the end (limit {}s)",
@@ -561,7 +713,7 @@ impl Scan {
             // never printed one, from the first heartbeat).
             let reference = if bst >= 0.0 { bst } else { hbf };
             if timing && reference >= 0.0 && since(run_end, reference) <= limit {
-                class = "INCONCLUSIVE";
+                class = Class::Inconclusive;
                 let since_what = if bst >= 0.0 {
                     "the bench header"
                 } else {
@@ -576,14 +728,14 @@ impl Scan {
                     .into_bytes(),
                 );
             } else {
-                class = "WEDGE";
+                class = Class::WedgeAlive;
                 note(what.as_bytes().to_vec());
             }
         } else if !missing.is_empty() {
-            class = "WEDGE";
+            class = Class::WedgeAlive;
             note(format!("gpu markers missing: {}", missing.join(",")).into_bytes());
         } else {
-            class = "CLEAN";
+            class = Class::Clean;
             if !timing {
                 note(
                     b"log-only: no harness timing, a late heartbeat stall is undetectable".to_vec(),
@@ -609,7 +761,7 @@ impl Scan {
         }
 
         let i3 = &self.info[2];
-        let lb = if class == "CLEAN" || class == "INCONCLUSIVE" || i3.is_empty() {
+        let lb = if matches!(class.base(), Base::Clean | Base::Inconclusive) || i3.is_empty() {
             "-"
         } else if contains(i3, b"Load balance: migrated") {
             "yes"
@@ -617,6 +769,11 @@ impl Scan {
             "no"
         };
         let dash = |v: Vec<u8>| if v.is_empty() { b"-".to_vec() } else { v };
+        let reentry = if class == Class::PanicLock {
+            reentry_of(&self.first)
+        } else {
+            None
+        };
         let [i1, i2, i3] = self.info;
         Classification {
             class,
@@ -636,6 +793,7 @@ impl Scan {
             detail: dash(notes.join(&b"; "[..])),
             first: dash(self.first),
             info: [dash(i1), dash(i2), dash(i3)],
+            reentry,
         }
     }
 }
@@ -715,7 +873,232 @@ mod tests {
             "INCONCLUSIVE\t-\t0\t5\t-\t-\tcut short: no heartbeat; boot sequence incomplete, only 5s since the kernel started (limit 15s)\t-\t-\t-\t-"
         );
         // --stall-secs 4 in --classify mode overrides the footer's limit.
-        assert!(line(log, Some(4)).starts_with("WEDGE\t-\t0\t5\t"));
+        assert!(line(log, Some(4)).starts_with("WEDGE-STUCK\t-\t0\t5\t"));
+    }
+
+    const STUB: &str = "AIOS UEFI stub v0.1.0\n";
+    const KERNEL: &str = "AIOS UEFI stub v0.1.0\nAIOS kernel booting\n";
+
+    /// A harness footer: `secs=75`, the limit ran out, stall limit 15 s.
+    fn footer(mode: &str, hb_last_advance: i64) -> String {
+        format!(
+            "[soak] meta mode={mode} secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=2 \
+             bench_start=7 g1done=-1 hb_count=2 hb_last_advance={hb_last_advance} \
+             hb_max_gap=-1 stall_limit=15 load1=1.00\n"
+        )
+    }
+
+    /// The class and detail of `log`, classified with the footer's limit.
+    fn class_detail(log: &str) -> (Class, String) {
+        let c = classify(log.as_bytes(), None);
+        (c.class, String::from_utf8(c.detail).expect("ASCII"))
+    }
+
+    fn assert_class(log: &str, class: Class, detail: &str) {
+        assert_eq!(class_detail(log), (class, detail.to_string()), "{log}");
+    }
+
+    #[test]
+    fn no_heartbeat_is_wedge_stuck() {
+        assert_class(
+            &format!("{KERNEL}[   0.2] Boot sequence complete\n"),
+            Class::WedgeStuck,
+            "no heartbeat after boot sequence complete",
+        );
+        assert_class(
+            KERNEL,
+            Class::WedgeStuck,
+            "no heartbeat; boot sequence incomplete",
+        );
+        assert_class(
+            STUB,
+            Class::WedgeStuck,
+            "no heartbeat; kernel never started",
+        );
+    }
+
+    #[test]
+    fn a_heartbeat_stuck_at_tick_0_is_wedge_stuck() {
+        assert_class(
+            &format!("{KERNEL}[heartbeat] tick=0\n=== Gate 1 Benchmark ===\n"),
+            Class::WedgeStuck,
+            "heartbeat stuck at tick 0 after the Gate 1 bench started",
+        );
+        assert_class(
+            &format!("{KERNEL}[heartbeat] tick=0\n"),
+            Class::WedgeStuck,
+            "heartbeat never advanced past tick 0",
+        );
+    }
+
+    #[test]
+    fn a_heartbeat_that_stopped_is_wedge_stuck() {
+        assert_class(
+            &format!(
+                "{KERNEL}[heartbeat] tick=0\n[heartbeat] tick=1000\n{}",
+                footer("text", 40)
+            ),
+            Class::WedgeStuck,
+            "heartbeat stopped at tick 1000, silent 35s before the end (limit 15s)",
+        );
+    }
+
+    #[test]
+    fn a_live_heartbeat_without_a_completed_bench_is_wedge_alive() {
+        assert_class(
+            &format!(
+                "{KERNEL}[heartbeat] tick=0\n=== Gate 1 Benchmark ===\n[heartbeat] tick=1000\n"
+            ),
+            Class::WedgeAlive,
+            "heartbeat alive but the Gate 1 bench never completed",
+        );
+        assert_class(
+            &format!(
+                "{KERNEL}[heartbeat] tick=0\n[heartbeat] tick=1000\n{}",
+                footer("text", 74)
+            ),
+            Class::WedgeAlive,
+            "heartbeat alive but the Gate 1 bench never started",
+        );
+    }
+
+    #[test]
+    fn missing_gpu_markers_are_wedge_alive() {
+        assert_class(
+            &format!(
+                "{KERNEL}[heartbeat] tick=0\nGpuReady\n=== Gate 1 Complete ===\n[heartbeat] tick=1000\n{}",
+                footer("gpu", 74)
+            ),
+            Class::WedgeAlive,
+            "gpu markers missing: InputReady,display handoff",
+        );
+    }
+
+    /// Step 1b's two-line re-entry panic (B1 text run 05, CR bytes dropped).
+    const REENTRY_PANIC: &str = "PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:\n\
+        lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894\n\
+        [panic] cpu=0 tid=16 ctx=irq-exit irq_was=off t=6.629260 irq_elr=0xffff0000000c3a08\n";
+
+    #[test]
+    fn a_lock_re_entry_panic_is_panic_lock_with_its_fields() {
+        let log = format!("{KERNEL}[heartbeat] tick=0\n{REENTRY_PANIC}");
+        let c = classify(log.as_bytes(), None);
+        assert_eq!(c.class, Class::PanicLock);
+        let b = |s: &str| Some(s.as_bytes().to_vec());
+        assert_eq!(
+            c.reentry,
+            Some(Reentry {
+                lock: b("THREAD_TABLE"),
+                ctx: b("irq-exit"),
+                holder_irqs: b("on"),
+            })
+        );
+        assert_eq!(c.detail, b"after heartbeat tick 0");
+        // A per-CPU lock keeps its index; a holder without a site prints `?`.
+        let log = format!(
+            "{KERNEL}PANIC: panicked at kernel/src/sched/scheduler.rs:192:46:\n\
+             lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq holder=? holder_irqs=off tid=? gen=356738\n"
+        );
+        let c = classify(log.as_bytes(), None);
+        assert_eq!(c.class, Class::PanicLock);
+        assert_eq!(
+            c.reentry,
+            Some(Reentry {
+                lock: b("CURRENT_THREAD[0]"),
+                ctx: b("irq"),
+                holder_irqs: b("off"),
+            })
+        );
+    }
+
+    #[test]
+    fn a_message_broken_by_other_output_keeps_what_it_can_read() {
+        let log = format!(
+            "{KERNEL}PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:\n\
+             lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[heartbeat] tick=1000\n"
+        );
+        let c = classify(log.as_bytes(), None);
+        assert_eq!(c.class, Class::PanicLock);
+        assert_eq!(
+            c.reentry,
+            Some(Reentry {
+                lock: Some(b"THREAD_TABLE".to_vec()),
+                ctx: Some(b"irq-e".to_vec()),
+                holder_irqs: None,
+            })
+        );
+    }
+
+    #[test]
+    fn any_other_panic_stays_panic() {
+        let log =
+            format!("{KERNEL}PANIC: panicked at kernel/src/mm/frame.rs:51:9:\nout of frames\n");
+        let c = classify(log.as_bytes(), None);
+        assert_eq!(c.class, Class::Panic);
+        assert_eq!(c.reentry, None);
+    }
+
+    #[test]
+    fn a_lock_re_entry_after_an_earlier_report_keeps_that_report_s_class() {
+        let log = format!(
+            "{KERNEL}[heartbeat] tick=0\nEXCEPTION[CPU 1]: Synchronous exception\n\
+             \x20 ESR=0x96000004 EC=0x25 FAR=0x10 ELR=0xffff000000091234\n{REENTRY_PANIC}"
+        );
+        let c = classify(log.as_bytes(), None);
+        assert_eq!(c.class, Class::Exception);
+        assert_eq!(c.reentry, None);
+        assert_eq!(c.detail, b"after heartbeat tick 0; 2 fatal reports");
+    }
+
+    #[test]
+    fn base_line_differs_from_line_in_the_class_only() {
+        let log = format!("{KERNEL}[heartbeat] tick=0\n{REENTRY_PANIC}");
+        let c = classify(log.as_bytes(), None);
+        let line = String::from_utf8(c.line()).expect("ASCII");
+        let base = String::from_utf8(c.base_line()).expect("ASCII");
+        assert_eq!(line.split_once('\t').map(|p| p.0), Some("PANIC-LOCK"));
+        assert_eq!(base.split_once('\t').map(|p| p.0), Some("PANIC"));
+        assert_eq!(
+            line.split_once('\t').map(|p| p.1),
+            base.split_once('\t').map(|p| p.1)
+        );
+    }
+
+    #[test]
+    fn classes_are_listed_in_summary_order_beside_their_base() {
+        let names: Vec<&str> = Class::ALL.iter().map(|c| c.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "PCZERO",
+                "PANIC-LOCK",
+                "PANIC",
+                "EXCEPTION",
+                "WEDGE-STUCK",
+                "WEDGE-ALIVE",
+                "INCONCLUSIVE",
+                "CLEAN"
+            ]
+        );
+        for (i, class) in Class::ALL.into_iter().enumerate() {
+            assert_eq!(class.index(), i);
+            assert_eq!(Class::from_name(class.name()), Some(class));
+        }
+        let bases: Vec<&str> = Class::ALL.iter().map(|c| c.base().name()).collect();
+        assert_eq!(
+            bases,
+            [
+                "PCZERO",
+                "PANIC",
+                "PANIC",
+                "EXCEPTION",
+                "WEDGE",
+                "WEDGE",
+                "INCONCLUSIVE",
+                "CLEAN"
+            ]
+        );
+        assert_eq!(Class::from_name("WEDGE"), None);
     }
 
     #[test]

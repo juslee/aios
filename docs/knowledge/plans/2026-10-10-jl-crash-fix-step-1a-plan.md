@@ -291,7 +291,7 @@ One commit each, `Crash fix step 1a: <desc>`, pushed after its checks pass (rule
   - Files: `runner.rs`. An `Arm` holds the checkout root, firmware, the ESP snapshot path, the kernel sha line and the git rev. `boot_once(arm, cfg, n, …) -> BootOutcome` runs one QEMU boot and writes the log and footer. The loop in `build_and_boot` calls it.
   - Tests: the existing unit and harness tests.
   - Check: `cargo test -p aios-tools` with `git status --short tools/tests/golden` empty, so no golden changed.
-- [ ] **T3. Class enum (8 classes), WEDGE split, PANIC-LOCK, oracle tests retired.**
+- [x] **T3. Class enum (8 classes), WEDGE split, PANIC-LOCK, oracle tests retired.**
   - Files:
     - `classify.rs`: `Class` without `Degraded`, refinement, `base_line()` (D1), `reentry` parsing;
     - `report.rs`: the 8-class table and counts;
@@ -606,6 +606,9 @@ The verdict is reported. The harness never stops a running soak over it.
   - S1: no developer-guide, README or `.claude/CLAUDE.md` sentence enumerates the aios build inputs (`rg` for the input list and for "provenance"/"stamp"); the only enumerations are the shim's (`:9–11`, `:198`, `:224–227`) and the justfile's (`:221`, `:228–231`, recipe comment). `tools/tests/shim.rs` also lists the inputs, so T5 updates it.
   - S7: a `--report-only` that is accepted and ignored with `--arm` would be a flag that does nothing; the plan refuses it instead, so the documented commands carry no such flag.
   - N4: besides `.github/`, a plain `rg` also skips `.claude/CLAUDE.md:243`, so the old check would have passed with that line stale.
+- T3: A1 on run 167 printed exactly the expected matrix: WEDGE → WEDGE-STUCK 10 and WEDGE → WEDGE-ALIVE 2 (the 12 boots listed under A1), every other boot unchanged, no `base_line()` difference, and all 60 classes agree with their `summary.tsv` under the fold. The same test on B1 (text and gpu) shows PANIC → PANIC-LOCK 3 (text runs 05, 07, 11) and WEDGE → WEDGE-ALIVE 3, nothing else; `--classify` on B1 gives the A2 classes (DEGRADED aside, which is T4's).
+- T3: the real-log test counted each run directory's `build.log` as a boot (62 logs for run 167's 60 boots, both INCONCLUSIVE in either classifier). It now skips `build.log`.
+- T3: `scripts/soak-matrix.sh` (`KNOWN_CLASSES`, and its detail-or-first-fatal `case`) knows only the six old names. An arm at T3 or later shows its subclasses as extra classes, with `first_fatal` instead of `detail` for a WEDGE-STUCK or WEDGE-ALIVE row. Not changed: T10 deletes the script, and nothing runs it on this branch before then.
 
 ## Decisions Made
 
@@ -627,6 +630,12 @@ The verdict is reported. The harness never stops a running soak over it.
   - Interleave mode is report-only, with `--fail-on-regression` as the opt-in gate (S7); the load check runs before the builds (S2); the top-level `summary.md` carries a status and is rewritten after every boot (S3); 3 harness-error boots in a row stop the soak (S4); `brief.sh` reads the interleaved layout (S8).
   - CI `runs` defaults to 5 outside `workflow_dispatch`, is capped at 60, and the job limit is 130 min (S6).
 - T2: `boot_once(arm, cfg, log, data, interrupts) -> Result<BootOutcome>` takes the log path and the data-disk path instead of the boot number `n`, so the caller names the log (`run-NN.log` now, `arm-X/run-NN.log` in T8) and owns the data disk. It makes the fresh data disk (with `cfg.fresh_data`), boots, appends the footer and returns `Booted(Boot { rc, elapsed, progress, load1, text })` or `Interrupted(code)`; `Boot::timing()` builds the `summary.tsv` timing fields. The first-boot stub check, classification and rows stay in the caller, since interleave mode applies its own harness-error rule (S4). `Arm::root` is set but not yet read in single mode; T8's per-arm builds read it.
+
+- T3: `Class::base()` returns a separate `Base` enum (the oracle's six classes, with `name()`), because WEDGE has no `Class` variant. `report.rs` picks a boot's trailing text by `class.base()`, exhaustively, so a subclass prints exactly what its base class did. The scan's first fatal report is an `Option<Class>` (`PcZero`, `Exception` or `Panic`) instead of a string.
+- T3: `reentry` is parsed by three regexes after `lock re-entry: ` in the joined first fatal line: the lock (`[A-Z][A-Z0-9_]*` plus an optional `[n]`), `ctx=[a-z-]+` and `holder_irqs=on|off`. Each field is an `Option`, so a message broken by another CPU's output keeps what it can read and nothing is guessed.
+- T3: every WEDGE branch the plan names already had corpus cases (`nohb-boot-complete`, `nohb-boot-incomplete`, `nohb-kernel-never-started`, `tick0-after-bench`, `tick0-never-advanced`, `hb-stopped`, `bench-never-completed`, `bench-never-started`, `gpu-markers-missing`), so T3 added no WEDGE cases. It added 8 `lock-reentry-*` cases: 6 PANIC-LOCK (the B1 shapes, a per-CPU lock, before the first heartbeat, after a blank line, two CPUs, a message broken by other output), one after an EXCEPTION (stays EXCEPTION) and one after an earlier non-lock panic (stays PANIC). The corpus is 116 cases.
+- T3: the fake harness's `Tool` enum went with `Tool::Oracle`, since `Aios` was its only variant left; `run_scenario` takes the scenario alone. The `no-qemu` golden is unchanged with the fake `bin` as its whole PATH.
+- T3: `brief.sh` prints PANIC-LOCK, WEDGE-STUCK and WEDGE-ALIVE counts, plus a WEDGE count only when a run from before 1a records one.
 
 ## Lessons Learned
 

@@ -21,9 +21,11 @@ run 01/1  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: pani
 | Class | Count | Share |
 |---|---:|---:|
 | PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
 | PANIC | 1 | 100% |
 | EXCEPTION | 0 | 0% |
-| WEDGE | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 0 | 0% |
 | CLEAN | 0 | 0% |
 | **Total** | 1 | |
@@ -64,9 +66,11 @@ boom | with a pipe é
 | Class | Count | Share |
 |---|---:|---:|
 | PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
 | PANIC | 1 | 100% |
 | EXCEPTION | 0 | 0% |
-| WEDGE | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 0 | 0% |
 | CLEAN | 0 | 0% |
 | **Total** | 1 | |

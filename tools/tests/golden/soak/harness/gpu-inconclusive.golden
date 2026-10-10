@@ -21,9 +21,11 @@ run 02/2  INCONCLUSIVE tick=-      stall=<N> [-]  UEFI stub never ran, not a boo
 | Class | Count | Share |
 |---|---:|---:|
 | PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
 | PANIC | 0 | 0% |
 | EXCEPTION | 1 | 50% |
-| WEDGE | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 1 | 50% |
 | CLEAN | 0 | 0% |
 | **Total** | 2 | |
@@ -67,9 +69,11 @@ UEFI firmware (fake)
 | Class | Count | Share |
 |---|---:|---:|
 | PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
 | PANIC | 0 | 0% |
 | EXCEPTION | 1 | 50% |
-| WEDGE | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 1 | 50% |
 | CLEAN | 0 | 0% |
 | **Total** | 2 | |

@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 
 use super::awk::contains;
-use super::classify::{classify, CLASSES};
+use super::classify::{classify, Class};
 use super::host;
 use super::report::{self, BootTiming, SummaryInfo, TSV_HEADER};
 use super::signals::Interrupts;
@@ -651,7 +651,7 @@ fn build_and_boot(
     )?;
 
     let width = cfg.runs_raw.len().max(2);
-    let mut counts = [0u64; 6];
+    let mut counts = [0u64; Class::COUNT];
     let mut non_clean = false;
     let mut md_rows: Vec<u8> = Vec::new();
     let mut loads: Vec<Vec<u8>> = Vec::new();
@@ -687,12 +687,8 @@ fn build_and_boot(
             format!("run {idx}/{}", cfg.runs_raw).as_bytes(),
             &c,
         ))?;
-        let slot = CLASSES
-            .iter()
-            .position(|k| *k == c.class)
-            .expect("a known class");
-        counts[slot] += 1;
-        non_clean |= c.class != "CLEAN";
+        counts[c.class.index()] += 1;
+        non_clean |= c.class != Class::Clean;
         append(
             &tsv,
             &report::tsv_row(&idx, &cfg.mode, &c, &boot.timing(), &log_name),

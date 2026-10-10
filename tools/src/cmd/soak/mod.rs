@@ -59,7 +59,10 @@ save each boot's serial log, and classify every boot as exactly one of:
                 ELR may be up to 3 lines below the "EXCEPTION[CPU n]:" prefix;
                 an instruction abort with FAR=0 (EC=0x20/0x21, or the line
                 "Instruction Abort at 0x0000000000000000") counts as well
-  PANIC         "PANIC: " from the kernel panic handler
+  PANIC-LOCK    a PANIC whose message (the line after "PANIC: panicked at
+                <file>:<line>:<col>:", joined to it) contains "lock re-entry:"
+                (crash-fix step 1b's lock detector)
+  PANIC         any other "PANIC: " from the kernel panic handler
   EXCEPTION     any other exception report: "EXCEPTION[CPU n]:" (EL1),
                 "DATA ABORT (EL0)", "INST ABORT (EL0)", "UNKNOWN EXCEPTION
                 (EL0)", or an edk2-format "Synchronous Exception at 0x..."
@@ -69,11 +72,12 @@ save each boot's serial log, and classify every boot as exactly one of:
                 ELR=0x.." on EL1, "(EL0): FAR=0x" / "(EL0): EC=0x" on EL0),
                 or by a "Data/Instruction Abort at 0x" line with no report
                 in the 4 lines above it
-  WEDGE         no fatal report, the boot is not healthy at the end of the run
+  WEDGE-STUCK   no fatal report, the boot is not healthy at the end of the run
                 (see CLEAN), and it had more than --stall-secs to get there:
                 the CPU 0 heartbeat never printed, stayed at tick 0, or stopped
-                advancing; or it kept running but the Gate 1 bench never
-                completed; or (gpu mode) a GPU marker is missing
+                advancing
+  WEDGE-ALIVE   as WEDGE-STUCK, but the heartbeat kept running: the Gate 1
+                bench never completed, or (gpu mode) a GPU marker is missing
   INCONCLUSIVE  not a result about the kernel:
                 - the UEFI stub never ran: no "AIOS UEFI stub" line and no
                   kernel output, whatever QEMU's exit status (QEMU failed to
@@ -82,7 +86,7 @@ save each boot's serial log, and classify every boot as exactly one of:
                 - QEMU was killed by a signal before the time limit (exit
                   status above 128 other than the harness's own 124/137, or
                   137 before the limit) and no fatal report came first
-                - the symptoms of a WEDGE, but the run ended no more than
+                - the symptoms of a wedge, but the run ended no more than
                   --stall-secs after the boot's last progress (kernel start,
                   heartbeat, bench start), so the boot was cut short rather
                   than shown to be stuck
@@ -92,11 +96,13 @@ save each boot's serial log, and classify every boot as exactly one of:
                 GpuReady, InputReady and "display handoff complete" markers
                 were printed
 
-Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC/EXCEPTION > QEMU
-killed by a signal (INCONCLUSIVE) > WEDGE/INCONCLUSIVE (cut short) > CLEAN.
-When a log holds several fatal reports, the earliest one decides the class
-(later ones are usually fallout, e.g. a data abort after a panic); the count
-is kept in the detail.
+Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC-LOCK/PANIC/EXCEPTION
+> QEMU killed by a signal (INCONCLUSIVE) > WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE
+(cut short) > CLEAN. When a log holds several fatal reports, the earliest one
+decides the class (later ones are usually fallout, e.g. a data abort after a
+panic, so a "lock re-entry:" panic after an exception stays EXCEPTION); the
+count is kept in the detail. Soaks from before crash-fix step 1a report
+both wedge classes as WEDGE, and PANIC-LOCK as PANIC.
 
 Heartbeat timing comes from the harness: it polls the log every second and
 appends a "[soak] meta" line recording when the kernel started, when the first
@@ -370,7 +376,7 @@ pub fn classify_files(
             .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", show(file.as_bytes())))?;
         let c = classify::classify(&raw, stall_override);
         out.write_all(&report::format_result(file.as_bytes(), &c))?;
-        if c.class != "CLEAN" {
+        if c.class != classify::Class::Clean {
             non_clean = true;
             out.write_all(&report::classify_details(&c))?;
         }

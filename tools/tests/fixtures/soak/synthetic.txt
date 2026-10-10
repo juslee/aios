@@ -956,3 +956,65 @@ AIOS kernel booting...<CR>
 [   1.0] [0] INFO  Boot  EL: 1<CR>
 
 [soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=0 hb_last_advance=-1 stall_limit=15 load1=30
+@@@ case lock-reentry-thread-table
+AIOS UEFI stub v0.1.0<CR>
+AIOS kernel booting<CR>
+[   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+[bench] === Gate 1 Benchmark ===<CR>
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:<CR>
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894<CR>
+[panic] cpu=0 tid=16 ctx=irq-exit irq_was=off t=6.629260 irq_elr=0xffff0000000c3a08<CR>
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case lock-reentry-per-cpu-lock
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[   6.6] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+PANIC: panicked at kernel/src/sched/scheduler.rs:192:46:
+lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=356738
+[panic] cpu=0 tid=16 ctx=irq-exit irq_was=off t=6.661844 irq_elr=0xffff000000099728
+@@@ case lock-reentry-before-heartbeat
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+PANIC: panicked at kernel/src/ipc/timeout.rs:118:20:
+lock re-entry: TIMEOUT_QUEUE on CPU 2 ctx=thread-off holder=kernel/src/ipc/timeout.rs:90 holder_irqs=off tid=7 gen=12
+@@@ case lock-reentry-after-blank-line
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+
+lock re-entry: THREAD_TABLE on CPU 1 ctx=irq holder=? holder_irqs=off tid=? gen=0
+@@@ case lock-reentry-two-cpus
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+PANIC: panicked at kernel/src/sched/scheduler.rs:192:46:
+lock re-entry: CURRENT_THREAD[3] on CPU 3 ctx=irq holder=? holder_irqs=on tid=? gen=77
+@@@ case lock-reentry-split-by-output
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[   6.7] [2] INFO  Ipc   interleaved output from CPU 2
+@@@ case lock-reentry-after-exception
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 1]: Synchronous exception
+  ESR=0x96000004 EC=0x25 FAR=0x0000000000000010 ELR=0xffff000000091234
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=9
+@@@ case lock-reentry-after-other-panic
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/mm/frame.rs:51:9:
+out of frames
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=9

@@ -20,9 +20,11 @@ run 01/1  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
 | Class | Count | Share |
 |---|---:|---:|
 | PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
 | PANIC | 0 | 0% |
 | EXCEPTION | 0 | 0% |
-| WEDGE | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 0 | 0% |
 | CLEAN | 1 | 100% |
 | **Total** | 1 | |
@@ -62,9 +64,11 @@ Gate 1: IPC < 10 us: PASS
 | Class | Count | Share |
 |---|---:|---:|
 | PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
 | PANIC | 0 | 0% |
 | EXCEPTION | 0 | 0% |
-| WEDGE | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
 | INCONCLUSIVE | 0 | 0% |
 | CLEAN | 1 | 100% |
 | **Total** | 1 | |

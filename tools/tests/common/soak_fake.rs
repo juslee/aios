@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use regex::bytes::Regex;
 
 use super::isolated;
-use super::soak::{oracle_script, rename_prefix};
 use super::unique_dir;
 
 /// Fake `qemu-system-aarch64`: `--version` prints a fixed banner; a boot
@@ -341,13 +340,6 @@ pub fn scenarios() -> Vec<Scenario> {
     v
 }
 
-/// The tool a scenario runs.
-#[derive(Clone, Copy, Debug)]
-pub enum Tool {
-    Aios,
-    Oracle,
-}
-
 /// What a scenario run produced, before normalisation.
 pub struct Outcome {
     pub code: i32,
@@ -375,41 +367,6 @@ fn write_exec(path: &Path, text: &str) {
 /// The system directories at the end of every scenario's PATH but `no-qemu`'s.
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
-/// What the oracle runs before it looks for QEMU: `bash` itself, `dirname` for
-/// its repository, `cat` for its awk program, and `sh` and `sleep` in its probe
-/// of `timeout`. aios runs nothing before that check.
-const PRE_QEMU_TOOLS: [&str; 5] = ["bash", "cat", "dirname", "sh", "sleep"];
-
-/// A directory of links to [`PRE_QEMU_TOOLS`] in [`SYSTEM_PATH`], and nothing else.
-fn pre_qemu_tools(root: &Path) -> PathBuf {
-    let dir = root.join("sys-bin");
-    std::fs::create_dir_all(&dir).expect("sys-bin");
-    for name in PRE_QEMU_TOOLS {
-        let found = SYSTEM_PATH
-            .split(':')
-            .map(|d| Path::new(d).join(name))
-            .find(|p| p.is_file())
-            .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
-        std::os::unix::fs::symlink(found, dir.join(name)).expect("symlink a system tool");
-    }
-    dir
-}
-
-/// The `timeout` (or `gtimeout`) on the ambient PATH, for the oracle.
-fn ambient_timeout() -> PathBuf {
-    let out = Command::new("sh")
-        .args(["-c", "command -v timeout || command -v gtimeout"])
-        .output()
-        .expect("run sh");
-    let path = String::from_utf8(out.stdout).expect("a UTF-8 path");
-    let path = path.lines().next().unwrap_or("");
-    assert!(
-        !path.is_empty(),
-        "the oracle needs timeout or gtimeout on PATH (macOS: brew install coreutils)"
-    );
-    PathBuf::from(path)
-}
-
 fn fake_git(dir: &Path, args: &[&str]) {
     super::git(dir, args);
 }
@@ -430,9 +387,9 @@ fn still_running(pid: &str) -> bool {
     }
 }
 
-/// Build the fake root for `sc` and run `tool` in it.
-pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
-    let root = unique_dir(&format!("soak-{}-{tool:?}", sc.name));
+/// Build the fake root for `sc` and run `aios soak` in it.
+pub fn run_scenario(sc: &Scenario) -> Outcome {
+    let root = unique_dir(&format!("soak-{}", sc.name));
     std::fs::write(root.join("fw.fd"), "firmware").expect("fw");
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
@@ -479,9 +436,6 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
     if !sc.no_image {
         std::fs::write(repo.join("aios.img"), "ESP image").expect("image");
     }
-    // The oracle finds its repository from its own location.
-    std::fs::create_dir_all(repo.join("scripts")).expect("scripts");
-    std::fs::copy(oracle_script(), repo.join("scripts/soak-qemu.sh")).expect("oracle");
     let cwd = repo.join(sc.cwd);
     if let (Some(kind), Out::At(out)) = (sc.out_exists, sc.out) {
         let out = cwd.join(out);
@@ -495,36 +449,17 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
     }
 
     let mut path = bin.clone().into_os_string();
-    if matches!(tool, Tool::Oracle) {
-        let oracle_bin = root.join("oracle-bin");
-        std::fs::create_dir_all(&oracle_bin).expect("oracle-bin");
-        std::os::unix::fs::symlink(ambient_timeout(), oracle_bin.join("timeout"))
-            .expect("symlink timeout");
+    // A distro QEMU in a system directory (Linux's qemu-system-arm package)
+    // would be found there, so `no-qemu` gets the fake `bin` alone: aios runs
+    // nothing before it looks for QEMU.
+    if !sc.no_qemu {
         path.push(":");
-        path.push(&oracle_bin);
-    }
-    path.push(":");
-    if sc.no_qemu {
-        // A distro QEMU in a system directory (Linux's qemu-system-arm package)
-        // would be found there, so give the tool only what it runs first.
-        path.push(pre_qemu_tools(&root));
-    } else {
         path.push(SYSTEM_PATH);
     }
 
-    let mut command = match tool {
-        Tool::Aios => {
-            let mut c = Command::new(env!("CARGO_BIN_EXE_aios"));
-            c.arg("soak");
-            c
-        }
-        Tool::Oracle => {
-            let mut c = Command::new("bash");
-            c.arg(repo.join("scripts/soak-qemu.sh"));
-            c
-        }
-    };
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aios"));
     isolated(&mut command)
+        .arg("soak")
         .args(sc.args)
         .current_dir(&cwd)
         .env("PATH", &path)
@@ -715,15 +650,8 @@ pub fn normalize(data: &[u8], root: &Path) -> Vec<u8> {
 }
 
 /// The golden text of an outcome: every part, normalised, in a fixed order.
-pub fn golden_text(o: &Outcome, rename: bool) -> Vec<u8> {
-    let n = |d: &[u8]| {
-        let d = normalize(d, &o.root);
-        if rename {
-            rename_prefix(&d)
-        } else {
-            d
-        }
-    };
+pub fn golden_text(o: &Outcome) -> Vec<u8> {
+    let n = |d: &[u8]| normalize(d, &o.root);
     let mut g = format!("exit {}\n--- stdout\n", o.code).into_bytes();
     g.extend(n(&o.stdout));
     g.extend_from_slice(b"--- stderr\n");

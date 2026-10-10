@@ -1,11 +1,13 @@
-//! `aios soak` command-line parity with the deleted `scripts/soak-qemu.sh`:
-//! `--classify` output and exit status, and the usage errors, byte for byte
-//! except for the documented `soak-qemu:` -> `soak:` message prefix.
+//! `aios soak` on the command line: `--classify` output and exit status, and
+//! the usage errors.
 //!
 //! - `cli_goldens_match_aios` replays every case of `CASES` and compares
 //!   `exit N`, stdout and stderr with `tests/golden/soak/cli/<case>.golden`.
-//! - `record_cli_goldens_from_oracle` (ignored) records them from the oracle.
-//! - `cli_differential_against_oracle` runs both tools on every case.
+//!   The goldens were recorded from the deleted `scripts/soak-qemu.sh` (R4's
+//!   oracle) and are kept by aios since crash-fix step 1a split its classes;
+//!   `AIOS_BLESS_GOLDENS=1` rewrites them from aios.
+//! - `help_prints_the_usage_whatever_came_before` and
+//!   `classify_works_outside_a_git_checkout` cover the rest.
 //!
 //! Every case runs in a directory holding the corpus as `cases/<name>.txt`, and
 //! none of them reaches the boot loop (tests/soak_harness.rs covers that).
@@ -13,9 +15,7 @@
 mod common;
 
 use aios_tools::cmd::soak::USAGE;
-use common::soak::{
-    check_golden, golden_dir, rename_prefix, run_oracle, synthetic_cases, write_cases,
-};
+use common::soak::{check_golden, synthetic_cases, write_cases};
 use common::{isolated, run_aios, unique_dir, Run};
 use std::path::{Path, PathBuf};
 
@@ -157,13 +157,6 @@ fn run_aios_soak(dir: &Path, args: &[String]) -> Run {
     run_aios(dir, &full)
 }
 
-fn run_oracle_renamed(dir: &Path, args: &[String]) -> Run {
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let mut run = run_oracle(dir, &refs, &[]);
-    run.stderr = rename_prefix(&run.stderr);
-    run
-}
-
 #[test]
 fn cli_goldens_match_aios() {
     let (dir, all) = corpus_dir("soak-cli-goldens");
@@ -176,40 +169,6 @@ fn cli_goldens_match_aios() {
             )
         })
         .collect();
-    assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
-}
-
-#[test]
-#[ignore = "rewrites tests/golden/soak/cli/ from the oracle"]
-fn record_cli_goldens_from_oracle() {
-    let (dir, all) = corpus_dir("soak-cli-record");
-    std::fs::create_dir_all(golden_dir().join("cli")).expect("golden dir");
-    for (name, case) in CASES {
-        let run = run_oracle_renamed(&dir, &args_of(case, &all));
-        std::fs::write(
-            golden_dir().join(format!("cli/{name}.golden")),
-            outcome(&run),
-        )
-        .expect("write a golden");
-    }
-}
-
-#[test]
-fn cli_differential_against_oracle() {
-    let (dir, all) = corpus_dir("soak-cli-diff");
-    let mut diffs = Vec::new();
-    for (name, case) in CASES {
-        let args = args_of(case, &all);
-        let want = outcome(&run_oracle_renamed(&dir, &args));
-        let got = outcome(&run_aios_soak(&dir, &args));
-        if want != got {
-            diffs.push(format!(
-                "{name}\n--- oracle\n{}\n--- aios\n{}",
-                String::from_utf8_lossy(&want),
-                String::from_utf8_lossy(&got)
-            ));
-        }
-    }
     assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
 }
 
@@ -266,7 +225,7 @@ fn classify_works_outside_a_git_checkout() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        out.stdout.starts_with(b"a.log  WEDGE "),
+        out.stdout.starts_with(b"a.log  WEDGE-STUCK "),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );

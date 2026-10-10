@@ -134,7 +134,7 @@ run-direct: build
 # Runs in the invocation directory ([no-cd]): relative out= and log paths resolve there.
 # The harness is this checkout's own tools build, not the main checkout's (.claude/hooks/aios),
 # so the commit summary.md records names the classifier as well as the kernel.
-# Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN
+# Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/CLEAN
 [no-cd]
 [positional-arguments]
 soak *args: tools

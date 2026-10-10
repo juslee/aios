@@ -3,7 +3,7 @@ exit 1
 cases/clean-text.txt  CLEAN        tick=2000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
 cases/clean-text-log-only.txt  CLEAN        tick=1000   stall=-     [EL1,BOOT,G1PASS,G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
 cases/clean-gpu.txt  CLEAN        tick=1000   stall=5s    [EL1,BOOT,G1DONE,GPU,INPUT,HANDOFF]
-cases/gpu-markers-missing.txt  WEDGE        tick=1000   stall=5s    [EL1,BOOT,G1DONE,GPU]  lb_last=no  gpu markers missing: InputReady,display handoff
+cases/gpu-markers-missing.txt  WEDGE-ALIVE  tick=1000   stall=5s    [EL1,BOOT,G1DONE,GPU]  lb_last=no  gpu markers missing: InputReady,display handoff
     first fatal: -
     last INFO:   -
                  [   0.200000] [0] INFO  Boot  Boot sequence complete
@@ -135,23 +135,23 @@ cases/rc137-before-limit.txt  INCONCLUSIVE tick=0      stall=74s   [-]  QEMU kil
                  -
                  -
 cases/rc137-at-limit-clean.txt  CLEAN        tick=1000   stall=1s    [G1DONE]
-cases/early-exit-rc1.txt  WEDGE        tick=1000   stall=36s   [G1DONE]  lb_last=-  heartbeat stopped at tick 1000, silent 36s before the end (limit 15s); qemu exited before the time limit (rc=1)
+cases/early-exit-rc1.txt  WEDGE-STUCK  tick=1000   stall=36s   [G1DONE]  lb_last=-  heartbeat stopped at tick 1000, silent 36s before the end (limit 15s); qemu exited before the time limit (rc=1)
     first fatal: -
     last INFO:   -
                  -
                  -
 cases/early-exit-rc0-clean.txt  CLEAN        tick=1000   stall=6s    [G1DONE]  qemu exited before the time limit (rc=0)
-cases/nohb-boot-complete.txt  WEDGE        tick=-      stall=74s   [EL1,BOOT]  lb_last=no  no heartbeat after boot sequence complete
+cases/nohb-boot-complete.txt  WEDGE-STUCK  tick=-      stall=74s   [EL1,BOOT]  lb_last=no  no heartbeat after boot sequence complete
     first fatal: -
     last INFO:   -
                  -
                  [   0.200000] [0] INFO  Boot  Boot sequence complete
-cases/nohb-boot-incomplete.txt  WEDGE        tick=-      stall=74s   [-]  lb_last=no  no heartbeat; boot sequence incomplete
+cases/nohb-boot-incomplete.txt  WEDGE-STUCK  tick=-      stall=74s   [-]  lb_last=no  no heartbeat; boot sequence incomplete
     first fatal: -
     last INFO:   -
                  -
                  [   0.100000] [0] INFO  Mm    frame allocator ready
-cases/nohb-kernel-never-started.txt  WEDGE        tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
+cases/nohb-kernel-never-started.txt  WEDGE-STUCK  tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
     first fatal: -
     last INFO:   -
                  -
@@ -166,17 +166,17 @@ cases/nohb-cut-short-qemu-start.txt  INCONCLUSIVE tick=-      stall=10s   [-]  c
     last INFO:   -
                  -
                  -
-cases/nohb-log-only.txt  WEDGE        tick=-      stall=-     [-]  lb_last=-  no heartbeat; boot sequence incomplete
+cases/nohb-log-only.txt  WEDGE-STUCK  tick=-      stall=-     [-]  lb_last=-  no heartbeat; boot sequence incomplete
     first fatal: -
     last INFO:   -
                  -
                  -
-cases/tick0-after-bench.txt  WEDGE        tick=0      stall=69s   [EL1,BOOT]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
+cases/tick0-after-bench.txt  WEDGE-STUCK  tick=0      stall=69s   [EL1,BOOT]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
     first fatal: -
     last INFO:   -
                  [   0.200000] [0] INFO  Boot  Boot sequence complete
                  [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
-cases/tick0-never-advanced.txt  WEDGE        tick=0      stall=74s   [-]  lb_last=-  heartbeat never advanced past tick 0
+cases/tick0-never-advanced.txt  WEDGE-STUCK  tick=0      stall=74s   [-]  lb_last=-  heartbeat never advanced past tick 0
     first fatal: -
     last INFO:   -
                  -
@@ -186,22 +186,22 @@ cases/tick0-cut-short.txt  INCONCLUSIVE tick=0      stall=9s    [-]  cut short: 
     last INFO:   -
                  -
                  -
-cases/tick0-log-only-lb-yes.txt  WEDGE        tick=0      stall=-     [-]  lb_last=yes  heartbeat never advanced past tick 0
+cases/tick0-log-only-lb-yes.txt  WEDGE-STUCK  tick=0      stall=-     [-]  lb_last=yes  heartbeat never advanced past tick 0
     first fatal: -
     last INFO:   -
                  -
                  [   5.901378] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
-cases/hb-stopped.txt  WEDGE        tick=2000   stall=35s   [G1DONE]  lb_last=no  heartbeat stopped at tick 2000, silent 35s before the end (limit 15s)
+cases/hb-stopped.txt  WEDGE-STUCK  tick=2000   stall=35s   [G1DONE]  lb_last=no  heartbeat stopped at tick 2000, silent 35s before the end (limit 15s)
     first fatal: -
     last INFO:   -
                  -
                  [   9.000000] [0] INFO  Sched idle
-cases/bench-never-completed.txt  WEDGE        tick=2000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
+cases/bench-never-completed.txt  WEDGE-ALIVE  tick=2000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
     first fatal: -
     last INFO:   -
                  -
                  -
-cases/bench-never-started.txt  WEDGE        tick=1000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+cases/bench-never-started.txt  WEDGE-ALIVE  tick=1000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
     first fatal: -
     last INFO:   -
                  -
@@ -216,14 +216,14 @@ cases/bench-never-started-cut-short.txt  INCONCLUSIVE tick=1000   stall=1s    [-
     last INFO:   -
                  -
                  -
-cases/bench-never-completed-log-only.txt  WEDGE        tick=1000   stall=-     [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
+cases/bench-never-completed-log-only.txt  WEDGE-ALIVE  tick=1000   stall=-     [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
     first fatal: -
     last INFO:   -
                  -
                  -
 cases/hb-max-gap-note.txt  CLEAN        tick=1000   stall=1s    [G1DONE]  heartbeat paused 20s after the bench completed
 cases/booted-twice.txt  CLEAN        tick=1000   stall=1s    [G1DONE]  guest booted 2 times
-cases/wedge-lb-no.txt  WEDGE        tick=0      stall=69s   [-]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
+cases/wedge-lb-no.txt  WEDGE-STUCK  tick=0      stall=69s   [-]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
     first fatal: -
     last INFO:   -
                  -
@@ -250,7 +250,7 @@ cases/clip-multibyte.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  P
     last INFO:   -
                  -
                  -
-cases/clip-info-160.txt  WEDGE        tick=0      stall=-     [-]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
+cases/clip-info-160.txt  WEDGE-STUCK  tick=0      stall=-     [-]  lb_last=no  heartbeat stuck at tick 0 after the Gate 1 bench started
     first fatal: -
     last INFO:   -
                  -
@@ -260,17 +260,17 @@ cases/tabs-in-fatal.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  PA
     last INFO:   -
                  -
                  -
-cases/stall-override-wedge.txt  WEDGE        tick=1000   stall=10s   [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+cases/stall-override-wedge.txt  WEDGE-ALIVE  tick=1000   stall=10s   [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
     first fatal: -
     last INFO:   -
                  -
                  -
-cases/stall-override-default.txt  WEDGE        tick=1000   stall=10s   [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+cases/stall-override-default.txt  WEDGE-ALIVE  tick=1000   stall=10s   [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
     first fatal: -
     last INFO:   -
                  -
                  -
-cases/older-footer.txt  WEDGE        tick=1000   stall=-     [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
+cases/older-footer.txt  WEDGE-ALIVE  tick=1000   stall=-     [-]  lb_last=-  heartbeat alive but the Gate 1 bench never started
     first fatal: -
     last INFO:   -
                  -
@@ -284,12 +284,12 @@ cases/window-priority.txt  PCZERO       tick=0      stall=-     [-]  lb_last=-  
                  -
 cases/rc-empty.txt  CLEAN        tick=1000   stall=1s    [G1DONE]
 cases/elapsed-over-secs.txt  CLEAN        tick=1000   stall=0s    [G1DONE]
-cases/boot-el-spacing.txt  WEDGE        tick=-      stall=-     [EL1]  lb_last=-  no heartbeat; boot sequence incomplete
+cases/boot-el-spacing.txt  WEDGE-STUCK  tick=-      stall=-     [EL1]  lb_last=-  no heartbeat; boot sequence incomplete
     first fatal: -
     last INFO:   -
                  -
                  -
-cases/gate1-pass-spacing.txt  WEDGE        tick=-      stall=-     [G1PASS]  lb_last=-  no heartbeat; kernel never started
+cases/gate1-pass-spacing.txt  WEDGE-STUCK  tick=-      stall=-     [G1PASS]  lb_last=-  no heartbeat; kernel never started
     first fatal: -
     last INFO:   -
                  -
@@ -319,12 +319,12 @@ cases/pr168-n05-nostub-logonly.txt  INCONCLUSIVE tick=-      stall=-     [-]  UE
     last INFO:   -
                  -
                  -
-cases/pr168-n06-stub-no-kernel.txt  WEDGE        tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
+cases/pr168-n06-stub-no-kernel.txt  WEDGE-STUCK  tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
     first fatal: -
     last INFO:   -
                  -
                  -
-cases/pr168-n07-stub-panic.txt  WEDGE        tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
+cases/pr168-n07-stub-panic.txt  WEDGE-STUCK  tick=-      stall=75s   [-]  lb_last=-  no heartbeat; kernel never started
     first fatal: -
     last INFO:   -
                  -
@@ -336,7 +336,7 @@ cases/pr168-n08-stub-edk2-exc.txt  EXCEPTION    tick=-      stall=75s   [-]  lb_
                  -
 cases/pr168-n09-killafter-stall5.txt  CLEAN        tick=3000   stall=0s    [EL1,BOOT,G1PASS,G1DONE]
 cases/pr168-n10-stall-eq-limit.txt  CLEAN        tick=3000   stall=15s   [EL1,BOOT,G1PASS,G1DONE]
-cases/pr168-n11-stall-over-limit.txt  WEDGE        tick=3000   stall=16s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  heartbeat stopped at tick 3000, silent 16s before the end (limit 15s)
+cases/pr168-n11-stall-over-limit.txt  WEDGE-STUCK  tick=3000   stall=16s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  heartbeat stopped at tick 3000, silent 16s before the end (limit 15s)
     first fatal: -
     last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
                  [   5.6] [0] INFO  Boot  EL: 1
@@ -357,7 +357,7 @@ cases/pr168-n15-rc139-after-exc.txt  EXCEPTION    tick=0      stall=69s   [EL1,B
     last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
                  [   5.6] [0] INFO  Boot  EL: 1
                  [   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
-cases/pr168-n16-rc1-early-kernel.txt  WEDGE        tick=3000   stall=45s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  heartbeat stopped at tick 3000, silent 45s before the end (limit 15s); qemu exited before the time limit (rc=1)
+cases/pr168-n16-rc1-early-kernel.txt  WEDGE-STUCK  tick=3000   stall=45s   [EL1,BOOT,G1PASS,G1DONE]  lb_last=no  heartbeat stopped at tick 3000, silent 45s before the end (limit 15s); qemu exited before the time limit (rc=1)
     first fatal: -
     last INFO:   [   5.6] [0] INFO  Boot  AIOS kernel booting...
                  [   5.6] [0] INFO  Boot  EL: 1
@@ -447,9 +447,49 @@ cases/pr168-s09-late-start-tick0.txt  INCONCLUSIVE tick=0      stall=2s    [BOOT
     last INFO:   -
                  -
                  [   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
-cases/pr168-s10-late-start-nohb.txt  WEDGE        tick=-      stall=75s   [EL1]  lb_last=no  no heartbeat; boot sequence incomplete
+cases/pr168-s10-late-start-nohb.txt  WEDGE-STUCK  tick=-      stall=75s   [EL1]  lb_last=no  no heartbeat; boot sequence incomplete
     first fatal: -
     last INFO:   -
                  -
                  [   1.0] [0] INFO  Boot  EL: 1
+cases/lock-reentry-thread-table.txt  PANIC-LOCK   tick=0      stall=74s   [BOOT]  lb_last=no  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    last INFO:   -
+                 -
+                 [   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/lock-reentry-per-cpu-lock.txt  PANIC-LOCK   tick=0      stall=-     [-]  lb_last=no  PANIC: panicked at kernel/src/sched/scheduler.rs:192:46: / lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=356738
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:192:46: / lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=356738
+    last INFO:   -
+                 -
+                 [   6.6] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+cases/lock-reentry-before-heartbeat.txt  PANIC-LOCK   tick=-      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/ipc/timeout.rs:118:20: / lock re-entry: TIMEOUT_QUEUE on CPU 2 ctx=thread-off holder=kernel/src/ipc/timeout.rs:90 holder_irqs=off tid=7 gen=12
+    first fatal: PANIC: panicked at kernel/src/ipc/timeout.rs:118:20: / lock re-entry: TIMEOUT_QUEUE on CPU 2 ctx=thread-off holder=kernel/src/ipc/timeout.rs:90 holder_irqs=off tid=7 gen=12
+    last INFO:   -
+                 -
+                 -
+cases/lock-reentry-after-blank-line.txt  PANIC-LOCK   tick=1000   stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 1 ctx=irq holder=? holder_irqs=off tid=? gen=0
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 1 ctx=irq holder=? holder_irqs=off tid=? gen=0
+    last INFO:   -
+                 -
+                 -
+cases/lock-reentry-two-cpus.txt  PANIC-LOCK   tick=0      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    last INFO:   -
+                 -
+                 -
+cases/lock-reentry-split-by-output.txt  PANIC-LOCK   tick=0      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[   6.7] [2] INFO  Ipc   interleaved output from CPU 2
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[   6.7] [2] INFO  Ipc   interleaved output from CPU 2
+    last INFO:   -
+                 -
+                 -
+cases/lock-reentry-after-exception.txt  EXCEPTION    tick=0      stall=-     [-]  lb_last=-  EXCEPTION[CPU 1]: Synchronous exception / ESR=0x96000004 EC=0x25 FAR=0x0000000000000010 ELR=0xffff000000091234
+    first fatal: EXCEPTION[CPU 1]: Synchronous exception / ESR=0x96000004 EC=0x25 FAR=0x0000000000000010 ELR=0xffff000000091234
+    last INFO:   -
+                 -
+                 -
+cases/lock-reentry-after-other-panic.txt  PANIC        tick=0      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/mm/frame.rs:51:9: / out of frames
+    first fatal: PANIC: panicked at kernel/src/mm/frame.rs:51:9: / out of frames
+    last INFO:   -
+                 -
+                 -
 --- stderr
