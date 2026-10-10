@@ -49,29 +49,59 @@ Decisions (the strictest one wins):
 
 Team rules (rule 11; agent_id and agent_type come from the payload of a
 subagent, AIOS_TEAM from the lead's launch line):
-  1  QEMU starts (qemu-system-aarch64, just run/run-display/run-gpu/run-input/
-     run-direct/debug/soak, aios soak, cargo run -p aios-tools -- soak,
-     scripts/soak-matrix.sh, scripts/agent/qemu-lock.sh run; `soak
-     --classify` starts nothing)
+  1  QEMU starts: qemu-system-aarch64 (not --version/-version/-h/--help);
+     just run/run-display/run-gpu/run-input/run-direct/debug/soak (not
+     --list, --show, --dry-run, --evaluate and the other print-only
+     options; just --command is read as a command); aios soak; cargo run/r
+     with `soak` as the first program argument after `--`;
+     scripts/soak-matrix.sh; and the lock wrapper's `run`. `soak
+     --classify` starts nothing; command -v/-V and type run nothing. Also
+     through setsid, screen (and screen -X stuff), tmux new-session/
+     new-window/split-window/send-keys/... and env -S. The wrapper is
+     trusted only as scripts/agent/qemu-lock.sh of the main checkout, the
+     project or the agent's own temporary worktree (realpath); any other
+     qemu-lock.sh, and any script called `run --team ...` (a renamed
+     copy), gets the wrapper's caller rules and has its body read.
        deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
-             exists; any start that is not `qemu-lock.sh run`; an agent with
-             no usable agent_type; any agent but the verifier; a team lead
+             exists; any start that is not the wrapper; an agent with no
+             usable agent_type; any agent but the verifier; a team lead
+       ask   a recipe, subcommand or wrapper path from a shell expansion
        none  the verifier, or an owner/solo main thread, running the wrapper
   2  Toolchain and kills
-       deny  pkill/killall with a qemu argument (everyone); rustup toolchain
-             install/uninstall/remove, update, install, uninstall, component
-             add/remove from an agent
-       ask   the same rustup commands from a main thread
+       deny  pkill/killall naming qemu or a piece of its binary name
+             (everyone); from an agent, every pkill/killall and every kill of
+             pids found by pattern (kill $(pgrep ...), ... | xargs kill, a
+             pid read from pgrep or ps output); from an agent, rustup
+             toolchain install/uninstall/remove/link, update, install,
+             uninstall, component and target add/remove, default <name>,
+             override (but list), set, run, self update/uninstall,
+             rustup-init, `cargo +<toolchain>` (any rustup proxy) and RUSTUP_*
+             set for a proxy
+       ask   from a main thread, pkill/killall with a computed or regex
+             pattern or one naming the soak harness, a kill of pids found by
+             pattern, and rustup toolchain install/uninstall/remove, update,
+             install, uninstall, component add/remove
   3  Agent spawn (tool Agent, or Task)
        deny  a named spawn without isolation; a project agent type whose
-             frontmatter says isolation: worktree spawned without
-             isolation: "worktree"; a project agent type with model set
-       ask   an agent definition file that cannot be read
+             frontmatter says isolation: worktree (YAML read: BOM, comments,
+             quotes, anchors and tags) spawned without isolation:
+             "worktree"; a project agent type with model set
+       ask   an agent definition file that cannot be read; an isolation key
+             whose value is not plainly worktree (an alias, a block, another
+             spelling), spawned without isolation: "worktree"
   4  Placement
        deny  EnterWorktree from any agent and from a team lead; from an
              agent, git reset --hard outside its own temporary worktree
-             (<main>/.claude/worktrees/agent-<id> on worktree-agent-<id>),
-             and git commit/merge/cherry-pick/revert/am in the main checkout
+             (<main>/.claude/worktrees/agent-<id> on worktree-agent-<id>,
+             <id> = the payload's agent_id); from an agent, in the main
+             checkout: commit/merge/cherry-pick/revert/am, rebase, pull,
+             reset (any mode), update-ref, symbolic-ref (writes), stash (but
+             list/show), commit-tree, fast-import, branch -f/-D/-M/-C,
+             checkout -B, switch -C; any of these from an agent with GIT_DIR,
+             GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE (or another
+             repository-moving GIT_* variable) set, exported or inherited,
+             with --git-dir/--work-tree, or with -c core.worktree/core.bare/
+             include.*
        ask   git reset --hard from a main thread
 
 This is defence in depth, not a security boundary: code the guard does not
@@ -113,12 +143,14 @@ ARG_WRAPPERS = {"xargs", "parallel", "find"}
 WRAPPERS = ARG_WRAPPERS | {"env", "command", "builtin", "exec", "nohup", "nice",
                            "timeout", "gtimeout", "time", "stdbuf", "sudo", "doas",
                            "caffeinate", "script", "unbuffer", "chronic", "flock",
-                           "rustup", "arch"}
+                           "rustup", "arch", "setsid", "screen"}
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 EXPANSION_START = re.compile(r"[A-Za-z_{0-9@*#?$!-]")
 INLINE_GIT_PUSH = re.compile(r"\bgit\b.*\bpush\b", re.S)
 # Text that suggests a command string or script is about git or gh.
 MENTIONS_GIT = re.compile(r"git|push|\bgh\b")
+# Text that suggests it is about a team rule (QEMU, kills, the toolchain).
+MENTIONS_TEAM = re.compile(r"qemu|\bjust\b|pkill|killall|rustup", re.I)
 
 # Environment variables that change which repository, config or binary a
 # git or gh command uses.
@@ -216,16 +248,51 @@ GQL_DANGEROUS = re.compile(
 QEMU_RECIPES = {"run", "run-display", "run-gpu", "run-input", "run-direct",
                 "debug", "soak"}
 # just options that take a value (so it is not mistaken for a recipe name).
-JUST_VALUE_LONGS = {"working-directory", "justfile", "set", "shell", "shell-arg",
+JUST_VALUE_LONGS = {"working-directory", "justfile", "shell", "shell-arg",
                     "chooser", "color", "command-color", "dotenv-filename",
                     "dotenv-path", "dump-format", "list-heading", "list-prefix",
-                    "list-submodules", "highlight", "timestamp-format", "tempdir"}
-JUST_VALUE_SHORTS = "dfE"
+                    "highlight", "timestamp-format", "tempdir", "alias-style",
+                    "ceiling", "cygpath", "evaluate-format", "group", "indentation",
+                    "jobs", "justfile-name", "completions"}
+JUST_VALUE_SHORTS = "dfEF"
+# just options that print or edit instead of running recipes.
+JUST_NO_RUN_LONGS = {"dry-run", "show", "evaluate", "list", "summary", "dump", "json",
+                     "variables", "groups", "usage", "changelog", "completions", "man",
+                     "fmt", "init", "edit", "help", "version"}
+JUST_NO_RUN_SHORTS = "nlsehV"
+# qemu-system-* options that print and exit before any machine starts, as the
+# first argument.
+QEMU_INFO_ARGS = {"--version", "-version", "-h", "--help", "-help"}
 QEMU_SCRIPTS = {"soak-matrix.sh", "soak-qemu.sh"}
+WRAPPER_PATH = os.path.join("scripts", "agent", "qemu-lock.sh")
 GIT_COMMITTERS = {"commit", "merge", "cherry-pick", "revert", "am"}
+# Rule 4: what an agent never runs in the main checkout besides committing.
+MAIN_CHECKOUT_REF_CHANGERS = {"rebase", "pull", "update-ref", "reset", "commit-tree",
+                              "fast-import"}
+# Environment variables and config keys that move git to another repository,
+# working tree or index (rule 4 denies them on an agent's reset or commit).
+PLACEMENT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")
+PLACEMENT_CONFIG = re.compile(r"core\.worktree$|core\.bare$|include\.|includeif\.", re.I)
 RUSTUP_TOP_CHANGES = {"update", "install", "uninstall"}
 RUSTUP_SUB_CHANGES = {"toolchain": {"install", "uninstall", "remove"},
                       "component": {"add", "remove"}}
+# More rustup commands that install or switch toolchains; denied to agents
+# only (rule 2 row 2).
+RUSTUP_AGENT_TOP = {"set", "run", "upgrade", "up"}
+RUSTUP_AGENT_SUB = {"toolchain": {"install", "add", "uninstall", "remove", "link"},
+                    "target": {"add", "remove", "install", "uninstall"},
+                    "self": {"update", "uninstall", "upgrade-data"}}
+# rustup proxies: `<proxy> +<toolchain>` runs, and may install, that toolchain.
+RUST_PROXIES = {"cargo", "rustc", "rustdoc", "rustfmt", "cargo-fmt", "cargo-clippy",
+                "clippy-driver", "cargo-miri", "rust-gdb", "rust-gdbgui", "rust-lldb",
+                "rust-analyzer", "rls"}
+# Commands whose output, in a $(...) or a pipe into kill, is a pid list found
+# by pattern.
+PID_FINDER = re.compile(r"\b(pgrep|pidof|pkill|lsof|fuser|ps)\b")
+PKILL_VALUE_OPTS = {"-F", "-G", "-g", "-J", "-j", "-M", "-N", "-P", "-s", "-T", "-t",
+                    "-U", "-u"}
+REGEX_META = set(".^$*+?()[]{}|\\")
+QEMU_BINARY = "qemu-system-aarch64"
 AGENT_ID_RE = re.compile(r"agent-(.+)")
 PROJECT_TYPE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
@@ -970,10 +1037,11 @@ class Analyzer:
 
     def opaque(self, state, cmd, reason):
         """Something runs that the guard cannot see. Ask when the text it came
-        from mentions git, gh or push: the whole command the agent typed, or,
+        from mentions git, gh or push, or a team rule's commands (QEMU, just,
+        pkill, killall, rustup): the whole command the agent typed, or,
         inside a script file, the command's own line."""
         text = cmd.src if state["script"] else state["text"]
-        if MENTIONS_GIT.search(text):
+        if MENTIONS_GIT.search(text) or MENTIONS_TEAM.search(text):
             self.verdict.ask(reason)
 
     # -- shell level ------------------------------------------------------
@@ -981,7 +1049,7 @@ class Analyzer:
     def analyze_text(self, text, cwd, depth, script=False):
         if depth > MAX_DEPTH:
             raise ParseError("nesting too deep")
-        state = {"cwd": cwd, "vars": {}, "text": text, "script": script}
+        state = {"cwd": cwd, "vars": {}, "text": text, "script": script, "pid_vars": set()}
         for cmd in parse_commands(text, depth):
             self.analyze_command(cmd, state, depth)
 
@@ -997,20 +1065,26 @@ class Analyzer:
         assigns = [w for w in words[:idx] if ASSIGNMENT.match(w)]
         if idx < len(words) and words[idx] in ("export", "local", "declare", "readonly", "typeset"):
             for w in words[idx + 1:]:
-                name = assignment_name(w) or w
-                if git_env_risky(name) or gh_env_risky(name):
-                    self.global_env.add(name)
+                if not w.startswith("-"):
+                    self.global_env.add(assignment_name(w) or w)
             idx = len(words)
             assigns = [w for w in words if ASSIGNMENT.match(w)]
         if idx >= len(words):
+            # A variable assigned from a pid lookup ($(pgrep ...)) carries a
+            # pattern kill to a later `kill $VAR`.
+            pid_lookup = bool(PID_FINDER.search(cmd.src))
             for w in assigns:
                 name = assignment_name(w)
                 state["vars"][name] = w[ASSIGNMENT.match(w).end():]
-                if git_env_risky(name) or gh_env_risky(name):
-                    self.global_env.add(name)
+                self.global_env.add(name)
+                if pid_lookup:
+                    state["pid_vars"].add(name)
+                else:
+                    state["pid_vars"].discard(name)
             return
-        frame = {n for n in map(assignment_name, assigns)
-                 if git_env_risky(n) or gh_env_risky(n)}
+        # Every name assigned for this command (callers filter the ones that
+        # matter to them: git_env_risky, gh_env_risky, RUSTUP_*).
+        frame = set(map(assignment_name, assigns))
         self.env_stack.append(frame)
         try:
             self.dispatch(words, flags, idx, cmd, state, depth, frame)
@@ -1044,15 +1118,30 @@ class Analyzer:
             if idx + 1 < len(words):
                 self.analyze_script(words[idx + 1], state, depth, cmd, argv=words[idx + 2:])
             return
+        if head == "command" and command_lookup(words[idx + 1:]):
+            return  # command -v / -V only prints what a name resolves to
         for k in range(idx, len(words)):
             name = basename(words[k])
             if k > idx and head == "env" and ASSIGNMENT.match(words[k]):
-                env_name = assignment_name(words[k])
-                if git_env_risky(env_name) or gh_env_risky(env_name):
-                    frame.add(env_name)
+                frame.add(assignment_name(words[k]))
                 continue
-            if (k == idx or head in WRAPPERS) and self.check_team_command(words, k):
-                return
+            if k == idx or head in WRAPPERS:
+                if name == "env":
+                    split = env_split_string(words[k + 1:])
+                    if split is not None:
+                        self.analyze_text(split, state["cwd"], depth + 1)
+                        return
+                if name == "tmux":
+                    self.analyze_tmux(words[k + 1:], state, depth)
+                    return
+                if name == "screen" and "stuff" in words[k + 1:]:
+                    # screen -X stuff TEXT types TEXT into the session's shell.
+                    for text in words[k + 1:][words[k + 1:].index("stuff") + 1:]:
+                        self.analyze_text(text, state["cwd"], depth + 1)
+                    return
+                via = {basename(w) for w in words[idx:k]}
+                if self.check_team_command(words, k, cmd, state, depth, via):
+                    return
             if name == "git":
                 wrapper = head if k > idx else None
                 self.analyze_git(words[k + 1:], cmd, state["cwd"], wrapper, depth)
@@ -1169,12 +1258,19 @@ class Analyzer:
                              "see what it runs")
 
     def analyze_script(self, path, state, depth, cmd, shebang=False, argv=()):
-        if not unresolved(path) and self.check_qemu_script(path, list(argv)):
+        if is_qemu_script(path, list(argv)):
+            self.check_qemu_script(path, list(argv), state, depth, shebang)
             return
         if unresolved(path):
             self.opaque(state, cmd, f"runs a script whose path ({path}) comes from a "
                                     "shell expansion the guard cannot resolve")
             return
+        self.read_script(path, state, depth, shebang)
+
+    def read_script(self, path, state, depth, shebang):
+        """Analyse a script file's commands. `shebang` is True when the file is
+        executed directly: a `#!` line naming something other than a shell
+        means it is not shell code; a file without one is run by the shell."""
         full = os.path.join(state["cwd"], os.path.expanduser(path))
         try:
             if not os.path.isfile(full) or os.path.getsize(full) > FILE_LIMIT:
@@ -1183,9 +1279,11 @@ class Analyzer:
                 text = fh.read()
         except OSError:
             return
+        if "\0" in text:
+            return  # a binary
         if shebang:
             first = text.split("\n", 1)[0]
-            if not first.startswith("#!") or not re.search(r"\b(sh|bash|zsh|dash|ksh)\b", first):
+            if first.startswith("#!") and not re.search(r"\b(sh|bash|zsh|dash|ksh)\b", first):
                 return
         self.analyze_text(text, state["cwd"], depth + 1, script=True)
 
@@ -1194,56 +1292,95 @@ class Analyzer:
     def is_agent(self):
         return self.ctx.get("agent_id") is not None
 
-    def check_team_command(self, words, k):
-        """Rules 1 and 2 for the command whose name is words[k]. Returns True
-        when the command is a trusted script whose body must not be read."""
-        v = self.verdict
+    def check_team_command(self, words, k, cmd, state, depth, via=frozenset()):
+        """Rules 1 and 2 for the command whose name is words[k]; `via` holds
+        the names of the wrappers that run it (xargs, timeout, ...). Returns True when
+        the command is fully handled and nothing after it must be read (a
+        recognised QEMU start or script)."""
         word = words[k]
         name = basename(word)
         args = words[k + 1:]
         if name in ("pkill", "killall"):
-            if any("qemu" in a.lower() for a in args):
-                v.rule_deny("never pattern-kill QEMU; TERM the lock owner's pid (rule 11)")
+            self.check_pkill(name, args)
             return False
-        if name == "rustup":
-            self.check_rustup(args)
+        if name == "kill":
+            self.check_kill(args, cmd, state, via)
             return False
-        if name in QEMU_SCRIPTS or name == "qemu-lock.sh":
-            return self.check_qemu_script(word, args)
+        if name in ("rustup", "rustup-init"):
+            self.check_rustup(name, args)
+            return False
         kind = None
-        if name == "qemu-system-aarch64":
-            kind = "other"
+        if name in RUST_PROXIES:
+            self.check_rust_proxy(name, args)
+            if name == "cargo":
+                kind = cargo_starts_qemu(args)
+        elif name == QEMU_BINARY:
+            kind = None if args[:1] and args[0] in QEMU_INFO_ARGS else "other"
         elif name == "just":
-            kind = self.just_starts_qemu(args)
+            kind = self.just_starts_qemu(args, state, depth)
         elif name == "aios" or (unresolved(word) and args[:1] == ["soak"]):
-            first = next((a for a in args if not a.startswith("-")), None)
-            if first == "soak" and not classify_only(args[args.index("soak") + 1:]):
-                kind = "other"
+            kind = aios_starts_qemu(args)
             return self.qemu_decision(kind) if kind else False
-        elif name == "cargo":
-            kind = cargo_starts_qemu(args)
+        elif is_qemu_script(word, args):
+            return self.check_qemu_script(word, args, state, depth, shebang=True)
         if kind:
             self.qemu_decision(kind)
         return False
 
-    def check_qemu_script(self, path, argv):
-        """A script that starts QEMU: the lock wrapper (only its `run`) and
-        the soak scripts. Returns True when the script was recognised, so its
-        body is not read: the wrapper's own text is not a QEMU start."""
+    def check_qemu_script(self, path, argv, state, depth, shebang):
+        """A script that starts QEMU: the soak scripts, and the lock wrapper
+        (only its `run`). The wrapper is recognised by what it is, not by its
+        name: only scripts/agent/qemu-lock.sh of the main checkout, the
+        project, or the agent's own temporary worktree is trusted, and its
+        body is not read (running the command after `--` is its job). Any
+        other qemu-lock.sh, and any script called the wrapper's way (`run
+        --team ...`, a renamed copy), gets the wrapper's caller rules and has
+        its body read like any other script. Returns True (handled)."""
         name = basename(path)
-        if name == "qemu-lock.sh":
-            if argv[:1] == ["run"]:
-                self.qemu_decision("wrapper")
-            return True
         if name in QEMU_SCRIPTS:
-            if name == "soak-qemu.sh" and classify_only(argv):
-                return True
-            self.qemu_decision("other")
+            if not (name == "soak-qemu.sh" and classify_only(argv)):
+                self.qemu_decision("other")
             return True
+        if argv[:1] == ["run"]:
+            if unresolved(path):
+                self.verdict.ask(f"the QEMU lock wrapper's path ({path}) comes from a shell "
+                                 "expansion; the guard cannot tell it is scripts/agent/qemu-lock.sh (rule 11)")
+            self.qemu_decision("wrapper")
+        if not unresolved(path) and not self.genuine_wrapper(path, state["cwd"]):
+            self.read_script(path, state, depth, shebang)
+        return True
+
+    def genuine_wrapper(self, path, cwd):
+        """True when `path` resolves to scripts/agent/qemu-lock.sh in the main
+        checkout, the project directory, or the agent's own temporary worktree
+        (a copy of the repository). A symlink counts as what it points to."""
+        target = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
+        roots = []
+        payload_cwd = self.ctx.get("cwd")
+        if payload_cwd:
+            repo = Repo.get(payload_cwd)
+            found = repo.roots()
+            if found:
+                roots.append(found[-1])
+            if self.is_agent() and self.own_temp_worktree(repo):
+                roots.append(found[0])
+        if os.environ.get("CLAUDE_PROJECT_DIR"):
+            roots.append(os.environ["CLAUDE_PROJECT_DIR"])
+        for root in roots:
+            wrapper = os.path.join(root, WRAPPER_PATH)
+            real = os.path.join(os.path.realpath(os.path.dirname(wrapper)), os.path.basename(wrapper))
+            if target == real and not os.path.islink(real):
+                return True
         return False
 
-    def just_starts_qemu(self, args):
+    def just_starts_qemu(self, args, state, depth):
+        """The QEMU kind of a just invocation: "other" when it runs a QEMU
+        recipe, "unclear" when a recipe name comes from an expansion, None
+        when it runs none or only prints (--list, --show, --dry-run, ...).
+        `just --command CMD` and `--dotenv-command CMD` run CMD, which is
+        analysed as a command line."""
         hits = []
+        no_run = False
         i = 0
         positional_only = False
         while i < len(args):
@@ -1256,14 +1393,40 @@ class Analyzer:
             if a == "--":
                 positional_only = True
             elif a.startswith("--"):
-                if "=" not in a and a[2:] in JUST_VALUE_LONGS:
+                name, eq, value = a[2:].partition("=")
+                if name == "command":
+                    self.analyze_text(shell_join(([value] if eq else []) + args[i:]),
+                                      state["cwd"], depth + 1)
+                    return None
+                if name == "dotenv-command":
+                    if not eq:
+                        value = args[i] if i < len(args) else ""
+                        i += 1
+                    self.analyze_text(value, state["cwd"], depth + 1)
+                    continue
+                if name in JUST_NO_RUN_LONGS:
+                    no_run = True
+                if name == "set" and not eq:
+                    i += 2
+                elif not eq and name in JUST_VALUE_LONGS:
                     i += 1
             else:
-                for pos, ch in enumerate(a[1:], 1):
+                cluster = a[1:]
+                for pos, ch in enumerate(cluster, 1):
+                    if ch == "c":
+                        rest = ([cluster[pos:]] if cluster[pos:] else []) + args[i:]
+                        self.analyze_text(shell_join(rest), state["cwd"], depth + 1)
+                        return None
+                    if ch in JUST_NO_RUN_SHORTS:
+                        no_run = True
                     if ch in JUST_VALUE_SHORTS:
-                        if pos == len(a) - 1:
+                        if pos == len(cluster):
                             i += 1
                         break
+        if no_run:
+            return None
+        if any(unresolved(h) for h in hits):
+            return "unclear"
         recipes = [h for h in hits if h in QEMU_RECIPES]
         if not recipes:
             return None
@@ -1273,8 +1436,13 @@ class Analyzer:
 
     def qemu_decision(self, kind):
         """Rule 1 rows 1-7 for a command that starts QEMU. `kind` is
-        "wrapper" for qemu-lock.sh run and "other" for anything else."""
+        "wrapper" for qemu-lock.sh run, "other" for anything else, and
+        "unclear" when the guard cannot tell whether it starts QEMU."""
         v = self.verdict
+        if kind == "unclear":
+            v.ask("cannot tell whether this starts QEMU: part of the command comes from a "
+                  "shell expansion; every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)")
+            return True
         held = qemu_lock_dir(self.ctx.get("cwd"))
         if held and os.path.exists(held):
             v.rule_deny(lock_message(held))
@@ -1290,32 +1458,177 @@ class Analyzer:
             v.rule_deny("team leads route boots to their verifier (rule 11)")
         return True
 
-    def check_rustup(self, args):
+    def analyze_tmux(self, args, state, depth):
+        """tmux runs shell commands it is given as strings (new-session,
+        new-window, split-window, respawn-*, run-shell, if-shell, -c) and
+        types send-keys text into a shell. Each argument that is not an
+        option, and the tail of arguments from the first one, is analysed as
+        a command line (option values are analysed too, which only adds
+        checks)."""
+        i = 0
+        while i < len(args) and args[i].startswith("-") and args[i] != "--":
+            a = args[i]
+            i += 1
+            if a == "-c" and i < len(args):
+                self.analyze_text(args[i], state["cwd"], depth + 1)
+                i += 1
+            elif a in ("-L", "-S", "-f", "-T"):
+                i += 1
+        if i < len(args) and args[i] == "--":
+            i += 1
+        group = []
+        for a in args[i:] + [";"]:
+            if a != ";":
+                group.append(a)
+                continue
+            words = [w for w in group[1:]]
+            group = []
+            positional = [n for n, w in enumerate(words) if not w.startswith("-")]
+            for n in positional:
+                self.analyze_text(words[n], state["cwd"], depth + 1)
+            if positional:
+                tail = [w for w in words[positional[0]:] if w not in TMUX_KEYS]
+                self.analyze_text(shell_join(tail), state["cwd"], depth + 1)
+
+    def check_pkill(self, name, args):
+        """Rule 2: pattern kills. A pattern naming QEMU (or a piece of its
+        binary name) is denied to everyone; agents never pattern-kill at all;
+        a main thread is asked when a pattern is computed, a regex, or names
+        the soak harness."""
+        v = self.verdict
+        patterns = []
+        skip = False
+        for a in args:
+            if skip:
+                skip = False
+            elif a in PKILL_VALUE_OPTS:
+                skip = True
+            elif not a.startswith("-") or unresolved(a):
+                patterns.append(a)
+        literal = [p for p in patterns if not unresolved(p)]
+        if (any("qemu" in a.lower() for a in args)
+                or any(len(p) >= 3 and p.lower() in QEMU_BINARY for p in literal)):
+            v.rule_deny("never pattern-kill QEMU; TERM the lock owner's pid (rule 11)")
+        elif self.is_agent():
+            v.rule_deny(f"agents never pattern-kill ({name}); stop only a pid you own, such as "
+                        "the lock owner's pid with a TERM (rule 11)")
+        elif any(unresolved(p) or REGEX_META & set(p) or re.search(r"aios|soak", p, re.I)
+                 for p in patterns):
+            v.ask(f"{name} with a pattern that comes from an expansion, is a regex or names the "
+                  "soak harness can match QEMU; TERM the lock owner's pid instead (rule 11)")
+
+    def check_kill(self, args, cmd, state, via):
+        """Rule 2: `kill $(pgrep ...)`, `pgrep ... | xargs kill`, and a kill of
+        a computed pid where the text also runs a pid lookup (`... | while
+        read p; do kill $p`, a variable assigned from `$(pgrep ...)`) are
+        pattern kills. The text is the whole command typed, or inside a
+        script the kill's own line."""
+        pattern = bool(set(via) & ARG_WRAPPERS)
+        if not pattern and any(unresolved(a) for a in args):
+            text = cmd.src if state["script"] else state["text"]
+            pattern = bool(PID_FINDER.search(text)) or any(
+                re.search(r"\$\{?%s\b" % re.escape(n), cmd.src) for n in state["pid_vars"])
+        if not pattern:
+            return
+        if self.is_agent():
+            self.verdict.rule_deny("agents never pattern-kill (kill with pids from pgrep, ps or "
+                                   "xargs); stop only a pid you own, such as the lock owner's pid "
+                                   "with a TERM (rule 11)")
+        else:
+            self.verdict.ask("kill with pids found by pattern (pgrep, ps or xargs) can hit QEMU; "
+                             "TERM the lock owner's pid instead (rule 11)")
+
+    def check_rustup(self, name, args):
+        agent_msg = "agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"
+        if name == "rustup-init":
+            if self.is_agent():
+                self.verdict.rule_deny(agent_msg)
+            return
         pos = [a for a in args if not a.startswith("-") and not a.startswith("+")]
         if not pos:
             return
-        subs = RUSTUP_SUB_CHANGES.get(pos[0], ())
-        if pos[0] not in RUSTUP_TOP_CHANGES and not any(p in subs for p in pos[1:]):
-            return
+        top, rest = pos[0], pos[1:]
+        changes = (top in RUSTUP_TOP_CHANGES
+                   or any(p in RUSTUP_SUB_CHANGES.get(top, ()) for p in rest))
         if self.is_agent():
-            self.verdict.rule_deny("agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)")
-        else:
+            if (changes or top in RUSTUP_AGENT_TOP
+                    or any(p in RUSTUP_AGENT_SUB.get(top, ()) for p in rest)
+                    or (top == "default" and rest)
+                    or (top == "override" and rest[:1] != ["list"])):
+                self.verdict.rule_deny(agent_msg)
+            elif unresolved(top):
+                self.verdict.ask("the rustup subcommand comes from a shell expansion; agents "
+                                 "never change the toolchain (rule 11, Toolchain)")
+        elif changes:
             self.verdict.ask("rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)")
 
-    def check_placement(self, sub, rest, workdir, extra):
-        """Rule 4 rows 4-6: git reset --hard and the commands that commit."""
+    def check_rust_proxy(self, name, args):
+        """Rule 2 row 2: `cargo +<toolchain>` and RUSTUP_* variables make a
+        rustup proxy run, and may install, another toolchain."""
+        if not self.is_agent():
+            return
+        env = sorted(n for n in self.env_names() if n.startswith("RUSTUP_"))
+        if (args[:1] and args[0].startswith("+")) or env:
+            self.verdict.rule_deny("agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)")
+
+    def own_temp_worktree(self, repo):
+        """The agent's own temporary worktree: agent-<id> on worktree-agent-<id>
+        where <id> is the payload's agent_id (or agent_id is agent-<id>)."""
+        wid = temp_worktree(repo)
+        aid = self.ctx.get("agent_id")
+        return wid is not None and isinstance(aid, str) and aid in (wid, "agent-" + wid)
+
+    def git_redirect(self, extra, inline_config):
+        """What in this command can move git to another repository, working
+        tree or index: GIT_DIR and its relatives (set in the command, exported
+        earlier, or inherited by the session), --git-dir/--work-tree, and
+        -c core.worktree/core.bare/include.*. Empty when nothing does."""
+        names = {n for n in self.env_names() if n.startswith("GIT_") and git_env_risky(n)}
+        names |= {n for n in PLACEMENT_ENV if os.environ.get(n)}
+        parts = []
+        if names:
+            parts.append(", ".join(sorted(names)))
+        if extra:
+            parts.append(" ".join(sorted({e.split("=", 1)[0] for e in extra})))
+        keys = [c.partition("=")[0] for c in inline_config]
+        risky = [k for k in keys if unresolved(k) or PLACEMENT_CONFIG.match(k)]
+        if risky:
+            parts.append("-c " + ", ".join(risky))
+        return " and ".join(parts)
+
+    def check_placement(self, sub, rest, workdir, extra, inline_config):
+        """Rule 4 rows 4-6: git reset --hard, and the commands that commit,
+        move refs or discard work in the main checkout."""
         v = self.verdict
-        if sub == "reset" and scan_git_options(rest, {"hard": False}):
-            if not self.is_agent():
+        hard = sub == "reset" and bool(scan_git_options(rest, {"hard": False}))
+        if not self.is_agent():
+            if hard:
                 v.ask("git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)")
-            elif unresolved(workdir) or not temp_worktree(Repo.get(workdir, extra)):
+            return
+        change = main_checkout_change(sub, rest)
+        if not hard and not change:
+            return
+        redirect = self.git_redirect(extra, inline_config)
+        if hard:
+            if redirect:
+                v.rule_deny(f"agents reset only their own temporary worktree; {redirect} in this "
+                            "command can point git at another one (rule 11)")
+            elif unresolved(workdir) or not self.own_temp_worktree(Repo.get(workdir)):
                 v.rule_deny("agents reset only their own temporary worktree (rule 11)")
-        elif sub in GIT_COMMITTERS and self.is_agent():
-            if unresolved(workdir):
-                v.ask(f"git {sub} runs in a directory that comes from a shell expansion; "
-                      "agents never commit in the main checkout")
-            elif main_checkout(Repo.get(workdir, extra)):
+            return
+        what = "commit" if change == "commit" else f"run git {change}"
+        if redirect:
+            v.rule_deny(f"agents never {what} in the main checkout; {redirect} in this command "
+                        "can point git at it (rule 11)")
+        elif unresolved(workdir):
+            v.ask(f"git {sub} runs in a directory that comes from a shell expansion; "
+                  "agents never commit or move refs in the main checkout")
+        elif main_checkout(Repo.get(workdir)):
+            if change == "commit":
                 v.rule_deny("agents never commit in the main checkout: you were spawned without isolation (rule 11)")
+            else:
+                v.rule_deny(f"agents never {what} in the main checkout (it moves refs or "
+                            "discards work): you were spawned without isolation (rule 11)")
 
     # -- files that a command publishes ------------------------------------
 
@@ -1412,7 +1725,7 @@ class Analyzer:
             self.expand_git_alias(sub, rest, args[:i], inline_config, cmd, cwd,
                                   repo, wrapper, depth)
             return
-        self.check_placement(sub, rest, workdir, extra)
+        self.check_placement(sub, rest, workdir, extra, inline_config)
         if any(a == "--output" or a.startswith("--output=") for a in rest):
             self.verdict.ask(f"git {sub} --output writes a file at any path, "
                              "including protected ones")
@@ -1965,16 +2278,132 @@ def classify_only(args):
     return False
 
 
+def aios_starts_qemu(args):
+    """`aios [options] soak ...` (not --classify): the tools binary's soak.
+    "unclear" when the subcommand comes from an expansion."""
+    first = next((a for a in args if not a.startswith("-")), None)
+    if first is None:
+        return None
+    if unresolved(first):
+        return "unclear"
+    if first == "soak" and not classify_only(args[args.index(first) + 1:]):
+        return "other"
+    return None
+
+
 def cargo_starts_qemu(args):
-    """`cargo run ... -p aios-tools ... -- soak`: the tools binary's soak."""
-    if "--" not in args:
+    """`cargo run|r ... -- [options] soak ...`: the tools binary's soak,
+    whichever way the package is named (`--bin aios`, `-p aios-tools`,
+    `--manifest-path tools/Cargo.toml`, a cwd under tools/). No other
+    package has a `soak` program argument, so the target is not checked."""
+    i = 1 if args[:1] and args[0].startswith("+") else 0
+    sub = None
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            return None
+        if a.startswith("-"):
+            if a in ("--config", "-Z", "-C", "--color"):
+                i += 1
+            continue
+        sub = a
+        break
+    if sub not in ("run", "r") or "--" not in args[i:]:
         return None
-    before, after = args[:args.index("--")], args[args.index("--") + 1:]
-    if not any("aios-tools" in a or a.endswith("tools/Cargo.toml") for a in before):
-        return None
-    if after[:1] != ["soak"] or classify_only(after[1:]):
-        return None
-    return "other"
+    return aios_starts_qemu(args[args.index("--", i) + 1:])
+
+
+def is_qemu_script(path, argv):
+    """A soak script, anything named qemu-lock.sh, or a script called the
+    lock wrapper's way (`run --team ...`, so a renamed copy counts)."""
+    name = basename(path)
+    if name in QEMU_SCRIPTS or name == "qemu-lock.sh":
+        return True
+    if argv[:1] != ["run"]:
+        return False
+    opts = argv[:argv.index("--")] if "--" in argv else argv
+    return any(a == "--team" or a.startswith("--team=") for a in opts)
+
+
+def command_lookup(args):
+    """`command -v NAME` / `command -V NAME` prints what NAME is; it runs
+    nothing."""
+    for a in args:
+        if a == "--" or not a.startswith("-") or a == "-":
+            return False
+        if "v" in a[1:] or "V" in a[1:]:
+            return True
+    return False
+
+
+def env_split_string(args):
+    """env -S STRING / --split-string=STRING: env splits STRING into the
+    command line it runs. Returns that command line (with the arguments
+    after STRING) as shell text, or None when there is no -S."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--" or not a.startswith("-") or a == "-":
+            return None
+        if a.startswith("--"):
+            name, eq, value = a[2:].partition("=")
+            if name and "split-string".startswith(name):
+                if not eq:
+                    value = args[i] if i < len(args) else ""
+                    i += 1
+                return " ".join([value] + [shlex.quote(r) for r in args[i:]])
+            if not eq and name and any(o.startswith(name) for o in ("unset", "chdir", "argv0")):
+                i += 1
+            continue
+        cluster = a[1:]
+        for pos, ch in enumerate(cluster):
+            rest = cluster[pos + 1:]
+            if ch == "S":
+                if not rest:
+                    rest = args[i] if i < len(args) else ""
+                    i += 1
+                return " ".join([rest] + [shlex.quote(r) for r in args[i:]])
+            if ch in "uCPa":
+                if not rest:
+                    i += 1
+                break
+    return None
+
+
+def shell_join(words):
+    return " ".join(shlex.quote(w) for w in words)
+
+
+# Key names tmux send-keys types as keys, not text.
+TMUX_KEYS = {"Enter", "C-m", "C-j", "KPEnter", "Space", "Tab", "Escape", "C-c", "C-d"}
+
+
+def main_checkout_change(sub, args):
+    """Rule 4 row 6 and its extension: the git commands an agent never runs
+    in the main checkout, as named in the deny text, or None."""
+    if sub in GIT_COMMITTERS:
+        return "commit"
+    if sub in MAIN_CHECKOUT_REF_CHANGERS:
+        return sub
+    positional = [a for a in args if not a.startswith("-")]
+    if sub == "symbolic-ref":
+        if len(positional) >= 2 or scan_git_options(args, {"delete": False}, "d"):
+            return sub
+    elif sub == "stash":
+        if positional[:1] not in (["list"], ["show"]):
+            return sub
+    elif sub == "branch":
+        if scan_git_options(args, {"force": False}, "DfMC", "u"):
+            return "branch -D/-f/-M/-C"
+    elif sub == "checkout":
+        if scan_git_options(args, {}, "B", "bB"):
+            return "checkout -B"
+    elif sub == "switch":
+        if scan_git_options(args, {"force-create": True}, "C", "cC"):
+            return "switch -C"
+    return None
 
 
 def qemu_lock_dir(cwd):
@@ -2011,17 +2440,18 @@ def lock_message(lock):
 
 
 def temp_worktree(repo):
-    """An isolated agent's own worktree: <main>/.claude/worktrees/agent-<id>
-    on branch worktree-agent-<id> with the same id (the names Claude Code
-    2.1.292 gives it). Nothing else counts."""
+    """The <id> of an isolated agent's temporary worktree:
+    <main>/.claude/worktrees/agent-<id> on branch worktree-agent-<id> with the
+    same id (the names Claude Code 2.1.292 gives it), else None. Nothing else
+    counts; whose it is, the caller checks against the payload's agent_id."""
     roots = repo.roots()
     if len(roots) != 2:
-        return False
+        return None
     top, main = roots
     m = AGENT_ID_RE.fullmatch(os.path.basename(top))
     if not m or top != os.path.join(main, ".claude", "worktrees", os.path.basename(top)):
-        return False
-    return repo.current_branch() == "worktree-agent-" + m.group(1)
+        return None
+    return m.group(1) if repo.current_branch() == "worktree-agent-" + m.group(1) else None
 
 
 def main_checkout(repo):
@@ -2036,27 +2466,103 @@ def decide(command, cwd, ctx=None):
     try:
         Analyzer(verdict, ctx).analyze_text(command, cwd, 0)
     except (ParseError, RecursionError) as exc:
-        if MENTIONS_GIT.search(command):
+        if (MENTIONS_GIT.search(command) or MENTIONS_TEAM.search(command)
+                or re.search(r"\b(kill|soak|cargo|tmux|screen|setsid)\b", command)):
             verdict.ask(f"git-push-guard could not parse the command ({exc})")
     return verdict
 
 
 def frontmatter(text):
-    """Top-level `key: value` pairs between the first two `---` lines;
-    indented lines belong to a nested block and are ignored."""
-    lines = text.splitlines()
+    """Top-level `key: value` pairs between the first two `---` lines, as
+    {key: [value, ...]} in file order. A leading BOM and blank lines are
+    skipped. The top level is the indentation of the first entry; deeper
+    lines belong to a nested block and are ignored. Values go through
+    yaml_scalar (None when YAML would not read a plain string). Top-level
+    lines that are not a `key: value` pair are kept under the key None, so
+    a caller can fail closed on them."""
+    lines = text.lstrip("\ufeff").splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
     fields = {}
-    if not lines or lines[0].strip() != "---":
+    if not lines or not lines[0].strip().startswith("---"):
         return fields
+    if not re.fullmatch(r"---(\s+#.*)?", lines[0].strip()):
+        fields.setdefault(None, []).append(lines[0].strip())  # `--- {flow}` and the like
+    body = []
     for line in lines[1:]:
-        if line.strip() == "---":
+        if line.strip() in ("---", "..."):
             break
-        if line[:1].isspace() or line.startswith("#"):
+        if line.strip() and not line.lstrip().startswith("#"):
+            body.append(line.rstrip())
+    if not body:
+        return fields
+    top = len(body[0]) - len(body[0].lstrip())
+    for line in body:
+        indent = len(line) - len(line.lstrip())
+        if indent > top:
             continue
-        key, colon, value = line.partition(":")
-        if colon:
-            fields[key.strip()] = value.strip().strip("'\"")
+        key, value = yaml_key(line.strip())
+        if key is None or indent < top:
+            fields.setdefault(None, []).append(line.strip())
+        else:
+            fields.setdefault(key, []).append(yaml_scalar(value))
     return fields
+
+
+def yaml_key(line):
+    """(key, rest) for a `key: rest` line with a plain or quoted key, else
+    (None, None)."""
+    if line[:1] in ("'", '"'):
+        end = line.find(line[0], 1)
+        if end < 0 or not line[end + 1:].lstrip().startswith(":"):
+            return None, None
+        return line[1:end], line[end + 1:].lstrip()[1:]
+    if line[:1] in "{[?-&!*|>%@`":
+        return None, None
+    key, colon, rest = line.partition(":")
+    return (key.strip(), rest) if colon else (None, None)
+
+
+def yaml_scalar(value):
+    """The string YAML reads from a one-line value, with anchors (&a), tags
+    (!!str), quotes and an unquoted ` # comment` removed. None for anything
+    it would read differently (an alias, a block or flow value, an escape in
+    a double-quoted string, an unterminated quote)."""
+    v = value.strip()
+    while v[:1] in ("!", "&"):
+        parts = v.split(None, 1)
+        v = parts[1].strip() if len(parts) > 1 else ""
+    if v[:1] == "'":
+        m = re.fullmatch(r"'((?:[^']|'')*)'\s*(#.*)?", v)
+        return m.group(1).replace("''", "'") if m else None
+    if v[:1] == '"':
+        m = re.fullmatch(r'"([^"\\]*)"\s*(#.*)?', v)
+        return m.group(1) if m else None
+    if v[:1] and v[0] in "*|>[{@`%":
+        return None
+    if v.startswith("#"):
+        return ""
+    return re.split(r"\s#", v, 1)[0].rstrip()
+
+
+def isolation_marker(fields, text):
+    """"worktree" when the frontmatter's isolation is exactly worktree, None
+    when it has no isolation key, and "unclear" when an isolation key is
+    there but not readable as one plain value."""
+    found = []
+    for key, values in fields.items():
+        if key is None:
+            if any("isolation" in line.lower() for line in values):
+                return "unclear"
+        elif key.lower() == "isolation":
+            if key != "isolation":
+                return "unclear"
+            found.extend(values)
+    if not fields and re.search(r"(?m)^\s*[\"']?isolation[\"']?\s*:", text):
+        return "unclear"  # a key outside anything read as frontmatter
+    if not found:
+        return None
+    return "worktree" if all(v == "worktree" for v in found) else "unclear"
 
 
 def project_dir(payload, env):
@@ -2101,13 +2607,18 @@ def decide_tool(payload, env):
         return verdict
     try:
         with open(path, encoding="utf-8") as fh:
-            fields = frontmatter(fh.read())
+            text = fh.read()
     except (OSError, UnicodeDecodeError) as exc:
         verdict.ask(f"cannot read the agent definition {path} ({type(exc).__name__}); "
                     "the guard cannot judge the spawn")
         return verdict
-    if fields.get("isolation") == "worktree" and isolation != "worktree":
-        verdict.rule_deny(f"{agent_type} is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)")
+    marker = isolation_marker(frontmatter(text), text)
+    if isolation != "worktree":
+        if marker == "worktree":
+            verdict.rule_deny(f"{agent_type} is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)")
+        elif marker == "unclear":
+            verdict.ask(f"{agent_type}'s frontmatter has an isolation key the guard cannot read as "
+                        "`isolation: worktree`; spawn it with isolation: \"worktree\" or fix the file (rule 11)")
     if model:
         verdict.rule_deny("the agent's frontmatter sets its model; do not pass model (rule 11)")
     return verdict

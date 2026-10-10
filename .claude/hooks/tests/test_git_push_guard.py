@@ -609,9 +609,14 @@ class BypassForms(RepoCase):
                    "commit=$(git rev-parse --short HEAD)\n\"$QEMU\" -machine virt -m 2G\n"
                    "$RUNNER --classify x.log\n")
         self.write("hidden.sh", "#!/bin/bash\n$(which git) push origin HEAD:main\n")
-        self.assertLevel("none", "bash soak.sh --runs 5")
-        self.assertLevel("none", "./soak.sh --runs 5")
+        self.write("tool.sh", "#!/bin/bash\ncommit=$(git rev-parse --short HEAD)\n"
+                   "\"$TOOL\" -x\n$RUNNER --classify x.log\n")
+        self.assertLevel("none", "bash tool.sh --runs 5")
+        self.assertLevel("none", "./tool.sh --runs 5")
         self.assertLevel("ask", "bash hidden.sh")
+        # "$QEMU" on a line that names QEMU is an unresolved QEMU start (rule 1).
+        self.assertLevel("ask", "bash soak.sh --runs 5")
+        self.assertLevel("ask", "./soak.sh --runs 5")
 
     def test_gh_as_a_plain_argument_is_not_a_command(self):
         for cmd in ["ln -sf \"$(which gh)\" /tmp/x/gh", "for t in git gh python3; do command -v $t; done",
@@ -705,16 +710,21 @@ class HookProtocol(RepoCase):
         self.assertEqual("ask", json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"])
 
 
-class TeamRules(RepoCase):
-    """Guard rules 1-4 of rule 11 (QEMU, toolchain, spawn shape, placement)."""
+REAL_ROOT = os.path.abspath(os.path.join(os.path.dirname(HOOK), "..", ".."))
+
+
+class TeamCase(RepoCase):
+    """Fixtures for guard rules 1-4 of rule 11 (QEMU, toolchain, spawn shape,
+    placement)."""
 
     WRAPPER = "scripts/agent/qemu-lock.sh run --team solo --mode boot --label t -- just soak runs=1"
 
     def setUp(self):
         super().setUp()
         self.lock = os.path.join(self.repo, ".git", "aios-agent", "qemu.lock")
-        # The temporary worktree Claude Code gives an isolated agent, a branch
-        # worktree the leads use, and a look-alike on the wrong branch.
+        # The temporary worktree Claude Code gives an isolated agent (agent_id
+        # "x"), a branch worktree the leads use, and a look-alike on the wrong
+        # branch.
         self.temp = os.path.join(self.repo, ".claude", "worktrees", "agent-x")
         self.branch_wt = os.path.join(self.tmp.name, "W")
         self.fake = os.path.join(self.repo, ".claude", "worktrees", "agent-y")
@@ -739,6 +749,42 @@ class TeamRules(RepoCase):
         if owner:
             with open(os.path.join(self.lock, "owner"), "w") as fh:
                 fh.write("team=team-build\nbranch=claude/x\nmode=boot\neta=1900000000\npid=1\n")
+
+    def run_hook(self, payload, **env):
+        full = {k: v for k, v in os.environ.items() if k != "AIOS_TEAM"}
+        full["CLAUDE_PROJECT_DIR"] = self.repo
+        full.update(env)
+        return subprocess.run([sys.executable, HOOK], input=json.dumps(payload),
+                              capture_output=True, text=True, timeout=20, env=full)
+
+    def hook(self, command, cwd=None, agent_id=None, agent_type=None, team="", env=None):
+        """The real hook process on a Bash payload: (decision, reason)."""
+        payload = {"tool_name": "Bash", "tool_input": {"command": command},
+                   "cwd": cwd or self.repo, "hook_event_name": "PreToolUse"}
+        if agent_id is not None:
+            payload["agent_id"] = agent_id
+        if agent_type is not None:
+            payload["agent_type"] = agent_type
+        extra = dict(env or {})
+        if team:
+            extra["AIOS_TEAM"] = team
+        proc = self.run_hook(payload, **extra)
+        if not proc.stdout:
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            return "none", ""
+        out = json.loads(proc.stdout)["hookSpecificOutput"]
+        self.assertEqual(2 if out["permissionDecision"] == "deny" else 0, proc.returncode)
+        return out["permissionDecision"], out["permissionDecisionReason"]
+
+    def check_hook(self, level, text, command, **kw):
+        decision, reason = self.hook(command, **kw)
+        self.assertEqual(level, decision, (command, reason))
+        if text:
+            self.assertIn(text, reason, command)
+
+
+class TeamRules(TeamCase):
+    """Guard rules 1-4 of rule 11, one test per row of the draft's tables."""
 
     # -- rule 1: who may start QEMU --------------------------------------
 
@@ -797,7 +843,7 @@ class TeamRules(RepoCase):
                        self.WRAPPER, agent_id="a1", agent_type=agent_type)
 
     def test_r1_row4_verifier_may_run_the_wrapper(self):
-        self.check("none", None, self.WRAPPER, cwd=self.temp, agent_id="a1", agent_type="verifier")
+        self.check("none", None, self.WRAPPER, cwd=self.temp, agent_id="x", agent_type="verifier")
         self.check("none", None, "sh scripts/agent/qemu-lock.sh run --team team-fix --mode boot -- x",
                    agent_id="a1", agent_type="verifier")
 
@@ -832,7 +878,7 @@ class TeamRules(RepoCase):
                     "rustup uninstall nightly", "rustup component remove rust-src",
                     "rustup component --toolchain nightly add rust-src",
                     "rustup -v toolchain install", "sh -c 'rustup update'",
-                    "rustup run nightly rustup update"]:
+                    "rustup run nightly rustup update", "rustup run nightly cargo build"]:
             self.check("deny", "agents never change the toolchain", cmd,
                        agent_id="a", agent_type="kernel-dev")
 
@@ -844,7 +890,8 @@ class TeamRules(RepoCase):
 
     def test_r2_read_only_rustup_is_fine(self):
         for cmd in ["rustup show", "rustup toolchain list", "rustup component list",
-                    "rustup which cargo", "rustup run nightly cargo build"]:
+                    "rustup which cargo", "rustup default", "rustup override list",
+                    "rustup target list"]:
             self.check("none", None, cmd, agent_id="a", agent_type="worker")
 
     # -- rule 3: spawn shape ----------------------------------------------
@@ -970,10 +1017,10 @@ class TeamRules(RepoCase):
         for command in ["git reset --hard abc123", "git reset --hard",
                         "git -C %s reset --hard abc123" % self.temp,
                         "cd %s && git reset --hard abc123" % self.temp]:
-            self.check("none", None, command, cwd=self.temp, agent_id="a1", agent_type="worker")
+            self.check("none", None, command, cwd=self.temp, agent_id="x", agent_type="worker")
         # git reset without --hard, after --, and read-only commands are not row 4.
         for command in ["git reset --soft HEAD~1", "git reset HEAD -- --hard", "git status"]:
-            self.check("none", None, command, cwd=self.repo, agent_id="a1", agent_type="worker")
+            self.check("none", None, command, cwd=self.temp, agent_id="x", agent_type="worker")
 
     def test_r4_row4_directory_name_alone_is_not_enough(self):
         self.check("deny", "agents reset only their own temporary worktree",
@@ -1004,13 +1051,6 @@ class TeamRules(RepoCase):
 
     # -- hook protocol ------------------------------------------------------
 
-    def run_hook(self, payload, **env):
-        full = {k: v for k, v in os.environ.items() if k != "AIOS_TEAM"}
-        full["CLAUDE_PROJECT_DIR"] = self.repo
-        full.update(env)
-        return subprocess.run([sys.executable, HOOK], input=json.dumps(payload),
-                              capture_output=True, text=True, timeout=20, env=full)
-
     def test_hook_routes_agent_and_enterworktree_payloads(self):
         proc = self.run_hook({"tool_name": "Agent", "cwd": self.repo,
                               "tool_input": {"subagent_type": "general-purpose", "name": "w"}})
@@ -1031,7 +1071,7 @@ class TeamRules(RepoCase):
 
     def test_hook_reads_agent_identity_and_team_from_the_payload_and_environment(self):
         payload = {"tool_name": "Bash", "cwd": self.temp, "tool_input": {"command": self.WRAPPER},
-                   "agent_id": "a1", "agent_type": "worker"}
+                   "agent_id": "x", "agent_type": "worker"}
         proc = self.run_hook(payload)
         self.assertEqual(2, proc.returncode)
         self.assertIn("only the verifier starts QEMU", proc.stdout)
@@ -1041,7 +1081,7 @@ class TeamRules(RepoCase):
         self.assertIn("team leads route boots", proc.stdout)
         proc = self.run_hook(payload)
         self.assertEqual((0, ""), (proc.returncode, proc.stdout))
-        payload["agent_id"] = "a1"
+        payload["agent_id"] = "x"
         payload["agent_type"] = "verifier"
         proc = self.run_hook(payload)
         self.assertEqual((0, ""), (proc.returncode, proc.stdout))
@@ -1054,6 +1094,349 @@ class TeamRules(RepoCase):
                 contextlib.redirect_stdout(out):
             self.assertEqual(0, guard.main())
         self.assertEqual("ask", json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"])
+
+
+class TeamRuleAttacks(TeamCase):
+    """Inputs the guard-attacking review of T7 found (review items 1-9 and the
+    false positives), and the main-thread commands that must stay allowed."""
+
+    def setUp(self):
+        super().setUp()
+        self.kdev = {"cwd": self.temp, "agent_id": "x", "agent_type": "kernel-dev"}
+
+    # -- item 1: rule 4 and git's environment -------------------------------
+
+    def test_i1_redirected_reset_or_commit_from_an_agent_is_denied(self):
+        m = self.repo
+        for command in [
+            "GIT_DIR=%s/.git GIT_WORK_TREE=%s git reset --hard" % (m, m),
+            "export GIT_DIR=%s/.git; git reset --hard" % m,
+            "export GIT_WORK_TREE=%s && git reset --hard abc" % m,
+            "env GIT_WORK_TREE=%s git reset --hard" % m,
+            "git -c core.worktree=%s reset --hard" % m,
+            "git -c core.bare=false reset --hard",
+            "git -c Core.WorkTree=%s reset --hard" % m,
+            "git --config-env=core.worktree=W reset --hard",
+            "git -c include.path=/tmp/c reset --hard",
+            "GIT_DIR=%s/.git git reset --hard" % m,
+            "GIT_COMMON_DIR=%s/.git git reset --hard" % m,
+            "GIT_INDEX_FILE=/tmp/i git reset --hard",
+            "git --git-dir=%s/.git reset --hard" % m,
+            "git --work-tree=%s reset --hard" % m,
+        ]:
+            self.check("deny", "agents reset only their own temporary worktree", command, **self.kdev)
+        for command in [
+            "git -c core.worktree=%s commit -m x" % m,
+            "git --git-dir=%s/.git commit -m x" % m,
+            "git --git-dir %s/.git commit -m x" % m,
+            "GIT_DIR=%s/.git git commit -m x" % m,
+            "export GIT_WORK_TREE=%s; git merge --ff-only foo" % m,
+            "env GIT_INDEX_FILE=/tmp/i git commit -m x",
+        ]:
+            self.check("deny", "agents never commit in the main checkout", command, **self.kdev)
+
+    def test_i1_plain_commands_in_the_own_worktree_still_run(self):
+        for command in ["git reset --hard abc", "git commit -m x",
+                        "GIT_AUTHOR_NAME=t git commit -m x", "git -c user.name=t commit -m x",
+                        "GIT_EDITOR=true git commit", "GIT_TRACE=1 git reset --hard abc"]:
+            self.check("none", None, command, **self.kdev)
+
+    def test_i1_through_the_hook_process(self):
+        m = self.repo
+        self.check_hook("deny", "agents reset only their own temporary worktree",
+                        "GIT_DIR=%s/.git GIT_WORK_TREE=%s git reset --hard" % (m, m), **self.kdev)
+        self.check_hook("deny", "agents never commit in the main checkout",
+                        "git --git-dir=%s/.git commit -m x" % m, **self.kdev)
+        # GIT_DIR inherited by the session reaches the agent's command too.
+        self.check_hook("deny", "agents reset only their own temporary worktree",
+                        "git reset --hard abc", env={"GIT_DIR": m + "/.git"}, **self.kdev)
+        self.check_hook("none", None, "git reset --hard abc", **self.kdev)
+
+    # -- item 2: rule 1 and cargo ----------------------------------------------
+
+    def test_i2_cargo_runs_of_the_tools_soak_are_qemu_starts(self):
+        for command in ["cargo run --bin aios -- soak", "cargo run --bin aios -- soak -n 3",
+                        "cd tools && cargo run -- soak", "cargo run -p aios-tools -- -v soak",
+                        "cargo r --bin=aios -- soak", "cargo +nightly run -paios-tools -- soak",
+                        "cargo run --manifest-path tools/Cargo.toml -- soak runs=1",
+                        "cargo run --release --package aios-tools -- soak"]:
+            self.check("deny", "every QEMU start goes through scripts/agent/qemu-lock.sh run", command)
+        self.check("ask", "cannot tell whether", "cargo run --bin aios -- $(echo soak)")
+        for command in ["cargo run --bin aios -- docs-check", "cargo build --bin aios",
+                        "cargo run --bin aios -- soak --classify a.log",
+                        "cargo test -p aios-tools -- soak", "cargo run --bin aios -- hook path-guard"]:
+            self.check("none", None, command)
+
+    def test_i2_through_the_hook_process(self):
+        self.check_hook("deny", "every QEMU start", "cargo run --bin aios -- soak")
+
+    # -- item 3: rule 1 and the wrapper allowance ---------------------------
+
+    def test_i3_a_look_alike_wrapper_is_an_ordinary_script(self):
+        self.write("tmpx/qemu-lock.sh", "#!/bin/sh\nqemu-system-aarch64 -M virt\n")
+        self.write("tmpx/plain/qemu-lock.sh", "qemu-system-aarch64 -M virt\n")
+        for command in ["tmpx/qemu-lock.sh run --team solo -- true",
+                        "sh tmpx/qemu-lock.sh run --team solo -- true",
+                        "tmpx/plain/qemu-lock.sh run --team solo -- true",
+                        "timeout 9 tmpx/qemu-lock.sh run --team solo -- true",
+                        "tmpx/qemu-lock.sh status"]:
+            self.check("deny", "every QEMU start goes through scripts/agent/qemu-lock.sh run", command)
+
+    def test_i3_a_symlink_to_another_script_is_not_the_wrapper(self):
+        evil = self.write("tmpx/evil.sh", "#!/bin/sh\nqemu-system-aarch64 -M virt\n")
+        os.makedirs(os.path.join(self.repo, "scripts", "agent"), exist_ok=True)
+        os.symlink(evil, os.path.join(self.repo, "scripts", "agent", "qemu-lock.sh"))
+        self.check("deny", "every QEMU start", self.WRAPPER)
+
+    def test_i3_a_renamed_copy_is_still_the_wrapper_for_rule_1(self):
+        copy = os.path.join(self.tmp.name, "x.sh")
+        for command in ["cp scripts/agent/qemu-lock.sh %s; %s run --team solo --mode boot -- true"
+                        % (copy, copy),
+                        "PATH=%s:$PATH x.sh run --team solo -- true" % self.tmp.name,
+                        "sh %s run --team team-fix -- true" % copy]:
+            self.check("deny", "only the verifier starts QEMU", command, **self.kdev)
+        with open(os.path.join(REAL_ROOT, "scripts", "agent", "qemu-lock.sh")) as fh:
+            self.write("x.sh", fh.read(), root=self.tmp.name)
+        self.check("deny", "only the verifier starts QEMU",
+                   "%s run --team solo --mode boot -- true" % copy, **self.kdev)
+        self.check_hook("deny", "only the verifier starts QEMU",
+                        "cp scripts/agent/qemu-lock.sh %s; %s run --team solo -- true" % (copy, copy),
+                        **self.kdev)
+
+    def test_i3_the_genuine_wrapper_is_trusted_in_the_main_checkout_and_own_worktree(self):
+        # The genuine wrapper's body is not read: a boot in it is its job.
+        body = "#!/bin/sh\nqemu-system-aarch64 -M virt\n"
+        self.write("scripts/agent/qemu-lock.sh", body)
+        self.write("scripts/agent/qemu-lock.sh", body, root=self.temp)
+        self.check("none", None, self.WRAPPER)
+        self.check("none", None, self.WRAPPER, cwd=self.temp, agent_id="x", agent_type="verifier")
+        self.check("none", None, "%s/scripts/agent/qemu-lock.sh run --team team-fix -- x" % self.repo,
+                   cwd=self.temp, agent_id="x", agent_type="verifier")
+        # Another agent's worktree copy is not its own: the body is read.
+        self.check("deny", "every QEMU start", self.WRAPPER, cwd=self.temp,
+                   agent_id="z", agent_type="verifier")
+        self.write("tmpx/qemu-lock.sh", body)
+        self.check_hook("deny", "every QEMU start", "tmpx/qemu-lock.sh run --team solo -- true")
+        self.check_hook("none", None, self.WRAPPER)
+
+    # -- item 4: rule 3 and frontmatter parsing ------------------------------
+
+    def agent_file(self, name, text):
+        self.write(os.path.join(".claude", "agents", name + ".md"), text)
+
+    def spawn_level(self, agent_type, isolation=None):
+        guard.Repo._cache.clear()
+        tool_input = {"subagent_type": agent_type, "prompt": "x"}
+        if isolation:
+            tool_input["isolation"] = isolation
+        payload = {"tool_name": "Agent", "tool_input": tool_input, "cwd": self.repo}
+        return guard.decide_tool(payload, {"CLAUDE_PROJECT_DIR": self.repo})
+
+    def test_i4_writer_markers_yaml_reads_as_worktree_deny(self):
+        for i, text in enumerate([
+            "---\nname: w\nisolation: worktree # comment\n---\n",
+            "﻿---\nname: w\nisolation: worktree\n---\n",
+            "\n\n---\nname: w\nisolation: worktree\n---\n",
+            "---\nname: w\n\"isolation\": \"worktree\"\n---\n",
+            "---\nname: w\n'isolation': 'worktree'  # c\n---\n",
+            "---\nname: w\nisolation: &a worktree\n---\n",
+            "---\nname: w\nisolation: !!str worktree\n---\n",
+            "---\nname: w\nisolation: !!str 'worktree'\n---\n",
+            "---\n  name: w\n  isolation: worktree\n---\n",
+            "--- # writer\nname: w\nisolation: worktree\n---\n",
+            "---\r\nname: w\r\nisolation: worktree\r\n---\r\n",
+        ]):
+            self.agent_file("w%d" % i, text)
+            v = self.spawn_level("w%d" % i)
+            self.assertEqual("deny", v.level, (text, v.reasons))
+            self.assertIn("spawn it with isolation", " ".join(v.reasons))
+            self.assertEqual("none", self.spawn_level("w%d" % i, "worktree").level, text)
+
+    def test_i4_unreadable_isolation_values_fail_closed(self):
+        for i, text in enumerate([
+            "---\nname: u\nisolation: *a\n---\n",
+            "---\nname: u\nisolation: |\n  worktree\n---\n",
+            "---\nname: u\nisolation:\n  worktree\n---\n",
+            "---\nname: u\nisolation: Worktree\n---\n",
+            "---\nname: u\nIsolation: worktree\n---\n",
+            "---\nname: u\nisolation: worktree\nisolation: none\n---\n",
+            "---\nname: u\nisolation: \"work\\x74ree\"\n---\n",
+            "---\n{name: u, isolation: worktree}\n---\n",
+            "--- {isolation: worktree}\n---\n",
+        ]):
+            self.agent_file("u%d" % i, text)
+            v = self.spawn_level("u%d" % i)
+            self.assertIn(v.level, ("ask", "deny"), (text, v.reasons))
+            self.assertEqual("none", self.spawn_level("u%d" % i, "worktree").level, text)
+
+    def test_i4_through_the_hook_process(self):
+        self.agent_file("writer", "---\nname: writer\nisolation: worktree # comment\n---\n")
+        proc = self.run_hook({"tool_name": "Agent", "cwd": self.repo,
+                              "tool_input": {"subagent_type": "writer", "prompt": "x"}})
+        self.assertEqual(2, proc.returncode, proc.stdout)
+        self.assertIn("spawn it with isolation", proc.stdout)
+
+    # -- item 5: rule 2 and pattern kills -------------------------------------
+
+    def test_i5_agents_never_pattern_kill(self):
+        for command in ["pkill -f firefox", "killall Finder", "pkill -f qem[u]",
+                        "pkill -f $(echo qemu)", "pkill -f \"$Q\"", "kill $(pgrep qemu)",
+                        "kill `pgrep qemu`", "pgrep qemu | xargs kill",
+                        "ps aux | grep qemu | awk '{print $2}' | xargs kill -9",
+                        "pkill -f 'aios soak'", "P=$(pgrep -f soak); kill $P",
+                        "sh -c 'pkill x'"]:
+            v = self.verdict(command, **self.kdev)
+            self.assertEqual("deny", v.level, (command, v.reasons))
+            self.assertTrue(any("pattern-kill" in r for r in v.reasons), (command, v.reasons))
+
+    def test_i5_main_thread_pattern_kills(self):
+        for command in ["pkill -f qem[u]", "pkill -f $(echo qemu)", "pkill -f \"$Q\"",
+                        "kill $(pgrep qemu)", "kill `pgrep qemu`", "pgrep qemu | xargs kill",
+                        "ps aux | grep qemu | awk '{print $2}' | xargs kill",
+                        "pkill -f 'aios soak'", "killall -r 'q.*u'", "P=$(pgrep x); kill -9 $P"]:
+            self.check("ask", "pattern", command)
+            self.check("ask", "pattern", command, team="team-build")
+        for command in ["pkill qem", "Q=qemu; pkill -f \"$Q\"", "pkill -f system-aarch"]:
+            self.check("deny", "never pattern-kill QEMU", command)
+        for command in ["pkill -f firefox", "kill 1234", "kill -TERM 1234", "kill -0 99",
+                        "pgrep qemu", "pgrep -fl qemu-system-aarch64", "ps aux | grep qemu"]:
+            self.check("none", None, command)
+
+    def test_i5_pid_lists_reached_another_way(self):
+        for command in ["pgrep qemu | timeout 5 xargs kill",
+                        "pgrep qemu | while read p; do kill $p; done",
+                        "while read p; do kill -9 \"$p\"; done < <(pgrep -f soak)",
+                        "for p in $(pgrep qemu); do kill $p; done"]:
+            self.check("ask", "pattern", command)
+            self.check("deny", "pattern-kill", command, **self.kdev)
+        self.check("ask", "could not parse", "kill $(pgrep 'q")
+
+    def test_i5_through_the_hook_process(self):
+        self.check_hook("ask", "pattern", "kill $(pgrep qemu)")
+        self.check_hook("deny", "pattern-kill", "pkill -f firefox", **self.kdev)
+
+    # -- item 6: rule 4 "own" ------------------------------------------------
+
+    def test_i6_the_temporary_worktree_must_be_the_agents_own(self):
+        for agent_id in ["y", "a1", "", "xx", "agent-y", 7]:
+            self.check("deny", "agents reset only their own temporary worktree",
+                       "git reset --hard abc", cwd=self.temp, agent_id=agent_id,
+                       agent_type="worker")
+        for agent_id in ["x", "agent-x"]:
+            self.check("none", None, "git reset --hard abc", cwd=self.temp, agent_id=agent_id,
+                       agent_type="worker")
+        self.check_hook("deny", "agents reset only their own temporary worktree",
+                        "git reset --hard abc", cwd=self.temp, agent_id="y", agent_type="worker")
+
+    # -- item 7: rule 4 in the main checkout -----------------------------------
+
+    def test_i7_agents_never_move_refs_in_the_main_checkout(self):
+        for command in ["git rebase main", "git pull", "git pull --ff-only origin main",
+                        "git update-ref refs/heads/main HEAD", "git symbolic-ref HEAD refs/heads/x",
+                        "git symbolic-ref -d HEAD", "git reset --soft HEAD~1", "git reset",
+                        "git reset HEAD -- f", "git stash", "git stash pop", "git stash push -m x",
+                        "git commit-tree HEAD^{tree}", "git fast-import", "git branch -f main HEAD",
+                        "git branch -D x", "git branch -M y", "git branch --force x HEAD",
+                        "git checkout -B main", "git switch -C main", "sh -c 'git stash'"]:
+            self.check("deny", "in the main checkout", command, cwd=self.repo,
+                       agent_id="x", agent_type="general-purpose")
+        for command in ["git status", "git log -1", "git stash list", "git symbolic-ref --short HEAD",
+                        "git branch --list", "git branch -d x", "git checkout -- f", "git fetch"]:
+            self.check("none", None, command, cwd=self.repo, agent_id="x", agent_type="worker")
+        # Main threads keep the existing asks, and the agent's own worktree is its own.
+        self.check("ask", "git branch -D", "git branch -D x", cwd=self.repo)
+        self.check("none", None, "git rebase main", cwd=self.repo)
+        for command in ["git rebase main", "git stash", "git reset --soft HEAD~1"]:
+            self.check("none", None, command, **self.kdev)
+        self.check_hook("deny", "in the main checkout", "git rebase main", cwd=self.repo,
+                        agent_id="x", agent_type="worker")
+
+    # -- item 8: rule 1 wrappers -------------------------------------------------
+
+    def test_i8_more_wrappers_start_qemu(self):
+        for command in ["setsid qemu-system-aarch64 -M virt", "setsid -f just run",
+                        "env -S 'qemu-system-aarch64 -M virt'", "env -S\"just run\"",
+                        "env --split-string='just run'", "env -iS 'just soak'",
+                        "screen -dmS q qemu-system-aarch64 -M virt", "screen -dm just run",
+                        "screen -dm sh -c 'just run'", "tmux new -d 'just run'",
+                        "tmux new-session -d -s q 'qemu-system-aarch64 -M virt'",
+                        "tmux new -d qemu-system-aarch64 -M virt", "tmux new-window 'just soak'",
+                        "tmux -L s new -d 'just run'", "tmux send-keys -t q 'just run' Enter",
+                        "nohup tmux new -d 'just run'", "screen -S q -X stuff 'just run\n'",
+                        "nohup env -S 'just run'"]:
+            self.check("deny", "every QEMU start goes through scripts/agent/qemu-lock.sh run", command)
+        for command in ["tmux ls", "screen -ls", "setsid true", "env -S 'just check'"]:
+            self.check("none", None, command)
+        self.check_hook("deny", "every QEMU start", "setsid qemu-system-aarch64 -M virt")
+
+    # -- item 9: rule 2 toolchain, for agents -----------------------------------
+
+    def test_i9_agents_never_switch_or_install_toolchains(self):
+        for command in ["rustup default nightly", "rustup override set nightly",
+                        "rustup override unset", "rustup target add x86_64-unknown-linux-gnu",
+                        "rustup target remove x", "rustup toolchain link t /p",
+                        "rustup toolchain uninstall t", "rustup self update", "rustup self uninstall",
+                        "rustup set profile minimal", "rustup-init -y", "rustup run nightly cargo build",
+                        "cargo +nightly build", "cargo +stable fmt", "rustc +nightly -V",
+                        "RUSTUP_TOOLCHAIN=nightly cargo build",
+                        "export RUSTUP_TOOLCHAIN=nightly; cargo build",
+                        "env RUSTUP_TOOLCHAIN=nightly cargo build",
+                        "RUSTUP_AUTO_INSTALL=1 cargo build"]:
+            self.check("deny", "agents never change the toolchain", command, **self.kdev)
+        for command in ["rustup show", "rustup default", "rustup override list", "rustup target list",
+                        "cargo build", "cargo fmt --check", "rustc -V"]:
+            self.check("none", None, command, **self.kdev)
+        # The main thread keeps its behaviour.
+        for command in ["rustup default nightly", "cargo +nightly fmt", "rustup target add x",
+                        "RUSTUP_TOOLCHAIN=nightly cargo build", "rustup run nightly cargo build"]:
+            self.check("none", None, command)
+        self.check_hook("deny", "agents never change the toolchain", "cargo +nightly build", **self.kdev)
+
+    # -- false positives and parse errors ----------------------------------------
+
+    def test_fp_lookups_and_dry_runs_start_no_qemu(self):
+        for command in ["qemu-system-aarch64 --version", "qemu-system-aarch64 -version",
+                        "qemu-system-aarch64 -h", "qemu-system-aarch64 --help",
+                        "command -v qemu-system-aarch64", "command -V just",
+                        "type qemu-system-aarch64", "just --show run", "just -s soak", "just -n run",
+                        "just --dry-run soak", "just --evaluate", "just --list", "just -l",
+                        "just --summary"]:
+            for kw in [{}, self.kdev]:
+                self.check("none", None, command, **kw)
+        for command in ["qemu-system-aarch64 -M virt -h", "command qemu-system-aarch64 -M virt",
+                        "just -c qemu-system-aarch64 -M virt", "just --command just run",
+                        "just -c sh -c 'just run'",
+                        "just $(echo run)"]:
+            self.assertNotEqual("none", self.verdict(command).level, command)
+        self.check_hook("none", None, "qemu-system-aarch64 --version")
+
+    def test_fp_unparseable_team_commands_ask(self):
+        for command in ["qemu-system-aarch64 'x", "just run 'x", "pkill 'q", "killall \"q",
+                        "rustup update 'x"]:
+            self.check("ask", "could not parse", command)
+        self.check("none", None, "ls 'x")
+        self.check_hook("ask", "could not parse", "just run 'x")
+
+    # -- main-thread safety ---------------------------------------------------------
+
+    def test_main_thread_everyday_commands_stay_allowed(self):
+        with open(os.path.join(REAL_ROOT, "scripts", "agent", "brief.sh")) as fh:
+            self.write("scripts/agent/brief.sh", fh.read())
+        commands = ["just check", "just test", "just build", "just disk", "just docs-check",
+                    "AIOS_TOOLS_BIN=target/tools/installed/aios just docs-check",
+                    "just tools", "cargo build", "cargo build --target aarch64-unknown-none",
+                    "cargo test", "cargo test -p aios-tools", "cargo clippy --all-targets -- -D warnings",
+                    "cargo fmt", "cargo fmt --check", "cargo +nightly fmt", "git commit -m x",
+                    "git status", "git log --oneline -5", "rg qemu", "rg -n 'pkill|qemu' .claude",
+                    "pgrep qemu", "pgrep -fl qemu-system-aarch64", "ps aux | grep qemu",
+                    "kill 1234", "kill -TERM 1234", "rustup show", "rustup toolchain list",
+                    "bash scripts/agent/brief.sh", "sh scripts/agent/brief.sh",
+                    "scripts/agent/qemu-lock.sh status"]
+        for team in ["", "team-build"]:
+            for command in commands:
+                self.check("none", None, command, team=team)
+        for command in ["just check", "cargo +nightly fmt", "kill 1234", "bash scripts/agent/brief.sh"]:
+            self.check_hook("none", None, command)
 
 
 if __name__ == "__main__":
