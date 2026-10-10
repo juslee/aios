@@ -42,7 +42,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 - [x] T-self: `tripwire-selftest` feature: end-to-end PANIC-LOCK proof (not in either soak arm) (booted at load 10–17: the feature boot, plus default text and gpu)
 - [x] V1: V-register listing: differential gate over the IRQ call graph (no repository file; passes, no contamination; no boot needed)
 - [x] D1: Docs sweep and ADR errata (docs only, no boot; `/audit-loop` left to the lead)
-- [ ] B1: Single-arm N2 baseline soak on the final 1b head (owner gate; host-exclusive, coordinated with team-build, the other session, formerly aios-b9)
+- [x] B1: Single-arm N2 baseline soak on the final 1b head (owner gate; host-exclusive, coordinated with team-build, the other session, formerly aios-b9). Run 2026-10-10 at c065b0c: text 11/20 CLEAN, gpu 1/10 CLEAN. Table, findings and per-boot TSV: `docs/knowledge/research/2026-10-10-jl-crash-fix-1b-n2-baseline.md`; logs in the worktree's `target/soak/20261010-094339-b1-{text,gpu}`.
   - **Owner decision before B1 (K5 review 2):** accept the K5 lock's cost for B1 and the A/B soak (the Gate 1 IPC round trip about doubles, and Gate 1's `IPC < 10 us` fails in most boots), or first cut the stamp reads that cause it. Evidence and the measured split: Issues Encountered, K5 (review 2). **Decided 2026-10-06 (owner): accept the cost.** B1 measures the N2 counters, not IPC, and both A/B arms carry the same lock.
 
 Every task: one commit `Crash fix step 1b: <description>`, `just check` with zero warnings, `just test`, and for kernel tasks one text and one gpu boot (`just soak runs=1 secs=75 report_only=1`, then `mode=gpu`) with the task's boot acceptance from Design §3.
