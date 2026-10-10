@@ -1042,18 +1042,20 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (584)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
-  channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
-  timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
+  mod.rs          (607)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  channel.rs      (577)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel, timeout arming
+  timeout.rs      (227)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs       (364)  # Direct switch fast path, priority inheritance, reply switch
+  scan.rs         (114)  # Read-only waker-table accessors for the tripwire's heartbeat scan B
   tests/
-    mod.rs        (763)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (772)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (186)  # IpcSelect capability self-test
     syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
     kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
-  notify.rs       (380)  # Notification objects (signal/wait)
-  select.rs       (359)  # IPC select (multi-wait)
+    timeout_args.rs (72) # IpcCall/IpcRecv timeouts near u64::MAX through syscall_dispatch, on the PI pair (#217) self-test
+  notify.rs       (413)  # Notification objects (signal/wait)
+  select.rs       (364)  # IPC select (multi-wait)
   shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
@@ -1598,7 +1600,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 678+ host-side tests pass |
+| **Test** | `just test` | All 684+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1650,7 +1652,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 678 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
+Currently 684 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1743,13 +1745,13 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (678 tests):**
+**Current test distribution (684 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `ipc` | 61 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected) |
+| `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |

@@ -26,7 +26,7 @@ const CHECKS: usize = 43;
 
 /// Issue syscall `nr` with `args` in x0.. through `syscall_dispatch`, the
 /// path an EL0 SVC takes, and return x0 as the signed result.
-fn svc(nr: Syscall, args: &[u64]) -> i64 {
+pub(super) fn svc(nr: Syscall, args: &[u64]) -> i64 {
     let mut tf = TrapFrame {
         x: [0; 31],
         sp_el0: 0,

@@ -8,6 +8,7 @@ mod bad_pid;
 mod kit_errors;
 mod select_cap;
 mod syscall_args;
+mod timeout_args;
 
 use crate::sched;
 use crate::syscall::IpcError;
@@ -556,7 +557,9 @@ fn ipc_timeout_entry() -> ! {
 // ---------------------------------------------------------------------------
 
 /// PI server: Normal-class server that checks if it was elevated to
-/// Interactive during request processing (via priority inheritance).
+/// Interactive during request processing (via priority inheritance). After
+/// its three round trips it answers the two calls of the timeout-argument
+/// test (`timeout_args::server_side`).
 fn pi_server_entry() -> ! {
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
     // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
@@ -650,6 +653,8 @@ fn pi_server_entry() -> ! {
         }
     }
 
+    timeout_args::server_side(ch);
+
     loop {
         sched::thread_yield();
     }
@@ -705,6 +710,8 @@ fn cap_denied_entry() -> ! {
 }
 
 /// PI caller: Interactive-class caller that exercises priority inheritance.
+/// After its three round trips it makes the two calls of the
+/// timeout-argument test (`timeout_args::call_side`).
 fn pi_caller_entry() -> ! {
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
     // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
@@ -756,6 +763,8 @@ fn pi_caller_entry() -> ! {
 
         sched::thread_yield();
     }
+
+    timeout_args::call_side(ch);
 
     loop {
         sched::thread_yield();

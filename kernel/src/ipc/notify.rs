@@ -208,13 +208,9 @@ pub fn notification_wait(id: NotificationId, mask: u64, timeout_ticks: u64) -> R
     // Table lock dropped here before blocking.
 
     // Slow path: register as waiter and block.
-    let deadline = if timeout_ticks == u64::MAX {
-        u64::MAX
-    } else {
-        TICK_COUNT
-            .load(Ordering::Relaxed)
-            .saturating_add(timeout_ticks)
-    };
+    // NOTIFY_DEADLINES stores no deadline as u64::MAX.
+    let deadline = shared::deadline_after(TICK_COUNT.load(Ordering::Relaxed), timeout_ticks)
+        .unwrap_or(u64::MAX);
 
     {
         let mut table = NOTIFICATION_TABLE.lock();
