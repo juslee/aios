@@ -6,7 +6,7 @@
     "section-refs": 4,
     "doc-map": 4,
     "just-recipes": 1,
-    "lock-order": 16,
+    "lock-order": 15,
     "milestone-status": 5,
     "phase-count": 1,
     "layout": 3,
@@ -248,13 +248,6 @@
       "file": ".claude/CLAUDE.md",
       "target": "unknown:VIRTIO_INPUT",
       "message": "lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src"
-    },
-    {
-      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:BOOT_LOG",
-      "check": "lock-order",
-      "file": "docs/kernel/deadlock-prevention.md",
-      "target": "undocumented:BOOT_LOG",
-      "message": "production lock BOOT_LOG is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:COMPOSITOR_CHANNEL",
