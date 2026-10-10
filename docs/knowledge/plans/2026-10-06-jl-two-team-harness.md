@@ -665,12 +665,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
   - [ ] Acceptance: `rg -n 'model:|effort:' .claude/workflows/audit-loop.js` prints nothing; `rg -c 'agentType' .claude/workflows/audit-loop.js` is 3 or more; the run prints `complete,in_diff,lens_failures,pre_existing,refuted,uncertain` and `[]` (a lens failing with an unknown agent type means the run did not start inside `W`). The docs gate shows only `plans-not-empty`.
 
-- [ ] **T13: brief.sh**
+- [x] **T13: brief.sh**
 
   **Files:** Modify `scripts/agent/brief.sh` per `D/scripts/agent/brief.sh.patch-notes.md.v4`.
 
-  - [ ] Step 1: apply the notes.
-  - [ ] Acceptance:
+  - [x] Step 1: apply the notes.
+  - [x] Acceptance:
     ```bash
     cd "$W"
     shellcheck scripts/agent/brief.sh && bash -n scripts/agent/brief.sh && echo lint-ok
@@ -944,3 +944,13 @@ On 2026-10-10, `git worktree remove` of an implementer's temporary worktree fail
 ### T6 qemu-lock.sh (2026-10-10)
 
 No deviation from the v4 draft. `shellcheck -s sh` and `dash -n` exit 0. Step 3 printed `rc=143 qemu-running-at-harness-term`, `free`, `no-qemu-left`. The Step 2 smoke output matched the Acceptance list line by line; the lock log showed the cleared owner lines (`cleared_at=... by_pid=...`, `team=team-fix`, `pid=999999`). Docs gate: only the knowledge-hygiene plan entry is new.
+
+### T13 brief.sh (2026-10-10)
+
+Deviations from `brief.sh.patch-notes.md.v4`, all by intent:
+- T13: the notes' line numbers are stale (main moved); every edit was anchored by text.
+- T13: the Routing log counts use `grep -c ... 2>/dev/null` with `${n:-0}` instead of `|| echo 0`. With an existing file that has no match, `grep -c` prints `0` and exits 1, so `|| echo 0` would print `0` twice.
+- T13: the lock section tests `[ -f ... ]` only (the note's `[ -x ] || [ -f ]` is redundant, since the script runs through `sh`). It runs only `qemu-lock.sh status`. In this run the main checkout has no `qemu-lock.sh` yet (T6 is not on `main`), so the section printed its "no scripts/agent/qemu-lock.sh in the main checkout" line.
+- T13: the team label sits in the PR line as the note says; the jq line was split over three lines for readability. Live check: `#234` prints `{team-build}`, PRs without a label print `{no team}`.
+- T13: `rg` is not installed in the implementer's shell; the acceptance's `rg -n` lines ran as `grep -nE` with the same patterns.
+- T13: `route-outcome` writes compact JSON (`serde_json`), so `"kind":"launched"` matches (`tools/src/cmd/hook/route_outcome.rs`).
