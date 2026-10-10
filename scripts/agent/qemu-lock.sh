@@ -20,12 +20,17 @@
 #       eta has passed. Exit 0.
 #   qemu-lock.sh stale
 #       Exit 0, printing the owner lines, when the holder is dead and no
-#       qemu-system-aarch64 process runs; exit 1 otherwise.
+#       qemu-system-aarch64 process runs; exit 1 otherwise. That is all it
+#       checks: a SIGKILLed wrapper (state=dead) orphans CMD, which can still
+#       run without a QEMU. Look for leftover harness processes (ps, pgrep -f
+#       for `aios soak`, the soak script, CMD itself) before clear-stale.
 #   qemu-lock.sh clear-stale
 #       When `stale` holds, append the owner lines to
 #       <git-common-dir>/aios-agent/qemu-lock.log, remove the lock and print
-#       "cleared"; exit 0. Otherwise print why not and exit 1. Any lead may run
-#       it. A live holder past its eta is never cleared here: report
+#       "cleared"; exit 0. Otherwise print why not and exit 1. The lock moves
+#       to a private name first and is checked again there, so two concurrent
+#       calls, or a `run` that takes the lock meanwhile, never lose a live
+#       holder's lock. Any lead may run it. A live holder past its eta is never cleared here: report
 #       LOCK-STALE to the holder's lead (rule 11).
 #   qemu-lock.sh run --team T --mode boot|quiet --label L --eta-min N
 #                    [--max-load X] [--settle-min M] -- CMD...
@@ -40,7 +45,12 @@
 #       once none of those runs any more or after a grace period (default
 #       15 s, above the harness's 10 s SIGTERM-to-SIGKILL grace), whatever is
 #       left, QEMU included. A bare QEMU (`just run*`) loses its parents at
-#       once, so it is stopped without the wait.
+#       once, so it is stopped without the wait. A process that ignores TERM
+#       is then sent SIGKILL. The lock is released only when nothing of the
+#       tree survives; otherwise the lock stays (status shows state=dead, with
+#       a `survivors=` line), the survivors go to stderr and the exit status
+#       is 78.
+#       CMD runs with stdin from /dev/null.
 #       Before CMD runs, with the lock held:
 #         - exit 76, lock released, when a qemu-system-aarch64 process already
 #           runs (a boot that bypassed the lock);
@@ -54,7 +64,8 @@
 #
 # Test hooks: AIOS_QEMU_LOCK_LOADAVG replaces the measured load average,
 # AIOS_QEMU_LOCK_SETTLE_STEP the 30-second settle interval (seconds), and
-# AIOS_QEMU_LOCK_GRACE the 15-second stop grace (seconds).
+# AIOS_QEMU_LOCK_GRACE the 15-second stop grace (seconds), and
+# AIOS_QEMU_LOCK_KILL the command that sends SIGKILL (default kill).
 #
 # R4b replaces this script with a flock lease inside `aios soak` and the
 # `just run*` recipes, and changes guard rule 1 to read the lease.
@@ -74,9 +85,10 @@ qemu_pids() {
     pgrep -f '^([^ ]*/)?qemu-system-aarch64( |$)' 2>/dev/null
 }
 
+# The owner lines of the lock directory $1 (default: the lock).
 owner_lines() {
-    if [ -f "$lock/owner" ]; then
-        cat "$lock/owner"
+    if [ -f "${1:-$lock}/owner" ]; then
+        cat "${1:-$lock}/owner"
     else
         echo "held (no owner file yet)"
     fi
@@ -86,9 +98,9 @@ owner_lines() {
 # owner file); a reused pid that is not this script's `run` counts as dead.
 self=$(basename -- "$0")
 holder_state() {
-    pid=$(sed -n 's/^pid=//p' "$lock/owner" 2>/dev/null)
+    pid=$(sed -n 's/^pid=//p' "${1:-$lock}/owner" 2>/dev/null)
     if [ -z "$pid" ]; then
-        if [ -n "$(find "$lock" -prune -mmin +2 2>/dev/null)" ]; then
+        if [ -n "$(find "${1:-$lock}" -prune -mmin +2 2>/dev/null)" ]; then
             echo dead
         else
             echo starting
@@ -104,16 +116,16 @@ holder_state() {
 load1() {
     if [ -n "${AIOS_QEMU_LOCK_LOADAVG:-}" ]; then
         echo "$AIOS_QEMU_LOCK_LOADAVG"
-    elif v=$(sysctl -n vm.loadavg 2>/dev/null); then
-        echo "$v" | tr -d '{}' | awk '{print $1}'
+    elif v=$(LC_ALL=C sysctl -n vm.loadavg 2>/dev/null); then
+        echo "$v" | tr -d '{}' | LC_ALL=C awk '{print $1}'
     else
-        cut -d' ' -f1 /proc/loadavg 2>/dev/null
+        LC_ALL=C cut -d' ' -f1 /proc/loadavg 2>/dev/null
     fi
 }
 
 # Exit status 0 when $1 > $2 (decimal numbers).
 above() {
-    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'
+    LC_ALL=C awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'
 }
 
 is_stale() {
@@ -153,12 +165,29 @@ clear-stale)
         fi
         exit 1
     fi
+    # Not atomic with is_stale: move the lock to a private name (atomic), then
+    # check that what we hold is still the stale holder before removing it.
+    stale_pid=$(sed -n 's/^pid=//p' "$lock/owner" 2>/dev/null)
+    moved="$lock.clearing.$$"
+    if ! mv "$lock" "$moved" 2>/dev/null; then
+        echo "not cleared: the lock changed"
+        exit 1
+    fi
+    moved_pid=$(sed -n 's/^pid=//p' "$moved/owner" 2>/dev/null)
+    if [ "$moved_pid" != "$stale_pid" ] || [ "$(holder_state "$moved")" != dead ] || [ -n "$(qemu_pids)" ]; then
+        if [ ! -e "$lock" ] && mv "$moved" "$lock" 2>/dev/null; then
+            echo "not cleared: the lock changed hands"
+        else
+            echo "not cleared: the lock changed hands and a new one exists; left at $moved"
+        fi
+        exit 1
+    fi
     {
         echo "cleared_at=$(date +%s) by_pid=$$"
-        owner_lines
+        owner_lines "$moved"
         echo "--"
     } >>"$log"
-    rm -rf "$lock"
+    rm -rf "$moved"
     echo cleared
     exit 0
     ;;
@@ -169,15 +198,19 @@ run) ;;
     ;;
 esac
 
+optval() {
+    echo "qemu-lock: $1 needs a value" >&2
+    exit 2
+}
 team='' mode='' label='' eta_min='' max_load='' settle_min=5
 while [ $# -gt 0 ]; do
     case "$1" in
-    --team) team=${2:-}; shift 2 ;;
-    --mode) mode=${2:-}; shift 2 ;;
-    --label) label=${2:-}; shift 2 ;;
-    --eta-min) eta_min=${2:-}; shift 2 ;;
-    --max-load) max_load=${2:-}; shift 2 ;;
-    --settle-min) settle_min=${2:-}; shift 2 ;;
+    --team) [ $# -ge 2 ] || optval "$1"; team=$2; shift 2 ;;
+    --mode) [ $# -ge 2 ] || optval "$1"; mode=$2; shift 2 ;;
+    --label) [ $# -ge 2 ] || optval "$1"; label=$2; shift 2 ;;
+    --eta-min) [ $# -ge 2 ] || optval "$1"; eta_min=$2; shift 2 ;;
+    --max-load) [ $# -ge 2 ] || optval "$1"; max_load=$2; shift 2 ;;
+    --settle-min) [ $# -ge 2 ] || optval "$1"; settle_min=$2; shift 2 ;;
     --) shift; break ;;
     *) echo "qemu-lock: unknown option $1" >&2; exit 2 ;;
     esac
@@ -202,9 +235,10 @@ if ! mkdir "$lock" 2>/dev/null; then
 fi
 
 child=''
+keep_lock=
 # shellcheck disable=SC2329 # called from the traps below
 release() {
-    rm -rf "$lock"
+    [ -n "$keep_lock" ] || rm -rf "$lock"
 }
 # The process $1 and everything it started, parents first, one pid per line.
 # shellcheck disable=SC2329 # called from the traps below
@@ -223,10 +257,26 @@ in_list() {
 running() {
     st=$(ps -o stat= -p "$1" 2>/dev/null) && [ -n "$st" ] && case $st in Z*) false ;; *) true ;; esac
 }
+# Wait up to $2 seconds while any pid of the list $1 runs.
+# shellcheck disable=SC2329 # called from stop_tree
+wait_gone() {
+    n=0
+    while [ "$n" -lt "$2" ]; do
+        any=
+        for p in $1; do
+            if running "$p"; then any=1; break; fi
+        done
+        [ -n "$any" ] || return 0
+        sleep 1
+        n=$((n + 1))
+    done
+}
 # Stop CMD and everything it started (see the usage text): TERM every process
 # of the tree but QEMU, parents first; wait while any of them still runs, up
 # to the grace; then TERM what is left of the tree, re-read in case a
-# process started more meanwhile, QEMU included.
+# process started more meanwhile, QEMU included; wait briefly; SIGKILL what
+# still runs; wait briefly. Returns 1, naming the survivors on stderr and in
+# the owner file, when a process of the tree still runs.
 # shellcheck disable=SC2329 # called from the traps below
 stop_tree() {
     tree=$(tree_of "$1")
@@ -248,15 +298,35 @@ stop_tree() {
         sleep 1
         waited=$((waited + 1))
     done
-    for p in $tree; do
-        for q in $(tree_of "$p"); do kill -TERM "$q" 2>/dev/null; done
+    # The pids seen so far plus whatever the tree has started since.
+    all=$tree
+    for p in $tree; do all="$all $(tree_of "$p")"; done
+    for p in $all; do running "$p" && kill -TERM "$p" 2>/dev/null; done
+    wait_gone "$all" 3
+    for p in $all; do running "$p" && ${AIOS_QEMU_LOCK_KILL:-kill} -KILL "$p" 2>/dev/null; done
+    wait_gone "$all" 3
+    left=
+    for p in $all; do
+        case " $left " in *" $p "*) continue ;; esac
+        running "$p" && left="$left $p"
     done
+    [ -z "$left" ] && return 0
+    {
+        echo "qemu-lock: the command's tree survived SIGKILL; the lock stays held:"
+        for p in $left; do ps -o pid=,command= -p "$p"; done
+    } >&2
+    echo "survivors=${left# }" >>"$lock/owner" 2>/dev/null
+    return 1
 }
 # shellcheck disable=SC2329 # called from the traps below
 on_signal() {
-    [ -n "$child" ] && stop_tree "$child"
+    sig=$1
+    if [ -n "$child" ] && ! stop_tree "$child"; then
+        keep_lock=1
+        exit 78
+    fi
     release
-    exit "$1"
+    exit "$sig"
 }
 trap release EXIT
 trap 'on_signal 129' HUP
@@ -309,7 +379,7 @@ fi
 # A stop request is a TERM to this script (pid= in the owner file). The trap
 # stops CMD and every process it started, found by parent pid (stop_tree), so
 # QEMU stops without touching any other session's processes.
-"$@" &
+"$@" </dev/null &
 child=$!
 wait "$child"
 status=$?

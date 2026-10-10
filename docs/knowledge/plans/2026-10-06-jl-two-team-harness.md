@@ -442,7 +442,96 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     sh q.sh run --team ship --mode boot --label x --eta-min 1 -- true; echo rc=$?
     ```
   - [x] Step 3 (v4): the harness-first stop check: `sh "$D/scripts/agent/qemu-lock.sh.v4.t8-smoke.sh" "$W/scripts/agent/qemu-lock.sh" "$(mktemp -d)/t8"` prints `rc=143 qemu-running-at-harness-term`, `free` and `no-qemu-left` (v3's leaf-first stop printed `qemu-already-gone-at-harness-term`; run 2026-10-09, three times each).
-  - [x] Acceptance: `shellcheck -s sh scripts/agent/qemu-lock.sh` and `dash -n scripts/agent/qemu-lock.sh` exit 0, Step 3 prints its three lines, and the smoke test prints, in order: `free`; the t1 owner lines with `state=live` and `rc=75`; `deferred: load 40 is above 30 (boot mode)` and `rc=77`; `deferred: load 5 is above 3.0 (quiet mode)` and `rc=77`; `ran-t5`, `rc=0`; the fake QEMU's process line and `rc=76` (no `NOT-RUN` anywhere); `state=dead`, `cleared`, `rc=0`, `free`; `free`, `no-sleep-left`; `--team must be team-build, team-fix or solo`, `rc=2`. (Run on the v3 draft on 2026-10-06 and on the v4 draft on 2026-10-09: exactly this output.) `cat "$S/.git/aios-agent/qemu-lock.log"` shows the cleared owner lines. The docs gate shows only `plans-not-empty`.
+  - [x] Step 4 (review fixes, 2026-10-10): save the block below as `t6-review.sh` and run `sh t6-review.sh "$W/scripts/agent/qemu-lock.sh" "$(mktemp -d)/t6r"`. Expected: (a) `rc=143`, `free`, `no-sleep-left` (an ignore-TERM command is SIGKILLed, the lock released); (b) `rc=78`, `survivors=<pids>` and `state=dead` (a survivor that cannot be killed keeps the lock; `AIOS_QEMU_LOCK_KILL=true` stands in for a failed SIGKILL), `1`, `cleaned-up`; (c) `not cleared: the lock changed hands`, `rc=1`, the new holder's `team=solo` and `pid=` still in the owner file, `0`; (d) one `cleared`, one `not cleared: the lock changed`, `rcs=0 1`, `1`, `free`, `0`; (e) `--team needs a value`, `--label needs a value`, `--max-load needs a value`, each `rc=2`, then `free`.
+    ```sh
+    #!/bin/sh
+    # T6 review-fix smoke. usage: step4.sh <qemu-lock.sh> <scratch-dir>
+    set -u
+    SRC=$1
+    S=$2
+    mkdir -p "$S" && cd "$S" || exit 1
+    git init -q -b main . && git -c user.email=a@b -c user.name=a commit -q --allow-empty -m s
+    cp "$SRC" q.sh
+    L=.git/aios-agent/qemu.lock
+    export AIOS_QEMU_LOCK_LOADAVG=1 AIOS_QEMU_LOCK_GRACE=2
+
+    echo "== a: a command that ignores TERM is SIGKILLed, the lock is released"
+    printf 'trap "" TERM\nsleep 37\n' >ign.sh
+    sh q.sh run --team solo --mode boot --label ign --eta-min 1 -- sh ign.sh &
+    W=$!
+    sleep 1
+    kill -TERM "$(sed -n 's/^pid=//p' $L/owner)"
+    wait $W
+    echo "rc=$?"
+    sh q.sh status
+    pgrep -f 'sleep 37' || echo no-sleep-left
+
+    echo "== b: a survivor that cannot be killed keeps the lock"
+    AIOS_QEMU_LOCK_KILL=true sh q.sh run --team solo --mode boot --label unk --eta-min 1 -- sh ign.sh 2>b.err &
+    W=$!
+    sleep 1
+    kill -TERM "$(sed -n 's/^pid=//p' $L/owner)"
+    wait $W
+    echo "rc=$?"
+    sh q.sh status | grep -E '^(state|survivors)='
+    grep -c 'survived SIGKILL; the lock stays held' b.err
+    sed -n 's/^survivors=//p' $L/owner >surv
+    for p in $(cat surv); do kill -KILL "$p" 2>/dev/null; done
+    sleep 1
+    pgrep -f 'sleep 37' || echo cleaned-up
+    rm -rf $L
+
+    echo "== c: a lock replaced between is_stale and the move survives clear-stale"
+    mkdir -p r2 && cd r2 && git init -q -b main . && git -c user.email=a@b -c user.name=a commit -q --allow-empty -m s
+    cp ../q.sh q.sh
+    sh q.sh run --team solo --mode boot --label holder --eta-min 1 -- sleep 15 &
+    H=$!
+    sleep 1
+    HP=$(sed -n 's/^pid=//p' .git/aios-agent/qemu.lock/owner)
+    cd ..
+    mkdir -p shim && cat >shim/pgrep <<EOF
+    #!/bin/sh
+    # first call: swap the stale lock for a live holder's, as a racing run would
+    if [ ! -f $S/swapped ]; then
+        : >$S/swapped
+        rm -rf $S/$L
+        mkdir $S/$L
+        printf 'team=solo\npid=$HP\n' >$S/$L/owner
+        exit 1
+    fi
+    exec /usr/bin/pgrep "\$@"
+    EOF
+    chmod 755 shim/pgrep
+    mkdir -p $L && printf 'team=team-fix\npid=999999\n' >$L/owner
+    PATH="$S/shim:$PATH" sh q.sh clear-stale; echo "rc=$?"
+    sleep 0.2
+    cat $L/owner
+    ls .git/aios-agent | grep -c clearing || true
+    kill -TERM "$H" 2>/dev/null; wait $H
+    rm -rf $L
+
+    echo "== d: two concurrent clear-stale calls on one stale lock"
+    mkdir -p $L && printf 'team=team-fix\npid=999999\n' >$L/owner
+    rm -f .git/aios-agent/qemu-lock.log
+    sh q.sh clear-stale >d1.out 2>&1 &
+    P1=$!
+    sh q.sh clear-stale >d2.out 2>&1 &
+    P2=$!
+    wait $P1; R1=$?
+    wait $P2; R2=$?
+    cat d1.out d2.out | sort | uniq -c
+    echo "rcs=$(echo $R1 $R2 | tr ' ' '\n' | sort | tr '\n' ' ')"
+    grep -c cleared_at .git/aios-agent/qemu-lock.log
+    sh q.sh status
+    ls .git/aios-agent | grep -c clearing || true
+
+    echo "== e: missing option values"
+    sh q.sh run --team; echo "rc=$?"
+    sh q.sh run --team solo --mode boot --label; echo "rc=$?"
+    sh q.sh run --team solo --mode boot --label x --eta-min 1 --max-load; echo "rc=$?"
+    sh q.sh status
+    ```
+  - [x] Acceptance: `shellcheck -s sh scripts/agent/qemu-lock.sh` and `dash -n scripts/agent/qemu-lock.sh` exit 0, Step 3 prints its three lines, Step 4 prints what it lists, and the smoke test prints, in order: `free`; the t1 owner lines with `state=live` and `rc=75`; `deferred: load 40 is above 30 (boot mode)` and `rc=77`; `deferred: load 5 is above 3.0 (quiet mode)` and `rc=77`; `ran-t5`, `rc=0`; the fake QEMU's process line and `rc=76` (no `NOT-RUN` anywhere); `state=dead`, `cleared`, `rc=0`, `free`; `free`, `no-sleep-left`; `--team must be team-build, team-fix or solo`, `rc=2`. (Run on the v3 draft on 2026-10-06 and on the v4 draft on 2026-10-09: exactly this output.) `cat "$S/.git/aios-agent/qemu-lock.log"` shows the cleared owner lines. The docs gate shows only `plans-not-empty`.
 
 - [ ] **T7: guard rules 1–4** (implementer in the foreground; guard-attacking reviewer)
 
@@ -824,6 +913,10 @@ The guard-attacking review of 103047e found two ways the `worker` agent could st
 ### T5 review fixes (2026-10-10)
 
 The guard-attacking review of 6beae0e found two inputs the shim's path-guard fallback allowed that the binary denies. (1) A payload with an `"agent_type"` key whose value is empty, `null` or not a string, and no `agent_id`, printed nothing; the fallback now denies whenever the key is present and no non-empty string is captured. (2) The greedy sed took the last `"agent_type"` on the line, which could be a nested key in `tool_input`; the fallback now counts the keys and denies when there is more than one (ambiguous fails closed, so the first-wins alternative was not taken). The header comment no longer claims the fallback reads fields "as in the binary". Nits: `set -f` around the `$hook_types` loop (a `*` value never globs), the row-13 fake binary echoes its stdin and the test asserts the payload arrived, and a hook-branch test covers a missing and a foreign stamp (`a_missing_or_foreign_stamp_is_stale_to_a_hook`). The new tests (`the_path_guard_fallback_denies_what_it_cannot_read`) failed before the shim change.
+
+### T6 review fixes (2026-10-10)
+
+The review of 2bc7a0c found a must-fix and four nits in `scripts/agent/qemu-lock.sh`. Must-fix: a command that ignores TERM survived the stop and the lock was released while it ran (`stop_tree` and `on_signal` sent TERM only). Fix: the harness-first TERM and the grace wait stay; then the whole tree (the pids seen first plus whatever it started since, QEMU included) gets TERM, a 3 s wait, SIGKILL, a 3 s wait. The lock is released only when nothing of the tree runs; otherwise it stays (the dead wrapper's pid makes `status` say `state=dead`), the survivors go to stderr and to a `survivors=` owner line, and the wrapper exits 78. Nits: (1) `clear-stale` moves the lock to `qemu.lock.clearing.<pid>` (atomic), then re-checks the owner pid, `state=dead` and that no QEMU runs, on the moved directory, before it logs and removes; on a failed check it moves the lock back when no new lock exists, else leaves it and says where. (2) Every option that takes a value, given without one, prints `<option> needs a value` and exits 2. (3) The load average is read and compared under `LC_ALL=C`. (4) Usage text: CMD's stdin is /dev/null (now explicit), and a SIGKILLed wrapper orphans CMD while `clear-stale` checks only for QEMU. A new test hook, `AIOS_QEMU_LOCK_KILL`, replaces the SIGKILL command so a survivor that cannot be killed can be simulated. Steps 2 and 3 produced the same output as before; Step 4 is new. Race case (c) is deterministic: a `pgrep` shim on PATH swaps the stale lock for a live holder's lock on its first call, which is the moment between `is_stale` and the move.
 
 ### T4 placement
 
