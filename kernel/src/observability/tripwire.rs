@@ -209,7 +209,9 @@ pub fn check_tpidr() {
 pub(crate) fn read_daif() -> u64 {
     let daif: u64;
     // SAFETY: DAIF is readable at EL1 and reading it has no side effects.
-    // The asm has no memory operand. A read at the wrong point would only
+    // The kernel runs only at EL1 (boot.S never drops to EL0 before this
+    // code), so the read is always legal. The asm has no memory operand. A
+    // read at the wrong point would only
     // mislabel the mask state; it cannot corrupt anything.
     unsafe { core::arch::asm!("mrs {}, DAIF", out(reg) daif, options(nostack, preserves_flags)) };
     daif

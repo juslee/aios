@@ -756,7 +756,11 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
      - `check_notification_timeouts` drops a due deadline when THREAD_TABLE is busy (`notify.rs:317` then `:321-323`, N3). This path is unreachable in soak today.
    - **The print** runs inside CPU 0's IRQ. The deferral rule skips ticks where CPU 0's interrupted stream holds a stamped IRQ-class lock. CHANNEL_TABLE/PROCESS_TABLE held by that stream (`cap/mod.rs:39`, `channel.rs:69`/`:362`/`:440`) is not visible, so CPUs 1–3 masked spins on those can be extended. This is the same exposure `drain_logs` has in `main`.
    - The `rsthold` walk (23 loads) before each `restore_context`, the `bump()` masked windows, and the `IRQ_CTX`/`note_dispatch`/phase/marker stores add nanoseconds and change no decisions.
-   - `unblock`, `schedule`, `wake_with_error`, `try_wake_select`, `try_reply_switch` and `try_direct_switch` gain parameters or return values but no behaviour.
+   - `unblock`, `schedule`, `wake_with_error`, `try_wake_select`, `try_reply_switch` and `try_direct_switch` gain parameters or return values, with two exceptions (independent audit, 2026-10-10):
+     - `unblock` with an out-of-range tid counts `badtid` and `ubnone` and returns, where `main` panics on the index (K6).
+     - A zero-iteration Gate 1 run now prints FAIL where `main` printed PASS (K5b), which flips the soak classifier's `G1PASS` for such boots.
+   - `tripwire::wait_armed` (`#[inline(never)]`) runs inside the IRQs-on TIMEOUT_QUEUE holds at `channel.rs:142`, `:194` and `:325`, lengthening them. The only effect is more `check_timeouts` try-lock skips on CPU 0 and more `ctbusy` on other CPUs; no decision changes (by design, for N2).
+   - Every `IrqSpinLock` static moves from `.bss` to `.data`, because `HolderFields::new` sets `tid` to `TID_NONE` (`u32::MAX`). About 173 KB of ELF growth; the image still ends inside the boot TTBR1's 4×2 MiB. No functional effect.
    - The balancer's `saturating_add` differs only where `main` would panic.
    - Do not fix anything the counters reveal.
    - The panic handler mask stops CPU 0's heartbeat after a CPU 0 panic; the panic path now drains every ring.
@@ -817,7 +821,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
 2. The pending protocol: interleaved, 20 text + 10 gpu per arm, 1b against `main`@`b07d7e4`, same load rule, QEMU, firmware and toolchain (`nightly-2026-09-24`).
 3. The decision rules, with the ctx restriction, `lkself`/`kind=self` as H3 evidence, `kind=ph` not wedge evidence by itself, and the harness matching `lock re-entry: ` on the message line.
 4. The schema-v1 key list, the golden line and the last-whole-line parser contract.
-5. The known behaviour differences from `main` (§4.5 in full): lock fast-path overhead, the scan holds and their effects on `clear_timeout`/`check_timeouts`/the balancer, the print timing, the bench masking removal, `CONSOLE_BUSY`, post-panic masking and full drain, the 192-B frame, and the balancer `saturating_add`.
+5. The known behaviour differences from `main` (§4.5 in full): lock fast-path overhead, the scan holds and their effects on `clear_timeout`/`check_timeouts`/the balancer, the print timing, the bench masking removal, `CONSOLE_BUSY`, post-panic masking and full drain, the 192-B frame, the balancer `saturating_add`, `unblock`'s out-of-range tid no longer panicking, the zero-iteration Gate 1 FAIL, the `wait_armed` calls inside TIMEOUT_QUEUE holds, and the `.bss`→`.data` move of the IRQ-class lock statics.
 6. `frame.rs:51` → `[mm] BUG: free_pages(`; `channel.rs:249` → `badchan` (3 sites).
 7. The B1 N2 baseline table, labelled single-arm and descriptive.
 8. The PR is ready to merge as instrumentation. The H1 and H3 verdicts and any ADR revision wait for the soak.

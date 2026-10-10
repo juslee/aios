@@ -325,20 +325,20 @@ pub fn schedule(origin: Origin) {
 
             // We're still the caller — switch to the next thread.
             IN_SCHEDULER[actual_cpu].store(false, Ordering::Release);
-            // SAFETY: next_ctx_ptr points to the next thread's ThreadContext.
-            // restore_context loads callee-saved regs, SP, and branches to
-            // the saved PC. This never returns.
             tripwire::check_restore(next_ctx_ptr, next_stack_phys, next_last_cpu);
             assert_valid_ctx(next_ctx_ptr, next_tid);
             crate::sync::note_restore();
+            // SAFETY: next_ctx_ptr points to the next thread's ThreadContext.
+            // restore_context loads callee-saved regs, SP, and branches to
+            // the saved PC. This never returns.
             unsafe { restore_context(next_ctx_ptr) };
         } else {
             // No current thread (first schedule on this CPU).
             IN_SCHEDULER[cpu].store(false, Ordering::Release);
-            // SAFETY: next_ctx_ptr is valid (checked above).
             tripwire::check_restore(next_ctx_ptr, next_stack_phys, next_last_cpu);
             assert_valid_ctx(next_ctx_ptr, next_tid);
             crate::sync::note_restore();
+            // SAFETY: next_ctx_ptr is valid (checked above).
             unsafe { restore_context(next_ctx_ptr) };
         }
     }
