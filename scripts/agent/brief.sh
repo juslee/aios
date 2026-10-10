@@ -3,7 +3,8 @@
 #
 # Prints, as Markdown: git state (branch, dirty files, worktrees, unpushed
 # commits), open PRs with check status and a merge-ready verdict, main CI, the
-# newest soak of a main commit and the newest other soak, the .remember handoff,
+# newest soak of a main commit and the newest other soak, the per-session handoff
+# files (.remember/handoff-<key>.md), the host QEMU lock, the routing-log count,
 # knowledge notes changed since the last session, open needs-human issues, the
 # next unchecked step of the current phase doc, and a one-line docs-check summary.
 #
@@ -193,7 +194,7 @@ section "Open pull requests"
 PRS_OK=0
 if [ "$GH_OK" = 1 ]; then
     if gh pr list --state open --limit 30 \
-        --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author \
+        --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author,labels \
         >"$TMP/prs.json" 2>"$TMP/prs.err"; then
         PRS_OK=1
         jq -r --slurpfile iss "$TMP/issues.json" --argjson issues_ok "$ISSUES_OK" \
@@ -227,7 +228,10 @@ if [ "$GH_OK" = 1 ]; then
                  (if $open_threads == null then "review threads unknown"
                   elif $open_threads > 0 then "\($open_threads) unresolved review thread(s)" else empty end)
                ]) as $blockers
-            | "- #\(.number) \(.title | clean) [`\(.headRefName | clean)`, \(.author.login // "?" | clean)]\(if .isDraft then " (draft)" else "" end)\n"
+            | "- #\(.number) \(.title | clean) [`\(.headRefName | clean)`, \(.author.login // "?" | clean)]\(if .isDraft then " (draft)" else "" end)"
+              + ([.labels[]?.name | select(. == "team-build" or . == "team-fix")] as $teams
+                 | if ($teams | length) > 0 then " {\($teams | join(","))}" else " {no team}" end)
+              + "\n"
               + "  checks: \($pass) pass, \($failed | length) fail, \($pend) pending"
               + (if ($failed | length) > 0 then " (failing: \($failed | map(.name | clean) | unique | join(", ")))" else "" end)
               + "; mergeable: \(.mergeable) / \($state); review: \(.reviewDecision // "" | if . == "" then "none" else . end)"
@@ -414,29 +418,54 @@ else
     fi
 fi
 
-# Handoff ---------------------------------------------------------------------
+# Host QEMU lock ---------------------------------------------------------------
+#
+# Read-only: `status` only prints; the brief never starts, stops or clears anything.
 
-section "Handoff (.remember)"
-REMEMBER_DIR="$MAIN_WT/.remember"
-if [ -f "$REMEMBER_DIR/remember.md" ]; then
-    echo "remember.md ($(fmt_epoch "$(mtime "$REMEMBER_DIR/remember.md")" '+%Y-%m-%d %H:%M')):"
-    echo
-    head -n 60 "$REMEMBER_DIR/remember.md"
+section "Host QEMU lock"
+if [ -f "$MAIN_WT/scripts/agent/qemu-lock.sh" ]; then
+    (cd "$MAIN_WT" && sh scripts/agent/qemu-lock.sh status) | sed 's/^/- /'
 else
-    echo "- no handoff at $REMEMBER_DIR/remember.md"
+    echo "- no scripts/agent/qemu-lock.sh in the main checkout"
 fi
-if [ -s "$REMEMBER_DIR/now.md" ]; then
-    echo
-    echo "now.md (last entries):"
-    echo
-    tail -n 12 "$REMEMBER_DIR/now.md"
+
+# Routing log ------------------------------------------------------------------
+#
+# Counts records only; it never reads their content.
+
+section "Routing log"
+HOOK_DIR="${AIOS_HOOK_STATE_DIR:-$COMMON/aios-agent/hooks}"
+shadow=$(grep -c . "$HOOK_DIR/route-shadow.jsonl" 2>/dev/null)
+launched=$(grep -c '"kind":"launched"' "$HOOK_DIR/route-outcome.jsonl" 2>/dev/null)
+echo "- route-shadow records: ${shadow:-0}; launched dispatches: ${launched:-0} (the Jev evaluation needs 200; agent-loop.md, Model routing)"
+
+# Handoffs --------------------------------------------------------------------
+
+section "Handoffs"
+HANDOFF_DIR="$MAIN_WT/.remember"
+NEWEST_HANDOFF=""
+# shellcheck disable=SC2012 # names are handoff-<key>.md, key team-build, team-fix or solo-[a-z0-9-]+ (pause validates it); ls -t sorts by mtime
+handoffs=$(ls -t "$HANDOFF_DIR"/handoff-*.md 2>/dev/null || true)
+if [ -z "$handoffs" ]; then
+    echo "- no handoff files in $HANDOFF_DIR (written by /justin:pause)"
+else
+    while IFS= read -r f; do
+        [ -n "$NEWEST_HANDOFF" ] || NEWEST_HANDOFF=$f
+        role=$(basename "$f" .md)
+        echo "${role#handoff-} ($(fmt_epoch "$(mtime "$f")" '+%Y-%m-%d %H:%M')):"
+        echo
+        head -n 60 "$f"
+        echo
+    done <<EOF
+$handoffs
+EOF
 fi
 
 # Knowledge changed since last session -----------------------------------------
 
 section "Knowledge notes changed since last session"
-if [ -f "$REMEMBER_DIR/remember.md" ]; then
-    since=$(mtime "$REMEMBER_DIR/remember.md")
+if [ -n "$NEWEST_HANDOFF" ]; then
+    since=$(mtime "$NEWEST_HANDOFF")
     since_label="last handoff"
 elif [ -f "$MARKER" ]; then
     since=$(mtime "$MARKER")

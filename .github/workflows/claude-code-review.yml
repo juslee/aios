@@ -19,8 +19,9 @@ jobs:
   claude-review:
     # Skip bot-triggered events (e.g. Renovate opening/rebasing PRs): the action
     # rejects non-human actors and would otherwise fail the check. Human pushes
-    # to bot-authored PRs are still reviewed.
-    if: ${{ !endsWith(github.actor, '[bot]') }}
+    # to bot-authored PRs are still reviewed. Draft PRs are skipped too; marking
+    # one ready (the ready_for_review event) re-triggers the review.
+    if: ${{ !github.event.pull_request.draft && !endsWith(github.actor, '[bot]') }}
 
     runs-on: ubuntu-latest
     permissions:

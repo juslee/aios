@@ -18,7 +18,6 @@ When this was written (2026-09-22, main at `33c6b3d`), the agent-loop tooling wa
 | `scripts/agent/brief.sh` | 508 |
 | `scripts/agent/checkpoint.sh` | 285 |
 | `scripts/soak-qemu.sh` | 853 |
-| `.claude/hooks/precompact-save.sh` | 152 |
 
 **Note (2026-09-24):** R1 replaced `scripts/docs/check.py` with `aios docs-check` and deleted it. The other line counts are as of `33c6b3d`.
 
@@ -36,12 +35,14 @@ Owner decisions, 2026-09-22:
 
 | Topic | Decision |
 | --- | --- |
-| Scope | All of it: docs-check, the push guard, brief, checkpoint, precompact, soak, and the new PR loop, which is written in Rust from the start |
+| Scope | All of it: docs-check, the push guard, brief, checkpoint, soak, and the new PR loop, which is written in Rust from the start |
 | Build model | A prebuilt binary called through a checking shim that fails closed |
 | Dependencies | An ergonomic set: clap, anyhow, serde + serde_json, regex, time |
 | Order | Infrastructure via the docs-check port first (R1), then the soak port (R4) so the crash fix can start, then the loop (R2), the scripts (R3), and the guard last in shadow mode (R5, R5b). The owner moved the soak port to second on 2026-09-22 |
 | Location | `tools/` at the repository root, with the guard and loop sources protected by permission ask rules. On 2026-09-28 the owner made R2's changed-paths gate the guarantee, because the ask rules cover `Edit` and `Write` only and an allowed Bash command can bypass them (§1 Protection) |
 | Soak vs crash fix | The soak port (R4) lands before crash-fix step 1a, so the harness is not changed twice |
+
+**Note:** precompact is out of scope; the remember plugin and its PreCompact hook were retired by the two-team harness PR.
 
 ## Design
 
@@ -68,9 +69,9 @@ Owner decisions, 2026-09-22:
 | `aios loop review\|merge\|sweep\|eval …`, `aios retro` | the planned Python `pr_loop` / `retro` |
 | `aios brief [--no-fetch]` | `scripts/agent/brief.sh` |
 | `aios checkpoint [--handoff saved] [--allow PATH]…` | `scripts/agent/checkpoint.sh` |
-| `aios precompact` (hook: JSON on stdin) | `.claude/hooks/precompact-save.sh` |
 | `aios soak …`, `aios soak --classify LOG…` | `scripts/soak-qemu.sh` |
 | `aios guard` (PreToolUse hook: JSON on stdin) | `.claude/hooks/git-push-guard.py` |
+| `aios hook` (repeat-error, path-guard, route-shadow, route-outcome) | added by #220 (model routing); `path-guard --agent-type` by the two-team harness PR |
 
 **Source layout:**
 
@@ -135,12 +136,14 @@ The Bash rules are a speed bump, as they are for the guard sources (§1 Protecti
 
 The stamp does not replace the mtime test, because HEAD's tree entries do not see uncommitted edits. On macOS, with a 3.7 MB binary, the checks take a guard call from about 33 ms (R1's shim) to about 68 ms, mostly for hashing the binary.
 
-| State | `aios guard` (every shell command) | Other subcommands |
-| --- | --- | --- |
-| Fresh | Runs the binary as a child. Its own exit 0 (decision on stdout) and 2 (block) pass through; any other exit, its own included, becomes an ask | runs |
-| Dirty | **Fails closed**: asks, and starts no build (a rebuild would stamp it dirty again: the input files must be reverted or removed, any that are needed merged through a PR first; the main checkout must be reset onto `origin/main` once its input commits have merged, or if they are not wanted, since a squash merge never puts those commits themselves on `origin/main`; with no `origin/main`, it must be fetched; the ask names the cause the shim finds now). Once the cause is gone the binary is stale (next row) | runs |
-| Stale (e.g. just after a pull, or a replaced binary) | **Fails closed**: asks, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`; a lock left by a killed build is taken over after a minute or two, `find -mmin +1`, when no recipe holds `target/tools/.install.lock`). The reason says whether the build started, one was already running, or none could start (no `just` on `PATH`, neither `flock(1)` nor `lockf(1)`, which the recipe needs, or no lock directory) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary |
-| Missing (not a non-empty regular executable file) | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Builds in the foreground (a full release build), then runs; exits 3 naming `just tools` if the build fails |
+| State | `aios guard` (every shell command) | Other subcommands | `aios hook` (every Bash, edit and Agent call) |
+| --- | --- | --- | --- |
+| Fresh | Runs the binary as a child. Its own exit 0 (decision on stdout) and 2 (block) pass through; any other exit, its own included, becomes an ask | runs | runs a hard link to the binary as a child; its stdout only on exit 0, else the fallback |
+| Dirty | **Fails closed**: asks, and starts no build (a rebuild would stamp it dirty again: the input files must be reverted or removed, any that are needed merged through a PR first; the main checkout must be reset onto `origin/main` once its input commits have merged, or if they are not wanted, since a squash merge never puts those commits themselves on `origin/main`; with no `origin/main`, it must be fetched; the ask names the cause the shim finds now). Once the cause is gone the binary is stale (next row) | runs | the fallback; no build |
+| Stale (e.g. just after a pull, or a replaced binary) | **Fails closed**: asks, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`; a lock left by a killed build is taken over after a minute or two, `find -mmin +1`, when no recipe holds `target/tools/.install.lock`). The reason says whether the build started, one was already running, or none could start (no `just` on `PATH`, neither `flock(1)` nor `lockf(1)`, which the recipe needs, or no lock directory) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary | the fallback, and one background `just tools` |
+| Missing (not a non-empty regular executable file) | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Builds in the foreground (a full release build), then runs; exits 3 naming `just tools` if the build fails | the fallback, and one background `just tools` |
+
+The `hook` fallback prints nothing, except `path-guard`'s PreToolUse deny for the agent types its `--agent-type` names (every caller when it names none or a value is empty) and for a payload with an `agent_id` but no `agent_type`.
 
 Every `aios guard` path that runs neither a fresh binary nor a runnable `AIOS_TOOLS_BIN` override (which gets no stamp or freshness test) prints an ask and exits 0: the states above, an `AIOS_TOOLS_BIN` that is not a runnable file, and a shim that cannot find its own directory or the main checkout. Each of these paths has its own `permissionDecisionReason`. The stale state has one reason for each outcome of the background build (started, already running, could not start), each covering every cause of a stale binary (a newer input, a missing or mismatched stamp, git failing), the dirty state has one reason for each cause (uncommitted, untracked or gitignored input files; input files that assume-unchanged or skip-worktree flags hide from `git status`; input commits `origin/main` lacks; no `origin/main`), and a guard binary that exits other than 0 or 2 gets one reason for the main checkout's build and another for an `AIOS_TOOLS_BIN` override.
 
@@ -169,9 +172,9 @@ Each port proves parity, records the old tool's output as golden files, switches
 | --- | --- | --- | --- |
 | R1 | docs-check | Byte-identical stdout, exit code and written `baseline.json` against `check.py` in every mode. Test inputs: (a) the real repository, (b) a fixture repository with one injected drift per check (15), (c) a pure line-shift case | `just docs-check` calls `aios`; `check.py` is deleted; the baseline format is unchanged |
 | R2 | PR loop | New code: the loop spec's tests with fake `gh`/`claude`, plus the eval suites | — |
-| R3 | brief, checkpoint, precompact | The 15 checkpoint scenarios in temporary repos with a bare remote; a golden brief from recorded `gh` responses (the exact line format the skills parse); precompact's no-op and plugin-resolution cases | Skills call `aios`; the scripts are deleted |
+| R3 | brief, checkpoint | The 15 checkpoint scenarios in temporary repos with a bare remote; a golden brief from recorded `gh` responses (the exact line format the skills parse) | Skills call `aios`; the scripts are deleted |
 | R4 | soak | Classifier parity on committed fixtures: the 63 synthetic cases plus a curated set of real logs. Checked fields: class, markers, first fatal line, and the `summary.tsv`/`summary.md` formats. Process handling (timeout, kill-after, process group) is tested with a fake QEMU, then one real 2-boot soak | `soak-qemu.sh` is deleted; there is no external `timeout` dependency, and the CI baseline is re-measured on the new image |
-| R5 | guard | The 55 unit tests ported as table tests. A committed adversarial corpus whose decisions must equal the Python guard's. The 3,502-command history replay is local-only, because raw transcript commands can contain secrets | **Shadow mode:** Python decides, Rust runs in parallel, and disagreements go to `.git/aios-agent/guard-shadow.jsonl` |
+| R5 | guard | The 55 unit tests ported as table tests. A committed adversarial corpus whose decisions must equal the Python guard's. The 3,502-command history replay is local-only, because raw transcript commands can contain secrets. The guard's rule 11 rules (QEMU starts through the lock wrapper, pattern kills and toolchain changes, spawn shape, agent placement: no EnterWorktree from agents or leads, `git reset --hard` only in an agent's own temporary worktree, no agent commits in the main checkout) are ported with their unit tests | **Shadow mode:** Python decides, Rust runs in parallel, and disagreements go to `.git/aios-agent/guard-shadow.jsonl` |
 | R5b | guard switch | 1,000 real calls with 0 disagreements | The Rust guard decides; the Python guard and its tests are deleted |
 
 R4 as built: 108 synthetic cases (real logs are verified locally, not committed); the oracle is the script's blob at `212df62`, read from git history, so the differentials outlive the deletion.

@@ -91,7 +91,7 @@ pub const KNOWN_TOOLS: [&str; 34] = [
 ];
 
 /// Slash commands built into Claude Code rather than project skills (check.py L80-85).
-pub const BUILTIN_COMMANDS: [&str; 29] = [
+pub const BUILTIN_COMMANDS: [&str; 30] = [
     "add-dir",
     "agents",
     "clear",
@@ -111,6 +111,7 @@ pub const BUILTIN_COMMANDS: [&str; 29] = [
     "model",
     "permissions",
     "plan",
+    "rename",
     "resume",
     "review",
     "schedule",

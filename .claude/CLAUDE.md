@@ -12,7 +12,7 @@ UEFI target:    aarch64-unknown-uefi  (Phase 1+)
 Host target:    native (for unit tests, shared crate)
 Build system:   just + cargo
 License:        BSD-2-Clause
-Toolchain:      Rust nightly (updated to latest at session start, pinned in rust-toolchain.toml)
+Toolchain:      Rust nightly, pinned in rust-toolchain.toml; changes only through Renovate PRs, installed once by the merging session
 Workspace:      resolver = "2", edition = "2021"
 Linker script:  emitted via build.rs (not .cargo/config.toml), with --orphan-handling=error
 Relocation:     static (relocation-model=static throughout all phases)
@@ -202,14 +202,18 @@ aios/
 ├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
 ├── .claude/
 │   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
-│   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
-│   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
-│   ├── rules/            01-code-conventions … 10-harness-mechanics (auto-loaded)
-│   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
-│                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup,
-│                         justin:start, justin:brief, justin:doctor, justin:pause
-│                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
+│   ├── agents/           kernel-dev, worker, doc-writer, simplifier, verifier, code-reviewer,
+│   │                     doc-auditor, skeptic (models and effort: the Agents table below)
+│   ├── hooks/            git-push-guard.py (PreToolUse: Bash, Monitor, Agent, EnterWorktree),
+│   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary; runs the
+│   │                     aios hook registrations: path-guard, route-shadow, repeat-error,
+│   │                     route-outcome), tests/; settings.json also holds the Fable plan gate
+│   ├── rules/            01-code-conventions … 11-teams (auto-loaded)
+│   ├── skills/           generate-phase-doc, implement-phase, review-pr-comments, verify-phase,
+│   │                     write-arch-doc, audit-loop, merge-and-cleanup,
+│   │                     justin:start, justin:brief, justin:doctor, justin:pause, justin:team
+│   │                     (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
+│   └── workflows/        audit-loop.js (one audit round; run by /audit-loop)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
 │   ├── arch/aarch64/     boot.S, daif, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
 │   ├── platform/         Platform trait + per-board (qemu)
@@ -238,10 +242,11 @@ aios/
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
-│                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook programs),
+│                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook
+│                         programs: repeat-error, path-guard, route-shadow, route-outcome),
 │                         src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
 ├── scripts/              soak-matrix.sh (interleaved multi-revision soak; CI: soak-matrix.yml),
-│                         agent/ (brief, checkpoint),
+│                         agent/ (brief, checkpoint, qemu-lock: the host QEMU lock),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```
@@ -250,18 +255,22 @@ aios/
 
 ## Team & Agent Architecture
 
-Single team lead + specialist agents. Fully autonomous — human reviews async via PRs.
+Two attended lead sessions split by domain, `team-build` (harness, tools, CI, features) and `team-fix` (boot-crash fix, kernel bugs, capability lifetime), each launched as `AIOS_TEAM=<team> claude -n <team> --model opus`; or one solo session. The lead is the session, never an agent. Every agent is a subagent; Claude Code teammates are not used. Writers and the verifier work in their own temporary worktree (`isolation: "worktree"`), reset to the branch tip; the lead fast-forwards the branch worktree to their commits, after a Fable review for kernel-dev, and runs the simplifier once per PR before the audit. Reviewers run read-only in the main checkout. Only the verifier starts QEMU. Rules: `.claude/rules/11-teams.md`. Protocol: `docs/project/agent-loop.md` (Teams). Model routing: `docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`.
 
 **Agents** (defined in `.claude/agents/`):
 
-| Agent | Role | Spawned by |
-| --- | --- | --- |
-| `team-lead` | Orchestrates phases, manages tasks, commits, creates PRs | User or `/build-team` |
-| `kernel-dev` | Implements Rust/asm code per phase doc steps | team-lead |
-| `doc-writer` | Generates phase docs from architecture docs | team-lead |
-| `code-reviewer` | Runs quality gates, reviews code conventions | team-lead |
-| `verifier` | Boots QEMU, validates acceptance criteria | team-lead |
-| `doc-auditor` | Validates docs on every change, loops until clean | Hook (auto) or team-lead |
+| Agent | Model / effort | Role | Spawned by |
+| --- | --- | --- | --- |
+| `kernel-dev` | opus / high | Writes kernel/, shared/, uefi-stub/ code from a branch's tip; the lead's Fable review (code-reviewer) approves each range before the fast-forward | a lead (`isolation: "worktree"`) |
+| `worker` | sonnet / high | Writes tools/, scripts/, CI, harness files and docs/ work from a branch's tip; path-guard keeps it out of kernel code | a lead (`isolation: "worktree"`) |
+| `doc-writer` | opus / high | Writes phase docs, architecture docs and ADR amendments | a lead (`isolation: "worktree"`) |
+| `simplifier` | opus / high | Simplifies the code a PR changed without changing behaviour, over the PR's whole range; never boots QEMU, and reports kernel byte changes so the lead runs a gate boot | a lead (`isolation: "worktree"`), once per PR before `/audit-loop` |
+| `verifier` | sonnet / medium | The only QEMU booter: gate boots, rate and A/B soaks, objdump/EL, under the host lock | a lead (`isolation: "worktree"`) |
+| `code-reviewer` | fable / high | Read-only: rules, bugs and diagnose lenses; its plan lens drives the Fable plan gate | audit-loop lens; a lead for each kernel-dev range and for diagnose |
+| `doc-auditor` | sonnet / medium | Read-only: docs accuracy, format, leftovers | audit-loop lens |
+| `skeptic` | sonnet / medium | Read-only: confirms or refutes one finding | audit-loop; a lead before filing an issue |
+
+`CLAUDE_CODE_EFFORT_LEVEL` stays unset (it overrides every agent's effort); the leads' effort is `effortLevel: "high"` in `.claude/settings.json`.
 
 **Skills** (defined in `.claude/skills/`):
 
@@ -270,22 +279,21 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action |
 | `/justin:brief` | Where the project stands | Deterministic brief (`scripts/agent/brief.sh`): git, PRs + merge-ready, CI, soak, handoff, needs-human, next step, docs drift |
 | `/justin:doctor` | Docs/harness health check | Drift report from `just docs-check --all`, grouped by who fixes it; read-only (bare `/doctor` is Claude Code's own) |
-| `/justin:pause` | Before a break or `/clear` (user only) | Handoff + WIP checkpoint (`scripts/agent/checkpoint.sh`) |
-| `/build-team` | Start of autonomous session | Creates team, spawns agents |
+| `/justin:pause` | Before a break or `/clear` (user only) | Writes this session's `.remember/handoff-<key>.md` (`team-build`, `team-fix` or `solo-<name>`), then the WIP checkpoint (`scripts/agent/checkpoint.sh`) |
+| `/justin:team <build\|fix>` | Team mode, in each lead (user only) | Makes the session the team-build or team-fix lead: checks the session, restores state from its handoff file and team labels, greets the peer, runs the loop |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
-| `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
+| `/audit-loop` | Before `gh pr ready` | Rule 02 audit: workflow rounds of read-only lenses and skeptics; confirmed in-diff findings fixed by a writer; stop after 4 rounds or 2 incomplete |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
-| `/merge-and-cleanup [PR]` | User only, after PR approval | Preserve soak results and agent memory, squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
+| `/merge-and-cleanup [PR]` | User only, after PR approval | Preserve soak results, squash merge, delete branch, remove worktree, update main, install a changed toolchain, tell the other lead; refuses gated PRs and quiet soaks. Agents never merge or push to `main`; they hand off (rule 03) |
 
 **Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 
-**Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
+**Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. `/audit-loop` runs before the PR is marked ready (docs mode for doc-only branches).
 
 **Existing skills reused** (not recreated):
 
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
 - `pr-review-toolkit:review-pr`
-- `remember:remember` (handoff written by `/justin:pause`)

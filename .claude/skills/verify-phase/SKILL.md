@@ -25,6 +25,8 @@ Read the phase doc fully. Extract the acceptance criteria for each milestone —
 
 Run each gate sequentially. For each gate, report PASS or FAIL with the command output.
 
+Gates 1–3 run in the worktree. A lead in the main checkout gets them from the writer's latest gate report at the head sha, or spawns a writer with "run the gates and report".
+
 ### Gate 1: Compile
 
 ```bash
@@ -51,25 +53,23 @@ just test 2>&1
 
 ### Gate 4: QEMU boot
 
-```bash
-just run 2>&1
-```
+Spawn the verifier (rule 11: `isolation: "worktree"`; the worktree path, the sha to boot (its tip) and the team in the prompt) in mode `boot`: one text boot, plus one gpu boot when the phase needs the display, with the phase's UART lines as acceptance. Its run directories land in `<W>/target/soak/`; remove its temporary worktree afterwards (`/justin:team`, Placement).
 
-**PASS condition:** Compare UART output against the phase doc's acceptance criteria. For each milestone, check that the expected strings appear in the output. Use Grep on the captured output to verify each expected line.
-
-**Timeout:** QEMU runs should complete within 30 seconds. If `just run` hangs, kill it and report FAIL.
+**PASS condition:** the verifier reports `PASS`, with every expected UART line of the phase doc's acceptance criteria matched. `DEFERRED` means the host was loaded: re-run later.
 
 ### Gate 5: Objdump (section addresses)
 
+The verifier runs the sysroot `llvm-objdump -h` command from rule 02 in the same spawn:
+
 ```bash
-cargo objdump -- -h 2>&1
+"$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-objdump -h target/aarch64-unknown-none/debug/kernel
 ```
 
-**PASS condition:** `.text` section starts at the expected kernel VMA. Check against the Key Technical Facts in `.claude/CLAUDE.md`.
+**PASS condition:** `.text.boot` is at VMA `0xffff000000080000` and LMA `0x40080000` (Key Technical Facts in `.claude/CLAUDE.md`).
 
 ### Gate 6: EL verification
 
-**PASS condition:** QEMU boot output (from Gate 4) contains `EL: 1` or equivalent EL1 confirmation, and `core: 0` or `CPU 0` in early boot messages.
+**PASS condition:** the EL and core lines in the boot log in the verifier's run directory (from Gate 4) contain `EL: 1` or equivalent EL1 confirmation, and `core: 0` or `CPU 0` in early boot messages.
 
 ## Step 3: Per-milestone acceptance
 

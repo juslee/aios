@@ -242,8 +242,8 @@ Before marking any step complete, verify ALL of these:
 
 ### Phase acceptance
 
-- [ ] Step's acceptance criteria met (run the exact command from the phase doc)
-- [ ] If QEMU output expected, it matches the documented strings
+- [ ] The step's acceptance commands that need no QEMU pass (build, `just check`, `just test`), with output quoted in your report.
+- [ ] Boots: name the boots the verifier must run (mode, count, the UART lines that pass). Never start QEMU yourself; only the verifier boots (rule 11).
 
 -----
 
@@ -251,10 +251,10 @@ Before marking any step complete, verify ALL of these:
 
 After completing a step:
 
-1. Stage only the files you created or modified
-2. Commit with format: `Phase N MK: Step X -- <description>`
-3. Push immediately -- do not batch steps
-4. Report completion to team-lead with summary of files created/modified
+1. Stage only the files you created or modified.
+2. Commit on your temporary branch with the message your lead gives (format `Phase N MK: Step X — <description>`, rule 03).
+3. The lead fast-forwards the branch worktree to your commits and pushes (rule 11). A solo session working directly in its own branch worktree pushes with `git push -u origin claude/<branch>`.
+4. Report to your lead in your agent definition's report format (the `RESULT:`, `BRANCH:` and `W:` lines first).
 
 -----
 
@@ -681,36 +681,7 @@ Both WAL and MemTable have no internal locks. They are accessed exclusively thro
 
 ## 7. Team & Agent Workflow
 
-AIOS uses an autonomous agent team for development. Understanding the workflow helps agents collaborate correctly.
-
-### Agent roles
-
-| Agent | Role | Spawned by |
-|---|---|---|
-| **team-lead** | Orchestrates phases, manages tasks, commits, creates PRs | User or `/build-team` |
-| **kernel-dev** | Implements Rust/asm code per phase doc steps | team-lead |
-| **doc-writer** | Generates phase docs from architecture docs | team-lead |
-| **code-reviewer** | Runs quality gates, reviews code conventions | team-lead |
-| **verifier** | Boots QEMU, validates acceptance criteria | team-lead |
-| **doc-auditor** | Validates docs on every change, loops until clean | Hook (auto) or team-lead |
-
-### How kernel-dev receives work
-
-1. team-lead reads the phase doc and creates a TodoWrite task list
-2. team-lead spawns kernel-dev with a specific step number and context
-3. kernel-dev reads the phase doc step, relevant architecture docs, and this guide
-4. kernel-dev implements the step, runs acceptance criteria
-5. kernel-dev reports completion back to team-lead
-
-### Post-implementation audit loop (mandatory)
-
-Before any PR is created, three audits must pass with zero issues:
-
-1. **Doc audit** -- Cross-reference errors, terminology, technical accuracy in all modified docs
-2. **Code review** -- Convention compliance, unsafe documentation, W^X, naming, dead code
-3. **Security/bug review** -- Logic errors, address confusion (virt vs phys), PTE bit correctness, race conditions
-
-Fix all genuine issues, commit, and re-run all three audits. Repeat until a full round returns 0 issues across all three categories.
+Who does what is in `.claude/CLAUDE.md` (Team & Agent Architecture) and `.claude/rules/11-teams.md`. The two-lead protocol is in `docs/project/agent-loop.md` (Teams). In short: a lead (a session, never a spawned agent) gives you one task for a branch, with its worktree and tip. In your own temporary worktree you reset to that tip, do the task, run the gates, commit, and report in the format `.claude/agents/kernel-dev.md` gives. Before fast-forwarding the branch to your range, the lead has code-reviewer (Fable) review it; must-fix findings come back to a fresh kernel-dev. The lead pushes. A simplifier pass runs once per PR, then the audit, before the PR is marked ready (rule 02).
 
 ### Post-PR review workflow
 

@@ -64,6 +64,25 @@
 #                     the main checkout. A runnable override is the
 #                     exception: it runs as a child like a fresh binary, with
 #                     no stamp or freshness test.
+#   aios hook ...     The Claude Code hook programs (settings.json runs them on
+#                     every Bash call, edit and Agent call). Never builds in the
+#                     foreground and always exits 0. Checks and runs a hard link
+#                     to the binary as guard does; a fresh binary's stdout is
+#                     printed only when it exits 0. Every other path falls back:
+#                     missing (one background build), stale (one background
+#                     build), dirty (no build), a hard link that cannot be made,
+#                     an override that is not a runnable file, a shim that
+#                     cannot find its own directory or the main checkout, and a
+#                     binary that exits non-zero (a usage error: one built
+#                     before the subcommand or one of its flags). The fallback
+#                     prints nothing, except for `hook path-guard`: a
+#                     PreToolUse deny when the payload's agent_type is one its
+#                     --agent-type values name (every caller when it names none,
+#                     or when a value is empty), or when the payload has an
+#                     agent_id but no agent_type, or when an agent_type key
+#                     has no non-empty string value or appears twice. A
+#                     runnable override runs as a child with no stamp or
+#                     freshness test.
 #   aios <other> ...  fresh or dirty: run. stale: rebuild in the foreground,
 #                     then run (a failed rebuild prints a warning and runs the
 #                     stale binary instead). missing: build, then run; exit 3
@@ -115,6 +134,57 @@ export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
 
 sub=${1:-}
 
+# `aios hook <program> [flags]`: the program, and for path-guard the agent
+# types its --agent-type values name (space-separated; agent type names hold
+# no spaces). An --agent-type value that is empty, blank or missing is a
+# registration mistake: hook_types_bad makes the fallback deny every caller,
+# as the binary's own error would.
+hook_prog=
+hook_types=
+hook_types_bad=
+add_hook_type() {
+    if [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]; then
+        hook_types="$hook_types $1"
+    else
+        hook_types_bad=1
+    fi
+}
+# Parsed in a function, so the script's own arguments stay intact for the
+# dispatch below.
+parse_hook_args() {
+    hook_prog=${2:-}
+    [ "$hook_prog" = path-guard ] || return 0
+    shift 2
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --agent-type)
+            if [ $# -ge 2 ]; then
+                add_hook_type "$2"
+                shift 2
+            else
+                hook_types_bad=1
+                shift
+            fi
+            ;;
+        --agent-type=*)
+            add_hook_type "${1#--agent-type=}"
+            shift
+            ;;
+        *) shift ;;
+        esac
+    done
+}
+[ "$sub" = hook ] && parse_hook_args "$@"
+# The hook payload, read from stdin once, by path-guard's fallback or run_hook.
+payload=
+payload_read=
+
+read_payload() {
+    [ -n "$payload_read" ] && return 0
+    payload=$(cat)
+    payload_read=1
+}
+
 # Print a PreToolUse "ask" decision with reason $1 and exit 0. Reasons are
 # fixed text plus digits: nothing that needs JSON escaping.
 ask() {
@@ -122,11 +192,79 @@ ask() {
     exit 0
 }
 
-# Give up without running a binary: guard asks with reason $1, --prebuild exits
-# 0, anything else prints $2 and exits 3.
+# The fallback when `aios hook ...` does not run a verified binary, or the
+# binary exits non-zero. $1 says why (fixed text: nothing that needs JSON
+# escaping). Always exits 0. Every hook program but path-guard prints nothing.
+# path-guard denies when its --agent-type values are bad or absent, when the
+# payload's agent_type is one of them, or when the payload has an agent_id but
+# no agent_type; otherwise it prints nothing. The payload is read for its
+# top-level keys only: inside a JSON string every quote is escaped, so a
+# file's content cannot produce `"agent_type"` or `"agent_id"` followed by a
+# colon. It is stricter than the binary where it cannot parse JSON: an
+# agent_type key whose value is not a non-empty string, and a payload with more
+# than one agent_type key, are denied (the binary reads one key only).
+hook_fallback() {
+    [ "$hook_prog" = path-guard ] || exit 0
+    read_payload
+    deny=
+    if [ -n "$hook_types_bad" ] || [ -z "$hook_types" ]; then
+        deny=1
+    else
+        keys=$(printf '%s\n' "$payload" | grep -o '"agent_type"[[:space:]]*:' | wc -l)
+        at=$(printf '%s\n' "$payload" | sed -n 's/.*"agent_type"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | head -n 1)
+        if [ "$keys" -gt 1 ]; then
+            # Two keys (a nested one, say) are ambiguous: fail closed.
+            deny=1
+        elif [ "$keys" -eq 1 ] && [ -z "$at" ]; then
+            # A key whose value is empty, null or not a string: the binary
+            # denies it, so does the fallback.
+            deny=1
+        elif [ -z "$at" ]; then
+            printf '%s\n' "$payload" | grep -q '"agent_id"[[:space:]]*:' && deny=1
+        else
+            set -f
+            for t in $hook_types; do
+                [ "$t" = "$at" ] && deny=1
+            done
+            set +f
+        fi
+    fi
+    if [ -n "$deny" ]; then
+        printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"path-guard could not run (%s), so this agent'"'"'s edits are denied; the lead runs just tools in the main checkout"}}\n' "$1"
+    fi
+    exit 0
+}
+
+# Run `aios hook ...` with binary $1 (the rest are its arguments) and exit 0.
+# Its stdout is printed only when it exits 0: a hook program exits 0 on every
+# payload, so any other exit is a usage error, a binary older than the
+# program or one of its flags, or a start failure, and its output is no
+# decision. For path-guard that also keeps a failing binary's partial output
+# from sitting next to the fallback's deny (two JSON objects parse as
+# neither, and the edit would proceed).
+run_hook() {
+    hook_bin=$1
+    shift
+    if [ "$hook_prog" = path-guard ]; then
+        read_payload
+        out=$(printf '%s\n' "$payload" | "$hook_bin" "$@")
+    else
+        out=$("$hook_bin" "$@")
+    fi
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        [ -z "$out" ] || printf '%s\n' "$out"
+        exit 0
+    fi
+    hook_fallback "the aios binary exited $status"
+}
+
+# Give up without running a binary: guard asks with reason $1, hook falls back
+# with reason $1, --prebuild exits 0, anything else prints $2 and exits 3.
 stop() {
     case $sub in
     guard) ask "$1" ;;
+    hook) hook_fallback "$1" ;;
     --prebuild) exit 0 ;;
     esac
     printf 'aios: %s\n' "$2" >&2
@@ -349,6 +487,7 @@ if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
             "AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not a non-empty regular executable file"
     [ "$sub" = guard ] &&
         run_guard "AIOS_TOOLS_BIN guard" "fix or unset AIOS_TOOLS_BIN" "$AIOS_TOOLS_BIN" "$@"
+    [ "$sub" = hook ] && run_hook "$AIOS_TOOLS_BIN" "$@"
     exec "$AIOS_TOOLS_BIN" "$@"
 fi
 
@@ -399,6 +538,32 @@ guard)
     1) ask "aios tools are stale or unverified; a background build (just tools) is already running" ;;
     esac
     ask "aios tools are stale or unverified, and a background build could not start; run just tools"
+    ;;
+hook)
+    # Never a foreground build: these run on every Bash call, edit and Agent
+    # call. A stale or dirty binary is treated as missing, the counterpart of
+    # guard's ask (owner question Q5 in RECONCILE-v4.md; the ADR leaves it to
+    # part 2): stale also covers a binary that fails its provenance stamp.
+    if ! runnable "$bin"; then
+        build_bg
+        hook_fallback "the aios binary is not built"
+    fi
+    # The same hard-link check-and-run as guard (above), in a directory of its
+    # own per call.
+    run_dir=
+    trap 'if [ -n "$run_dir" ]; then rm -f "$run_dir/aios"; rmdir "$run_dir"; fi 2>/dev/null' EXIT
+    trap 'hook_fallback "the hook was interrupted"' HUP INT TERM
+    if ! run_dir=$(mktemp -d "$main/target/tools/.hook.XXXXXX" 2>/dev/null) ||
+        ! ln "$bin" "$run_dir/aios" 2>/dev/null; then
+        hook_fallback "the shim cannot hard-link the aios binary into target/tools"
+    fi
+    runnable "$run_dir/aios" || hook_fallback "the aios binary is not built"
+    case $(verdict "$run_dir/aios") in
+    fresh) run_hook "$run_dir/aios" "$@" ;;
+    dirty-*) hook_fallback "the aios binary was built from input files or commits not merged on origin/main" ;;
+    esac
+    build_bg
+    hook_fallback "the aios binary is stale or unverified; a background build was requested"
     ;;
 esac
 

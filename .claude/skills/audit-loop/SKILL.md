@@ -1,84 +1,72 @@
 ---
 name: audit-loop
 description: >
-  Recursive audit that loops until a clean round with 0 issues.
-  Auto-detects scope: docs-only (.md files) runs doc audit only;
-  code changes run full triple audit (doc, code review, security/bug review).
-  Use before creating a PR.
+  Runs rule 02's audit on one claude/* branch before its PR is marked ready.
+  Each round runs the committed audit-loop workflow (read-only doc and code
+  lenses plus skeptic votes). Confirmed in-diff findings go to a writer
+  spawned from the branch tip, and the lead fast-forwards and pushes the fix. Rounds repeat until a
+  complete round confirms nothing, or the stop rule ends the audit. At most
+  one audit per team at a time, and no new round during the other team's
+  quiet window.
 ---
 
-# Recursive Audit Loop
+# /audit-loop <worktree>
 
-Auto-detect which audits to run based on changed files, then loop until 0 issues.
+You run in the main checkout and never edit the branch yourself (rule 11).
 
-## Scope Detection
+## Inputs
 
-Run this Bash command to get the list of changed files:
+| Name | How to get it |
+| --- | --- |
+| `W` | the absolute worktree path |
+| branch | `git -C <W> branch --show-current` |
+| base | `git -C <W> merge-base origin/main HEAD` |
+| context | the plan path, the issue numbers, and any owner decisions that limit scope |
+| gates | the latest writer report's gate output; its sha must equal the head |
 
-```bash
-git diff --name-only main...HEAD
-```
+If the gate output is missing or was taken on another sha, first spawn the branch's writer with the task "run the gates and report" (no commit), as `/justin:team` describes.
 
-- **Docs-only mode**: If ALL changed files are `.md` files → run doc audit only
-- **Full mode**: If ANY non-`.md` files are changed → run all three audits
+### Mode
 
-## How to Run Each Audit
+Classify `git -C <W> diff --name-only <base>..HEAD`, ignoring `*.md` files:
 
-Spawn Agent tool subagents for each audit type. Run all applicable audits in parallel within each round.
+- **kernel**: any path under `kernel/`, `shared/` or `uefi-stub/`, or `rust-toolchain.toml`, `Cargo.toml` or `Cargo.lock`.
+- **tools**: any path under `tools/`, `scripts/`, `.github/` or `.claude/`, or `justfile` or `.gitattributes`.
+- **both**: kernel and tools paths both present; run both lens sets.
+- **docs**: no path left after ignoring `*.md`.
+- A non-`.md` path that matches none of the lists above counts as **tools**.
 
-### 1. Doc audit (both modes)
+The docs lens runs in every mode. Re-detect the mode after every fix round.
 
-Spawn a `doc-auditor` agent with this prompt:
-> "Audit all modified docs for: cross-reference errors (broken links, wrong section numbers), technical accuracy (struct/function/constant names matching actual code), naming consistency, bare code fences (opening ``` without language specifier), stale cross-references to split docs. List of modified docs: [paste file list]. Report each issue with file path, line number, and what's wrong. Return the total issue count."
+## One round
 
-### 2. Code review (full mode only)
+1. Record `head=$(git -C <W> rev-parse HEAD)`. If the other team holds or has requested a quiet window (`qemu-lock.sh status` shows `mode=quiet`, or a `QUIET-REQ` you acknowledged is open), wait for `QUIET-END` before starting the round.
+2. Run the `audit-loop` workflow with the Workflow tool, passing these args:
+   - `worktree`, `branch`, `base`, `head`, `mode`, `context`, `gates`;
+   - the ledger from earlier rounds: `fixed` and `refuted` findings (never re-reported), and `uncertain`, the previous round's `uncertain` findings (re-checked, and re-reported if still present).
+3. The workflow returns:
+   - `complete`: false when any lens failed (`lens_failures` is not empty) or a finding stayed unverified (`uncertain` is not empty);
+   - `in_diff`: confirmed findings in this branch's diff;
+   - `pre_existing`: confirmed findings that were already there;
+   - `refuted` and `uncertain`.
+4. Write the result to `<git-common-dir>/aios-agent/audit/<branch>/<head>.json`. `<git-common-dir>` comes from `git rev-parse --path-format=absolute --git-common-dir`, and `<branch>` has its `/` replaced by `-`. A fresh session resumes from this file after a usage-limit stop.
+5. If `in_diff` is not empty, fix it:
+   - Spawn the writer for the findings' area (kernel-dev, worker or doc-writer), as `/justin:team` describes, with the findings in its prompt and the commit message `Audit round <N>: fix <summary>`. Split by area when findings span areas.
+   - When it reports gates passing, run `/justin:team`'s Placement on its range (a kernel-dev range gets the lead's Fable review before the fast-forward, rule 11), which ends with `git -C <W> push -u origin claude/<branch>`. Then start the next round with its gate output.
+6. Pass this round's `uncertain` findings as the next round's `uncertain` arg for re-verification.
 
-Spawn a `code-reviewer` agent with this prompt:
-> "Review all modified code files for: convention compliance (see .claude/rules/01-code-conventions.md), unsafe documentation (every unsafe block needs SAFETY comment with invariant + maintainer + violation consequence), W^X enforcement (no page both writable and executable), naming conventions (snake_case functions, CamelCase types, SCREAMING_SNAKE constants), dead code (#[allow(dead_code)] that can be removed). List of modified files: [paste file list]. Report each issue with file path, line number, and what's wrong. Return the total issue count."
+## Stop
 
-### 3. Security/bug review (full mode only)
+- **Converged:** a round with `complete: true` and an empty `in_diff`.
+- **Not converged:** after 4 rounds, or after 2 incomplete rounds in a row.
+  - Leave the PR as a draft.
+  - Open a `needs-human` issue titled `Gate: PR #<n> audit did not converge`, listing the open findings. The brief holds the PR until the owner rules.
 
-Spawn a `code-reviewer` agent with this prompt:
-> "Review all modified code files for: logic errors, address confusion (virtual vs physical addresses — check every pointer cast and address arithmetic), PTE bit correctness (permissions, attributes), race conditions (shared state accessed without proper synchronization), integer overflow in address calculations, missing barrier instructions (DSB/ISB after MMU/TLB operations). List of modified files: [paste file list]. Report each issue with file path, line number, and what's wrong. Return the total issue count."
+A round that returns nothing because agents failed is incomplete, not clean.
 
-## Convergence Protocol
+## Pre-existing findings
 
-The audit uses a **two-level loop**: an inner loop that fixes until 0 issues, then an outer loop that restarts fresh to confirm no regressions. Done only when a fresh restart finds 0 issues on its first round.
+Never fix pre-existing findings on this branch. For each confirmed one:
 
-```
-OUTER LOOP:
-  INNER LOOP (Round N):
-    a. Spawn applicable audit agents (1 or 3 depending on mode) in parallel
-    b. Collect results, count total issues found across all agents
-    c. If >0 issues:
-       - Fix all genuine issues using Edit tool
-       - Commit and push: "Audit round N: fix <summary>"
-       - Re-check scope (fixes may have added non-.md files — upgrade to full mode if needed)
-       - Go to Round N+1
-    d. If 0 issues:
-       - Exit inner loop → restart outer loop (fresh audit from scratch)
-
-  OUTER LOOP EXIT:
-    - If the fresh restart finds 0 issues on its FIRST round → DONE
-    - Otherwise, enter inner loop again to fix new issues
-```
-
-**Example (full)**:
-- Round 1: 4 issues → fix, commit, push
-- Round 2: 2 issues → fix, commit, push
-- Round 3: 0 issues → restart fresh
-- Round 4: 2 issues → fix, commit, push (previous fixes introduced regressions)
-- Round 5: 0 issues → restart fresh
-- Round 6: 0 issues → **done** (fresh start was clean)
-
-**Example (docs-only)**:
-- Round 1: 2 doc issues → fix, commit, push
-- Round 2: 0 issues → restart fresh
-- Round 3: 0 issues → **done**
-
-## Guidelines
-
-- Fix all genuine issues. Do not dismiss issues without clear justification.
-- Each fix round gets its own commit: `Audit round N: fix <summary of changes>`
-- If an issue is a false positive, document why and skip it.
-- Maximum 10 rounds. If not converging after 10 rounds, stop and report to user.
+1. Search for an existing issue: `gh issue list --search "<file> <summary>"`.
+2. If none exists, file one issue per defect, labelled `agent`, citing the branch, the round and the skeptic's evidence.
