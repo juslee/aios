@@ -384,7 +384,7 @@ print_interleaved() { # $1 = run dir, $2 = worktree, $3 = mtime
     local d=$1 b status
     b=$(git -C "$2" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "(detached)")
     status=$(grep -m 1 '^\*\*Status:\*\*' "$d/summary.md" 2>/dev/null | sed 's/^\*\*Status:\*\* *//')
-    echo "- newest interleaved soak: $(rel_path "$d") (worktree on \`$b\`, $(fmt_epoch "$3" '+%Y-%m-%d %H:%M'))"
+    echo "- newest interleaved soak (an A/B experiment, not main's state): $(rel_path "$d") (worktree on \`$b\`, $(fmt_epoch "$3" '+%Y-%m-%d %H:%M'))"
     echo "  - status: ${status:-not recorded (no summary.md)}"
     # Columns by header name: arms.tsv's arm and commit, boots.tsv's arm and class.
     # shellcheck disable=SC2016 # the backticks are literal Markdown, not expansions

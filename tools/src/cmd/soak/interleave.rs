@@ -434,39 +434,66 @@ fn tsv_cell(v: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// The harness's own commit: the git rev of the checkout holding the running
-/// binary, and its path. The rev is `-dirty` when that checkout's host-tools
-/// build inputs differ from its `HEAD`, untracked and ignored files included
-/// ([`host::tools_inputs_dirty`]), since cargo builds from those too; a
-/// checkout git cannot test is said so rather than shown clean. Read once,
-/// at the start of the soak and before any arm build, so a commit or branch
-/// switch in that checkout while the arms build cannot be named as the
-/// classifier's.
+/// The harness's own commit: the short `HEAD` commit of the checkout holding
+/// the running binary, and its path. The rev is `-dirty` only when that
+/// checkout's host-tools build inputs differ from its `HEAD`, untracked and
+/// ignored files included ([`host::tools_inputs_dirty`]), since cargo builds
+/// from those too; other changes there (an arm's kernel edits, say) do not
+/// touch the classifier. A note follows when the binary's `just tools` stamp
+/// does not match that `HEAD` ([`host::tools_stamp_matches`]: a binary left
+/// from an older commit, as a direct `aios soak` after a pull or the shim's
+/// fallback after a failed rebuild runs), when it has no stamp (a plain cargo
+/// build), and when git cannot test the inputs or the stamp, rather than show
+/// the commit clean. Read once, at the start of the soak and before any arm
+/// build, so a commit or branch switch in that checkout while the arms build
+/// cannot be named as the classifier's.
 fn harness_rev() -> Vec<u8> {
     let Ok(exe) = std::env::current_exe() else {
         return b"unknown".to_vec();
     };
-    let (rev, note) = match exe.parent().and_then(|dir| host::repo_root(dir).ok()) {
-        None => ("unknown".to_string(), ""),
+    let (rev, notes) = match exe.parent().and_then(|dir| host::repo_root(dir).ok()) {
+        None => ("unknown".to_string(), Vec::new()),
         Some(root) => {
-            let rev = host::git_rev(&root);
-            match host::tools_inputs_dirty(&root) {
-                Some(false) => (rev, ""),
-                Some(true) if rev.ends_with("-dirty") => (rev, ""),
-                Some(true) => (format!("{rev}-dirty"), ""),
-                None => (rev, "; build inputs not checked"),
+            let commit = host::git_output(
+                &[
+                    OsStr::new("-C"),
+                    root.as_os_str(),
+                    OsStr::new("rev-parse"),
+                    OsStr::new("--short"),
+                    OsStr::new("HEAD"),
+                ],
+                None,
+            )
+            .map(|v| String::from_utf8_lossy(&v).into_owned())
+            .unwrap_or_else(|| "unknown".to_string());
+            let mut notes = Vec::new();
+            let rev = match host::tools_inputs_dirty(&root) {
+                Some(false) => commit,
+                Some(true) => format!("{commit}-dirty"),
+                None => {
+                    notes.push("build inputs not checked");
+                    commit
+                }
+            };
+            match host::tools_stamp_matches(&root, &exe) {
+                Some(true) => {}
+                Some(false) => {
+                    notes.push("binary not built from this commit (stale stamp; run just tools)")
+                }
+                None if exe.with_file_name("aios.stamp").exists() => {
+                    notes.push("binary's stamp not checked")
+                }
+                None => notes.push("binary has no just tools stamp; its source is not checked"),
             }
+            (rev, notes)
         }
     };
-    [
-        format!("`{rev}` (").as_bytes(),
-        b"`",
-        bytes(&exe),
-        b"`",
-        note.as_bytes(),
-        b")",
-    ]
-    .concat()
+    let mut row = [format!("`{rev}` (").as_bytes(), b"`", bytes(&exe), b"`"].concat();
+    for note in notes {
+        row.extend_from_slice(format!("; {note}").as_bytes());
+    }
+    row.push(b')');
+    row
 }
 
 /// Run an interleaved soak. Returns the exit status: 0 when every boot ran,

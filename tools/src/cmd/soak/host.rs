@@ -5,7 +5,8 @@
 //! same on each host. Crash-fix step 1a adds the interleave preflight's probes
 //! (toolchain channel, `rustc --version`, HEAD and arm-base checks, the QEMU
 //! version line and full sha256), the harness checkout's build-input dirty
-//! test ([`tools_inputs_dirty`]), the parent cargo config scan
+//! test ([`tools_inputs_dirty`]) and stamp check ([`tools_stamp_matches`]),
+//! the parent cargo config scan
 //! ([`cargo_home`], [`parent_cargo_configs`]), the [`git`] wrapper every git
 //! call goes through, and the debug-only `AIOS_SOAK_LOADAVG` override.
 //! Every program `aios soak` runs starts from [`command`], in the C locale,
@@ -466,6 +467,40 @@ pub fn tools_inputs_dirty(root: &Path) -> Option<bool> {
     )
 }
 
+/// What the provenance stamp `just tools` writes beside the installed binary
+/// (`aios.stamp`) says about `exe`, the running binary, in the checkout
+/// `root`: `Some(true)` when the stamp names `root`'s current `HEAD` tree
+/// entries for [`TOOLS_INPUTS`] and `exe`'s git hash, as the
+/// `.claude/hooks/aios` shim's freshness test reads it; `Some(false)` when
+/// either differs (a binary left from an older commit, or one the stamp does
+/// not describe); `None` when there is no stamp or git cannot tell. The
+/// stamp's `source` line is not compared: [`tools_inputs_dirty`] tests the
+/// work tree itself.
+pub fn tools_stamp_matches(root: &Path, exe: &Path) -> Option<bool> {
+    let have = std::fs::read(exe.with_file_name("aios.stamp")).ok()?;
+    let mut ls: Vec<&OsStr> = ["ls-tree", "HEAD", "--"].iter().map(OsStr::new).collect();
+    ls.extend(TOOLS_INPUTS.iter().map(OsStr::new));
+    let src = git_output(&ls, Some(root))?;
+    let sum = git_output(
+        &[
+            OsStr::new("hash-object"),
+            OsStr::new("--no-filters"),
+            OsStr::new("--"),
+            exe.as_os_str(),
+        ],
+        Some(root),
+    )?;
+    let want = [
+        b"aios-tools-stamp 1\n".as_slice(),
+        &src,
+        b"\nbin ",
+        &sum,
+        b"\nsource ",
+    ]
+    .concat();
+    Some(have.starts_with(&want))
+}
+
 /// The cargo home: `$CARGO_HOME`, else `$HOME/.cargo`, as cargo resolves it.
 pub fn cargo_home() -> Option<PathBuf> {
     std::env::var_os("CARGO_HOME")
@@ -727,6 +762,46 @@ mod tests {
         git(&["update-index", "--no-assume-unchanged", "tools/src/main.rs"]);
         assert_eq!(tools_inputs_dirty(&dir), Some(false));
         assert_eq!(tools_inputs_dirty(Path::new("/")), None);
+
+        // The installed binary's stamp, in the recipe's format: it matches
+        // until HEAD's input entries or the binary change, and is absent
+        // beside a binary `just tools` did not install.
+        let exe = dir.join("installed/aios");
+        std::fs::create_dir_all(dir.join("installed")).expect("mkdir");
+        std::fs::write(&exe, "binary").expect("write");
+        let mut ls = vec!["ls-tree", "HEAD", "--"];
+        ls.extend(TOOLS_INPUTS);
+        let src = git_output(&ls, Some(&dir)).expect("ls-tree");
+        let sum = git_output(
+            &[
+                OsStr::new("hash-object"),
+                OsStr::new("--no-filters"),
+                OsStr::new("--"),
+                exe.as_os_str(),
+            ],
+            Some(&dir),
+        )
+        .expect("hash-object");
+        let stamp = [
+            b"aios-tools-stamp 1\n".as_slice(),
+            &src,
+            b"\nbin ",
+            &sum,
+            b"\nsource dirty\n",
+        ]
+        .concat();
+        assert_eq!(tools_stamp_matches(&dir, &exe), None, "no stamp");
+        std::fs::write(dir.join("installed/aios.stamp"), &stamp).expect("write");
+        assert_eq!(tools_stamp_matches(&dir, &exe), Some(true));
+        std::fs::write(&exe, "rebuilt").expect("write");
+        assert_eq!(tools_stamp_matches(&dir, &exe), Some(false), "binary");
+        std::fs::write(&exe, "binary").expect("write");
+        assert_eq!(tools_stamp_matches(&dir, &exe), Some(true));
+        std::fs::write(dir.join("tools/src/lib.rs"), "").expect("write");
+        git(&["add", "tools/src/lib.rs"]);
+        git(&["commit", "-q", "-m", "four"]);
+        assert_eq!(tools_stamp_matches(&dir, &exe), Some(false), "new commit");
+        std::fs::remove_dir_all(dir.join("installed")).expect("remove");
 
         // Replace refs are off: one that swaps HEAD for a commit holding a
         // staged tools/ edit hides that edit from a plain git status, but not

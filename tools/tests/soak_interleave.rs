@@ -769,7 +769,7 @@ fn brief_lists_an_interleaved_run_once_and_never_as_main_soak() {
     );
     assert!(
         soak.contains(
-            "- newest interleaved soak: target/soak/20261002-000000-text-arms (worktree on `main`"
+            "- newest interleaved soak (an A/B experiment, not main's state): target/soak/20261002-000000-text-arms (worktree on `main`"
         ),
         "{soak}"
     );
