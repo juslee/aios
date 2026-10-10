@@ -97,13 +97,12 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     }
 
     // --- Blocking path ---
-    let deadline = if timeout_ticks == u64::MAX {
-        u64::MAX
-    } else {
-        TICK_COUNT
-            .load(core::sync::atomic::Ordering::Relaxed)
-            .saturating_add(timeout_ticks)
-    };
+    // NOTIFY_DEADLINES stores no deadline as u64::MAX.
+    let deadline = shared::deadline_after(
+        TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+        timeout_ticks,
+    )
+    .unwrap_or(u64::MAX);
 
     // Register as select waiter.
     {
