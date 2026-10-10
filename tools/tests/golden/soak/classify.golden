@@ -1,7 +1,7 @@
 clean-text	CLEAN	2000	3	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	[   6.100000] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark	[   7.000000] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
 clean-text-log-only	CLEAN	1000	2	-	EL1,BOOT,G1PASS,G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
 clean-gpu	CLEAN	1000	2	5	EL1,BOOT,G1DONE,GPU,INPUT,HANDOFF	-	-	-	[   0.300000] [0] INFO  Gpu   GpuReady	[   0.310000] [0] INFO  Input InputReady	[   0.320000] [0] INFO  Gpu   display handoff complete
-gpu-markers-missing	WEDGE	1000	2	5	EL1,BOOT,G1DONE,GPU	no	gpu markers missing: InputReady,display handoff	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	[   0.300000] [0] INFO  Gpu   GpuReady
+gpu-markers-missing	WEDGE-ALIVE	1000	2	5	EL1,BOOT,G1DONE,GPU	no	gpu markers missing: InputReady,display handoff	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	[   0.300000] [0] INFO  Gpu   GpuReady
 gpu-markers-missing-log-only	CLEAN	1000	2	-	G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	-
 pczero-elr-inline	PCZERO	1000	2	72	-	no	after heartbeat tick 1000	EXCEPTION[CPU 1]: Synchronous ESR=0x86000006 EC=0x21 FAR=0x0000000000000000 ELR=0x0000000000000000	-	-	[   3.000000] [1] INFO  Sched switch to tid 9
 pczero-split-elr	PCZERO	0	1	-	-	-	after heartbeat tick 0	EXCEPTION[CPU 2]: Synchronous exception / ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000	-	-	-
@@ -29,61 +29,61 @@ stub-never-ran-empty	INCONCLUSIVE	-	0	-	-	-	UEFI stub never ran, not a boot resu
 signaled	INCONCLUSIVE	1000	2	46	-	-	QEMU killed by signal 11 after 30s (rc=139), not a boot result	-	-	-	-
 rc137-before-limit	INCONCLUSIVE	0	1	74	-	-	QEMU killed by signal 9 after 40s (rc=137), not a boot result	-	-	-	-
 rc137-at-limit-clean	CLEAN	1000	2	1	G1DONE	-	-	-	-	-	-
-early-exit-rc1	WEDGE	1000	2	36	G1DONE	-	heartbeat stopped at tick 1000, silent 36s before the end (limit 15s); qemu exited before the time limit (rc=1)	-	-	-	-
+early-exit-rc1	WEDGE-STUCK	1000	2	36	G1DONE	-	heartbeat stopped at tick 1000, silent 36s before the end (limit 15s); qemu exited before the time limit (rc=1)	-	-	-	-
 early-exit-rc0-clean	CLEAN	1000	2	6	G1DONE	-	qemu exited before the time limit (rc=0)	-	-	-	-
-nohb-boot-complete	WEDGE	-	0	74	EL1,BOOT	no	no heartbeat after boot sequence complete	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
-nohb-boot-incomplete	WEDGE	-	0	74	-	no	no heartbeat; boot sequence incomplete	-	-	-	[   0.100000] [0] INFO  Mm    frame allocator ready
-nohb-kernel-never-started	WEDGE	-	0	75	-	-	no heartbeat; kernel never started	-	-	-	-
+nohb-boot-complete	WEDGE-STUCK	-	0	74	EL1,BOOT	no	no heartbeat after boot sequence complete	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+nohb-boot-incomplete	WEDGE-STUCK	-	0	74	-	no	no heartbeat; boot sequence incomplete	-	-	-	[   0.100000] [0] INFO  Mm    frame allocator ready
+nohb-kernel-never-started	WEDGE-STUCK	-	0	75	-	-	no heartbeat; kernel never started	-	-	-	-
 nohb-cut-short-kstart	INCONCLUSIVE	-	0	5	-	-	cut short: no heartbeat; boot sequence incomplete, only 5s since the kernel started (limit 15s)	-	-	-	-
 nohb-cut-short-qemu-start	INCONCLUSIVE	-	0	10	-	-	cut short: no heartbeat; kernel never started, only 10s since QEMU started (limit 15s)	-	-	-	-
-nohb-log-only	WEDGE	-	0	-	-	-	no heartbeat; boot sequence incomplete	-	-	-	-
-tick0-after-bench	WEDGE	0	1	69	EL1,BOOT	no	heartbeat stuck at tick 0 after the Gate 1 bench started	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	[   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
-tick0-never-advanced	WEDGE	0	1	74	-	-	heartbeat never advanced past tick 0	-	-	-	-
+nohb-log-only	WEDGE-STUCK	-	0	-	-	-	no heartbeat; boot sequence incomplete	-	-	-	-
+tick0-after-bench	WEDGE-STUCK	0	1	69	EL1,BOOT	no	heartbeat stuck at tick 0 after the Gate 1 bench started	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	[   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+tick0-never-advanced	WEDGE-STUCK	0	1	74	-	-	heartbeat never advanced past tick 0	-	-	-	-
 tick0-cut-short	INCONCLUSIVE	0	1	9	-	-	cut short: heartbeat never advanced past tick 0, only 9s before the end (limit 15s)	-	-	-	-
-tick0-log-only-lb-yes	WEDGE	0	1	-	-	yes	heartbeat never advanced past tick 0	-	-	-	[   5.901378] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
-hb-stopped	WEDGE	2000	3	35	G1DONE	no	heartbeat stopped at tick 2000, silent 35s before the end (limit 15s)	-	-	-	[   9.000000] [0] INFO  Sched idle
-bench-never-completed	WEDGE	2000	3	1	-	-	heartbeat alive but the Gate 1 bench never completed	-	-	-	-
-bench-never-started	WEDGE	1000	2	1	-	-	heartbeat alive but the Gate 1 bench never started	-	-	-	-
+tick0-log-only-lb-yes	WEDGE-STUCK	0	1	-	-	yes	heartbeat never advanced past tick 0	-	-	-	[   5.901378] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
+hb-stopped	WEDGE-STUCK	2000	3	35	G1DONE	no	heartbeat stopped at tick 2000, silent 35s before the end (limit 15s)	-	-	-	[   9.000000] [0] INFO  Sched idle
+bench-never-completed	WEDGE-ALIVE	2000	3	1	-	-	heartbeat alive but the Gate 1 bench never completed	-	-	-	-
+bench-never-started	WEDGE-ALIVE	1000	2	1	-	-	heartbeat alive but the Gate 1 bench never started	-	-	-	-
 bench-cut-short	INCONCLUSIVE	1000	2	1	-	-	cut short: heartbeat alive but the Gate 1 bench never completed, only 10s since the bench header (limit 15s)	-	-	-	-
 bench-never-started-cut-short	INCONCLUSIVE	1000	2	1	-	-	cut short: heartbeat alive but the Gate 1 bench never started, only 5s since the first heartbeat (limit 15s)	-	-	-	-
-bench-never-completed-log-only	WEDGE	1000	2	-	-	-	heartbeat alive but the Gate 1 bench never completed	-	-	-	-
+bench-never-completed-log-only	WEDGE-ALIVE	1000	2	-	-	-	heartbeat alive but the Gate 1 bench never completed	-	-	-	-
 hb-max-gap-note	CLEAN	1000	2	1	G1DONE	-	heartbeat paused 20s after the bench completed	-	-	-	-
 booted-twice	CLEAN	1000	3	1	G1DONE	-	guest booted 2 times	-	-	-	-
-wedge-lb-no	WEDGE	0	1	69	-	no	heartbeat stuck at tick 0 after the Gate 1 bench started	-	-	-	[   6.613322] [0] INFO  Ipc   Channel 6 created (unchecked) by thread 18
+wedge-lb-no	WEDGE-STUCK	0	1	69	-	no	heartbeat stuck at tick 0 after the Gate 1 bench started	-	-	-	[   6.613322] [0] INFO  Ipc   Channel 6 created (unchecked) by thread 18
 exception-no-info	EXCEPTION	-	0	-	-	-	before the first heartbeat	EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234	-	-	-
 info-frozen-at-fatal	PANIC	0	1	-	-	yes	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/mod.rs:1:1: / boom	[   2.000000] [0] INFO  Mm    two	[   3.000000] [0] INFO  Mm    three	[   4.000000] [0] INFO  Sched Load balance: migrated tid=4 from CPU 0 to CPU 2
 ansi-escapes	CLEAN	1000	2	-	G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	-
 nul-cr-bytes	CLEAN	1000	2	-	G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	-
 clip-first-200	EXCEPTION	-	0	-	-	-	before the first heartbeat	EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...	-	-	-
 clip-multibyte	PANIC	-	0	-	-	-	before the first heartbeat	PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa√...	-	-	-
-clip-info-160	WEDGE	0	1	-	-	no	heartbeat stuck at tick 0 after the Gate 1 bench started	-	-	-	[   1.000000] [0] INFO  Mm    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
+clip-info-160	WEDGE-STUCK	0	1	-	-	no	heartbeat stuck at tick 0 after the Gate 1 bench started	-	-	-	[   1.000000] [0] INFO  Mm    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
 tabs-in-fatal	PANIC	-	0	-	-	-	before the first heartbeat	PANIC: panicked at kernel/src/y.rs:2:2: with tabs	-	-	-
-stall-override-wedge	WEDGE	1000	2	10	-	-	heartbeat stopped at tick 1000, silent 10s before the end (limit 5s)	-	-	-	-
-stall-override-default	WEDGE	1000	2	10	-	-	heartbeat alive but the Gate 1 bench never started	-	-	-	-
-older-footer	WEDGE	1000	2	-	-	-	heartbeat alive but the Gate 1 bench never started	-	-	-	-
+stall-override-wedge	WEDGE-STUCK	1000	2	10	-	-	heartbeat stopped at tick 1000, silent 10s before the end (limit 5s)	-	-	-	-
+stall-override-default	WEDGE-ALIVE	1000	2	10	-	-	heartbeat alive but the Gate 1 bench never started	-	-	-	-
+older-footer	WEDGE-ALIVE	1000	2	-	-	-	heartbeat alive but the Gate 1 bench never started	-	-	-	-
 footer-odd-fields	CLEAN	1000	2	1	G1DONE	-	-	-	-	-	-
 heartbeat-inline	CLEAN	12345	2	-	G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	-
 window-priority	PCZERO	0	1	-	-	-	after heartbeat tick 0; 2 fatal reports	EXCEPTION[CPU 1]: Synchronous exception / ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000	-	-	-
 rc-empty	CLEAN	1000	2	1	G1DONE	-	-	-	-	-	-
 elapsed-over-secs	CLEAN	1000	2	0	G1DONE	-	-	-	-	-	-
-boot-el-spacing	WEDGE	-	0	-	EL1	-	no heartbeat; boot sequence incomplete	-	-	-	-
-gate1-pass-spacing	WEDGE	-	0	-	G1PASS	-	no heartbeat; kernel never started	-	-	-	-
+boot-el-spacing	WEDGE-STUCK	-	0	-	EL1	-	no heartbeat; boot sequence incomplete	-	-	-	-
+gate1-pass-spacing	WEDGE-STUCK	-	0	-	G1PASS	-	no heartbeat; kernel never started	-	-	-	-
 pr168-n01-nostub-rc124	INCONCLUSIVE	-	0	75	-	-	UEFI stub never ran, not a boot result	-	-	-	-
 pr168-n02-nostub-rc137	INCONCLUSIVE	-	0	75	-	-	UEFI stub never ran, not a boot result	-	-	-	-
 pr168-n03-nostub-rc0-early	INCONCLUSIVE	-	0	75	-	-	UEFI stub never ran, not a boot result; qemu exited before the time limit (rc=0)	-	-	-	-
 pr168-n04-nostub-edk2-exc	INCONCLUSIVE	-	0	75	-	-	UEFI stub never ran, not a boot result; edk2-format report from the firmware	Synchronous Exception at 0x00000000BF5A1234	-	-	-
 pr168-n05-nostub-logonly	INCONCLUSIVE	-	0	-	-	-	UEFI stub never ran, not a boot result	-	-	-	-
-pr168-n06-stub-no-kernel	WEDGE	-	0	75	-	-	no heartbeat; kernel never started	-	-	-	-
-pr168-n07-stub-panic	WEDGE	-	0	75	-	-	no heartbeat; kernel never started	-	-	-	-
+pr168-n06-stub-no-kernel	WEDGE-STUCK	-	0	75	-	-	no heartbeat; kernel never started	-	-	-	-
+pr168-n07-stub-panic	WEDGE-STUCK	-	0	75	-	-	no heartbeat; kernel never started	-	-	-	-
 pr168-n08-stub-edk2-exc	EXCEPTION	-	0	75	-	-	edk2-format report from the firmware or UEFI stub; before the first heartbeat	Synchronous Exception at 0x00000000BF5A1234	-	-	-
 pr168-n09-killafter-stall5	CLEAN	3000	4	0	EL1,BOOT,G1PASS,G1DONE	-	-	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n10-stall-eq-limit	CLEAN	3000	4	15	EL1,BOOT,G1PASS,G1DONE	-	-	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
-pr168-n11-stall-over-limit	WEDGE	3000	4	16	EL1,BOOT,G1PASS,G1DONE	no	heartbeat stopped at tick 3000, silent 16s before the end (limit 15s)	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+pr168-n11-stall-over-limit	WEDGE-STUCK	3000	4	16	EL1,BOOT,G1PASS,G1DONE	no	heartbeat stopped at tick 3000, silent 16s before the end (limit 15s)	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n12-adv-after-secs	CLEAN	3000	4	0	EL1,BOOT,G1PASS,G1DONE	-	-	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n13-rc137-early	INCONCLUSIVE	3000	4	35	EL1,BOOT,G1PASS,G1DONE	-	QEMU killed by signal 9 after 40s (rc=137), not a boot result	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n14-rc134-abort	INCONCLUSIVE	3000	4	45	EL1,BOOT,G1PASS,G1DONE	-	QEMU killed by signal 6 after 30s (rc=134), not a boot result	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n15-rc139-after-exc	EXCEPTION	0	1	69	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=139, signal 11)	EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
-pr168-n16-rc1-early-kernel	WEDGE	3000	4	45	EL1,BOOT,G1PASS,G1DONE	no	heartbeat stopped at tick 3000, silent 45s before the end (limit 15s); qemu exited before the time limit (rc=1)	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+pr168-n16-rc1-early-kernel	WEDGE-STUCK	3000	4	45	EL1,BOOT,G1PASS,G1DONE	no	heartbeat stopped at tick 3000, silent 45s before the end (limit 15s); qemu exited before the time limit (rc=1)	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n17-rc124-short-elapsed	CLEAN	3000	4	0	EL1,BOOT,G1PASS,G1DONE	-	-	-	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n18-split-prefix-pc0	PCZERO	3000	5	0	EL1,BOOT,G1PASS,G1DONE	no	report prefix split by other output; after heartbeat tick 1000	TION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-n19-split-mid-esr	EXCEPTION	3000	5	0	EL1,BOOT,G1PASS,G1DONE	no	after heartbeat tick 1000	EXCEPTION[CPU 2]: ES[heartbeat] tick=1000 / R=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58	[   5.6] [0] INFO  Boot  AIOS kernel booting...	[   5.6] [0] INFO  Boot  EL: 1	[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
@@ -105,4 +105,23 @@ pr168-s06-nul	EXCEPTION	100	2	-	EL1,BOOT,G1DONE	no	after heartbeat tick 100	EXCE
 pr168-s07-stall-boundary	CLEAN	1000	2	14	EL1,BOOT,G1DONE	-	-	-	-	[   1.0] [0] INFO  Boot  EL: 1	[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-s08-silent-nofooter	CLEAN	2000	3	-	EL1,BOOT,G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	[   1.0] [0] INFO  Boot  EL: 1	[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
 pr168-s09-late-start-tick0	INCONCLUSIVE	0	1	2	BOOT	-	cut short: heartbeat stuck at tick 0 after the Gate 1 bench started, only 2s before the end (limit 15s)	-	-	-	[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler
-pr168-s10-late-start-nohb	WEDGE	-	0	75	EL1	no	no heartbeat; boot sequence incomplete	-	-	-	[   1.0] [0] INFO  Boot  EL: 1
+pr168-s10-late-start-nohb	WEDGE-STUCK	-	0	75	EL1	no	no heartbeat; boot sequence incomplete	-	-	-	[   1.0] [0] INFO  Boot  EL: 1
+lock-reentry-thread-table	PANIC-LOCK	0	1	74	BOOT	no	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894	-	-	[   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler
+lock-reentry-per-cpu-lock	PANIC-LOCK	0	1	-	-	no	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/scheduler.rs:192:46: / lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=356738	-	-	[   6.6] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+lock-reentry-before-heartbeat	PANIC-LOCK	-	0	-	-	-	before the first heartbeat	PANIC: panicked at kernel/src/ipc/timeout.rs:118:20: / lock re-entry: TIMEOUT_QUEUE on CPU 2 ctx=thread-off holder=kernel/src/ipc/timeout.rs:90 holder_irqs=off tid=7 gen=12	-	-	-
+lock-reentry-after-blank-line	PANIC-LOCK	1000	2	-	-	-	after heartbeat tick 1000	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 1 ctx=irq holder=? holder_irqs=off tid=? gen=0	-	-	-
+lock-reentry-two-cpus	PANIC-LOCK	0	1	-	-	-	after heartbeat tick 0; 2 fatal reports	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894	-	-	-
+lock-reentry-split-by-output	PANIC-LOCK	0	1	-	-	-	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[   6.7] [2] INFO  Ipc   interleaved output from CPU 2	-	-	-
+lock-reentry-after-exception	EXCEPTION	0	1	-	-	-	after heartbeat tick 0; 2 fatal reports	EXCEPTION[CPU 1]: Synchronous exception / ESR=0x96000004 EC=0x25 FAR=0x0000000000000010 ELR=0xffff000000091234	-	-	-
+lock-reentry-after-other-panic	PANIC	0	1	-	-	-	after heartbeat tick 0; 2 fatal reports	PANIC: panicked at kernel/src/mm/frame.rs:51:9: / out of frames	-	-	-
+ipc-10000-iters-clean	CLEAN	1000	2	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-0-iters-gate1-fail-degraded	DEGRADED	1000	2	1	EL1,BOOT,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-9999-iters-degraded	DEGRADED	1000	2	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-no-line-degraded	DEGRADED	1000	2	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-line-cut-degraded	DEGRADED	2000	3	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+ipc-0-iters-log-only-degraded	DEGRADED	1000	2	-	G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	-
+ipc-first-line-decides-degraded	DEGRADED	1000	3	1	G1DONE	-	guest booted 2 times	-	-	-	-
+ipc-0-iters-pczero-stays-fatal	PCZERO	1000	2	24	EL1,BOOT,G1PASS,G1DONE	no	after heartbeat tick 1000	EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+tripwire-panic-lock-with-events	PANIC-LOCK	0	1	74	EL1,BOOT	no	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894	-	-	[   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler
+tripwire-clean-g1-then-hb	CLEAN	3000	4	1	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete
+tripwire-other-schema-last-wedge-alive	WEDGE-ALIVE	2000	3	1	-	-	heartbeat alive but the Gate 1 bench never completed	-	-	-	-

@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --out <DIR>/cases is not empty; choose a new or empty directory

@@ -131,14 +131,39 @@ run-direct: build
 #   just soak                                  10 text boots x 75 s, logs under target/soak/
 #   just soak runs=20 secs=90 mode=gpu         key=value or --flags go to aios soak
 #   just soak report_only=1                    exit 0 even if some boots are not CLEAN
+#   just soak --arm ../aios-base --arm .       interleave 2-4 checkouts, one boot each per round
 # Runs in the invocation directory ([no-cd]): relative out= and log paths resolve there.
 # The harness is this checkout's own tools build, not the main checkout's (.claude/hooks/aios),
-# so the commit summary.md records names the classifier as well as the kernel.
-# Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN
+# so in a single soak the commit summary.md records names the classifier as well as the kernel;
+# with --arm, the top-level summary.md's Harness row names the classifier and each
+# arm-X/summary.md the arm's kernel commit.
+# The recipe runs a hard link to installed/aios (and its stamp) made for the
+# soak in target/tools/.soak.XXXXXX/, as the shim's guard does: a `just tools`
+# rename during the soak replaces only installed/aios, so the binary the
+# Harness row's stamp check hashes is the one running. A rename between the
+# two links leaves a pair that does not match, which the row reports as a
+# stale stamp. The shell outlives a signal the soak handles (no-op traps) and
+# exits with the soak's status once the links are removed.
+# Soak-test boots: N sequential QEMU boots (or, with --arm, N rounds over 2-4 checkouts), each classified PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN
 [no-cd]
 [positional-arguments]
 soak *args: tools
-    {{ quote(justfile_directory() / "target" / "tools" / "installed" / "aios") }} soak "$@"
+    #!/bin/sh
+    set -u
+    tools={{ quote(justfile_directory() / "target" / "tools") }}
+    run_dir=
+    trap 'if [ -n "$run_dir" ]; then rm -f "$run_dir/aios" "$run_dir/aios.stamp"; rmdir "$run_dir"; fi 2>/dev/null' EXIT
+    trap ':' HUP INT QUIT TERM
+    if ! run_dir=$(mktemp -d "$tools/.soak.XXXXXX") || ! ln "$tools/installed/aios" "$run_dir/aios"; then
+        echo "just soak: cannot hard-link target/tools/installed/aios into target/tools to run it; check that target/tools is writable" >&2
+        exit 2
+    fi
+    if [ -e "$tools/installed/aios.stamp" ]; then
+        ln "$tools/installed/aios.stamp" "$run_dir/aios.stamp" 2>/dev/null || :
+    fi
+    "$run_dir/aios" soak "$@"
+    status=$?
+    exit "$status"
 
 # kernel is no_std and excluded; the tools crate is excluded too and tested
 # separately with `cargo test -p aios-tools` in CI's Tools (host) job, which has
@@ -168,7 +193,7 @@ test:
 # the installed binary's git hash, and "source dirty" when the inputs have
 # uncommitted changes (untracked and gitignored files count: an ignored
 # tools/build.rs or .cargo/config still changes the build; the exclude
-# pathspecs, anchored under tools/ and .cargo/ for the reason the shim gives,
+# pathspecs, anchored under tools/, shared/ and .cargo/ for the reason the shim gives,
 # leave out OS and editor files no build reads), or when the index marks an
 # input file assume-unchanged or skip-worktree (git status skips it; `git
 # ls-files -v` tags every other file H), before the build or after it: a file
@@ -188,7 +213,10 @@ test:
 # unmerged input commit look merged.
 # The shim treats a missing or mismatched stamp as stale, and repeats the dirty
 # test on a dirty stamp; the inputs list, the dirty test and the format must
-# match the shim's.
+# match the shim's, and those of tools/src/cmd/soak/host.rs (TOOLS_INPUTS,
+# tools_inputs_dirty, tools_stamp), which reads the stamp for a soak's Harness
+# row; its tests check the inputs list and the exclude anchors against this
+# recipe and the shim.
 # Build the host tools binary target/tools/installed/aios (run through .claude/hooks/aios)
 tools:
     #!/bin/sh
@@ -218,7 +246,7 @@ tools:
     GIT_NO_REPLACE_OBJECTS=1
     GIT_GRAFT_FILE=/dev/null/no-grafts
     export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
-    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
+    inputs='tools shared Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
     # Print the input files git status lists (or a failure aborts the recipe)
     # and those the index flags hide from it.
     uncommitted() {
@@ -227,6 +255,8 @@ tools:
             status --porcelain --untracked-files=all --ignored=matching -- $inputs \
             ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
             ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
+            ':(exclude,glob)shared/**/.DS_Store' ':(exclude,glob)shared/**/*.swp' ':(exclude,glob)shared/**/*.swo' \
+            ':(exclude,glob)shared/**/*~' ':(exclude,glob)shared/**/*.rs.bk' \
             ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
             ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk' || return 1
         flags=$(git --work-tree="$PWD" ls-files -v -- $inputs) || return 1

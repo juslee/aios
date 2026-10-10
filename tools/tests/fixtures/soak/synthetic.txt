@@ -8,6 +8,7 @@ AIOS kernel booting
 [   6.100000] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
 [bench] === Gate 1 Benchmark ===
 Gate 1: IPC < 10 us: PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 [   7.000000] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
@@ -22,6 +23,7 @@ AIOS kernel booting
 [heartbeat] tick=0
 [bench] === Gate 1 Benchmark ===
 Gate 1: IPC < 10 us: PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 @@@ case clean-gpu
@@ -34,6 +36,7 @@ AIOS kernel booting
 [   0.320000] [0] INFO  Gpu   display handoff complete
 [heartbeat] tick=0
 [bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -54,6 +57,7 @@ AIOS kernel booting
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 @@@ case pczero-elr-inline
@@ -210,6 +214,7 @@ AIOS kernel booting
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -226,6 +231,7 @@ AIOS kernel booting
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -294,6 +300,7 @@ AIOS kernel booting
 [heartbeat] tick=2000
 [   9.000000] [0] INFO  Sched idle
 [bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=3 hb_last_advance=40 hb_max_gap=3 stall_limit=15 load1=1.00
@@ -338,6 +345,7 @@ AIOS kernel booting
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -348,6 +356,7 @@ AIOS kernel booting
 [heartbeat] tick=0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -379,12 +388,14 @@ boom
 <ESC>[1;32mAIOS UEFI stub v0.1.0<ESC>[0m
 AIOS kernel booting
 <ESC>[33m[heartbeat] tick=0<ESC>[0m
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 <ESC>[2J=== Gate 1 Complete ===
 [heartbeat] tick=<ESC>[0m1000
 @@@ case nul-cr-bytes
 AIOS UEFI stub v0.1.0<CR>
 AIOS kernel<NUL> booting<CR>
 [heartbeat] tick=0<CR>
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)<CR>
 === Gate 1 Complete ===<CR>
 [heartbeat] tick=1000<CR>
 @@@ case clip-first-200
@@ -430,6 +441,7 @@ AIOS kernel booting
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -439,6 +451,7 @@ AIOS UEFI stub v0.1.0
 AIOS kernel booting
 cpu2 noise [heartbeat] tick=0 trailing
 garbage[heartbeat] tick=12345xyz
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 @@@ case window-priority
 AIOS UEFI stub v0.1.0
@@ -451,6 +464,7 @@ EXCEPTION[CPU 2]: Synchronous exception
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -459,6 +473,7 @@ AIOS kernel booting
 AIOS UEFI stub v0.1.0
 AIOS kernel booting
 [heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 === Gate 1 Complete ===
 [heartbeat] tick=1000
 
@@ -535,6 +550,7 @@ AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
 [heartbeat] tick=2000
 [heartbeat] tick=3000
 [bench] Gate 1: IPC < 10 us:           PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 [bench] === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=85 qemu_rc=137 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=5 load1=5
@@ -552,6 +568,7 @@ AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
 [heartbeat] tick=2000
 [heartbeat] tick=3000
 [bench] Gate 1: IPC < 10 us:           PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 [bench] === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=55 hb_last_advance=60 hb_max_gap=1 stall_limit=15 load1=5
@@ -586,6 +603,7 @@ AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
 [heartbeat] tick=2000
 [heartbeat] tick=3000
 [bench] Gate 1: IPC < 10 us:           PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 [bench] === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=77 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=72 hb_last_advance=77 hb_max_gap=1 stall_limit=15 load1=5
@@ -668,6 +686,7 @@ AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
 [heartbeat] tick=2000
 [heartbeat] tick=3000
 [bench] Gate 1: IPC < 10 us:           PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 [bench] === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
@@ -836,6 +855,7 @@ AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
 [heartbeat] tick=2000
 [heartbeat] tick=3000
 [bench] Gate 1: IPC < 10 us:           PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 [bench] === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=50 hb_last_advance=75 hb_max_gap=40 stall_limit=15 load1=5
@@ -853,6 +873,7 @@ AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
 [heartbeat] tick=2000
 [heartbeat] tick=3000
 [bench] Gate 1: IPC < 10 us:           PASS
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
 [bench] === Gate 1 Complete ===
 
 [soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=3 stall_limit=15 load1=5
@@ -929,6 +950,7 @@ AIOS kernel booting...<CR>
 [heartbeat] tick=0<CR>
 
 [bench] === Gate 1 Benchmark ===<CR>
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)<CR>
 [bench] === Gate 1 Complete ===<CR>
 [heartbeat] tick=1000<CR>
 
@@ -940,6 +962,7 @@ AIOS kernel booting...<CR>
 [heartbeat] tick=0<CR>
 
 [bench] === Gate 1 Benchmark ===<CR>
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)<CR>
 [bench] === Gate 1 Complete ===<CR>
 [heartbeat] tick=1000<CR>
 [heartbeat] tick=2000<CR>
@@ -956,3 +979,210 @@ AIOS kernel booting...<CR>
 [   1.0] [0] INFO  Boot  EL: 1<CR>
 
 [soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=0 hb_last_advance=-1 stall_limit=15 load1=30
+@@@ case lock-reentry-thread-table
+AIOS UEFI stub v0.1.0<CR>
+AIOS kernel booting<CR>
+[   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+[bench] === Gate 1 Benchmark ===<CR>
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:<CR>
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894<CR>
+[panic] cpu=0 tid=16 ctx=irq-exit irq_was=off t=6.629260 irq_elr=0xffff0000000c3a08<CR>
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case lock-reentry-per-cpu-lock
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[   6.6] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+PANIC: panicked at kernel/src/sched/scheduler.rs:192:46:
+lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=356738
+[panic] cpu=0 tid=16 ctx=irq-exit irq_was=off t=6.661844 irq_elr=0xffff000000099728
+@@@ case lock-reentry-before-heartbeat
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+PANIC: panicked at kernel/src/ipc/timeout.rs:118:20:
+lock re-entry: TIMEOUT_QUEUE on CPU 2 ctx=thread-off holder=kernel/src/ipc/timeout.rs:90 holder_irqs=off tid=7 gen=12
+@@@ case lock-reentry-after-blank-line
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+
+lock re-entry: THREAD_TABLE on CPU 1 ctx=irq holder=? holder_irqs=off tid=? gen=0
+@@@ case lock-reentry-two-cpus
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+PANIC: panicked at kernel/src/sched/scheduler.rs:192:46:
+lock re-entry: CURRENT_THREAD[3] on CPU 3 ctx=irq holder=? holder_irqs=on tid=? gen=77
+@@@ case lock-reentry-split-by-output
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-e[   6.7] [2] INFO  Ipc   interleaved output from CPU 2
+@@@ case lock-reentry-after-exception
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 1]: Synchronous exception
+  ESR=0x96000004 EC=0x25 FAR=0x0000000000000010 ELR=0xffff000000091234
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=9
+@@@ case lock-reentry-after-other-panic
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/mm/frame.rs:51:9:
+out of frames
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=? holder_irqs=on tid=? gen=9
+@@@ case ipc-10000-iters-clean
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=9 us, p99=16 us, min=8000 ns, max=759008 ns (10000 iters)<CR>
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=3 hb_count=2 hb_last_advance=74 hb_max_gap=1 stall_limit=15 load1=1.00
+@@@ case ipc-0-iters-gate1-fail-degraded
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=0 us, p99=0 us, min=18446744073709551615 ns, max=0 ns (0 iters)<CR>
+[bench] Context switch: avg=7 us, p99=60 us, min=992 ns, max=918000 ns (1000 iters)<CR>
+[bench] Gate 1: IPC < 10 us:           FAIL
+[bench] Gate 1: Context switch < 20 us: PASS
+[bench] === Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=40 hb_count=2 hb_last_advance=74 hb_max_gap=1 stall_limit=15 load1=1.00
+@@@ case ipc-9999-iters-degraded
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (9999 iters)
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=3 hb_count=2 hb_last_advance=74 hb_max_gap=1 stall_limit=15 load1=1.00
+@@@ case ipc-no-line-degraded
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=3 hb_count=2 hb_last_advance=74 hb_max_gap=1 stall_limit=15 load1=1.00
+@@@ case ipc-line-cut-degraded
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=49[heartbeat] tick=1000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+[heartbeat] tick=2000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=3 hb_count=3 hb_last_advance=74 hb_max_gap=1 stall_limit=15 load1=1.00
+@@@ case ipc-0-iters-log-only-degraded
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=0 us, p99=0 us, min=18446744073709551615 ns, max=0 ns (0 iters)
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+@@@ case ipc-first-line-decides-degraded
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=0 us, p99=0 us, min=18446744073709551615 ns, max=0 ns (0 iters)
+=== Gate 1 Complete ===
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=3 hb_count=4 hb_last_advance=74 hb_max_gap=1 stall_limit=15 load1=1.00
+@@@ case ipc-0-iters-pczero-stays-fatal
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=0 us, p99=0 us, min=18446744073709551615 ns, max=0 ns (0 iters)
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+[heartbeat] tick=1000
+EXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=40 hb_count=2 hb_last_advance=51 hb_max_gap=0 stall_limit=15 load1=1.00
+@@@ case tripwire-panic-lock-with-events
+AIOS UEFI stub v0.1.0<CR>
+AIOS kernel booting<CR>
+  Boot EL: 1<CR>
+[   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+[tripwire] v=1 src=hb cpu=0 t=1 ncpu=4 tick=1,0,0,0 scana=1 scanb=1 scanhold1=28375 scanhold2=6625 badchan=2,2,1 twc=0 twn=0 twmax=0 n=14<CR>
+[bench] === Gate 1 Benchmark ===<CR>
+[tripwire-ev] kind=ph cpu=1 lock=THREAD_TABLE idx=- ctx=irq owner_cpu=0 owner_gen=508890 holder_tid=16 cur_tid=3 holder_running=0 holder=kernel/src/cap/mod.rs:39<CR>
+[tripwire-ev] kind=self cpu=0 lock=THREAD_TABLE idx=- ctx=irq-exit owner_cpu=0 owner_gen=508894 holder_tid=16 cur_tid=16 holder_running=0 holder=kernel/src/cap/mod.rs:39<CR>
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:<CR>
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894<CR>
+[panic] cpu=0 tid=16 ctx=irq-exit irq_was=off t=6.629260 irq_elr=0xffff0000000c3a08<CR>
+[tripwire-ev] kind=stuck cpu=3 lock=THREAD_TABLE idx=- ctx=thread-off owner_cpu=0 owner_gen=508894 holder_tid=16 cur_tid=12 holder_running=0 holder=kernel/src/cap/mod.rs:39<CR>
+[tripwire] v=1 src=panic cpu=0 t=544 ncpu=4 tick=544,0,0,0 irqsw=6,0,0,0 lkself=1,0,0,0,0,0,0,0,0 badchan=2,2,1 twc=12 twn=2 twmax=142375 n=12<CR>
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case tripwire-clean-g1-then-hb
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=7 us, p99=9 us, min=5000 ns, max=760000 ns (10000 iters)
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 irqsw=2711,0,0,0 elrmm=1,0,0,0 ctbusy=1 starved=0,9,0,0 scanhold1=25625 twc=9 twn=1 twmax=183437 n=14
+[heartbeat] tick=1000
+[tripwire] v=1 src=hb cpu=0 t=2000 ncpu=4 tick=2000,0,0,0 irqsw=3182,0,0,0 elrmm=1,0,0,0 ctbusy=1 starved=0,9,0,0 scanhold1=26750 twc=18 twn=2 twmax=189187 n=14
+[heartbeat] tick=2000
+[tripwire] v=1 src=hb cpu=0 t=3000 ncpu=4 tick=3000,0,0,0 irqsw=32[heartbeat] tick=3000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=3 hb_count=4 hb_last_advance=74 hb_max_gap=2 stall_limit=15 load1=1.25
+@@@ case tripwire-other-schema-last-wedge-alive
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[tripwire] v=1 src=hb cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 n2=0,1,0,0 ubrbl=0,1,0,0,0,0,0,0,0,0,0,0,0,0,0 nowaker=1 twc=9 twn=1 twmax=50 n=12
+[heartbeat] tick=1000
+[tripwire] v=2 src=hb cpu=0 t=2000 ncpu=4 newkey=1,2 nowaker=1 n=7
+[heartbeat] tick=2000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=-1 hb_count=3 hb_last_advance=74 hb_max_gap=-1 stall_limit=15 load1=0.75

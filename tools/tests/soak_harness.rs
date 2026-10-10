@@ -1,13 +1,14 @@
 //! `aios soak`'s boot loop against a fake QEMU and a fake `just` (see
-//! `common::soak_fake::scenarios`), compared with the deleted `scripts/soak-qemu.sh`.
+//! `common::soak_fake::scenarios`).
 //!
 //! - `harness_goldens_match_aios` runs every scenario with aios, in parallel, and
 //!   compares the normalised stdout, stderr, output files and QEMU arguments with
 //!   `tests/golden/soak/harness/<scenario>.golden`. It also checks the raw
-//!   timing the normalisation hides.
-//! - `record_harness_goldens_from_oracle` (ignored) records the goldens from the
-//!   oracle; it needs `timeout` or `gtimeout` on PATH.
-//! - `harness_differential_against_oracle` (ignored, about 30 s) runs both.
+//!   timing the normalisation hides. The goldens from before crash-fix step 1a
+//!   were recorded from the deleted `scripts/soak-qemu.sh` (R4's oracle) and
+//!   are kept by aios since step 1a split its classes; the `tripwire`
+//!   scenario, new in step 1a (the script wrote no tripwire columns), was
+//!   recorded from aios. `AIOS_BLESS_GOLDENS=1` rewrites them all from aios.
 //! - `sighup_and_sigquit_stop_qemu_and_clean_up` covers the two signals the
 //!   script did not handle (the port exits 129 or 131 instead of leaving QEMU
 //!   running).
@@ -18,11 +19,15 @@
 //! - `ctrl_z_stops_qemu_with_the_harness` covers SIGTSTP during a boot: QEMU
 //!   stops with the harness and its time limit waits for the resume (the
 //!   script's `timeout` killed it at the limit while bash was stopped).
+//! - `classify_out_writes_the_soak_s_rows` checks that `--classify --out` over
+//!   a soak's logs writes the same `summary.tsv` and the same `summary.md`
+//!   tables as the soak did (one writer, timing from the footers).
 
 mod common;
 
-use common::soak::{check_golden, golden_dir};
-use common::soak_fake::{golden_text, run_scenario, scenarios, suspended, Outcome, Scenario, Tool};
+use common::run_aios;
+use common::soak::check_golden;
+use common::soak_fake::{golden_text, run_scenario, scenarios, suspended, Outcome, Scenario};
 
 /// Run `f` over `items` on scoped threads, keeping the input order.
 fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -77,7 +82,7 @@ fn check_raw(sc: &Scenario, o: &Outcome) {
             in_range("qemu_rc", 137, 137);
             in_range("elapsed", 12, 13);
         }
-        "panic-exit" => {
+        "panic-exit" | "tripwire" => {
             in_range("qemu_rc", 1, 1);
             in_range("elapsed", 0, 2);
             in_range("kstart", 0, 2);
@@ -102,53 +107,12 @@ fn check_raw(sc: &Scenario, o: &Outcome) {
 #[test]
 fn harness_goldens_match_aios() {
     let all = scenarios();
-    let outcomes = parallel(&all, |sc| run_scenario(Tool::Aios, sc));
+    let outcomes = parallel(&all, run_scenario);
     let mut diffs = Vec::new();
     for (sc, o) in all.iter().zip(&outcomes) {
         check_raw(sc, o);
-        if let Some(d) = check_golden(
-            &format!("harness/{}.golden", sc.name),
-            &golden_text(o, false),
-        ) {
+        if let Some(d) = check_golden(&format!("harness/{}.golden", sc.name), &golden_text(o)) {
             diffs.push(d);
-        }
-    }
-    assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
-}
-
-#[test]
-#[ignore = "rewrites tests/golden/soak/harness/ from the oracle (needs timeout or gtimeout)"]
-fn record_harness_goldens_from_oracle() {
-    let all = scenarios();
-    let outcomes = parallel(&all, |sc| run_scenario(Tool::Oracle, sc));
-    std::fs::create_dir_all(golden_dir().join("harness")).expect("golden dir");
-    for (sc, o) in all.iter().zip(&outcomes) {
-        std::fs::write(
-            golden_dir().join(format!("harness/{}.golden", sc.name)),
-            golden_text(o, true),
-        )
-        .expect("write a golden");
-    }
-}
-
-#[test]
-#[ignore = "runs every scenario under bash and aios (about 30 s; needs timeout or gtimeout)"]
-fn harness_differential_against_oracle() {
-    let all = scenarios();
-    let pairs = parallel(&all, |sc| {
-        (run_scenario(Tool::Oracle, sc), run_scenario(Tool::Aios, sc))
-    });
-    let mut diffs = Vec::new();
-    for (sc, (oracle, aios)) in all.iter().zip(&pairs) {
-        let want = golden_text(oracle, true);
-        let got = golden_text(aios, false);
-        if want != got {
-            diffs.push(format!(
-                "{}\n--- oracle\n{}\n--- aios\n{}",
-                sc.name,
-                String::from_utf8_lossy(&want),
-                String::from_utf8_lossy(&got)
-            ));
         }
     }
     assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
@@ -174,7 +138,7 @@ fn sighup_and_sigquit_stop_qemu_and_clean_up() {
             interrupt: Some(signal),
             ..scenario("interrupt-int")
         };
-        run_scenario(Tool::Aios, &sc)
+        run_scenario(&sc)
     });
     for ((name, _, code), o) in cases.iter().zip(&outcomes) {
         assert_eq!(
@@ -219,7 +183,7 @@ fn a_signal_that_ends_a_setup_step_exits_with_its_status() {
             flags,
             ..scenario("panic-exit")
         };
-        run_scenario(Tool::Aios, &sc)
+        run_scenario(&sc)
     });
     for ((name, _, _), o) in cases.iter().zip(&outcomes) {
         // 130 and no `soak: error:`, as the script's trap exited.
@@ -243,7 +207,7 @@ fn an_interrupt_after_the_last_boot_skips_the_summary() {
         flags: &["uname-interrupts"],
         ..scenario("panic-exit")
     };
-    let o = run_scenario(Tool::Aios, &sc);
+    let o = run_scenario(&sc);
     assert_eq!(o.code, 130, "{}", String::from_utf8_lossy(&o.stderr));
     assert!(o.alive.is_empty(), "still running: {:?}", o.alive);
     assert_eq!(
@@ -254,7 +218,7 @@ fn an_interrupt_after_the_last_boot_skips_the_summary() {
 
 #[test]
 fn ctrl_z_stops_qemu_with_the_harness() {
-    let o = run_scenario(Tool::Aios, &suspended());
+    let o = run_scenario(&suspended());
     // Status 0 without report_only: the boot is CLEAN.
     assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stdout));
     assert!(
@@ -282,5 +246,56 @@ fn ctrl_z_stops_qemu_with_the_harness() {
             .is_some_and(|l| l.iter().any(|n| n == "summary.md")),
         "{:?}",
         o.listing
+    );
+}
+
+/// The output file `name` of an outcome.
+fn file<'a>(o: &'a Outcome, name: &str) -> &'a [u8] {
+    &o.files
+        .iter()
+        .find(|(n, _)| n == name)
+        .unwrap_or_else(|| panic!("no {name}"))
+        .1
+}
+
+/// `summary.md` from its tripwire table on: the part made from the boots alone.
+fn md_tables(md: &[u8]) -> String {
+    let md = String::from_utf8_lossy(md);
+    let at = md
+        .find("\n### Tripwire counters by class\n")
+        .expect("the tripwire table");
+    md[at..].to_string()
+}
+
+#[test]
+fn classify_out_writes_the_soak_s_rows() {
+    let o = run_scenario(&scenario("tripwire"));
+    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stderr));
+    let out = o.root.join("repo/out");
+    let run = run_aios(
+        &out,
+        &[
+            "soak",
+            "--report-only",
+            "--classify",
+            "--out",
+            "../again",
+            "run-01.log",
+            "run-02.log",
+        ],
+    );
+    assert_eq!(run.code, 0, "{}", String::from_utf8_lossy(&run.stderr));
+    let again = o.root.join("repo/again");
+    let tsv = std::fs::read(again.join("summary.tsv")).expect("summary.tsv");
+    // Every column, the timing ones included, since those come from the footers.
+    assert_eq!(
+        String::from_utf8_lossy(&tsv),
+        String::from_utf8_lossy(file(&o, "summary.tsv"))
+    );
+    let md = std::fs::read(again.join("summary.md")).expect("summary.md");
+    assert_eq!(md_tables(&md), md_tables(file(&o, "summary.md")));
+    assert!(
+        String::from_utf8_lossy(&tsv).contains("\tPANIC-LOCK\t"),
+        "the scenario exercises the step-1a columns"
     );
 }

@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      runs:
+        description: "Boots in the QEMU boot soak job (1-60, 90 s each); push and pull_request runs boot 5"
+        required: false
+        default: 5
+        type: number
 
 env:
   CARGO_TERM_COLOR: always
@@ -125,7 +131,9 @@ jobs:
     name: QEMU boot soak (report-only)
     # Measures boot flakiness for the crash investigation (see `just soak`).
     # Report-only: crashes show up in the summary and artifacts, never block CI.
-    # One soak per commit. claude/** branches get it from their push run, so
+    # One soak per commit. A manual dispatch can soak a commit again, with
+    # its runs input setting the number of boots; push and pull_request runs
+    # boot 5. claude/** branches get it from their push run, so
     # their pull_request run skips it. Every other PR head (renovate/*, other
     # same-repo branches, forks) has no push run and is soaked on the
     # pull_request event.
@@ -136,21 +144,57 @@ jobs:
     # A newer push to a branch or PR cancels its soak still running. On main
     # each commit has its own group and nothing is cancelled, so back-to-back
     # merges each keep their soak (and their CI run is not marked cancelled).
+    # Each manual dispatch has a group of its own (its run id), so it neither
+    # cancels nor is cancelled by a push soak or another dispatch on that ref.
     concurrency:
-      group: qemu-soak-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+      group: qemu-soak-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     # Pinned: the QEMU and edk2 versions come from the runner image, and soak
     # results are only comparable across runs on the same image.
     runs-on: ubuntu-26.04
     continue-on-error: true
-    timeout-minutes: 30
+    # GitHub's job limit: the soak step's own limit at the 60-boot maximum
+    # (110 min, see "Plan the soak") plus 20 min of setup, summary and upload.
+    timeout-minutes: 130
     env:
       AIOS_EDK2_FW: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+      # The dispatch input reaches the scripts as an environment variable,
+      # never as ${{ }} text inside a script. It is empty on push and
+      # pull_request, which have no inputs.
+      RUNS: ${{ inputs.runs }}
     steps:
       # Outside target/, which rust-cache saves and restores: the harness
       # refuses an output directory that is not new or empty.
       - name: Choose the soak output directory
         run: echo "SOAK_OUT=$RUNNER_TEMP/aios-soak" >> "$GITHUB_ENV"
+      # Boots: the runs input, or 5 when there is none. Soak step limit, in
+      # minutes: ceil(runs x (90 + 15) / 60) + 5, where 15 s per boot covers
+      # the harness's per-boot work and QEMU's exit after the SIGTERM at the
+      # time limit (up to 10 s before SIGKILL), and 5 min covers the warm
+      # `just disk`. 5 boots get 14 min, 60 boots 110.
+      - name: Plan the soak
+        id: plan
+        run: |
+          runs=${RUNS:-5}
+          # Whole numbers only, leading zeros dropped (bash would read 030
+          # as octal), and at most 2 digits before any arithmetic.
+          case "$runs" in
+            *[!0-9]*) echo "::error::runs must be a whole number (got '$runs')"; exit 1 ;;
+          esac
+          digits=${runs#"${runs%%[!0]*}"}
+          if [ "${#digits}" -gt 2 ]; then
+            echo "::error::runs must be at most 60 (got $digits)"
+            exit 1
+          fi
+          runs=$((10#$runs))
+          if [ "$runs" -lt 1 ] || [ "$runs" -gt 60 ]; then
+            echo "::error::runs must be from 1 to 60 (got $runs)"
+            exit 1
+          fi
+          minutes=$(( (runs * (90 + 15) + 59) / 60 + 5 ))
+          echo "Plan: $runs boots x (90 s + 15 s); soak step limit $minutes min"
+          echo "runs=$runs" >> "$GITHUB_OUTPUT"
+          echo "minutes=$minutes" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -172,8 +216,11 @@ jobs:
       - name: Build the host tools
         run: just tools
       # TCG on x86 is slower than on the arm64 dev hosts, hence 90 s per boot.
-      - name: Soak (5 boots x 90 s)
-        run: just soak runs=5 secs=90 report_only=1 out="$SOAK_OUT"
+      - name: Soak (${{ steps.plan.outputs.runs }} boots x 90 s)
+        timeout-minutes: ${{ fromJSON(steps.plan.outputs.minutes) }}
+        env:
+          SOAK_RUNS: ${{ steps.plan.outputs.runs }}
+        run: just soak runs="$SOAK_RUNS" secs=90 report_only=1 out="$SOAK_OUT"
       - name: Publish summary
         if: always()
         run: |

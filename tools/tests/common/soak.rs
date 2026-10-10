@@ -1,24 +1,23 @@
-//! Helpers for the `aios soak` parity tests (tests/soak_*.rs): the oracle,
-//! `scripts/soak-qemu.sh` read from git history at [`ORACLE_COMMIT`] so the
-//! differential tests keep running after R4 deleted the script (the #206
-//! pattern); the synthetic log corpus in `tests/fixtures/soak/synthetic.txt`;
-//! and the golden-file helpers. The fake QEMU environment is in `soak_fake`.
+//! Helpers for the `aios soak` tests (tests/soak_*.rs): the classifier oracle,
+//! `CLASSIFY_AWK` from `scripts/soak-qemu.sh` read from git history at
+//! [`ORACLE_COMMIT`], so the fold differential keeps running after R4 deleted
+//! the script (the #206 pattern); the synthetic log corpus in
+//! `tests/fixtures/soak/synthetic.txt`; and the golden-file helpers. The fake
+//! QEMU environment is in `soak_fake`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{LazyLock, OnceLock};
-
-use regex::bytes::Regex;
+use std::sync::OnceLock;
 
 use super::fixture::repo_root;
-use super::{isolated, Run};
+use super::isolated;
 
 /// main at R4's branch point: the last commit whose `scripts/soak-qemu.sh`
 /// is the one R4 ports. Its blob is the parity oracle.
 pub const ORACLE_COMMIT: &str = "212df62abcc4cbc024ea4011a408f1cd20a6494e";
 
 /// `tools/tests/golden/soak`.
-pub fn golden_dir() -> PathBuf {
+fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/soak")
 }
 
@@ -118,28 +117,6 @@ pub fn oracle_classify(log: &Path, stall: Option<u64>) -> Vec<u8> {
     let mut line = out.stdout;
     assert_eq!(line.pop(), Some(b'\n'), "one line from the awk program");
     line
-}
-
-/// `bash <oracle> args` in `cwd`, in the isolated environment plus `env`.
-pub fn run_oracle(cwd: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Run {
-    let mut command = Command::new("bash");
-    isolated(command.arg(oracle_script()).args(args).current_dir(cwd));
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    let out = command.output().expect("run bash");
-    Run {
-        code: out.status.code().unwrap_or(-1),
-        stdout: out.stdout,
-        stderr: out.stderr,
-    }
-}
-
-/// The script's stderr prefix, renamed by the port (a documented divergence).
-pub fn rename_prefix(stderr: &[u8]) -> Vec<u8> {
-    static PREFIX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^soak-qemu: ").expect("regex"));
-    PREFIX.replace_all(stderr, &b"soak: "[..]).into_owned()
 }
 
 // ---------------------------------------------------------------------------

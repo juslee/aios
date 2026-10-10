@@ -1,6 +1,7 @@
 //! `aios soak`: boot AIOS repeatedly under QEMU and classify every boot, or
 //! classify saved serial logs (`--classify`). A port of `scripts/soak-qemu.sh`
-//! (deleted in R4; the parity oracle is its blob at `212df62`).
+//! (deleted in R4; the parity oracle is its blob at `212df62`). With `--arm`
+//! (crash-fix step 1a), soak two to four checkouts interleaved ([`interleave`]).
 //!
 //! The command line is parsed by hand, in the script's `case` order, because
 //! the script's syntax is not clap's: `key=value` aliases, options only before
@@ -20,9 +21,13 @@
 pub mod awk;
 pub mod classify;
 pub mod host;
+pub mod interleave;
+pub mod pair;
 pub mod report;
 pub mod runner;
 pub mod signals;
+pub mod stats;
+pub mod tripwire;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -48,7 +53,8 @@ const BOOT_BUDGET_SECS: u64 = 20;
 
 /// `aios soak --help`.
 pub const USAGE: &str = r#"Usage: aios soak [options] [key=value ...]
-       aios soak --classify [--stall-secs S] LOG...
+       aios soak --arm DIR --arm DIR [--arm DIR [--arm DIR]] [options]
+       aios soak --classify [--stall-secs S] [--out DIR] LOG...
        just soak [options] [key=value ...]
 
 Boot AIOS N times under QEMU (same arguments as `just run` / `just run-gpu`),
@@ -59,7 +65,10 @@ save each boot's serial log, and classify every boot as exactly one of:
                 ELR may be up to 3 lines below the "EXCEPTION[CPU n]:" prefix;
                 an instruction abort with FAR=0 (EC=0x20/0x21, or the line
                 "Instruction Abort at 0x0000000000000000") counts as well
-  PANIC         "PANIC: " from the kernel panic handler
+  PANIC-LOCK    a PANIC whose message (the line after "PANIC: panicked at
+                <file>:<line>:<col>:", joined to it) contains "lock re-entry:"
+                (crash-fix step 1b's lock detector)
+  PANIC         any other "PANIC: " from the kernel panic handler
   EXCEPTION     any other exception report: "EXCEPTION[CPU n]:" (EL1),
                 "DATA ABORT (EL0)", "INST ABORT (EL0)", "UNKNOWN EXCEPTION
                 (EL0)", or an edk2-format "Synchronous Exception at 0x..."
@@ -69,11 +78,12 @@ save each boot's serial log, and classify every boot as exactly one of:
                 ELR=0x.." on EL1, "(EL0): FAR=0x" / "(EL0): EC=0x" on EL0),
                 or by a "Data/Instruction Abort at 0x" line with no report
                 in the 4 lines above it
-  WEDGE         no fatal report, the boot is not healthy at the end of the run
+  WEDGE-STUCK   no fatal report, the boot is not healthy at the end of the run
                 (see CLEAN), and it had more than --stall-secs to get there:
                 the CPU 0 heartbeat never printed, stayed at tick 0, or stopped
-                advancing; or it kept running but the Gate 1 bench never
-                completed; or (gpu mode) a GPU marker is missing
+                advancing
+  WEDGE-ALIVE   as WEDGE-STUCK, but the heartbeat kept running: the Gate 1
+                bench never completed, or (gpu mode) a GPU marker is missing
   INCONCLUSIVE  not a result about the kernel:
                 - the UEFI stub never ran: no "AIOS UEFI stub" line and no
                   kernel output, whatever QEMU's exit status (QEMU failed to
@@ -82,21 +92,30 @@ save each boot's serial log, and classify every boot as exactly one of:
                 - QEMU was killed by a signal before the time limit (exit
                   status above 128 other than the harness's own 124/137, or
                   137 before the limit) and no fatal report came first
-                - the symptoms of a WEDGE, but the run ended no more than
+                - the symptoms of a wedge, but the run ended no more than
                   --stall-secs after the boot's last progress (kernel start,
                   heartbeat, bench start), so the boot was cut short rather
                   than shown to be stuck
+  DEGRADED      CLEAN by every other rule, but the Gate 1 IPC line
+                ("[bench] IPC round-trip (same core): avg=N us, ...
+                (N iters)", the first one in the log) reports a count other
+                than 10000 iterations, is missing, or is cut before its count.
+                The count is shown where a CLEAN boot shows its detail, and
+                in summary.tsv's ipc_iters column ("-" when unreadable)
   CLEAN         no fatal report; the heartbeat advanced past tick 0 and a new
                 heartbeat arrived within the last --stall-secs of the run;
-                "=== Gate 1 Complete ===" was printed; and in gpu mode the
-                GpuReady, InputReady and "display handoff complete" markers
-                were printed
+                "=== Gate 1 Complete ===" was printed; the Gate 1 IPC line
+                reports 10000 iterations; and in gpu mode the GpuReady,
+                InputReady and "display handoff complete" markers were
+                printed
 
-Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC/EXCEPTION > QEMU
-killed by a signal (INCONCLUSIVE) > WEDGE/INCONCLUSIVE (cut short) > CLEAN.
-When a log holds several fatal reports, the earliest one decides the class
-(later ones are usually fallout, e.g. a data abort after a panic); the count
-is kept in the detail.
+Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC-LOCK/PANIC/EXCEPTION
+> QEMU killed by a signal (INCONCLUSIVE) > WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE
+(cut short) > DEGRADED > CLEAN. When a log holds several fatal reports, the
+earliest one decides the class (later ones are usually fallout, e.g. a data
+abort after a panic, so a "lock re-entry:" panic after an exception stays
+EXCEPTION); the count is kept in the detail. Soaks from before crash-fix step 1a report
+both wedge classes as WEDGE, PANIC-LOCK as PANIC, and DEGRADED as CLEAN.
 
 Heartbeat timing comes from the harness: it polls the log every second and
 appends a "[soak] meta" line recording when the kernel started, when the first
@@ -116,30 +135,146 @@ Options:
                      gpu:  `just run-gpu` devices plus -display none
                      (default text)
   --out DIR          output directory; must be new or empty and must not be
-                     the repository root (default target/soak/<timestamp>-<mode>)
+                     the repository root (default target/soak/<timestamp>-<mode>).
+                     With --classify: also write summary.tsv and summary.md
+                     for the logs there (no default: without it, nothing is
+                     written)
   --stall-secs S     heartbeat silence at the end that counts as a wedge
                      (default 15)
   --no-build         skip `just disk` and boot the existing ESP image
   --fresh-data       fresh zeroed 256 MiB data disk for every boot (default)
   --reuse-data       boot every run on the repository's data.img, so disk
                      state carries over between boots (like `just run`)
-  --report-only      exit 0 even when some boots are not CLEAN
-  --classify LOG...  classify existing log files instead of booting
+  --report-only      exit 0 even when some boots are not CLEAN (not with --arm,
+                     which is always report-only)
+  --arm DIR          interleave mode (see below); give it 2 to 4 times
+  --allow-mixed-toolchains
+                     with --arm: let the arms' toolchain channels and
+                     rustc versions differ (a toolchain-change pair); the
+                     report says so
+  --combine CLASS+CLASS[+...]
+                     with --arm: add a row for these classes counted
+                     together to every pair's tests (repeatable); e.g.
+                     --combine WEDGE-STUCK+PANIC-LOCK
+  --ignore-load      with --arm: soak even when the host's 1-minute load
+                     average is above its CPU count before the builds (the
+                     loads are still recorded)
+  --fail-on-regression
+                     with --arm: exit 1 when some pair's regression guard
+                     fails
+  --classify LOG...  classify existing log files instead of booting; with
+                     --out, number them in the order given, take each one's
+                     timing from its "[soak] meta" line, and give "-" for what
+                     logs cannot tell (commit, QEMU, firmware, host, load)
   -h, --help         show this help
 
 key=value aliases (so `just soak runs=5 mode=gpu` works): runs=N secs=T
-mode=text|gpu out=DIR stall_secs=S report_only=1
+mode=text|gpu out=DIR stall_secs=S report_only=1 arm=DIR combine=CLASS+CLASS
 
 `just soak` runs this command from the directory you invoke just in, so
 relative out= and --classify paths resolve against that directory. The soak
 boots the git checkout that contains that directory.
 
 Output directory: run-NN.log (raw serial output plus a trailing "[soak] meta"
-line), summary.tsv (one row per boot), summary.md (counts, 95% interval for
-the CLEAN rate, per-boot table) and build.log. The ESP snapshot and the fresh
+line), summary.tsv, summary.md and build.log. The ESP snapshot and the fresh
 data disks live in a private .scratch.* subdirectory that is removed at exit.
 
+summary.tsv has one row per boot, with a header line. Read it by column name:
+the first 22 columns are the script-era ones (class, ticks, timing, markers,
+detail, first fatal line, INFO lines, log); then ipc_avg_us (the Gate 1 IPC
+average in whole us, as the kernel truncates it) and ipc_iters; reentry_lock,
+reentry_ctx and reentry_holder_irqs (a PANIC-LOCK's message); ev_ph, ev_self,
+ev_self_irq (ctx=irq or irq-exit) and ev_stuck ("[tripwire-ev]" lock events);
+tw_v, tw_src, tw_cpu, tw_t, tw_ncpu and one tw_<key> per tripwire key, from
+the last complete "[tripwire]" line (docs/kernel/observability.md 6.5: its n=
+must equal its key=value count; a key it leaves out is 0; a line of another
+schema version fills only tw_v and tw_line); g1_elrmm, from the last complete
+src=g1 line; then the whole lines g1_line and tw_line. "-" means unreadable,
+or no such line. summary.md has the settings, the class counts, the CLEAN
+rate with its 95% Wilson interval, the mean Gate 1 IPC average over CLEAN
+boots, the tripwire counters by class, and the per-boot table.
+
+Interleave mode (--arm DIR, 2 to 4 times): soak 2 to 4 git checkouts (a
+worktree is fine) in one host session. They are labelled A to D in the order
+given; every two arms form a pair, the earlier one the "previous" arm and the
+later one the "new" arm. The same DIR twice is an A/A control, built once.
+Each arm is built once (`rustup toolchain install`, then `just disk`, in
+DIR, without RUSTUP_TOOLCHAIN, CARGO_TARGET_DIR or CARGO_BUILD_TARGET_DIR;
+both steps skipped with --no-build, which boots the ESP image already in
+DIR: the summary's Build row says so, and the arm-base and toolchain checks
+then cover DIR's HEAD and pinned toolchain, not that image or the compiler
+that built it) and its ESP snapshotted; then --runs rounds boot every arm
+once, the arm order moving by one each round (A B, B A, A B, ...), each boot
+on a fresh data disk (--reuse-data is refused). This harness boots and
+classifies every arm, with its own QEMU arguments (an arm's justfile `run`
+recipe is not used).
+Before any build, it refuses (exit 2):
+  - a missing git, just, rustup, rustc, qemu-system-aarch64 or mcopy
+    (rustup is needed with --no-build too: `rustc --version` relies on it
+    picking each arm's toolchain), or a qemu-system-aarch64 whose --version
+    prints nothing;
+  - an arm that does not contain 7167d40 (#196: strict-NX firmware faults
+    every older kernel);
+  - arms whose `just --evaluate edk2_fw` do not name one absolute firmware
+    file;
+  - arms whose rust-toolchain.toml channels differ (unless
+    --allow-mixed-toolchains);
+  - a host whose 1-minute load average is above its CPU count (unless
+    --ignore-load): boots on a loaded host measure the host as much as the
+    arms. The load is read again after the builds and at the end, and
+    before every boot; all are recorded.
+Each arm's `rustup toolchain install`, run in DIR before its build, must
+succeed (none runs with --no-build). After each arm's build: its HEAD must
+still be the commit the arm-base check saw, and its `rustc --version`, run
+in DIR, must match arm A's (unless --allow-mixed-toolchains). A cargo
+config above an arm's checkout (a worktree inside another checkout) joins
+the arm's build; it is warned about and named in summary.md's Parent cargo
+config row. Every boot runs the QEMU binary PATH resolves to and the firmware
+file edk2_fw resolves to (links followed once, before the builds); both
+(QEMU's version line and sha256, the firmware's sha256) are checked again
+before and after every boot; a change stops the soak (exit 2), and the boot it happened during is
+not counted. A boot on which the UEFI stub never ran is a harness error: on
+an arm's first boot it stops the soak at once (exit 2), as in single mode;
+after that, 3 such boots in a row (in boot order, across arms) stop it
+(exit 2). Those boots stay in the reports, as INCONCLUSIVE.
+Output (default target/soak/<timestamp>-<mode>-arms): arm-X/ for each arm,
+a normal single-run directory (run-NN.log, summary.tsv row by row,
+build.log in the first arm directory of each checkout built (none with
+--no-build), and summary.md once the soak finishes); arms.tsv (each arm's
+checkout, commit, channel, rustc, kernel and QEMU arguments); boots.tsv
+(round, position and arm, then summary.tsv's columns, one row per boot in
+boot order); and summary.md, rewritten after every boot, whose status line
+reads "running (k of N boots)", "stopped (<reason>) after k of N boots" or
+"finished (N boots)", with the settings, the arms, each arm's class counts
+and CLEAN rate, and the pair report:
+  - Load: each arm's per-boot load1 mean and max; a pair whose means differ
+    by more than 25% of the lower mean reads "redo the pair";
+  - Pair tests (Fisher's exact test on conclusive boots, INCONCLUSIVE left
+    out), one block per pair: the regression guard (fewer CLEAN in the new
+    arm, one-sided p < 0.05: "fails"), then one row per class and per
+    --combine group with both one-sided p values, the two-sided p, the rate
+    difference (recorded, never gated on), and the markers "removed" (none
+    in the new arm, one-sided p < 0.05) and "new" (none in the previous arm,
+    one-sided p < 0.05); with more than one pair, a Bonferroni note;
+  - Gate 1 IPC: each arm's mean ipc_avg_us over its CLEAN boots, and its
+    G1PASS count;
+  - Tripwire per arm: the conclusive non-CLEAN boots with neither a
+    complete tripwire line nor a fatal report (INCONCLUSIVE boots are not
+    counted; meaningful only for kernels that print tripwire lines; "n/a"
+    for an arm with none), and the tripwire counters by arm;
+  - Non-CLEAN boots: round, arm, class, last tick, first fatal line or
+    detail, tripwire source and log.
+Exit status: 0 when every boot ran, whatever the classes; 1 with
+--fail-on-regression when some pair's regression guard fails; 2 on a usage,
+preflight (the load check included) or setup error, or a stop for harness
+errors or a changed QEMU or firmware; 130, 143, 129 or 131 on a signal (once
+the boots have started, the summary's status names it; a signal during the
+builds leaves only the build logs).
+
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
+Debug builds of aios (the tests') also read AIOS_SOAK_MIN_ARM_BASE (the arm
+base) and AIOS_SOAK_LOADAVG (the load averages) and warn when they do; the
+release build `just soak` runs reads neither.
 Requires qemu-system-aarch64, just, mtools (for `just disk`) and the POSIX
 kill utility. Each boot's QEMU runs in its own process group: the harness
 sends the group SIGTERM when --secs run out and SIGKILL 10 s later, and
@@ -148,10 +283,11 @@ stopped QEMU, 137 when SIGKILL was needed). Ctrl-Z (SIGTSTP) stops the running
 QEMU along with the harness; on resume, the time limit and the boot's
 timings are moved back by the time spent stopped.
 
-Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
-boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
-build failure, the UEFI stub never running on the first boot) -- setup errors
-exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
+Exit status without --arm (a single soak, or --classify): 0 when every boot
+is CLEAN (or with --report-only), 1 when some boot is not CLEAN, 2 on a usage
+or setup error (bad arguments, unusable --out, build failure, the UEFI stub
+never running on the first boot) -- setup errors exit 2 even with
+--report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
 131 on SIGQUIT; QEMU is stopped first. SIGKILL cannot be caught: a harness
 killed by it leaves the running QEMU behind until it is killed by hand, so
 stop a soak with one of the four signals above. Likewise SIGSTOP, or SIGTTIN
@@ -170,8 +306,12 @@ pub enum Request {
         files: Vec<OsString>,
         stall_override: Option<u64>,
         report_only: bool,
+        /// `--out DIR`: also write `summary.tsv` and `summary.md` there.
+        out: Option<OsString>,
     },
     Soak(Config),
+    /// `--arm DIR` two to four times: an interleaved soak.
+    Interleave(interleave::Request),
 }
 
 /// The value as a positive decimal integer, as `is_uint "$v" && [ "$v" -ge 1 ]`
@@ -203,7 +343,7 @@ fn show(v: &[u8]) -> String {
 
 /// The option a `--opt=value` or `key=value` word sets, and its value.
 fn assignment(arg: &[u8]) -> Option<(&'static str, &[u8])> {
-    const FORMS: [(&[u8], &str); 11] = [
+    const FORMS: [(&[u8], &str); 15] = [
         (b"--runs=", "runs"),
         (b"runs=", "runs"),
         (b"--secs=", "secs"),
@@ -215,6 +355,10 @@ fn assignment(arg: &[u8]) -> Option<(&'static str, &[u8])> {
         (b"--stall-secs=", "stall"),
         (b"stall_secs=", "stall"),
         (b"report_only=", "report_only"),
+        (b"--arm=", "arm"),
+        (b"arm=", "arm"),
+        (b"--combine=", "combine"),
+        (b"combine=", "combine"),
     ];
     FORMS
         .iter()
@@ -234,6 +378,11 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let mut report_only = false;
     let mut fresh_data = true;
     let mut classify = false;
+    let mut arms: Vec<OsString> = Vec::new();
+    let mut allow_mixed = false;
+    let mut combine: Vec<Vec<classify::Class>> = Vec::new();
+    let mut ignore_load = false;
+    let mut fail_on_regression = false;
     let mut positional: Vec<OsString> = Vec::new();
 
     let mut i = 0;
@@ -250,12 +399,20 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                     stall = value;
                     stall_given = true;
                 }
+                "arm" => {
+                    if value.is_empty() {
+                        bail!("--arm needs a directory");
+                    }
+                    arms.push(value);
+                }
+                "combine" => combine.push(pair::parse_combine(&show(value.as_bytes()))?),
                 _ => report_only = truthy(value.as_bytes())?,
             }
             Ok(())
         };
         match arg {
-            b"--runs" | b"--secs" | b"--mode" | b"--out" | b"--stall-secs" => {
+            b"--runs" | b"--secs" | b"--mode" | b"--out" | b"--stall-secs" | b"--arm"
+            | b"--combine" => {
                 let Some(value) = args.get(i + 1) else {
                     bail!("option {} needs a value", show(arg));
                 };
@@ -264,6 +421,8 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                     b"--secs" => "secs",
                     b"--mode" => "mode",
                     b"--out" => "out",
+                    b"--arm" => "arm",
+                    b"--combine" => "combine",
                     _ => "stall",
                 };
                 set(key, value.clone())?;
@@ -275,6 +434,9 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
             b"--fresh-data" => fresh_data = true,
             b"--reuse-data" => fresh_data = false,
             b"--classify" => classify = true,
+            b"--allow-mixed-toolchains" => allow_mixed = true,
+            b"--ignore-load" => ignore_load = true,
+            b"--fail-on-regression" => fail_on_regression = true,
             b"-h" | b"--help" => return Ok(Request::Help),
             b"--" => {
                 positional = args[i + 1..].to_vec();
@@ -300,11 +462,27 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let Some(stall_n) = positive(&stall) else {
         bail!("--stall-secs must be a positive integer");
     };
+    if arms.is_empty() {
+        for (given, option) in [
+            (allow_mixed, "--allow-mixed-toolchains"),
+            (!combine.is_empty(), "--combine"),
+            (ignore_load, "--ignore-load"),
+            (fail_on_regression, "--fail-on-regression"),
+        ] {
+            if given {
+                bail!("{option} needs --arm");
+            }
+        }
+    }
     if classify {
+        if !arms.is_empty() {
+            bail!("--arm cannot be combined with --classify");
+        }
         return Ok(Request::Classify {
             files: positional,
             stall_override: stall_given.then_some(stall_n),
             report_only,
+            out,
         });
     }
     if let Some(first) = positional.first() {
@@ -333,7 +511,23 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     if mode != "text" && mode != "gpu" {
         bail!("--mode must be text or gpu, got '{mode}'");
     }
-    Ok(Request::Soak(Config {
+    if !arms.is_empty() {
+        if !(interleave::MIN_ARMS..=interleave::MAX_ARMS).contains(&arms.len()) {
+            bail!(
+                "--arm needs {} to {} arms, got {}",
+                interleave::MIN_ARMS,
+                interleave::MAX_ARMS,
+                arms.len()
+            );
+        }
+        if report_only {
+            bail!("--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes; --fail-on-regression makes a failed regression guard exit 1)");
+        }
+        if !fresh_data {
+            bail!("--reuse-data cannot be combined with --arm: every interleaved boot gets a fresh data disk");
+        }
+    }
+    let cfg = Config {
         runs_raw: show(runs.as_bytes()),
         runs: runs_n,
         secs_raw: secs_s,
@@ -344,24 +538,64 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
         build,
         report_only,
         fresh_data,
-    }))
+    };
+    Ok(if arms.is_empty() {
+        Request::Soak(cfg)
+    } else {
+        Request::Interleave(interleave::Request {
+            cfg,
+            arms,
+            allow_mixed_toolchains: allow_mixed,
+            combine,
+            ignore_load,
+            fail_on_regression,
+        })
+    })
+}
+
+/// The one value every log's footer gives for `key`, `mixed` when they
+/// differ, or `-` when none gives one.
+fn common_value(footers: &[runner::Footer], key: &str) -> String {
+    let mut values = footers.iter().filter_map(|f| f.get(key));
+    match values.next() {
+        None => "-".to_string(),
+        Some(first) if values.all(|v| v == first) => show(first),
+        Some(_) => "mixed".to_string(),
+    }
 }
 
 /// `run_classify`: classify each log, print its summary line (and, when it is
 /// not CLEAN, its first fatal line and last INFO lines). Exit 1 when some log
 /// is not CLEAN, unless `report_only`.
+///
+/// With `out`, also write `summary.tsv` and `summary.md` there, as a soak
+/// writes them: the boots are numbered in the order given, the `log` column
+/// is each path as given, and the timing columns come from each log's
+/// `[soak] meta` footer (`-` without one). What a set of logs cannot tell
+/// (the commit, QEMU, the firmware, the host, the load before and after) is
+/// `-`; the mode, `--secs` and the stall limit come from the footers when
+/// they agree.
 pub fn classify_files(
     files: &[OsString],
     stall_override: Option<u64>,
     report_only: bool,
+    out_arg: Option<&OsString>,
     cwd: &Path,
     out: &mut dyn Write,
 ) -> Result<u8> {
     if files.is_empty() {
         bail!("--classify needs at least one log file");
     }
+    let out_dir = out_arg
+        .map(|o| runner::fresh_out_dir(cwd, o, None))
+        .transpose()?;
+    let width = files.len().to_string().len().max(2);
+    let mut tsv = report::tsv_header();
+    let mut tally = report::Tally::default();
+    let mut footers = Vec::new();
+    let mut parents = Vec::new();
     let mut non_clean = false;
-    for file in files {
+    for (n, file) in files.iter().enumerate() {
         let path = cwd.join(file);
         if !path.is_file() {
             bail!("no such log file: {}", show(file.as_bytes()));
@@ -370,12 +604,78 @@ pub fn classify_files(
             .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", show(file.as_bytes())))?;
         let c = classify::classify(&raw, stall_override);
         out.write_all(&report::format_result(file.as_bytes(), &c))?;
-        if c.class != "CLEAN" {
+        if c.class != classify::Class::Clean {
             non_clean = true;
             out.write_all(&report::classify_details(&c))?;
         }
+        if out_dir.is_some() {
+            let idx = format!("{:0width$}", n + 1);
+            let footer = runner::Footer::parse(&raw);
+            let timing = footer.timing();
+            let mode = footer.get("mode").map_or_else(|| "-".to_string(), show);
+            tsv.extend(report::tsv_row(
+                &idx,
+                &mode,
+                &c,
+                &timing,
+                &show(file.as_bytes()),
+            ));
+            tally.add(&idx, &c, &timing);
+            footers.push(footer);
+            parents.push(path.parent().and_then(|p| std::fs::canonicalize(p).ok()));
+        }
+    }
+    if let Some(dir) = out_dir {
+        let tsv_path = dir.join("summary.tsv");
+        std::fs::write(&tsv_path, &tsv)
+            .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", tsv_path.display()))?;
+        // The directory that holds every log, when there is one.
+        let logs = match parents.first() {
+            Some(Some(first)) if parents.iter().all(|p| p.as_ref() == Some(first)) => {
+                first.as_os_str().as_bytes().to_vec()
+            }
+            _ => b"-".to_vec(),
+        };
+        let stall =
+            stall_override.map_or_else(|| common_value(&footers, "stall_limit"), |n| n.to_string());
+        let runs = files.len().to_string();
+        let mode = common_value(&footers, "mode");
+        let secs = common_value(&footers, "secs");
+        let info = report::SummaryInfo {
+            mode: &mode,
+            runs: &runs,
+            secs: &secs,
+            stall_secs: &stall,
+            fresh_data: None,
+            git_rev: "-",
+            kernel_sha: "-",
+            qemu_version: b"-",
+            firmware: b"-",
+            host: b"-",
+            load_start: "-",
+            load_end: "-",
+            out: &logs,
+        };
+        let head = report::summary_head(&info, &tally);
+        runner::write_summary(&dir, &head, &tally, out)?;
     }
     Ok(if non_clean && !report_only { 1 } else { 0 })
+}
+
+/// Warn when [`host::LOADAVG_VAR`] replaces the host's load average (debug
+/// builds only), so no soak's loads are faked silently.
+fn warn_load_override(err: &mut dyn Write) -> Result<()> {
+    if let Some(fixed) = host::loadavg_override() {
+        runner::warn(
+            err,
+            format!(
+                "{} replaces the host's load average with '{fixed}'; only debug builds read it",
+                host::LOADAVG_VAR
+            )
+            .as_bytes(),
+        )?;
+    }
+    Ok(())
 }
 
 /// Run `aios soak` with its raw arguments. Returns the exit status; `Err` is a
@@ -390,8 +690,23 @@ pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Wri
             files,
             stall_override,
             report_only,
-        } => classify_files(&files, stall_override, report_only, cwd, out),
-        Request::Soak(cfg) => runner::run(&cfg, cwd, out, err),
+            out: out_arg,
+        } => classify_files(
+            &files,
+            stall_override,
+            report_only,
+            out_arg.as_ref(),
+            cwd,
+            out,
+        ),
+        Request::Soak(cfg) => {
+            warn_load_override(err)?;
+            runner::run(&cfg, cwd, out, err)
+        }
+        Request::Interleave(req) => {
+            warn_load_override(err)?;
+            interleave::run(&req, cwd, out, err)
+        }
     }
 }
 
@@ -548,7 +863,8 @@ mod tests {
             Ok(Request::Classify {
                 files: os(&["a.log", "--report-only"]),
                 stall_override: Some(5),
-                report_only: false
+                report_only: false,
+                out: None,
             })
         );
         assert_eq!(
@@ -556,7 +872,8 @@ mod tests {
             Ok(Request::Classify {
                 files: os(&["-x.log"]),
                 stall_override: None,
-                report_only: true
+                report_only: true,
+                out: None,
             })
         );
         // Soak-only options are not checked in --classify mode.
@@ -565,12 +882,120 @@ mod tests {
             Ok(Request::Classify {
                 files: vec![],
                 stall_override: None,
-                report_only: false
+                report_only: false,
+                out: None,
             })
         );
         assert_eq!(
             error(&["--stall-secs", "0", "--classify", "a.log"]),
             "--stall-secs must be a positive integer"
+        );
+    }
+
+    fn interleave(args: &[&str]) -> interleave::Request {
+        match parse_str(args).0 {
+            Ok(Request::Interleave(req)) => req,
+            other => panic!("{args:?}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arm_options_select_interleave_mode() {
+        let req = interleave(&["--arm", "a", "arm=b", "--arm=c", "runs=2", "--no-build"]);
+        assert_eq!(req.arms, os(&["a", "b", "c"]));
+        assert!(!req.allow_mixed_toolchains);
+        assert_eq!(
+            (req.cfg.runs, req.cfg.build, req.cfg.report_only),
+            (2, false, false)
+        );
+        assert!(req.cfg.fresh_data);
+        let req = interleave(&["--arm", ".", "--arm", ".", "--allow-mixed-toolchains"]);
+        assert_eq!(req.arms, os(&[".", "."]));
+        assert!(req.allow_mixed_toolchains);
+        assert!(req.combine.is_empty() && !req.ignore_load && !req.fail_on_regression);
+        let req = interleave(&[
+            "arm=a",
+            "arm=b",
+            "--combine",
+            "WEDGE-STUCK+PANIC-LOCK",
+            "combine=PANIC+EXCEPTION",
+            "--combine=PCZERO+CLEAN",
+            "--ignore-load",
+            "--fail-on-regression",
+        ]);
+        use classify::Class;
+        assert_eq!(
+            req.combine,
+            [
+                vec![Class::WedgeStuck, Class::PanicLock],
+                vec![Class::Panic, Class::Exception],
+                vec![Class::PcZero, Class::Clean],
+            ]
+        );
+        assert!(req.ignore_load && req.fail_on_regression);
+        // report_only=0 is not --report-only.
+        assert!(
+            !interleave(&["arm=a", "arm=b", "report_only=0"])
+                .cfg
+                .report_only
+        );
+    }
+
+    #[test]
+    fn arm_usage_errors() {
+        assert_eq!(error(&["--arm", "a"]), "--arm needs 2 to 4 arms, got 1");
+        assert_eq!(
+            error(&["arm=a", "arm=b", "arm=c", "arm=d", "arm=e"]),
+            "--arm needs 2 to 4 arms, got 5"
+        );
+        assert_eq!(error(&["--arm"]), "option --arm needs a value");
+        assert_eq!(error(&["arm=", "arm=b"]), "--arm needs a directory");
+        assert_eq!(
+            error(&["--arm", "a", "--arm", "b", "--report-only"]),
+            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes; --fail-on-regression makes a failed regression guard exit 1)"
+        );
+        assert_eq!(
+            error(&["report_only=1", "--arm", "a", "--arm", "b"]),
+            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes; --fail-on-regression makes a failed regression guard exit 1)"
+        );
+        assert_eq!(
+            error(&["--arm", "a", "--arm", "b", "--reuse-data"]),
+            "--reuse-data cannot be combined with --arm: every interleaved boot gets a fresh data disk"
+        );
+        assert_eq!(
+            error(&["--allow-mixed-toolchains"]),
+            "--allow-mixed-toolchains needs --arm"
+        );
+        assert_eq!(
+            error(&["--arm", "a", "--classify", "x.log"]),
+            "--arm cannot be combined with --classify"
+        );
+        assert_eq!(
+            error(&["--classify", "--allow-mixed-toolchains", "x.log"]),
+            "--allow-mixed-toolchains needs --arm"
+        );
+        // No interleave-only flag is accepted and ignored.
+        for (args, option) in [
+            (&["--combine", "PANIC+PANIC-LOCK"][..], "--combine"),
+            (&["combine=PANIC+PANIC-LOCK"][..], "--combine"),
+            (&["--ignore-load"][..], "--ignore-load"),
+            (&["--fail-on-regression"][..], "--fail-on-regression"),
+            (
+                &["--classify", "--ignore-load", "x.log"][..],
+                "--ignore-load",
+            ),
+        ] {
+            assert_eq!(error(args), format!("{option} needs --arm"), "{args:?}");
+        }
+        assert_eq!(
+            error(&["--arm", "a", "--arm", "b", "--combine", "PANIC"]),
+            "--combine needs two or more classes joined by +, got 'PANIC'"
+        );
+        assert_eq!(error(&["--combine"]), "option --combine needs a value");
+        // The shared options are checked first, as in single mode.
+        assert_eq!(
+            error(&["--arm", "a", "runs=0"]),
+            "--runs must be a positive integer"
         );
     }
 

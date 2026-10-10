@@ -1,0 +1,24 @@
+exit 2
+--- stdout
+soak: arm A: installing its pinned toolchain (rustup toolchain install) -> <ROOT>/repo/out/arm-A/build.log
+soak: arm A: building ESP image (just disk) -> <ROOT>/repo/out/arm-A/build.log
+soak: arm B: installing its pinned toolchain (rustup toolchain install) -> <ROOT>/repo/out/arm-B/build.log
+soak: arm B: building ESP image (just disk) -> <ROOT>/repo/out/arm-B/build.log
+--- stderr
+soak: warning: AIOS_SOAK_LOADAVG replaces the host's load average with '0.50 0.40 0.30'; only debug builds read it
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+soak: error: the arms' compilers differ (arm A: rustc 1.99.0-nightly (fake 2026-10-09), arm B: rustc 1.98.0-nightly (fake 2026-10-01)); pass --allow-mixed-toolchains to soak a toolchain change
+--- out: arm-A/build.log arm-B/build.log
+--- file arm-A/build.log
+fake rustup: toolchain installed
+fake build
+--- file arm-B/build.log
+fake rustup: toolchain installed
+fake build
+--- boots: 0
+--- rustup.log
+toolchain install --no-self-update in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset
+toolchain install --no-self-update in <ROOT>/arms/b RUSTUP_TOOLCHAIN=unset
+--- just.log
+disk in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset CARGO_BUILD_TARGET_DIR=unset
+disk in <ROOT>/arms/b RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset CARGO_BUILD_TARGET_DIR=unset
