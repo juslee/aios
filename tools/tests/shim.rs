@@ -372,6 +372,42 @@ impl Sandbox {
         cmd.output().expect("run the shim")
     }
 
+    /// `run_at` with `stdin` piped to the shim, as Claude Code pipes a hook's
+    /// payload.
+    fn run_stdin_at(
+        &self,
+        shim: &Path,
+        args: &[&str],
+        envs: &[(&str, &str)],
+        stdin: &str,
+    ) -> Output {
+        let mut cmd = Command::new(shim);
+        isolated(&mut cmd);
+        cmd.env("PATH", self.path_env())
+            .current_dir(self.repo.path())
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
+        let mut child = cmd.spawn().expect("run the shim");
+        // A hook program that never reads its payload may exit first: the
+        // write then fails with a broken pipe, which is no test failure.
+        child
+            .stdin
+            .take()
+            .expect("a piped stdin")
+            .write_all(stdin.as_bytes())
+            .ok();
+        child.wait_with_output().expect("wait for the shim")
+    }
+
+    fn run_stdin(&self, args: &[&str], envs: &[(&str, &str)], stdin: &str) -> Output {
+        self.run_stdin_at(&self.shim(), args, envs, stdin)
+    }
+
     fn run(&self, args: &[&str]) -> Output {
         self.run_at(&self.shim(), args, &[])
     }
@@ -1745,6 +1781,12 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     let out = sandbox.run_at(&shim, &["guard", "PreToolUse"], &[("PATH", &path)]);
     assert_asks(&out, NO_MAIN);
 
+    // A hook program never exits 3 (Claude Code would run the tool): it
+    // falls back and prints nothing.
+    let out = sandbox.run_stdin_at(&shim, &["hook", "route-outcome"], &[("PATH", &path)], "{}");
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+
     // A stale worktree binary and a slow build: a shim that took the worktree
     // for the main checkout would hold the worktree's build lock on return.
     set_mtime(&other, STALE_STAMP);
@@ -1821,4 +1863,237 @@ fn a_bare_override_names_a_file_in_the_current_directory() {
     let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", "path-only-aios")]);
     assert_eq!(code(&out), 3);
     assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+}
+
+// `aios hook ...`: the Claude Code hook programs. Registered on every Bash
+// call, edit and Agent call, so the shim never builds in the foreground and
+// always exits 0. A binary that is missing, stale, dirty or failing is no
+// decision: the fallback prints nothing, except for `path-guard`, which denies
+// the agent types it guards.
+
+/// A `hook path-guard` call that guards `worker` under `kernel/`.
+const PG: [&str; 6] = [
+    "hook",
+    "path-guard",
+    "--agent-type",
+    "worker",
+    "--deny",
+    "kernel/",
+];
+
+/// A PreToolUse `Write` of `/x/kernel/a.rs`, plus the top-level `fields` (a
+/// string of `,"key":value` pairs).
+fn payload(fields: &str) -> String {
+    format!(
+        r#"{{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{{"file_path":"/x/kernel/a.rs","content":"x"}}{fields}}}"#
+    )
+}
+
+/// A payload from the guarded agent type `worker`.
+fn worker() -> String {
+    payload(r#","agent_type":"worker","agent_id":"a1""#)
+}
+
+/// The shim exited 0 with exactly one PreToolUse "deny" decision.
+fn is_deny(out: &Output) -> bool {
+    code(out) == 0
+        && serde_json::from_str::<serde_json::Value>(&stdout(out))
+            .map(|decision| decision["hookSpecificOutput"]["permissionDecision"] == "deny")
+            .unwrap_or(false)
+}
+
+fn assert_denies(out: &Output) {
+    assert!(is_deny(out), "{}{}", stdout(out), stderr(out));
+}
+
+/// The shim exited 0 and printed nothing.
+fn assert_silent(out: &Output) {
+    assert_eq!(code(out), 0, "stderr: {}", stderr(out));
+    assert!(stdout(out).is_empty(), "{}", stdout(out));
+}
+
+/// The entries under target/tools that the hook branch's per-call link
+/// directories use.
+fn hook_link_dirs(sandbox: &Sandbox) -> Vec<String> {
+    std::fs::read_dir(sandbox.repo.path().join("target/tools"))
+        .expect("list target/tools")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".hook."))
+        .collect()
+}
+
+// Row 1: a missing binary never holds the hook up behind a build.
+#[test]
+fn a_hook_with_no_binary_starts_a_background_build_and_returns_at_once() {
+    let sandbox = Sandbox::new("shim-hook-missing");
+    let started = Instant::now();
+    let out = sandbox.run_stdin(
+        &["hook", "repeat-error"],
+        &[("FAKE_CARGO_DELAY", "5")],
+        "{}",
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "the hook waited for the build"
+    );
+    assert_silent(&out);
+    sandbox.wait_for_background_build();
+}
+
+// Rows 2-6b: path-guard's fallback denies the guarded agent types, reading the
+// payload's top-level keys only.
+#[test]
+fn the_path_guard_fallback_denies_the_guarded_agent_types() {
+    let sandbox = Sandbox::new("shim-hook-fallback");
+
+    // 2: a guarded agent type is denied, with the reason T16 looks for.
+    let out = sandbox.run_stdin(&PG, &[], &worker());
+    assert_denies(&out);
+    assert!(
+        stdout(&out).contains("path-guard could not run"),
+        "{}",
+        stdout(&out)
+    );
+
+    // 3: another type passes, even when a string field holds the escaped text
+    // of a guarded type's key.
+    let quoted = payload(r##","agent_type":"kernel-dev","note":"\"agent_type\":\"worker\"""##);
+    assert_silent(&sandbox.run_stdin(&PG, &[], &quoted));
+
+    // 4: an agent_id without an agent_type is a subagent of unknown type.
+    let unknown = payload(r#","agent_id":"a1""#);
+    assert_denies(&sandbox.run_stdin(&PG, &[], &unknown));
+
+    // 5: neither field, the main thread: not guarded.
+    assert_silent(&sandbox.run_stdin(&PG, &[], &payload("")));
+
+    // 6: no --agent-type value guards every caller.
+    let kernel_dev = payload(r#","agent_type":"kernel-dev","agent_id":"a1""#);
+    let out = sandbox.run_stdin(
+        &["hook", "path-guard", "--deny", "kernel/"],
+        &[],
+        &kernel_dev,
+    );
+    assert_denies(&out);
+
+    // 6b: a blank value is a registration mistake and guards every caller too.
+    let out = sandbox.run_stdin(
+        &[
+            "hook",
+            "path-guard",
+            "--agent-type",
+            " ",
+            "--deny",
+            "kernel/",
+        ],
+        &[],
+        &kernel_dev,
+    );
+    assert_denies(&out);
+    sandbox.wait_for_background_build();
+}
+
+// Rows 7, 8, 16: a binary that exits non-zero is no decision, and its own
+// stdout never leaks.
+#[test]
+fn a_failing_hook_binary_falls_back_and_its_output_is_dropped() {
+    let sandbox = Sandbox::new("shim-hook-failing");
+    sandbox.install_bin(true);
+    let envs = [("FAKE_EXIT", "2")];
+
+    let out = sandbox.run_stdin(&PG, &envs, &worker());
+    assert_denies(&out);
+    assert!(!stdout(&out).contains("fake:"), "{}", stdout(&out));
+    let kernel_dev = payload(r#","agent_type":"kernel-dev","agent_id":"a1""#);
+    assert_silent(&sandbox.run_stdin(&PG, &envs, &kernel_dev));
+
+    assert_silent(&sandbox.run_stdin(&["hook", "repeat-error"], &envs, "{}"));
+    assert!(sandbox.no_build_started());
+    assert!(hook_link_dirs(&sandbox).is_empty(), "the link is removed");
+}
+
+// Rows 9, 16: a fresh binary runs, with no build and no link left behind.
+#[test]
+fn a_hook_runs_a_fresh_binary() {
+    let sandbox = Sandbox::new("shim-hook-fresh");
+    sandbox.install_bin(true);
+    let out = sandbox.run_stdin(&["hook", "route-outcome"], &[], "{}");
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), "fake:hook route-outcome\n");
+    assert!(sandbox.no_build_started());
+    assert!(hook_link_dirs(&sandbox).is_empty(), "the link is removed");
+}
+
+// Row 10 (owner question Q5, "treat as missing"): a stale binary is not run.
+#[test]
+fn a_stale_binary_is_treated_as_missing_by_a_hook() {
+    let sandbox = Sandbox::new("shim-hook-stale");
+    sandbox.install_bin(false);
+    let envs = [("FAKE_CARGO_DELAY", "5")];
+
+    let started = Instant::now();
+    let out = sandbox.run_stdin(&["hook", "route-shadow"], &envs, "{}");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "the hook waited for the build"
+    );
+    assert_silent(&out);
+    assert!(!sandbox.no_build_started(), "a background build starts");
+
+    assert_denies(&sandbox.run_stdin(&PG, &envs, &worker()));
+    sandbox.wait_for_background_build();
+}
+
+// Row 11: an override that is not runnable falls back; it does not exit 3.
+#[test]
+fn a_hook_with_a_missing_override_falls_back() {
+    let sandbox = Sandbox::new("shim-hook-override");
+    let out = sandbox.run_stdin(&PG, &[("AIOS_TOOLS_BIN", "/nonexistent/aios")], &worker());
+    assert_denies(&out);
+    assert!(sandbox.no_build_started());
+}
+
+// Row 13: a fresh binary's decision passes through unchanged.
+#[test]
+fn a_hook_binarys_decision_passes_through() {
+    let sandbox = Sandbox::new("shim-hook-passthrough");
+    sandbox.install(Some("#!/bin/sh\ncat >/dev/null\necho '{\"d\":1}'\n"), true);
+    let out = sandbox.run_stdin(&PG, &[], &worker());
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), "{\"d\":1}\n");
+    assert!(hook_link_dirs(&sandbox).is_empty(), "the link is removed");
+}
+
+// Row 14 (Q5): a binary built from dirty inputs is not run, and no build
+// starts, since a rebuild would be dirty again.
+#[test]
+fn a_dirty_binary_is_treated_as_missing_by_a_hook_without_a_build() {
+    let sandbox = Sandbox::new("shim-hook-dirty");
+    sandbox
+        .repo
+        .write("tools/src/lib.rs", "// an uncommitted edit\n");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+
+    assert_silent(&sandbox.run_stdin(&["hook", "repeat-error"], &[], "{}"));
+    assert_denies(&sandbox.run_stdin(&PG, &[], &worker()));
+    assert!(sandbox.no_build_started());
+}
+
+// Row 15: a replaced binary is stale even when future-dated, so it never runs.
+#[test]
+fn a_replaced_binary_never_runs_as_a_hook() {
+    let sandbox = Sandbox::new("shim-hook-replaced");
+    sandbox.install_bin(true);
+    write_executable(
+        &sandbox.bin(),
+        "#!/bin/sh\nprintf 'replaced:%s\\n' \"$*\"\n",
+    );
+    set_mtime(&sandbox.bin(), NEWER_STAMP);
+
+    let out = sandbox.run_stdin(&["hook", "repeat-error"], &[], "{}");
+    assert_silent(&out);
+    assert!(!sandbox.no_build_started(), "a background build starts");
+    sandbox.wait_for_background_build();
 }
