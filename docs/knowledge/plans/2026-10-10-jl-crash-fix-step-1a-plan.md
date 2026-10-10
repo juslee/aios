@@ -357,6 +357,8 @@ The `.claude/` edits go through a permission prompt (rule 08), so they are batch
 
 ## Open questions for the owner
 
+**Answered 2026-10-10 11:31 (owner): every recommendation taken: Q1 A, Q2 A, Q3 A, Q4 A, Q5 A, Q6 refuse-with-override and the min-based ratio, Q7 A, Q8 A.** The questions stay below as the record of the options.
+
 Each has options and a recommendation. Nothing below is decided by this plan, and the tasks that depend on a question wait for its answer: Q1 and Q8 gate T8 and T10; Q2 gates T5; Q3 gates T5 and T6; Q4 gates T3; Q5 gates T4; Q6 gates T9; Q7 gates T10.
 
 **Q1. What happens to `scripts/soak-matrix.sh` and `soak-matrix.yml`?**
@@ -450,6 +452,16 @@ The verdict is reported. The harness never stops a running soak over it.
 (to be filled during implementation)
 
 ## Decisions Made
+
+- Owner, 2026-10-10 11:31: every recommendation in "Open questions" taken.
+  - Q1 A: `aios soak --arm` replaces `scripts/soak-matrix.sh`, which is deleted; `soak-matrix.yml` keeps its trust model, makes the arm worktrees in YAML and runs `just soak --arm …`.
+  - Q2 A: `aios-tools` depends on `shared` by path; rule 01's tools-dependency sentence is amended.
+  - Q3 A: every tripwire key as a column, plus the line, the H3 event and re-entry inputs and the IPC figures, appended after the existing 22.
+  - Q4 A: keep the fold differential against the oracle; re-bless the CLI, harness and classify goldens; delete the other differentials and the oracle recorders.
+  - Q5 A: an unreadable IPC iteration count after Gate 1 is DEGRADED.
+  - Q6: refuse above the CPU count unless `--ignore-load`; the 25% rule is |mean_A − mean_B| / min(mean_A, mean_B).
+  - Q7 A: `runs` is boots per soak, default 5, with a derived and capped time limit.
+  - Q8 A: 2–4 arms.
 
 (to be filled during implementation)
 
