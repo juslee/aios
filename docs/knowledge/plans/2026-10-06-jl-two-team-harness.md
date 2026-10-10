@@ -665,12 +665,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
   - [ ] Acceptance: `rg -n 'model:|effort:' .claude/workflows/audit-loop.js` prints nothing; `rg -c 'agentType' .claude/workflows/audit-loop.js` is 3 or more; the run prints `complete,in_diff,lens_failures,pre_existing,refuted,uncertain` and `[]` (a lens failing with an unknown agent type means the run did not start inside `W`). The docs gate shows only `plans-not-empty`.
 
-- [ ] **T12b: the simplifier agent and the ship-pass simplify step**
+- [x] **T12b: the simplifier agent and the ship-pass simplify step**
 
   **Files:** Create `.claude/agents/simplifier.md` (based on the pr-review-toolkit `code-simplifier` agent, adapted to AIOS; frontmatter and protocol as in `worker.md` and `kernel-dev.md`). Modify `.claude/CLAUDE.md` (the Agents table row and the layout `agents/` line only), `.claude/rules/04-phase-workflow.md` (a bullet before `/audit-loop` in step 9), `.claude/rules/11-teams.md` (writer list, a Simplify bullet before Audit, writer areas), `.claude/rules/02-quality-gates.md` (one clause in the audit section), `.claude/skills/justin/skills/team/SKILL.md` (a loop step before the audit; later steps renumbered, the `MAIN-MOVED` row follows), `.claude/skills/implement-phase/SKILL.md` (a step before `/audit-loop`; steps and the "steps N-M" reference renumbered).
 
-  - [ ] Step 1: write the agent (`model: opus`, `effort: high`, `isolation: worktree`, `maxTurns: 300`; rule 11's writer protocol; behaviour-preserving, scoped to the range's files, leaves reviewer-settled code alone, runs every gate covering a touched file, never boots QEMU and reports `KERNEL-BYTES: yes|no`, rule 01 and "no legacy", one commit per logical simplification) and add the single ship-pass step to the four files plus the one-line rule 02 mention.
-  - [ ] Acceptance (run in the implementer's worktree):
+  - [x] Step 1: write the agent (`model: opus`, `effort: high`, `isolation: worktree`, `maxTurns: 300`; rule 11's writer protocol; behaviour-preserving, scoped to the range's files, leaves reviewer-settled code alone, runs every gate covering a touched file, never boots QEMU and reports `KERNEL-BYTES: yes|no`, rule 01 and "no legacy", one commit per logical simplification) and add the single ship-pass step to the four files plus the one-line rule 02 mention.
+  - [x] Acceptance (run in the implementer's worktree):
     ```bash
     ls .claude/agents | tr '\n' ' '
     for f in .claude/agents/*.md; do printf '%s %s %s\n' "$(basename "$f" .md)" "$(sed -n 's/^model: //p' "$f")" "$(sed -n 's/^effort: //p' "$f")"; done

@@ -2293,9 +2293,7 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 
 AIOS development runs as one or two attended Claude Code lead sessions (`team-build`, `team-fix`, or a solo session) that spawn specialist agents, plus project skills. The agent roster with models and effort, and the skill list, are in [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture. The rules for placing agents are in `.claude/rules/11-teams.md`; the two-lead protocol and the model-routing hooks are in [agent-loop.md](agent-loop.md) § Teams and § Model routing.
 
-All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
-
-The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
+All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively; [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture is the authoritative reference.
 
 ### Agents
 
@@ -2357,8 +2355,7 @@ create worktree → writers commit on temporary branches from its tip, the lead 
 # Create a worktree for doc work
 git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 
-# Work in it
-# the session stays in the main checkout; writers work from its tip in their own temporary worktrees, and the session fast-forwards it (rule 11)
+# The session stays in the main checkout; writers work from the branch tip in their own temporary worktrees, and the session fast-forwards it (rule 11)
 
 # Before the PR merges, from the main checkout: copy out what git ignores,
 # because removing the worktree deletes ignored files without asking
@@ -2376,29 +2373,7 @@ The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncomm
 
 ### Audit Loop Pattern
 
-The `/audit-loop` skill enforces quality through a mandatory **two-level convergence protocol** before any PR:
-
-**Scope detection** (automatic): checks `git diff --name-only main...HEAD` — if all changed files are `.md`, runs docs-only mode; if any non-`.md` files changed, runs full mode.
-
-**Docs-only mode**: doc audit (cross-reference errors, technical accuracy, naming consistency)
-
-**Full mode**: doc audit + code review (convention compliance, unsafe documentation, W^X, dead code) + security/bug review (logic errors, address confusion, PTE bit correctness, race conditions)
-
-**Two-level loop**:
-
-```text
-OUTER LOOP:
-  INNER LOOP:
-    Run audits → if issues found: fix, commit, push → repeat
-    If 0 issues: exit inner loop → restart outer loop (fresh audit)
-  OUTER EXIT:
-    If fresh restart finds 0 issues on FIRST round → DONE
-    Otherwise: enter inner loop again
-```
-
-**Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
-
-The audit loop is **mandatory before any PR** — see [rule 04](../../.claude/rules/04-phase-workflow.md) (Phase Implementation Workflow).
+`/audit-loop` ([SKILL.md](../../.claude/skills/audit-loop/SKILL.md)) runs rounds of `.claude/workflows/audit-loop.js` against the merge-base, in modes kernel, tools, both or docs, with skeptics verifying each finding. It stops after 4 rounds, or after 2 incomplete rounds in a row, and runs before `gh pr ready` on the simplified head ([rule 02](../../.claude/rules/02-quality-gates.md)).
 
 ### Knowledge Hive Integration
 

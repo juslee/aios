@@ -4,7 +4,7 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
 
 ## Sessions
 
-- **Team mode** is two attended terminal sessions, each started from the main checkout on a clean `main` with `AIOS_TEAM=<team> claude -n <team> --model opus`. The teams split the work by domain, and each runs its own branches end to end (plan, steps, audit, soak, ship pass, PR):
+- **Team mode** is two attended terminal sessions, each started from the main checkout on a clean `main` with `AIOS_TEAM=<team> claude -n <team> --model opus`. The teams split the work by domain, and each runs its own branches end to end (plan, steps, simplify, audit, soak, ship pass, PR):
   - `team-build`: the harness (`.claude/`), `tools/`, `scripts/`, CI, docs drift, and new features;
   - `team-fix`: the boot-crash fix steps, nearby kernel bugs, and the capability-lifetime work.
 

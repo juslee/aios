@@ -64,7 +64,7 @@ Work, loop, retro and setup skills belong to later stages and do not exist yet.
 | Boot soak results | `summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in a run directory under `target/soak/` (`<timestamp>-<mode>` by default; `out=target/soak/167/main-text-r1` nests it deeper; runs that `out=` puts outside `target/soak/` are not read by `/justin:brief`) in whichever worktree ran the soak harness; before merging a PR, `/merge-and-cleanup` copies its worktree's runs to the main checkout as `target/soak/pr<number>-<run>`. `scripts/soak-matrix.sh` writes to `target/soak-matrix/<timestamp>-<mode>/` in the main checkout by default instead, whichever worktree runs it, because that copy skips it (`--out DIR` overrides it, and the `Soak matrix` workflow always passes one; keep an `--out` outside PR worktrees); `/justin:brief` does not read it | this Mac |
 | Team ownership | PR and issue labels `team-build`, `team-fix`; "Owned branches" in each lead's handoff file | anyone / this Mac |
 | Host QEMU lock | `<git-common-dir>/aios-agent/qemu.lock/owner` (`scripts/agent/qemu-lock.sh status`); cleared stale locks in `<git-common-dir>/aios-agent/qemu-lock.log` | this Mac |
-| Audit ledgers | `<git-common-dir>/aios-agent/audit/<branch>/<head>.json`; saved round args in `.../audit/args/` | this Mac |
+| Audit ledgers | `<git-common-dir>/aios-agent/audit/<branch>/<head>.json` | this Mac |
 | Hook state | `<git-common-dir>/aios-agent/hooks/`: `route-shadow.jsonl` (Jev's answer per Agent dispatch), `route-outcome.jsonl` (`launched`, `launch_failed`, `stopped`, `error` records), `repeat-error/` (per-session failure counters, deleted after 7 days). `AIOS_HOOK_STATE_DIR` overrides the directory. | this Mac |
 
 GitHub labels: `needs-human` (waiting for an owner decision; agents do not claim it or change the files it names), `agent-ready` (owner-approved and claimable; only the owner applies it), `agent-working` (claimed by an agent session), `agent` (opened by an agent, so agent work can be counted), `team-build`, `team-fix` (which team owns a PR or issue; see Teams).
@@ -106,7 +106,7 @@ Press Esc to interrupt the current turn; close the terminal to end the session. 
 
 ## Teams
 
-Two attended lead sessions split the work by domain. Each owns its branches end to end: plan, steps, audit, soak, ship pass, PR, and the hand-off to you. Hard rules are in `.claude/rules/11-teams.md`.
+Two attended lead sessions split the work by domain. Each owns its branches end to end: plan, steps, simplify, audit, soak, ship pass, PR, and the hand-off to you. Hard rules are in `.claude/rules/11-teams.md`.
 
 - **team-build**: the harness (`.claude/`), `tools/`, `scripts/`, CI, docs drift, and new features.
 - **team-fix**: the boot-crash fix steps, nearby kernel bugs, and the capability-lifetime work.
@@ -166,7 +166,7 @@ One writer works on a branch at a time; the second of two would lose the fast-fo
 - **Plan:** every working plan is written in plan mode. ExitPlanMode runs the Fable plan gate (code-reviewer's `plan` lens, at most two blocks per session); then you approve, and worker commits that plan file unchanged.
 - **Step (kernel-dev):** before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only in the main checkout with the `rules` and `bugs` lenses on `git -C <W> diff <tip>..worktree-agent-<id>`. Must-fix findings go to a fresh kernel-dev that resets to the reviewed head and adds a fix commit; at most three rounds, then the lead or you decide. Only an approved range is fast-forwarded. It is not a hook: Claude Code discards a `SubagentStop` block for a subagent (2.1.292). worker and doc-writer steps get no Fable step review.
 - **Simplify (once per PR):** after the last task and before the audit, the lead spawns simplifier over the PR's whole diff (merge-base with `origin/main` to head) and runs Placement on its range. It keeps behaviour and never boots QEMU; when it reports `KERNEL-BYTES: yes`, the verifier runs a gate boot on the range before the fast-forward. Its range gets no Fable review, because the audit follows.
-- **Audit:** `/audit-loop` before `gh pr ready`, on the simplified head, at most one per team at a time. A round is complete only with no lens failures and no unverified findings; unverified ones (the workflow's `uncertain` arg) are carried into the next round, and a PR stops after 4 rounds or 2 incomplete ones.
+- **Audit:** `/audit-loop` before `gh pr ready`, on the simplified head, at most one per team at a time. A round is complete only with no lens failures and no unverified findings; unverified ones (the workflow's `uncertain` arg) are carried into the next round, and a PR stops after 4 rounds or 2 incomplete rounds in a row.
 
 ### Messages
 
