@@ -14,7 +14,7 @@ Task B1 of crash-fix step 1b: one baseline soak of the final 1b kernel with the 
 - **Kernel:** branch `claude/crash-fix-step-1b-tripwires` at c065b0c (kernel ELF sha256 prefix `d2496ca5bf1745a2`, as the soak reports it), toolchain nightly-2026-10-09.
 - **Runs:** `just soak runs=20 secs=75 report_only=1` (text) then `just soak runs=10 secs=75 mode=gpu report_only=1`, 2026-10-10 09:43–10:21 (+07), fresh data disk per boot. QEMU 11.1.2, Homebrew edk2 firmware.
 - **Host:** Apple Silicon Mac, 10 CPUs. No other QEMU, build or test ran (the other session held its work). The 1-minute load was 5.1 at the start, 6.5 after the text arm and 18.6 at the end; iCloud's `fileproviderd` was still finishing the removal of the repo's old `~/Documents` copy.
-- **Extraction:** the plan's rule. Per boot, the last tripwire line (`src=hb|g1|panic|exc`) whose key count matches its `n=`; a missing key is 0; `ubrun`/`ubrbl` index 1 is `reply`; class from the soak's `summary.tsv`. Every boot had a valid line.
+- **Extraction:** the parser contract of [observability.md §6.5](../../kernel/observability.md). Per boot, the last tripwire line (`src=hb|g1|panic|exc`) whose key count matches its `n=`; a missing key is 0; `ubrun`/`ubrbl` index 1 is `reply`; class from the soak's `summary.tsv`. Every boot had a valid line.
 
 ## Classes
 
