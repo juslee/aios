@@ -114,7 +114,7 @@ function relFile(f) {
 
 // Same file, same line, same normalised summary: one finding. Two distinct issues on one line stay apart.
 function keyOf(f) {
-  const s = String(f.summary || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80)
+  const s = String(f.summary || '').toLowerCase().replace(/\s+/g, ' ').trim()
   return `${f.file}:${f.line}:${s}`
 }
 

@@ -25,7 +25,7 @@ When implementing Phase N:
    - `/audit-loop` runs once before `gh pr ready` (rule 02), on the simplified head. Fix all issues, commit.
 10. **FINAL GATE**: Run `/verify-phase` before `gh pr ready`; the `/audit-loop` is step 9 (rule 02)
 11. **DISTILL**: Read working plan, extract lessons/decisions to knowledge hive, delete plan
-12. **PR**: Open the PR as a draft, run `/audit-loop`, mark it ready, run `/review-pr-comments`, then hand off: report the PR URL and check status and ask the user to run `/merge-and-cleanup` (user-invocable only; never merge yourself)
+12. **PR**: The audit (`/audit-loop`) converges before `gh pr ready`; run `/review-pr-comments`, then hand off: report the PR URL and check status and ask the user to run `/merge-and-cleanup` (user-invocable only; never merge yourself)
 
 **PLAN MODE**: step 4 always runs in plan mode. If the session is not in plan mode, `/implement-phase` calls EnterPlanMode first. The plan gate reviews the plan when the session calls ExitPlanMode.
 

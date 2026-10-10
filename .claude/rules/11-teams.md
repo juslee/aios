@@ -46,7 +46,7 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
   - counts in `docs/project/developer-guide.md`;
   - README status;
   - `scripts/docs/baseline.json`.
-- **The main checkout stays on a clean `main`.** Inside it, only `target/`, `.remember/` and `.git/aios-agent/` are written. Permission allow-listing goes to `.claude/settings.local.json`, never to the tracked `.claude/settings.json`.
+- **The main checkout stays on a clean `main`.** Agents and sessions write nothing tracked in it except through `/merge-and-cleanup`'s update of `main`; untracked state (`target/`, `.remember/`, `.git/aios-agent/`) is the only other thing written there. Permission allow-listing goes to `.claude/settings.local.json`, never to the tracked `.claude/settings.json`.
 
 ## Git authority
 

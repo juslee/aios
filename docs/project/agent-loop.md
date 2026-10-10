@@ -138,7 +138,7 @@ Then type `/justin:team build` in `team-build` and `/justin:team fix` in `team-f
 - Both leads must run in the same permission mode; Claude Code holds cross-session messages while the modes differ.
 - Permission prompts from foreground agents appear in their lead's window. `.claude/**` edits always run in the foreground (rule 11), so keep both windows reachable.
 - If a lead's ListAgents name is not its team name (a fresh launch without `-n`, for example), run `/rename <team>` in it.
-- A lead's `git -C <W>` calls prompt, because no wildcard `git -C *` allow exists (#223: the first `*` could carry `-c core.pager=<cmd>`). For each branch worktree, allow the lead's own calls with the path written out, in the main checkout's `.claude/settings.local.json`: `Bash(git -C <W> rev-parse HEAD)`, `Bash(git -C <W> rev-list *)`, `Bash(git -C <W> diff *)`, `Bash(git -C <W> show *)`, `Bash(git -C <W> log *)`, `Bash(git -C <W> status *)`, `Bash(git -C <W> merge --ff-only worktree-agent-*)`, `Bash(git -C <W> branch -d worktree-agent-*)`, `Bash(git -C <W> push -u origin claude/<branch>)`. Remove them when the worktree goes.
+- A lead's `git -C <W>` calls prompt, because no wildcard `git -C *` allow exists (#223: the first `*` could carry `-c core.pager=<cmd>`). For each branch worktree, allow the lead's own calls with the path written out, in the main checkout's `.claude/settings.local.json`: `Bash(git -C <W> rev-parse HEAD)`, `Bash(git -C <W> rev-list *)`, `Bash(git -C <W> diff *)`, `Bash(git -C <W> show *)`, `Bash(git -C <W> log *)`, `Bash(git -C <W> status *)`, `Bash(git -C <W> merge --ff-only worktree-*)`, `Bash(git -C <W> branch -d worktree-*)`, `Bash(git -C <W> push -u origin claude/<branch>)`. Remove them when the worktree goes.
 
 ### What runs where
 

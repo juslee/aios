@@ -28,7 +28,7 @@ Only lines from `uefi-stub` onward matter for an acceptance check.
 | --- | --- | --- |
 | Run 167, text, kernel at f0b4169 (2026-09-22), host load1 mean 9 to 24 | 20 | 12 CLEAN, 5 WEDGE (all heartbeat stuck at tick 0), 3 PCZERO (ticks 3000, 29000, 38000) |
 | Run 167, gpu, same kernel | 10 | 0 CLEAN, 5 PANIC, 2 EXCEPTION, 2 WEDGE, 1 PCZERO |
-| Three small text runs at 212df62 (2026-09-29), host load1 mean 83 to 224 | 16 | 2 CLEAN, 8 PCZERO, 5 WEDGE, 1 PANIC |
+| Three small text runs at 212df62 (2026-09-29), host load1 mean 77 to 224 | 16 | 2 CLEAN, 8 PCZERO, 5 WEDGE, 1 PANIC |
 | One text run at af59149 (2026-10-10), load1 mean 193 | 2 | 1 WEDGE (tick 0), 1 EXCEPTION |
 
 The kernel has changed a lot since f0b4169 (log rings, IPC and syscall hardening, the I/D cache sync, the boot-stack move), and the later runs were taken on a host running other soaks. Treat the run-167 rates as the shape of the problem, not as the current rate. Refresh them with a host-exclusive `just soak runs=20` before using a number in a gate. The boot race behind the tick-0 WEDGE and the PC=0 abort is the one in `docs/knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md`.
