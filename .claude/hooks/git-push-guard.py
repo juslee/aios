@@ -286,6 +286,8 @@ RUSTUP_AGENT_SUB = {"toolchain": {"install", "add", "uninstall", "remove", "link
 RUST_PROXIES = {"cargo", "rustc", "rustdoc", "rustfmt", "cargo-fmt", "cargo-clippy",
                 "clippy-driver", "cargo-miri", "rust-gdb", "rust-gdbgui", "rust-lldb",
                 "rust-analyzer", "rls"}
+AGENT_TOOLCHAIN_DENY = ("agents never change the toolchain; report a missing toolchain to "
+                        "your lead (rule 11, Toolchain)")
 # Commands whose output, in a $(...) or a pipe into kill, is a pid list found
 # by pattern.
 PID_FINDER = re.compile(r"\b(pgrep|pidof|pkill|lsof|fuser|ps)\b")
@@ -1492,7 +1494,7 @@ class Analyzer:
             if a != ";":
                 group.append(a)
                 continue
-            words = [w for w in group[1:]]
+            words = group[1:]
             group = []
             positional = [n for n, w in enumerate(words) if not w.startswith("-")]
             for n in positional:
@@ -1550,10 +1552,9 @@ class Analyzer:
                              "TERM the lock owner's pid instead (rule 11)")
 
     def check_rustup(self, name, args):
-        agent_msg = "agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"
         if name == "rustup-init":
             if self.is_agent():
-                self.verdict.rule_deny(agent_msg)
+                self.verdict.rule_deny(AGENT_TOOLCHAIN_DENY)
             return
         pos = [a for a in args if not a.startswith("-") and not a.startswith("+")]
         if not pos:
@@ -1566,7 +1567,7 @@ class Analyzer:
                     or any(p in RUSTUP_AGENT_SUB.get(top, ()) for p in rest)
                     or (top == "default" and rest)
                     or (top == "override" and rest[:1] != ["list"])):
-                self.verdict.rule_deny(agent_msg)
+                self.verdict.rule_deny(AGENT_TOOLCHAIN_DENY)
             elif unresolved(top):
                 self.verdict.ask("the rustup subcommand comes from a shell expansion; agents "
                                  "never change the toolchain (rule 11, Toolchain)")
@@ -1580,7 +1581,7 @@ class Analyzer:
             return
         env = sorted(n for n in self.env_names() if n.startswith("RUSTUP_"))
         if (args[:1] and args[0].startswith("+")) or env:
-            self.verdict.rule_deny("agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)")
+            self.verdict.rule_deny(AGENT_TOOLCHAIN_DENY)
 
     def own_temp_worktree(self, repo):
         """The agent's own temporary worktree: agent-<id> on worktree-agent-<id>
@@ -1627,7 +1628,6 @@ class Analyzer:
             elif unresolved(workdir) or not self.own_temp_worktree(Repo.get(workdir)):
                 v.rule_deny("agents reset only their own temporary worktree (rule 11)")
             return
-        what = "commit" if change == "commit" else f"run git {change}"
         if redirect:
             v.rule_deny(f"agents never change where git writes: {redirect} in this command can "
                         f"point git {sub} at another repository, working tree, index or config (rule 11)")
@@ -1638,7 +1638,7 @@ class Analyzer:
             if change == "commit":
                 v.rule_deny("agents never commit in the main checkout: you were spawned without isolation (rule 11)")
             else:
-                v.rule_deny(f"agents never {what} in the main checkout (it moves refs or "
+                v.rule_deny(f"agents never run git {change} in the main checkout (it moves refs or "
                             "discards work): you were spawned without isolation (rule 11)")
 
     # -- files that a command publishes ------------------------------------

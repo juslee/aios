@@ -782,6 +782,14 @@ class TeamCase(RepoCase):
         if text:
             self.assertIn(text, reason, command)
 
+    def agent_file(self, name, text):
+        self.write(os.path.join(".claude", "agents", name + ".md"), text)
+
+    def spawn(self, tool_input, tool="Agent"):
+        guard.Repo._cache.clear()
+        payload = {"tool_name": tool, "tool_input": tool_input, "cwd": self.repo}
+        return guard.decide_tool(payload, {"CLAUDE_PROJECT_DIR": self.repo})
+
 
 class TeamRules(TeamCase):
     """Guard rules 1-4 of rule 11, one test per row of the draft's tables."""
@@ -895,14 +903,6 @@ class TeamRules(TeamCase):
             self.check("none", None, cmd, agent_id="a", agent_type="worker")
 
     # -- rule 3: spawn shape ----------------------------------------------
-
-    def agent_file(self, name, text):
-        self.write(os.path.join(".claude", "agents", name + ".md"), text)
-
-    def spawn(self, tool_input, tool="Agent"):
-        guard.Repo._cache.clear()
-        payload = {"tool_name": tool, "tool_input": tool_input, "cwd": self.repo}
-        return guard.decide_tool(payload, {"CLAUDE_PROJECT_DIR": self.repo})
 
     def check_spawn(self, level, text, tool_input):
         v = self.spawn(tool_input)
@@ -1234,16 +1234,11 @@ class TeamRuleAttacks(TeamCase):
 
     # -- item 4: rule 3 and frontmatter parsing ------------------------------
 
-    def agent_file(self, name, text):
-        self.write(os.path.join(".claude", "agents", name + ".md"), text)
-
     def spawn_level(self, agent_type, isolation=None):
-        guard.Repo._cache.clear()
         tool_input = {"subagent_type": agent_type, "prompt": "x"}
         if isolation:
             tool_input["isolation"] = isolation
-        payload = {"tool_name": "Agent", "tool_input": tool_input, "cwd": self.repo}
-        return guard.decide_tool(payload, {"CLAUDE_PROJECT_DIR": self.repo})
+        return self.spawn(tool_input)
 
     def test_i4_writer_markers_yaml_reads_as_worktree_deny(self):
         for i, text in enumerate([
@@ -1298,9 +1293,7 @@ class TeamRuleAttacks(TeamCase):
                         "ps aux | grep qemu | awk '{print $2}' | xargs kill -9",
                         "pkill -f 'aios soak'", "P=$(pgrep -f soak); kill $P",
                         "sh -c 'pkill x'"]:
-            v = self.verdict(command, **self.kdev)
-            self.assertEqual("deny", v.level, (command, v.reasons))
-            self.assertTrue(any("pattern-kill" in r for r in v.reasons), (command, v.reasons))
+            self.check("deny", "pattern-kill", command, **self.kdev)
 
     def test_i5_main_thread_pattern_kills(self):
         for command in ["pkill -f qem[u]", "pkill -f $(echo qemu)", "pkill -f \"$Q\"",
