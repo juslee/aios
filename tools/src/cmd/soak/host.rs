@@ -366,6 +366,99 @@ pub fn git_rev_of(root: &Path, commit: &str) -> String {
     rev
 }
 
+/// The host tools' build inputs, as the justfile's `tools` recipe lists them
+/// in `inputs`: cargo reads untracked and ignored files among them (a
+/// `tools/build.rs`, a legacy `rust-toolchain`, a `.cargo/config`) as well as
+/// tracked ones.
+const TOOLS_INPUTS: [&str; 8] = [
+    "tools",
+    "shared",
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    ".cargo",
+    "justfile",
+];
+
+/// Whether the checkout `root` holds host-tools build inputs that its `HEAD`
+/// does not: the `tools` recipe's own test, so a harness the recipe stamps
+/// `source dirty` for uncommitted, untracked or ignored inputs reads dirty
+/// here too. `git status --untracked-files=all --ignored=matching` over
+/// [`TOOLS_INPUTS`], less the editor and Finder files the recipe excludes,
+/// plus any file `git ls-files -v` flags (assume-unchanged, skip-worktree),
+/// which `git status` does not show. `None` when git cannot tell.
+pub fn tools_inputs_dirty(root: &Path) -> Option<bool> {
+    const JUNK: [&str; 5] = [".DS_Store", "*.swp", "*.swo", "*~", "*.rs.bk"];
+    let mut status: Vec<String> = [
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    status.extend(TOOLS_INPUTS.iter().map(|s| (*s).to_string()));
+    for dir in ["tools", "shared", ".cargo"] {
+        status.extend(
+            JUNK.iter()
+                .map(|junk| format!(":(exclude,glob){dir}/**/{junk}")),
+        );
+    }
+    let listed = output_of("git", &status, Some(root))?;
+    if !listed.is_empty() {
+        return Some(true);
+    }
+    let mut ls = vec!["ls-files", "-v", "--"];
+    ls.extend(TOOLS_INPUTS);
+    let flags = output_of("git", &ls, Some(root))?;
+    Some(
+        flags
+            .split(|&b| b == b'\n')
+            .any(|l| !l.is_empty() && !l.starts_with(b"H ")),
+    )
+}
+
+/// The cargo home: `$CARGO_HOME`, else `$HOME/.cargo`, as cargo resolves it.
+pub fn cargo_home() -> Option<PathBuf> {
+    std::env::var_os("CARGO_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+}
+
+/// The cargo config files above the checkout `root` that a build in it reads
+/// as well as its own: cargo merges `.cargo/config.toml` (or the legacy
+/// `.cargo/config`) of every ancestor of the directory it runs in, joining
+/// array values such as `rustflags`, so a worktree inside another checkout
+/// builds with that checkout's flags too. `cargo_home`'s config is skipped,
+/// since cargo reads it wherever the build runs.
+pub fn parent_cargo_configs(root: &Path, cargo_home: Option<&Path>) -> Vec<PathBuf> {
+    let home = cargo_home.map(|h| std::fs::canonicalize(h).unwrap_or_else(|_| h.to_path_buf()));
+    root.ancestors()
+        .skip(1)
+        .filter_map(|dir| {
+            let dot_cargo = dir.join(".cargo");
+            let is_home = home
+                .as_deref()
+                .is_some_and(|h| std::fs::canonicalize(&dot_cargo).is_ok_and(|d| d == h));
+            if is_home {
+                return None;
+            }
+            ["config.toml", "config"]
+                .iter()
+                .map(|name| dot_cargo.join(name))
+                .find(|f| f.is_file())
+        })
+        .collect()
+}
+
 /// `date +%Y%m%d-%H%M%S`, for the default output directory.
 pub fn timestamp() -> Result<String> {
     match output_of("date", &["+%Y%m%d-%H%M%S"], None) {
@@ -571,6 +664,64 @@ mod tests {
         let root = std::fs::canonicalize(&dir).expect("canonical");
         assert_eq!(repo_root(&dir.join("sub")).expect("inside"), root);
         assert!(git_rev(Path::new("/")).starts_with("unknown"));
+
+        // The tools recipe's dirty test: untracked and ignored build inputs
+        // count, editor files and files outside the inputs do not.
+        git(&["checkout", "-q", "--", "f"]);
+        std::fs::create_dir_all(dir.join("tools/src")).expect("tools dir");
+        std::fs::write(dir.join("tools/src/main.rs"), "fn main() {}").expect("write");
+        std::fs::write(dir.join(".gitignore"), "tools/build.rs\n").expect("write");
+        git(&["add", "tools", ".gitignore"]);
+        git(&["commit", "-q", "-m", "three"]);
+        assert_eq!(tools_inputs_dirty(&dir), Some(false));
+        std::fs::write(dir.join("tools/src/.DS_Store"), "x").expect("write");
+        std::fs::write(dir.join("tools/src/main.rs.swp"), "x").expect("write");
+        std::fs::write(dir.join("notes.txt"), "x").expect("write");
+        assert_eq!(tools_inputs_dirty(&dir), Some(false));
+        std::fs::write(dir.join("tools/build.rs"), "fn main() {}").expect("write");
+        assert_eq!(tools_inputs_dirty(&dir), Some(true), "ignored input");
+        std::fs::remove_file(dir.join("tools/build.rs")).expect("remove");
+        std::fs::write(dir.join("rust-toolchain"), "nightly").expect("write");
+        assert_eq!(tools_inputs_dirty(&dir), Some(true), "untracked input");
+        std::fs::remove_file(dir.join("rust-toolchain")).expect("remove");
+        git(&["update-index", "--assume-unchanged", "tools/src/main.rs"]);
+        assert_eq!(tools_inputs_dirty(&dir), Some(true), "flagged input");
+        git(&["update-index", "--no-assume-unchanged", "tools/src/main.rs"]);
+        assert_eq!(tools_inputs_dirty(&dir), Some(false));
+        assert_eq!(tools_inputs_dirty(Path::new("/")), None);
+
+        // A checkout nested in another sees the outer one's cargo config
+        // (the legacy name too), but not the cargo home's.
+        let inner = dir.join("wt/arm");
+        std::fs::create_dir_all(dir.join("wt/.cargo")).expect("mkdir");
+        std::fs::create_dir_all(dir.join(".cargo")).expect("mkdir");
+        std::fs::create_dir_all(inner.join(".cargo")).expect("mkdir");
+        std::fs::write(inner.join(".cargo/config.toml"), "").expect("write");
+        // Only those under the scratch repository: the temp directory's own
+        // ancestors are the host's.
+        let under = |home: Option<&Path>| -> Vec<PathBuf> {
+            parent_cargo_configs(&root.join("wt/arm"), home)
+                .into_iter()
+                .filter(|p| p.starts_with(&root))
+                .collect()
+        };
+        assert!(
+            under(None).is_empty(),
+            "the arm's own config is not a parent's"
+        );
+        std::fs::write(dir.join(".cargo/config.toml"), "").expect("write");
+        std::fs::write(dir.join("wt/.cargo/config"), "").expect("write");
+        assert_eq!(
+            under(None),
+            [
+                root.join("wt/.cargo/config"),
+                root.join(".cargo/config.toml")
+            ]
+        );
+        assert_eq!(
+            under(Some(&dir.join(".cargo"))),
+            [root.join("wt/.cargo/config")]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

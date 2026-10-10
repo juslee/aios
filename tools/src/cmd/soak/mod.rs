@@ -223,10 +223,13 @@ Before any build, it refuses (exit 2):
     --ignore-load): boots on a loaded host measure the host as much as the
     arms. The load is read again after the builds and at the end, and
     before every boot; all are recorded.
-After each arm's build: its HEAD must still be the commit the arm-base
-check saw, its `rustc --version`, run in DIR, must match arm A's (unless
---allow-mixed-toolchains), and a failed `rustup toolchain install` is
-refused. Every boot runs the QEMU binary PATH resolves to and the firmware
+Each arm's `rustup toolchain install`, run in DIR before its build, must
+succeed (none runs with --no-build). After each arm's build: its HEAD must
+still be the commit the arm-base check saw, and its `rustc --version`, run
+in DIR, must match arm A's (unless --allow-mixed-toolchains). A cargo
+config above an arm's checkout (a worktree inside another checkout) joins
+the arm's build; it is warned about and named in summary.md's Parent cargo
+config row. Every boot runs the QEMU binary PATH resolves to and the firmware
 file edk2_fw resolves to (links followed once, before the builds); both
 (QEMU's version line and sha256, the firmware's sha256) are checked again
 before and after every boot; a change stops the soak (exit 2), and the boot it happened during is

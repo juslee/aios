@@ -266,6 +266,7 @@ round	position	arm	run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	l
 | Load check | passed: load1 0.50 before the builds, not above the host's CPU count (AIOS_SOAK_LOADAVG override: every load reads '0.50 0.40 0.30') |
 | Toolchains | one channel and one rustc for every arm, checked on each checkout's pinned toolchain, not on the compiler that built the ESP image that boots (--no-build) |
 | Build | skipped (--no-build): each arm boots the ESP image already in its checkout, not one built from the checked commit |
+| Parent cargo config | <CARGO-CONFIG> |
 | Arm base | every arm contains `244166f03dbd262e5ed2921769fb515ee7dd0652` (AIOS_SOAK_MIN_ARM_BASE override; the release base is `7167d408f6a43ca9859fb6238f608ca6bdee37d6`, #196); checked on each checkout's HEAD, not on the ESP image that boots (--no-build) |
 | Harness | <HARNESS> |
 | Logs | `<ROOT>/repo/out` |

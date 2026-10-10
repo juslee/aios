@@ -182,7 +182,10 @@ impl EventCounts {
     /// Count the events in one log line. Each `[tripwire-ev] ` starts an
     /// event, so two CPUs' events on one line count twice. An event counts
     /// only when the first token after the marker is a known `kind=`, and a
-    /// `self` event counts as IRQ context only when its `ctx=` token reads so.
+    /// `self` event counts as IRQ context only when its own `ctx=` token reads
+    /// so: the fifth token (`kind`, `cpu`, `lock`, `idx`, `ctx`, the order
+    /// `irq_spin_lock.rs` prints them in), never a later `ctx=` from another
+    /// CPU's line (`[panic] ... ctx=irq-exit`) that landed on the same line.
     pub fn observe(&mut self, line: &[u8]) {
         let mut rest = line;
         while let Some(p) = find(rest, EVENT_PREFIX) {
@@ -194,7 +197,7 @@ impl EventCounts {
                 Some(b"kind=stuck") => self.stuck += 1,
                 Some(b"kind=self") => {
                     self.self_held += 1;
-                    let irq = tokens.any(|t| {
+                    let irq = tokens.nth(3).is_some_and(|t| {
                         [Ctx::Irq, Ctx::IrqExit]
                             .iter()
                             .any(|c| t == [b"ctx=", c.name().as_bytes()].concat())
@@ -478,5 +481,17 @@ mod tests {
         let mut e = EventCounts::default();
         e.observe(b"[tripwire-ev] kind=self cpu=0 lock=THREAD_TABLE idx=- ct");
         assert_eq!((e.self_held, e.self_irq), (1, 0));
+        // Another CPU's `ctx=irq-exit` on the same line is not the event's
+        // own context, after a whole `ctx=thread` token or a cut-off one.
+        for line in [
+            format!("{} [panic] cpu=0 tid=3 ctx=irq-exit", ev("self", "thread")),
+            "[tripwire-ev] kind=self cpu=1 lock=THREAD_TABLE idx=- ct[panic] cpu=0 tid=3 \
+             ctx=irq-exit"
+                .to_string(),
+        ] {
+            let mut e = EventCounts::default();
+            e.observe(line.as_bytes());
+            assert_eq!((e.self_held, e.self_irq), (1, 0), "{line}");
+        }
     }
 }

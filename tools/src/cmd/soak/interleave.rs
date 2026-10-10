@@ -428,16 +428,35 @@ fn tsv_cell(v: &[u8]) -> Vec<u8> {
 }
 
 /// The harness's own commit: the git rev of the checkout holding the running
-/// binary, and its path.
+/// binary, and its path. The rev is `-dirty` when that checkout's host-tools
+/// build inputs differ from its `HEAD`, untracked and ignored files included
+/// ([`host::tools_inputs_dirty`]), since cargo builds from those too; a
+/// checkout git cannot test is said so rather than shown clean.
 fn harness_rev() -> Vec<u8> {
     let Ok(exe) = std::env::current_exe() else {
         return b"unknown".to_vec();
     };
-    let rev = exe
-        .parent()
-        .and_then(|dir| host::repo_root(dir).ok())
-        .map_or_else(|| "unknown".to_string(), |root| host::git_rev(&root));
-    [format!("`{rev}` (").as_bytes(), b"`", bytes(&exe), b"`)"].concat()
+    let (rev, note) = match exe.parent().and_then(|dir| host::repo_root(dir).ok()) {
+        None => ("unknown".to_string(), ""),
+        Some(root) => {
+            let rev = host::git_rev(&root);
+            match host::tools_inputs_dirty(&root) {
+                Some(false) => (rev, ""),
+                Some(true) if rev.ends_with("-dirty") => (rev, ""),
+                Some(true) => (format!("{rev}-dirty"), ""),
+                None => (rev, "; build inputs not checked"),
+            }
+        }
+    };
+    [
+        format!("`{rev}` (").as_bytes(),
+        b"`",
+        bytes(&exe),
+        b"`",
+        note.as_bytes(),
+        b")",
+    ]
+    .concat()
 }
 
 /// Run an interleaved soak. Returns the exit status: 0 when every boot ran,
@@ -583,6 +602,40 @@ fn run_with_base(
         )?;
     }
 
+    // Cargo config files above an arm's checkout join its build: a worktree
+    // inside another checkout gets that checkout's rustflags as well as its
+    // own commit's.
+    let cargo_home = host::cargo_home();
+    let mut parent_configs: Vec<u8> = Vec::new();
+    for c in &checkouts {
+        let found = host::parent_cargo_configs(&c.root, cargo_home.as_deref());
+        if found.is_empty() {
+            continue;
+        }
+        let label = first_label(c);
+        let files = found
+            .iter()
+            .map(|f| [&b"`"[..], bytes(f), b"`"].concat())
+            .collect::<Vec<_>>()
+            .join(&b", "[..]);
+        runner::warn(
+            err,
+            &[
+                format!("arm {label}: parent cargo config ").as_bytes(),
+                &files,
+                b" applies to the arm's build as well as its own; soak checkouts outside any other checkout",
+            ]
+            .concat(),
+        )?;
+        if !parent_configs.is_empty() {
+            parent_configs.extend_from_slice(b"; ");
+        }
+        parent_configs.extend_from_slice(&[format!("arm {label}: ").as_bytes(), &files].concat());
+    }
+    if parent_configs.is_empty() {
+        parent_configs.extend_from_slice(b"none above any arm's checkout");
+    }
+
     let out_arg: OsString = match &cfg.out {
         Some(o) => o.clone(),
         None => host::repo_root(cwd)?
@@ -601,6 +654,7 @@ fn run_with_base(
         base: base.clone(),
         load_before,
         load_check,
+        parent_configs,
         out_dir,
     };
     // As in single mode: a child that a terminal signal ended makes its step
@@ -617,6 +671,8 @@ struct Setup {
     /// The load average before the builds, and its check.
     load_before: String,
     load_check: LoadCheck,
+    /// The cargo configs above each arm's checkout, for the summary.
+    parent_configs: Vec<u8>,
     out_dir: PathBuf,
 }
 
@@ -689,6 +745,7 @@ fn build_and_boot(
         base,
         load_before,
         load_check,
+        parent_configs,
         out_dir,
     } = setup;
     let n_arms = req.arms.len();
@@ -940,6 +997,7 @@ fn build_and_boot(
         ),
         ("Toolchains".into(), toolchains.to_vec()),
         ("Build".into(), build.to_vec()),
+        ("Parent cargo config".into(), parent_configs),
         ("Arm base".into(), arm_base.into_bytes()),
         ("Harness".into(), harness_rev()),
         ("Logs".into(), [&b"`"[..], bytes(&out_dir), b"`"].concat()),

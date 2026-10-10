@@ -716,6 +716,16 @@ static RULES: LazyLock<Vec<(Regex, &'static [u8])>> = LazyLock::new(|| {
         (r"\| Load average \| [^\n]*", b"| Load average | <L> |"),
         (r"after [0-9]+s\)", b"after <N>s)"),
         (r"\| Harness \| [^\n]*", b"| Harness | <HARNESS> |"),
+        // The cargo configs above the fake arms are the test host's own
+        // (the workspace holding CARGO_TARGET_TMPDIR, say).
+        (
+            r"(?m)^soak: warning: arm [A-D]: parent cargo config [^\n]*\n",
+            b"",
+        ),
+        (
+            r"\| Parent cargo config \| [^\n]*",
+            b"| Parent cargo config | <CARGO-CONFIG> |",
+        ),
         (r"above its [0-9]+ CPUs", b"above its <N> CPUs"),
         (
             r"\(load average after the builds: [^)\n]*\)",
