@@ -416,12 +416,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
   - [x] Step 5: `(cd "$W" && cargo fmt -p aios-tools && cargo test -p aios-tools --test shim)`. Expected: all pass. (The v4 draft was smoke-tested on 2026-10-09 in a scratch repository with `D/.claude/hooks/aios.v4.smoke.sh`: rows 1–11 and 13–16 and `guard` on a dirty stamp behaved as the table says.)
   - [x] Acceptance: the tools gate; `sh -n`, `dash -n`, `shellcheck -s sh` on `.claude/hooks/aios` exit 0; `git -C "$W" diff origin/main --stat -- .claude/hooks/aios tools/tests/shim.rs` lists only those two files; `git -C "$W" diff origin/main -- .claude/hooks/aios | grep -c '^-[^-]'` prints `2` or less (#203's lines stay: only the `stop` comment and its case list change).
 
-- [ ] **T6: the host QEMU lock wrapper**
+- [x] **T6: the host QEMU lock wrapper**
 
   **Files:** Create `scripts/agent/qemu-lock.sh` (from `D/scripts/agent/qemu-lock.sh.v4`, mode 755).
 
-  - [ ] Step 1: copy the draft; `chmod 755`.
-  - [ ] Step 2: the smoke test, in a scratch repository outside `W` (the fake QEMU is a symlink, because a copied system binary is killed by code signing):
+  - [x] Step 1: copy the draft; `chmod 755`.
+  - [x] Step 2: the smoke test, in a scratch repository outside `W` (the fake QEMU is a symlink, because a copied system binary is killed by code signing):
     ```sh
     S=$(mktemp -d) && cd "$S" && git init -q -b main . && git -c user.email=a@b -c user.name=a commit -q --allow-empty -m s
     cp "$W/scripts/agent/qemu-lock.sh" q.sh && mkdir fake && ln -s /bin/sleep fake/qemu-system-aarch64
@@ -441,8 +441,8 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     kill -TERM "$(sed -n 's/^pid=//p' .git/aios-agent/qemu.lock/owner)"; sleep 1; sh q.sh status; pgrep -f 'sleep 31' || echo no-sleep-left
     sh q.sh run --team ship --mode boot --label x --eta-min 1 -- true; echo rc=$?
     ```
-  - [ ] Step 3 (v4): the harness-first stop check: `sh "$D/scripts/agent/qemu-lock.sh.v4.t8-smoke.sh" "$W/scripts/agent/qemu-lock.sh" "$(mktemp -d)/t8"` prints `rc=143 qemu-running-at-harness-term`, `free` and `no-qemu-left` (v3's leaf-first stop printed `qemu-already-gone-at-harness-term`; run 2026-10-09, three times each).
-  - [ ] Acceptance: `shellcheck -s sh scripts/agent/qemu-lock.sh` and `dash -n scripts/agent/qemu-lock.sh` exit 0, Step 3 prints its three lines, and the smoke test prints, in order: `free`; the t1 owner lines with `state=live` and `rc=75`; `deferred: load 40 is above 30 (boot mode)` and `rc=77`; `deferred: load 5 is above 3.0 (quiet mode)` and `rc=77`; `ran-t5`, `rc=0`; the fake QEMU's process line and `rc=76` (no `NOT-RUN` anywhere); `state=dead`, `cleared`, `rc=0`, `free`; `free`, `no-sleep-left`; `--team must be team-build, team-fix or solo`, `rc=2`. (Run on the v3 draft on 2026-10-06 and on the v4 draft on 2026-10-09: exactly this output.) `cat "$S/.git/aios-agent/qemu-lock.log"` shows the cleared owner lines. The docs gate shows only `plans-not-empty`.
+  - [x] Step 3 (v4): the harness-first stop check: `sh "$D/scripts/agent/qemu-lock.sh.v4.t8-smoke.sh" "$W/scripts/agent/qemu-lock.sh" "$(mktemp -d)/t8"` prints `rc=143 qemu-running-at-harness-term`, `free` and `no-qemu-left` (v3's leaf-first stop printed `qemu-already-gone-at-harness-term`; run 2026-10-09, three times each).
+  - [x] Acceptance: `shellcheck -s sh scripts/agent/qemu-lock.sh` and `dash -n scripts/agent/qemu-lock.sh` exit 0, Step 3 prints its three lines, and the smoke test prints, in order: `free`; the t1 owner lines with `state=live` and `rc=75`; `deferred: load 40 is above 30 (boot mode)` and `rc=77`; `deferred: load 5 is above 3.0 (quiet mode)` and `rc=77`; `ran-t5`, `rc=0`; the fake QEMU's process line and `rc=76` (no `NOT-RUN` anywhere); `state=dead`, `cleared`, `rc=0`, `free`; `free`, `no-sleep-left`; `--team must be team-build, team-fix or solo`, `rc=2`. (Run on the v3 draft on 2026-10-06 and on the v4 draft on 2026-10-09: exactly this output.) `cat "$S/.git/aios-agent/qemu-lock.log"` shows the cleared owner lines. The docs gate shows only `plans-not-empty`.
 
 - [ ] **T7: guard rules 1–4** (implementer in the foreground; guard-attacking reviewer)
 
@@ -841,3 +841,7 @@ On 2026-10-10, `git worktree remove` of an implementer's temporary worktree fail
 ## Lessons Learned
 
 (to be filled during execution; T17 distils them)
+
+### T6 qemu-lock.sh (2026-10-10)
+
+No deviation from the v4 draft. `shellcheck -s sh` and `dash -n` exit 0. Step 3 printed `rc=143 qemu-running-at-harness-term`, `free`, `no-qemu-left`. The Step 2 smoke output matched the Acceptance list line by line; the lock log showed the cleared owner lines (`cleared_at=... by_pid=...`, `team=team-fix`, `pid=999999`). Docs gate: only the knowledge-hygiene plan entry is new.
