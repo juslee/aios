@@ -1486,6 +1486,153 @@ class TeamRuleAttacks(TeamCase):
         self.check("deny", "every QEMU start", "cd %s && %s" % (other, run), cwd=self.branch_wt)
 
 
+class WrappedCommands(TeamCase):
+    """T17 (security review of a2fbc05): the command after a qemu-lock.sh
+    `run`'s `--` is analysed like a command typed on its own, so every rule
+    applies to it; only the QEMU start it wraps is the wrapper's job (rule 1
+    decided it on the wrapper call)."""
+
+    RUN = "scripts/agent/qemu-lock.sh run --team solo --mode boot --label x --eta-min 5 -- "
+
+    def setUp(self):
+        super().setUp()
+        self.main = {}
+        self.verifier = {"cwd": self.temp, "agent_id": "x", "agent_type": "verifier"}
+        self.prefixes = [self.RUN, "bash " + self.RUN, "sh " + self.RUN,
+                         "timeout 600 " + self.RUN,
+                         "scripts/agent/qemu-lock.sh run --team team-fix --mode quiet --label x "
+                         "--eta-min 5 --max-load 3.0 --settle-min 1 -- "]
+
+    def cases(self):
+        """(inner command, main-thread level, verifier level, reason text)."""
+        m, b = self.repo, self.branch_wt
+        return [
+            ("git push origin HEAD:main", "deny", "deny", "main"),
+            ("git push origin main", "deny", "deny", "main"),
+            ("git push --force origin claude/x", "deny", "deny", "force"),
+            ("gh pr merge 1", "ask", "ask", "gh pr merge"),
+            ("gh pr merge 1 --admin", "deny", "deny", "--admin"),
+            ("sh -c 'git push origin HEAD:main'", "deny", "deny", "main"),
+            ("bash -c \"gh pr merge 1 --squash\"", "ask", "ask", "gh pr merge"),
+            ("pkill -f qemu", "deny", "deny", "never pattern-kill QEMU"),
+            ("killall qemu-system-aarch64", "deny", "deny", "never pattern-kill QEMU"),
+            ("sh -c 'pkill -f qemu'", "deny", "deny", "never pattern-kill QEMU"),
+            ("pkill -f 'aios soak'", "ask", "deny", "pkill"),
+            ("kill $(pgrep -f soak)", "ask", "deny", "pids"),
+            ("rustup toolchain install nightly", "ask", "deny", "toolchain"),
+            ("rustup install nightly", "ask", "deny", "toolchain"),
+            ("bash -c 'rustup update'", "ask", "deny", "toolchain"),
+            ("cargo +nightly build", "none", "deny", "agents never change the toolchain"),
+            ("RUSTUP_TOOLCHAIN=nightly cargo build", "none", "deny",
+             "agents never change the toolchain"),
+            ("git -C %s reset --hard abc" % m, "ask", "deny", "reset"),
+            ("sh -c 'cd %s && git reset --hard abc'" % m, "ask", "deny", "reset"),
+            ("git -C %s commit -m x" % m, "none", "deny", "agents never commit in the main checkout"),
+            ("git -C %s update-ref refs/heads/main HEAD" % m, "none", "deny", "in the main checkout"),
+            ("sh -c 'cd %s && git reset --hard abc'" % b, "ask", "deny", "reset"),
+            ("bash -c 'cd %s && git commit -m x'" % b, "none", "deny",
+             "only in their own temporary worktree"),
+            ("git -C %s switch -C t" % b, "ask", "deny", "switch"),
+            ("git -C %s stash" % b, "none", "deny", "only in their own temporary worktree"),
+            ("GIT_DIR=%s/.git git reset --hard" % m, "ask", "deny", "reset"),
+        ]
+
+    def test_wrapped_commands_get_the_unwrapped_decision(self):
+        for inner, main_level, verifier_level, text in self.cases():
+            for kw, level in [(self.main, main_level), (self.verifier, verifier_level)]:
+                plain = self.verdict(inner, **kw)
+                self.assertEqual(level, plain.level, (inner, kw, plain.reasons))
+                for prefix in self.prefixes:
+                    if kw is self.verifier and "--team solo" in prefix:
+                        prefix = prefix.replace("--team solo", "--team team-fix")
+                    if kw is self.main and "--team team-fix" in prefix:
+                        continue
+                    self.check(level, text if level != "none" else None, prefix + inner, **kw)
+
+    def test_the_security_finding_through_the_hook_process(self):
+        command = ("bash scripts/agent/qemu-lock.sh run --team solo --mode boot --label x "
+                   "--eta-min 5 -- git push origin HEAD:main")
+        self.check_hook("deny", "main", command)
+        self.check_hook("deny", "main", command.replace("solo", "team-fix"), **self.verifier)
+        self.check_hook("ask", "gh pr merge", self.RUN + "gh pr merge 7 --squash")
+        self.check_hook("deny", "never pattern-kill QEMU", self.RUN + "pkill -f qemu",
+                        **self.verifier)
+        self.check_hook("deny", "agents never change the toolchain",
+                        self.RUN + "cargo +nightly build", **self.verifier)
+        self.check_hook("deny", "agents never commit in the main checkout",
+                        self.RUN + "git -C %s commit -m x" % self.repo, **self.verifier)
+
+    def test_qemu_starts_inside_the_wrapper_stay_allowed(self):
+        out = os.path.join(self.temp, "target", "soak", "l")
+        for inner in ["just soak runs=1 secs=75 report_only=1",
+                      "just soak --no-build runs=1 secs=75 mode=gpu report_only=1 out=%s" % out,
+                      "just run", "just run-gpu", "just run-display", "just debug",
+                      "qemu-system-aarch64 -M virt", "target/tools/installed/aios soak runs=1",
+                      "cargo run -p aios-tools -- soak runs=1", "scripts/soak-matrix.sh",
+                      "sh scripts/soak-matrix.sh", "env FOO=1 just run",
+                      "sh -c 'for i in 1 2; do just soak --no-build runs=1 out=a$i; done'",
+                      "sh -c 'just soak runs=1 && just soak runs=1 mode=gpu'"]:
+            self.check("none", None, self.RUN + inner)
+            self.check("none", None, "bash " + self.RUN + inner)
+            self.check("none", None, self.RUN.replace("solo", "team-fix") + inner, **self.verifier)
+            # Rule 1's own rows still apply to the wrapper call.
+            self.check("deny", "only the verifier starts QEMU", self.RUN + inner,
+                       cwd=self.temp, agent_id="x", agent_type="kernel-dev")
+            self.check("deny", "team leads route boots to their verifier", self.RUN + inner,
+                       team="team-fix")
+        self.check_hook("none", None, self.RUN + "just soak runs=1 secs=75 report_only=1")
+        self.check_hook("none", None, self.RUN + "just run", **self.verifier)
+        self.hold_lock()
+        self.check("deny", "QEMU lock held by", self.RUN + "just soak runs=1", **self.verifier)
+
+    def test_a_qemu_start_outside_the_wrapped_command_is_still_denied(self):
+        # Only the wrapped command is the wrapper's: what follows the wrapper
+        # call, or runs before it, is not.
+        for command in [self.RUN + "true; just run", "just run && " + self.RUN + "true",
+                        self.RUN + "true | qemu-system-aarch64 -M virt"]:
+            self.check("deny", "every QEMU start goes through", command)
+
+    def test_status_and_clear_stale_are_unchanged(self):
+        for sub in ["status", "clear-stale", "stale"]:
+            for prefix in ["scripts/agent/qemu-lock.sh ", "bash scripts/agent/qemu-lock.sh "]:
+                for kw in [self.main, self.verifier, {"team": "team-fix"},
+                           {"cwd": self.temp, "agent_id": "x", "agent_type": "kernel-dev"}]:
+                    self.check("none", None, prefix + sub, **kw)
+
+    def test_the_wrappers_own_option_parsing(self):
+        # `--label --` is a label: the command starts after the next `--`.
+        self.check("deny", "main", "scripts/agent/qemu-lock.sh run --team solo --mode boot "
+                                   "--label -- --eta-min 5 -- git push origin HEAD:main")
+        # An unknown option makes the wrapper refuse; the words after the next
+        # `--` are still analysed.
+        self.check("deny", "main", "scripts/agent/qemu-lock.sh run --team=solo --bogus "
+                                   "-- git push origin HEAD:main")
+        # No `--`: the wrapper refuses to run anything; the decision is the
+        # wrapper call's own.
+        self.check("none", None, "scripts/agent/qemu-lock.sh run --team solo --mode boot --label x "
+                                 "--eta-min 5 git push origin HEAD:main")
+        self.check("none", None, self.RUN)
+
+    def test_a_non_genuine_copy_is_still_read(self):
+        # Its body is read as before; the command after its `--` is analysed
+        # too, with the QEMU start decided on the call (rule 1, unchanged).
+        self.write("tmpx/qemu-lock.sh", "#!/bin/sh\nqemu-system-aarch64 -M virt\n")
+        self.check("deny", "every QEMU start goes through",
+                   "tmpx/qemu-lock.sh run --team solo --mode boot --label x -- just soak")
+        copy = os.path.join(self.tmp.name, "x.sh")
+        with open(os.path.join(REAL_ROOT, "scripts", "agent", "qemu-lock.sh")) as fh:
+            self.write("x.sh", fh.read(), root=self.tmp.name)
+        tail = " run --team solo --mode boot --label x --eta-min 5 -- "
+        # The copy's body runs "$@" (a command name from an expansion): ask,
+        # whatever it wraps, and no rule 1 deny for the QEMU start it wraps.
+        self.check("ask", "the command name comes from a shell expansion", copy + tail + "true")
+        self.check("ask", "the command name comes from a shell expansion",
+                   copy + tail + "just soak runs=1")
+        self.check("deny", "main", copy + tail + "git push origin HEAD:main")
+        self.check("deny", "only the verifier starts QEMU", copy + tail + "just soak runs=1",
+                   cwd=self.temp, agent_id="x", agent_type="kernel-dev")
+
+
 class WorkflowWorktrees(TeamCase):
     """T7b: rule 4 for the temporary worktrees of workflow agents
     (wf_<8 hex>-<3 hex>-<n> on worktree-wf_<same>), owned by the payload's

@@ -61,7 +61,13 @@ subagent, AIOS_TEAM from the lead's launch line):
      trusted only as scripts/agent/qemu-lock.sh of the main checkout, the
      project or the agent's own temporary worktree (realpath); any other
      qemu-lock.sh, and any script called `run --team ...` (a renamed
-     copy), gets the wrapper's caller rules and has its body read.
+     copy), gets the wrapper's caller rules and has its body read. The
+     command after a `run`'s `--` (found the way the wrapper reads its
+     options) is analysed like one typed on its own, so rules 1-4 and the
+     push, merge and gh rules apply to it; only a QEMU start in it, the
+     wrapper's job, gets no rule 1 decision of its own. The settings
+     allow only the wrapper's `status` and `clear-stale`: a `run` goes
+     through the permission prompt (refused in background and -p runs).
        deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
              exists; any start that is not the wrapper; an agent with no
              usable agent_type; any agent but the verifier; a team lead
@@ -280,6 +286,8 @@ JUST_NO_RUN_SHORTS = "nlsehV"
 QEMU_INFO_ARGS = {"--version", "-version", "-h", "--help", "-help"}
 QEMU_SCRIPTS = {"soak-matrix.sh", "soak-qemu.sh"}
 WRAPPER_PATH = os.path.join("scripts", "agent", "qemu-lock.sh")
+# qemu-lock.sh run's options, each taking the next word as its value.
+WRAPPER_VALUE_OPTS = {"--team", "--mode", "--label", "--eta-min", "--max-load", "--settle-min"}
 GIT_COMMITTERS = {"commit", "merge", "cherry-pick", "revert", "am"}
 # Rule 4: what an agent never runs in the main checkout besides committing.
 MAIN_CHECKOUT_REF_CHANGERS = {"rebase", "pull", "update-ref", "reset", "commit-tree",
@@ -1057,6 +1065,9 @@ class Analyzer:
         self.commits_changed = False  # a commit, merge, reset, ... ran earlier
         self.global_env = set()       # risky variables assigned or exported
         self.env_stack = []           # risky prefix assignments per command
+        # True while the command after a qemu-lock.sh `run`'s `--` is
+        # analysed: rule 1 decided its QEMU start on the wrapper call.
+        self.wrapped = False
 
     def env_names(self):
         names = set(self.global_env)
@@ -1075,10 +1086,13 @@ class Analyzer:
 
     # -- shell level ------------------------------------------------------
 
-    def analyze_text(self, text, cwd, depth, script=False):
+    def analyze_text(self, text, cwd, depth, script=False, typed=None):
+        """`typed` is the text that opaque() and check_kill() read as the whole
+        command typed, when it is not `text` itself (analyze_wrapped)."""
         if depth > MAX_DEPTH:
             raise ParseError("nesting too deep")
-        state = {"cwd": cwd, "vars": {}, "text": text, "script": script, "pid_vars": set()}
+        state = {"cwd": cwd, "vars": {}, "text": text if typed is None else typed,
+                 "script": script, "pid_vars": set()}
         for cmd in parse_commands(text, depth):
             self.analyze_command(cmd, state, depth)
 
@@ -1288,7 +1302,7 @@ class Analyzer:
 
     def analyze_script(self, path, state, depth, cmd, shebang=False, argv=()):
         if is_qemu_script(path, list(argv)):
-            self.check_qemu_script(path, list(argv), state, depth, shebang)
+            self.check_qemu_script(path, list(argv), cmd, state, depth, shebang)
             return
         if unresolved(path):
             self.opaque(state, cmd, f"runs a script whose path ({path}) comes from a "
@@ -1351,20 +1365,21 @@ class Analyzer:
             kind = aios_starts_qemu(args)
             return self.qemu_decision(kind) if kind else False
         elif is_qemu_script(word, args):
-            return self.check_qemu_script(word, args, state, depth, shebang=True)
+            return self.check_qemu_script(word, args, cmd, state, depth, shebang=True)
         if kind:
             self.qemu_decision(kind)
         return False
 
-    def check_qemu_script(self, path, argv, state, depth, shebang):
+    def check_qemu_script(self, path, argv, cmd, state, depth, shebang):
         """A script that starts QEMU: the soak scripts, and the lock wrapper
         (only its `run`). The wrapper is recognised by what it is, not by its
         name: only scripts/agent/qemu-lock.sh of the main checkout, the
         project, or the agent's own temporary worktree is trusted, and its
-        body is not read (running the command after `--` is its job). Any
-        other qemu-lock.sh, and any script called the wrapper's way (`run
-        --team ...`, a renamed copy), gets the wrapper's caller rules and has
-        its body read like any other script. Returns True (handled)."""
+        body is not read. Any other qemu-lock.sh, and any script called the
+        wrapper's way (`run --team ...`, a renamed copy), gets the wrapper's
+        caller rules and has its body read like any other script. For every
+        `run`, the command after its `--` is analysed as a command line
+        (analyze_wrapped). Returns True (handled)."""
         name = basename(path)
         if name in QEMU_SCRIPTS:
             if not (name == "soak-qemu.sh" and classify_only(argv)):
@@ -1375,9 +1390,28 @@ class Analyzer:
                 self.verdict.ask(f"the QEMU lock wrapper's path ({path}) comes from a shell "
                                  "expansion; the guard cannot tell it is scripts/agent/qemu-lock.sh (rule 11)")
             self.qemu_decision("wrapper")
+            self.analyze_wrapped(argv, cmd, state, depth)
         if not unresolved(path) and not self.genuine_wrapper(path, state["cwd"]):
             self.read_script(path, state, depth, shebang)
         return True
+
+    def analyze_wrapped(self, argv, cmd, state, depth):
+        """The command a qemu-lock.sh `run` executes (wrapped_command) is
+        analysed like one typed on its own, so every rule applies to it,
+        except that a QEMU start in it is the wrapper's: rule 1 decided it on
+        the wrapper call (qemu_decision skips it while self.wrapped holds).
+        Its words hold `$(...)` placeholders, so the wrapper call's own text
+        stays the text opaque() and check_kill() read (`kill $(pgrep ...)`)."""
+        words = wrapped_command(argv)
+        if not words:
+            return
+        outer = self.wrapped
+        self.wrapped = True
+        try:
+            self.analyze_text(shell_join(words), state["cwd"], depth + 1,
+                              typed=cmd.src if state["script"] else state["text"])
+        finally:
+            self.wrapped = outer
 
     def genuine_wrapper(self, path, cwd):
         """True when `path` resolves to scripts/agent/qemu-lock.sh in the main
@@ -1477,8 +1511,12 @@ class Analyzer:
     def qemu_decision(self, kind):
         """Rule 1 rows 1-7 for a command that starts QEMU. `kind` is
         "wrapper" for qemu-lock.sh run, "other" for anything else, and
-        "unclear" when the guard cannot tell whether it starts QEMU."""
+        "unclear" when the guard cannot tell whether it starts QEMU. Inside
+        the command a wrapper `run` executes (self.wrapped) there is nothing
+        to decide: the wrapper call was decided as "wrapper"."""
         v = self.verdict
+        if self.wrapped:
+            return True
         if kind == "unclear":
             v.ask("cannot tell whether this starts QEMU: part of the command comes from a "
                   "shell expansion; every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)")
@@ -2381,6 +2419,22 @@ def is_qemu_script(path, argv):
         return False
     opts = argv[:argv.index("--")] if "--" in argv else argv
     return any(a == "--team" or a.startswith("--team=") for a in opts)
+
+
+def wrapped_command(argv):
+    """The command qemu-lock.sh `run` executes (argv[0] is "run"): the words
+    after the `--` that ends its options, read the way the wrapper reads them
+    (each option takes the next word as its value, so `--label --` is a
+    label). Where the options stop reading that way (an unknown option, which
+    the wrapper refuses, or a word from an expansion), the words after the
+    next `--`. None without one: the wrapper refuses a missing command."""
+    i = 1
+    while i + 1 < len(argv) and argv[i] in WRAPPER_VALUE_OPTS:
+        i += 2
+    rest = argv[i:]
+    if "--" not in rest:
+        return None
+    return rest[rest.index("--") + 1:]
 
 
 def command_lookup(args):

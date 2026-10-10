@@ -66,6 +66,9 @@ bash scripts/agent/qemu-lock.sh run --team <team> --mode boot --label <branch>-<
 
 The lock's owner file records your temporary worktree and branch, so the label carries the branch name for anyone reading `qemu-lock.sh status`.
 
+- **The `run` call needs the owner's approval.** The settings allow only `qemu-lock.sh status` and `clear-stale`. A `run` call prompts the owner in an attended session and is refused in a background or `-p` run. If it is refused, stop and report the refusal (the command and the message) instead of retrying it or rewording it to get past the prompt.
+- The guard reads the command after `--` as if you had typed it on its own: every rule applies to it (pushes, merges, kills, toolchain, placement). Only the QEMU start it wraps is the wrapper's job.
+
 - The wrapper takes the lock atomically, writes the owner file (team, worktree, branch, sha, mode, label, start, eta, its own pid), runs the command, and releases the lock on exit, interrupt or termination. Its exit codes before the command runs:
   - 75: another holder has the lock. Wait as in preflight step 2.
   - 76: a QEMU is already running without the lock. Report a foreign boot with the processes it printed.
