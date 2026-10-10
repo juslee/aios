@@ -13,13 +13,44 @@ use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
 use shared::tripwire::WakeSource;
-use shared::{ChannelId, EndpointState, RawMessage, SelectKind, MAX_MESSAGE_SIZE};
+use shared::{deadline_after, ChannelId, EndpointState, RawMessage, SelectKind, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
     clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, TimeoutEntry, REPLY_SLOTS,
     TIMEOUT_QUEUE,
 };
 use super::{channel_mut, direct, CHANNEL_TABLE};
+
+// ---------------------------------------------------------------------------
+// Timeout registration shared by IpcCall and IpcRecv
+// ---------------------------------------------------------------------------
+
+/// The deadline of a wait for `timeout_ticks` that starts now, by
+/// [`deadline_after`]: the current tick plus `timeout_ticks`, or `None` for
+/// `u64::MAX` and for a sum that would reach `u64::MAX` (a tick never
+/// reached). `ipc_call` and `ipc_recv` handle 0 before this.
+fn deadline_from_now(timeout_ticks: u64) -> Option<u64> {
+    deadline_after(TICK_COUNT.load(Ordering::Relaxed), timeout_ticks)
+}
+
+/// Register `tid`'s `deadline` in `TIMEOUT_QUEUE`, where `check_timeouts`
+/// wakes it with ETIMEDOUT, and move its tripwire N2 phase on `side` to
+/// armed inside that critical section. `None` registers no entry: the wait
+/// has no deadline.
+fn arm_timeout(side: WaitSide, tid: ThreadId, deadline: Option<u64>) {
+    match deadline {
+        Some(wake_at_tick) => {
+            let mut tq = TIMEOUT_QUEUE.lock();
+            tq[tid.0 as usize] = Some(TimeoutEntry {
+                tid,
+                wake_at_tick,
+                error_code: IpcError::Etimedout as i64,
+            });
+            tripwire::wait_armed(side, tid, true);
+        }
+        None => tripwire::wait_armed(side, tid, false),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // IpcCall — send request and block for reply (synchronous)
@@ -29,7 +60,11 @@ use super::{channel_mut, direct, CHANNEL_TABLE};
 ///
 /// `send_buf`/`send_len`: request payload.
 /// `recv_buf`/`recv_len`: reply buffer.
-/// `timeout_ticks`: maximum ticks to wait (0 = non-blocking, use DEFAULT_TIMEOUT_TICKS for 5s).
+/// `timeout_ticks`: maximum ticks to wait for the reply, from when the call
+/// is queued. 0 and `u64::MAX` both mean no timeout: the call waits until a
+/// reply, a cancel or the channel's destruction wakes it (capability-lifetime
+/// ADR §9 keeps 0 unbounded), and so does any value whose deadline would
+/// reach `u64::MAX`, so a value from a syscall register cannot overflow (#217). `DEFAULT_TIMEOUT_TICKS` is 5 s.
 ///
 /// Returns bytes received on success, or negative error code.
 pub fn ipc_call(
@@ -89,6 +124,14 @@ pub fn ipc_call(
             return IpcError::Enospc as i64;
         }
 
+        // The reply deadline counts from the queued request. 0 is no
+        // timeout for ipc_call (capability-lifetime ADR §9), not a poll.
+        let deadline = if timeout_ticks == 0 {
+            None
+        } else {
+            deadline_from_now(timeout_ticks)
+        };
+
         // Register as pending caller.
         ch.pending_caller = Some(caller_tid);
         // Tripwire N2 phase: published, timeout not yet registered.
@@ -96,7 +139,7 @@ pub fn ipc_call(
             WaitSide::Call,
             caller_tid,
             u64::from(channel.0),
-            timeout_ticks > 0,
+            deadline.is_some(),
         );
 
         // Check for direct switch: is a receiver already waiting?
@@ -131,18 +174,7 @@ pub fn ipc_call(
             // Register timeout (even with direct switch, the receiver
             // might not reply in time). The tripwire N2 phase becomes armed
             // inside the TIMEOUT_QUEUE critical section.
-            if timeout_ticks > 0 {
-                let deadline = TICK_COUNT.load(Ordering::Relaxed) + timeout_ticks;
-                let mut tq = TIMEOUT_QUEUE.lock();
-                tq[caller_tid.0 as usize] = Some(TimeoutEntry {
-                    tid: caller_tid,
-                    wake_at_tick: deadline,
-                    error_code: IpcError::Etimedout as i64,
-                });
-                tripwire::wait_armed(WaitSide::Call, caller_tid, true);
-            } else {
-                tripwire::wait_armed(WaitSide::Call, caller_tid, false);
-            }
+            arm_timeout(WaitSide::Call, caller_tid, deadline);
 
             #[cfg(feature = "kernel-metrics")]
             METRICS.ipc_call.inc();
@@ -183,18 +215,7 @@ pub fn ipc_call(
 
             // Register timeout. The tripwire N2 phase becomes armed inside
             // the TIMEOUT_QUEUE critical section.
-            if timeout_ticks > 0 {
-                let deadline = TICK_COUNT.load(Ordering::Relaxed) + timeout_ticks;
-                let mut tq = TIMEOUT_QUEUE.lock();
-                tq[caller_tid.0 as usize] = Some(TimeoutEntry {
-                    tid: caller_tid,
-                    wake_at_tick: deadline,
-                    error_code: IpcError::Etimedout as i64,
-                });
-                tripwire::wait_armed(WaitSide::Call, caller_tid, true);
-            } else {
-                tripwire::wait_armed(WaitSide::Call, caller_tid, false);
-            }
+            arm_timeout(WaitSide::Call, caller_tid, deadline);
 
             #[cfg(feature = "kernel-metrics")]
             METRICS.ipc_call.inc();
@@ -255,7 +276,9 @@ pub fn ipc_call(
 /// Wait for a message on a channel.
 ///
 /// `recv_buf`: buffer to receive message payload.
-/// `timeout_ticks`: maximum ticks to wait (0 = non-blocking poll).
+/// `timeout_ticks`: maximum ticks to wait. 0 is a non-blocking poll and
+/// `u64::MAX`, or any value whose deadline would reach `u64::MAX`, is no
+/// timeout, so a value from a syscall register cannot overflow (#217).
 ///
 /// Returns (bytes_received, sender_tid) on success, or negative error.
 /// The sender's ThreadId is returned so the receiver knows who to reply to.
@@ -274,7 +297,7 @@ pub fn ipc_recv(
     crate::cap::check_channel_access(pid, channel)?;
 
     // Try to dequeue a message.
-    {
+    let deadline = {
         let mut table = CHANNEL_TABLE.lock();
         let ch = channel_mut(&mut table, channel)?;
 
@@ -303,29 +326,20 @@ pub fn ipc_recv(
             return Err(IpcError::Eagain as i64);
         }
         ch.waiting_receiver = Some(receiver_tid);
+        let deadline = deadline_from_now(timeout_ticks);
         // Tripwire N2 phase: published, timeout not yet registered.
         tripwire::wait_published(
             WaitSide::Recv,
             receiver_tid,
             u64::from(channel.0),
-            timeout_ticks < u64::MAX,
+            deadline.is_some(),
         );
-    }
+        deadline
+    };
 
     // Register timeout. The tripwire N2 phase becomes armed inside the
     // TIMEOUT_QUEUE critical section.
-    if timeout_ticks < u64::MAX {
-        let deadline = TICK_COUNT.load(Ordering::Relaxed) + timeout_ticks;
-        let mut tq = TIMEOUT_QUEUE.lock();
-        tq[receiver_tid.0 as usize] = Some(TimeoutEntry {
-            tid: receiver_tid,
-            wake_at_tick: deadline,
-            error_code: IpcError::Etimedout as i64,
-        });
-        tripwire::wait_armed(WaitSide::Recv, receiver_tid, true);
-    } else {
-        tripwire::wait_armed(WaitSide::Recv, receiver_tid, false);
-    }
+    arm_timeout(WaitSide::Recv, receiver_tid, deadline);
 
     // Block until message arrives or timeout.
     sched::block_current(ThreadState::BlockedIpc {
