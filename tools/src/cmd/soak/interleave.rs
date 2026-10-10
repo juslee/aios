@@ -12,19 +12,23 @@
 //! contain [`MIN_ARM_BASE`] (#196: strict-NX firmware faults every older
 //! kernel), arms whose justfiles name different firmware files, or (unless
 //! `--allow-mixed-toolchains`) arms whose `rust-toolchain.toml` channels
-//! differ. After each arm's build, its `rustc --version` must match the first
-//! arm's (same override). The QEMU binary's version line and sha256 and the
-//! firmware's sha256 are checked again before and after every boot: a change
-//! stops the soak (exit 2), and a boot during which the change happened is not
-//! counted.
+//! differ. It also refuses a host whose 1-minute load average is above its
+//! CPU count, unless `--ignore-load`: the check runs before the builds, which
+//! raise the load themselves. After each arm's build, its `rustc --version`
+//! must match the first arm's (same override). The QEMU binary's version line
+//! and sha256 and the firmware's sha256 are checked again before and after
+//! every boot: a change stops the soak (exit 2), and a boot during which the
+//! change happened is not counted.
 //!
 //! The run is report-only: it exits 0 when every boot ran, whatever the
-//! classes. Each arm's directory `arm-X/` is a normal single-run directory
-//! (`run-NN.log`, `summary.tsv` row by row, `build.log`, and `summary.md` once
-//! the soak finishes). The top level holds `arms.tsv`, `boots.tsv` (every boot
-//! in boot order) and `summary.md`, rewritten after every boot through a
-//! temporary file and a rename, with a status line, so a signal or a time limit
-//! still leaves a report of the boots so far.
+//! classes, unless `--fail-on-regression` is given and some pair's regression
+//! guard fails ([`pair`], exit 1). Each arm's directory `arm-X/` is a normal
+//! single-run directory (`run-NN.log`, `summary.tsv` row by row, `build.log`,
+//! and `summary.md` once the soak finishes). The top level holds `arms.tsv`,
+//! `boots.tsv` (every boot in boot order) and `summary.md`, rewritten after
+//! every boot through a temporary file and a rename, with a status line and
+//! the pair report, so a signal or a time limit still leaves a report of the
+//! boots so far.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
@@ -36,6 +40,7 @@ use anyhow::{bail, Context, Result};
 use super::awk::contains;
 use super::classify::{classify, Class};
 use super::host;
+use super::pair::{self, Boot};
 use super::report::{self, SummaryInfo, Tally};
 use super::runner::{self, append, boot_once, bytes, Arm, BootOutcome, Config, ScratchDir};
 use super::signals::{name_of_exit, Interrupts};
@@ -81,12 +86,83 @@ const HOST_TOOLS: [&str; 6] = [
 const BUILD_ENV_REMOVE: [&str; 2] = ["RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"];
 
 /// An interleaved soak request: the boot settings (`runs` boots per arm), the
-/// arm directories as given, and `--allow-mixed-toolchains`.
+/// arm directories as given, and the interleave-only options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub cfg: Config,
     pub arms: Vec<OsString>,
     pub allow_mixed_toolchains: bool,
+    /// `--combine CLASS+CLASS...`: extra rows of every pair's tests.
+    pub combine: Vec<Vec<Class>>,
+    /// `--ignore-load`: soak even when the load is above the CPU count.
+    pub ignore_load: bool,
+    /// `--fail-on-regression`: exit 1 when some pair's regression guard fails.
+    pub fail_on_regression: bool,
+}
+
+/// The start check of the host's load, before the builds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadCheck {
+    /// load1 was not above the CPU count.
+    Passed { load1: String },
+    /// `--ignore-load`: not checked; `above` when load1 was above the CPU count.
+    Ignored { load1: String, above: bool },
+    /// The load average or the CPU count could not be read.
+    Unreadable,
+}
+
+impl LoadCheck {
+    /// Check `loadavg` (as [`host::loadavg`] prints it) against `cpus` (as
+    /// [`host::host_cpus`] prints it). Refuses (`Err`) when load1 is above
+    /// the CPU count, unless `ignore`.
+    pub fn new(loadavg: &str, cpus: &[u8], ignore: bool) -> Result<LoadCheck> {
+        let load1 = loadavg.split(' ').next().unwrap_or("").to_string();
+        let l: Option<f64> = load1.trim().parse().ok().filter(|v: &f64| v.is_finite());
+        let n: Option<u64> = std::str::from_utf8(cpus)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .filter(|&n| n > 0);
+        let (Some(l), Some(n)) = (l, n) else {
+            return Ok(if ignore && !load1.is_empty() {
+                LoadCheck::Ignored {
+                    load1,
+                    above: false,
+                }
+            } else {
+                LoadCheck::Unreadable
+            });
+        };
+        let above = l > n as f64;
+        if ignore {
+            return Ok(LoadCheck::Ignored { load1, above });
+        }
+        if above {
+            bail!(
+                "the host's 1-minute load average is {load1}, above its {n} CPUs: boots on a loaded host measure the host as much as the arms. Wait for the load to drop, or pass --ignore-load to soak anyway (the loads are recorded)"
+            );
+        }
+        Ok(LoadCheck::Passed { load1 })
+    }
+
+    /// The Settings row's text.
+    fn text(&self) -> String {
+        match self {
+            LoadCheck::Passed { load1 } => {
+                format!("passed: load1 {load1} before the builds, not above the host's CPU count")
+            }
+            LoadCheck::Ignored { load1, above } => format!(
+                "skipped (--ignore-load): load1 {load1} before the builds{}",
+                if *above {
+                    ", above the host's CPU count"
+                } else {
+                    ""
+                }
+            ),
+            LoadCheck::Unreadable => {
+                "not checked: the load average or the CPU count could not be read".to_string()
+            }
+        }
+    }
 }
 
 /// The commit every arm must contain, and whether [`MIN_ARM_BASE_VAR`] set it.
@@ -223,6 +299,10 @@ struct Report {
     settings: Vec<(String, Vec<u8>)>,
     arms: Vec<Vec<Vec<u8>>>,
     tallies: Vec<Tally>,
+    /// Every boot so far, in boot order, for the pair report.
+    boots: Vec<Boot>,
+    /// `--combine` groups.
+    combine: Vec<Vec<Class>>,
     total: u64,
     out_dir: PathBuf,
 }
@@ -285,6 +365,7 @@ impl Report {
         md.extend_from_slice(
             b"\nThe CLEAN rate is over each arm's conclusive boots (INCONCLUSIVE left out).\n",
         );
+        md.extend(pair::sections(labels, &self.boots, &self.combine));
         md
     }
 
@@ -336,9 +417,10 @@ fn harness_rev() -> Vec<u8> {
 }
 
 /// Run an interleaved soak. Returns the exit status: 0 when every boot ran,
-/// or 129, 130, 131 or 143 when a signal stopped it. Usage, preflight and
-/// setup errors, and a stop for harness errors or a changed QEMU or firmware,
-/// are `Err` (status 2).
+/// 1 with `--fail-on-regression` when some pair's regression guard fails, or
+/// 129, 130, 131 or 143 when a signal stopped it. Usage, preflight (the load
+/// check included) and setup errors, and a stop for harness errors or a
+/// changed QEMU or firmware, are `Err` (status 2).
 pub fn run(req: &Request, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -> Result<u8> {
     for tool in HOST_TOOLS {
         if host::find_in_path(tool).is_none() {
@@ -451,6 +533,16 @@ fn run_with_base(
         firmware: firmware_path,
     };
 
+    // The load, before the builds raise it.
+    let load_before = host::loadavg();
+    let load_check = LoadCheck::new(&load_before, &host::host_cpus(), req.ignore_load)?;
+    if load_check == LoadCheck::Unreadable {
+        runner::warn(
+            err,
+            b"cannot read the load average or the CPU count; the load check before the builds was skipped",
+        )?;
+    }
+
     let out_arg: OsString = match &cfg.out {
         Some(o) => o.clone(),
         None => host::repo_root(cwd)?
@@ -467,6 +559,8 @@ fn run_with_base(
         fixed,
         firmware_raw,
         base: base.clone(),
+        load_before,
+        load_check,
         out_dir,
     };
     // As in single mode: a child that a terminal signal ended makes its step
@@ -480,6 +574,9 @@ struct Setup {
     fixed: Fixed,
     firmware_raw: Vec<u8>,
     base: ArmBase,
+    /// The load average before the builds, and its check.
+    load_before: String,
+    load_check: LoadCheck,
     out_dir: PathBuf,
 }
 
@@ -550,6 +647,8 @@ fn build_and_boot(
         fixed,
         firmware_raw,
         base,
+        load_before,
+        load_check,
         out_dir,
     } = setup;
     let n_arms = req.arms.len();
@@ -562,7 +661,6 @@ fn build_and_boot(
     let scratch = ScratchDir::create(&out_dir).map_err(|_| {
         anyhow::anyhow!("cannot create a scratch directory in {}", out_dir.display())
     })?;
-    let load_before = host::loadavg();
 
     // Build each checkout once, then snapshot it.
     let mut built: Vec<Built> = Vec::new();
@@ -756,6 +854,7 @@ fn build_and_boot(
             "Load average".into(),
             format!("before the builds {load_before}; after the builds {load_after}").into_bytes(),
         ),
+        ("Load check".into(), load_check.text().into_bytes()),
         ("Toolchains".into(), toolchains.to_vec()),
         ("Arm base".into(), arm_base.into_bytes()),
         ("Harness".into(), harness_rev()),
@@ -766,6 +865,8 @@ fn build_and_boot(
         settings,
         arms: arm_rows,
         tallies: (0..n_arms).map(|_| Tally::default()).collect(),
+        boots: Vec::new(),
+        combine: req.combine.clone(),
         total,
         out_dir: out_dir.clone(),
     };
@@ -883,6 +984,9 @@ fn build_and_boot(
                 .concat(),
             )?;
             report.tallies[label].add(&idx, &c, &timing);
+            report
+                .boots
+                .push(Boot::new(round + 1, label, &c, &timing, boots_log));
 
             errors_in_a_row = if stub_ran { 0 } else { errors_in_a_row + 1 };
             if errors_in_a_row >= MAX_HARNESS_ERRORS_IN_A_ROW {
@@ -929,15 +1033,27 @@ fn build_and_boot(
     report.settings.iter_mut().for_each(|(name, value)| {
         if name == "Load average" {
             value.extend(format!("; at the end {load_end}").into_bytes());
+            if let Some(fixed) = host::loadavg_override() {
+                value.extend(
+                    format!(
+                        " ({} override: every load reads '{fixed}')",
+                        host::LOADAVG_VAR
+                    )
+                    .into_bytes(),
+                );
+            }
         }
     });
     report.write(&format!("finished ({} boots)", report.counted()))?;
     if let Some(code) = interrupts.pending() {
         return Ok(code);
     }
+    let labels = &LABELS[..n_arms];
+    out.write_all(b"\n")?;
+    out.write_all(&pair::console(labels, &report.boots))?;
     out.write_all(
         &[
-            &b"\nsoak: interleaved report in "[..],
+            &b"soak: interleaved report in "[..],
             bytes(&out_dir.join("summary.md")),
             b", rows in ",
             bytes(&boots_tsv),
@@ -945,6 +1061,10 @@ fn build_and_boot(
         ]
         .concat(),
     )?;
+    if req.fail_on_regression && pair::regression(n_arms, &report.boots) {
+        out.write_all(b"soak: a pair's regression guard failed (--fail-on-regression): exit 1\n")?;
+        return Ok(1);
+    }
     Ok(0)
 }
 
@@ -983,12 +1103,66 @@ mod tests {
     }
 
     #[test]
+    fn the_load_check_refuses_load1_above_the_cpu_count() {
+        let passed = |l: &str| LoadCheck::Passed { load1: l.into() };
+        assert_eq!(
+            LoadCheck::new("3.99 9.00 9.00", b"4", false).expect("passes"),
+            passed("3.99")
+        );
+        // Equal to the CPU count is not above it.
+        assert_eq!(
+            LoadCheck::new("4.00 1.00 1.00", b"4\n", false).expect("passes"),
+            passed("4.00")
+        );
+        let refused = LoadCheck::new("4.01 1.00 1.00", b"4", false).expect_err("refused");
+        assert_eq!(
+            format!("{refused:#}"),
+            "the host's 1-minute load average is 4.01, above its 4 CPUs: boots on a loaded host measure the host as much as the arms. Wait for the load to drop, or pass --ignore-load to soak anyway (the loads are recorded)"
+        );
+        let ignored = LoadCheck::new("4.01 1.00 1.00", b"4", true).expect("ignored");
+        assert_eq!(
+            ignored,
+            LoadCheck::Ignored {
+                load1: "4.01".into(),
+                above: true
+            }
+        );
+        assert_eq!(
+            ignored.text(),
+            "skipped (--ignore-load): load1 4.01 before the builds, above the host's CPU count"
+        );
+        assert_eq!(
+            passed("0.50").text(),
+            "passed: load1 0.50 before the builds, not above the host's CPU count"
+        );
+        // Unreadable: no refusal, and the report says so.
+        for (load, cpus) in [
+            ("", &b"4"[..]),
+            ("x 1 1", b"4"),
+            ("1.00 1 1", b"?"),
+            ("1.00", b"0"),
+        ] {
+            assert_eq!(
+                LoadCheck::new(load, cpus, false).expect("not refused"),
+                LoadCheck::Unreadable,
+                "{load:?} {cpus:?}"
+            );
+        }
+        assert_eq!(
+            LoadCheck::Unreadable.text(),
+            "not checked: the load average or the CPU count could not be read"
+        );
+    }
+
+    #[test]
     fn the_report_counts_classes_per_arm() {
         let report = Report {
             mode: "text".into(),
             settings: vec![("Design".into(), b"2 arms".to_vec())],
             arms: vec![vec![b"A".to_vec(), b"`a|b`".to_vec()]],
             tallies: vec![Tally::default(), Tally::default()],
+            boots: Vec::new(),
+            combine: Vec::new(),
             total: 4,
             out_dir: PathBuf::from("/nonexistent"),
         };
@@ -1005,5 +1179,17 @@ mod tests {
             md.contains("| **Total** | 0 | 0 |\n| CLEAN rate | n/a | n/a |\n"),
             "{md}"
         );
+        // The pair report follows the class table, in D4's order.
+        let at = |h: &str| md.find(h).unwrap_or_else(|| panic!("no {h} in\n{md}"));
+        let order = [
+            "### Classes per arm",
+            "### Load",
+            "### Pair tests",
+            "### Gate 1 IPC",
+            "### Tripwire per arm",
+            "### Non-CLEAN boots",
+        ]
+        .map(at);
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{md}");
     }
 }

@@ -1,0 +1,372 @@
+exit 1
+--- stdout
+soak: interleaved, 2 arms x 4 rounds x 3s, mode=text, data=fresh
+soak: arm A: <ROOT>/arms/a commit=<REV>
+soak: arm B: <ROOT>/arms/b commit=<REV>
+soak: qemu=<ROOT>/bin/qemu-system-aarch64
+soak: firmware=<ROOT>/fw.fd
+soak: logs in <ROOT>/repo/out (load average after the builds: <L>)
+A run 01/4  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
+B run 01/4  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
+B run 02/4  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
+A run 02/4  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
+A run 03/4  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
+B run 03/4  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
+B run 04/4  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
+A run 04/4  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
+
+soak: A vs B: regression guard FAILS (CLEAN 4/4 vs 0/4, one-sided p 0.0143); mean load 0.50 vs 0.50, 0% apart: comparable
+soak: interleaved report in <ROOT>/repo/out/summary.md, rows in <ROOT>/repo/out/boots.tsv, each arm's single-run files in arm-X/
+soak: a pair's regression guard failed (--fail-on-regression): exit 1
+--- stderr
+soak: warning: --secs 3 leaves under 20s beyond --stall-secs 2 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 2s of a boot is never seen
+soak: warning: AIOS_SOAK_LOADAVG replaces the host's load average with '0.50 0.40 0.30'; only debug builds read it
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+--- out: arm-A/run-01.log arm-A/run-02.log arm-A/run-03.log arm-A/run-04.log arm-A/summary.md arm-A/summary.tsv arm-B/run-01.log arm-B/run-02.log arm-B/run-03.log arm-B/run-04.log arm-B/summary.md arm-B/summary.tsv arms.tsv boots.tsv summary.md
+--- file arm-A/run-01.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=124 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=2 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-A/run-02.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=124 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=2 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-A/run-03.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=124 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=2 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-A/run-04.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=124 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=2 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-A/summary.md
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `<REV>` (kernel ELF sha256 `94cc3f95c7b1a13c`) |
+| Boots | 4 x 3s, stall limit 2s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) |
+| Firmware | `<ROOT>/fw.fd` |
+| Host | <HOST> |
+| Load average | <L> |
+| Logs | `<ROOT>/repo/out/arm-A` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
+| PANIC | 0 | 0% |
+| EXCEPTION | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
+| INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
+| CLEAN | 4 | 100% |
+| **Total** | 4 | |
+
+CLEAN rate: 100% (95% Wilson interval 51%-100%)
+Gate 1 IPC round trip, mean over CLEAN boots: 6.00 us (n=4; each boot's avg= is whole us, truncated)
+
+### Tripwire counters by class
+
+From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). A cell is "boots with a non-zero value / sum over those boots", or "/ max" for a gauge (marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every boot are left out.
+
+| Counter | CLEAN |
+|---|---:|
+| Boots | 4 |
+| Boots with a `v=1` line | 4 |
+| `tick` | 4/4004 |
+| `tick[CPU 0]` | 4/4004 |
+| `elrmm` | 4/4 |
+| `elrmm[CPU 0]` | 4/4 |
+| `twc` | 4/36 |
+| `twn` | 4/4 |
+| `twmax` (max) | 4/94000 |
+
+| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
+|---:|---|---:|---:|---|---|---|---|
+| 01 | CLEAN | 1000 | <N> | EL1,BOOT,G1PASS,G1DONE | - | hb | - |
+| 02 | CLEAN | 1000 | <N> | EL1,BOOT,G1PASS,G1DONE | - | hb | - |
+| 03 | CLEAN | 1000 | <N> | EL1,BOOT,G1PASS,G1DONE | - | hb | - |
+| 04 | CLEAN | 1000 | <N> | EL1,BOOT,G1PASS,G1DONE | - | hb | - |
+--- file arm-A/summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
+01	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+02	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-02.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+03	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-03.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+04	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-04.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+--- file arm-B/run-01.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/x.rs:1:1:
+boom | with a pipe é
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-B/run-02.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/x.rs:1:1:
+boom | with a pipe é
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-B/run-03.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/x.rs:1:1:
+boom | with a pipe é
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-B/run-04.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/x.rs:1:1:
+boom | with a pipe é
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file arm-B/summary.md
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `<REV>` (kernel ELF sha256 `94cc3f95c7b1a13c`) |
+| Boots | 4 x 3s, stall limit 2s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) |
+| Firmware | `<ROOT>/fw.fd` |
+| Host | <HOST> |
+| Load average | <L> |
+| Logs | `<ROOT>/repo/out/arm-B` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC-LOCK | 0 | 0% |
+| PANIC | 4 | 100% |
+| EXCEPTION | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
+| INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
+| CLEAN | 0 | 0% |
+| **Total** | 4 | |
+
+CLEAN rate: 0% (95% Wilson interval 0%-49%)
+Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)
+
+### Tripwire counters by class
+
+No boot has a complete `v=1` tripwire line.
+
+| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
+|---:|---|---:|---:|---|---|---|---|
+| 01 | PANIC | 0 | <N> | EL1,BOOT | no | - | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+| 02 | PANIC | 0 | <N> | EL1,BOOT | no | - | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+| 03 | PANIC | 0 | <N> | EL1,BOOT | no | - | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+| 04 | PANIC | 0 | <N> | EL1,BOOT | no | - | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+--- file arm-B/summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
+01	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+02	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-02.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+03	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-03.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+04	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-04.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+--- file arms.tsv
+arm	checkout	root	commit	channel	rustc	kernel	firmware	qemu	qemu_args
+A	../arms/a	<ROOT>/arms/a	244166f	nightly-2026-10-09	rustc 1.99.0-nightly (fake 2026-10-09)	kernel ELF sha256 `94cc3f95c7b1a13c`	<ROOT>/fw.fd	<ROOT>/bin/qemu-system-aarch64	-machine virt,gic-version=3 -cpu cortex-a72 -smp 4 -m 2G -nographic -bios <ROOT>/fw.fd -drive if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp-A.img,format=raw -device virtio-blk-pci,drive=disk0 -drive if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw -device virtio-blk-device,drive=data0 -device ramfb
+B	../arms/b	<ROOT>/arms/b	244166f	nightly-2026-10-09	rustc 1.99.0-nightly (fake 2026-10-09)	kernel ELF sha256 `94cc3f95c7b1a13c`	<ROOT>/fw.fd	<ROOT>/bin/qemu-system-aarch64	-machine virt,gic-version=3 -cpu cortex-a72 -smp 4 -m 2G -nographic -bios <ROOT>/fw.fd -drive if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp-B.img,format=raw -device virtio-blk-pci,drive=disk0 -drive if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw -device virtio-blk-device,drive=data0 -device ramfb
+--- file boots.tsv
+round	position	arm	run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
+1	1	A	01	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-A/run-01.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+1	2	B	01	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-B/run-01.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+2	1	B	02	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-B/run-02.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+2	2	A	02	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-A/run-02.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+3	1	A	03	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-A/run-03.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+3	2	B	03	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-B/run-03.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+4	1	B	04	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-B/run-04.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+4	2	A	04	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	arm-A/run-04.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+--- file summary.md
+## AIOS QEMU interleaved soak (text mode)
+
+**Status:** finished (8 boots)
+
+### Settings
+
+| Setting | Value |
+|---|---|
+| Design | 2 arms (A, B), 4 rounds of one boot per arm: 8 boots |
+| Rotation | the arm order moves by one each round: A B; B A, then again |
+| Boots | 3s each, stall limit 2s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) (`<ROOT>/bin/qemu-system-aarch64`, sha256 `f6881a5e580c7942`) |
+| Firmware | `<ROOT>/fw.fd` (sha256 `c3bf47ea1f4a4a60`) |
+| Host | <HOST> |
+| Load average | <L> |
+| Load check | passed: load1 0.50 before the builds, not above the host's CPU count |
+| Toolchains | one channel and one rustc for every arm |
+| Arm base | every arm contains `244166f03dbd262e5ed2921769fb515ee7dd0652` (AIOS_SOAK_MIN_ARM_BASE override; the release base is `7167d408f6a43ca9859fb6238f608ca6bdee37d6`, #196) |
+| Harness | <HARNESS> |
+| Logs | `<ROOT>/repo/out` |
+
+### Arms
+
+| Arm | Checkout | Commit | Channel | rustc | Kernel |
+|---|---|---|---|---|---|
+| A | `../arms/a` | `244166f` | nightly-2026-10-09 | rustc 1.99.0-nightly (fake 2026-10-09) | kernel ELF sha256 `94cc3f95c7b1a13c` |
+| B | `../arms/b` | `244166f` | nightly-2026-10-09 | rustc 1.99.0-nightly (fake 2026-10-09) | kernel ELF sha256 `94cc3f95c7b1a13c` |
+
+### Classes per arm
+
+| Class | A | B |
+|---|---:|---:|
+| PCZERO | 0 | 0 |
+| PANIC-LOCK | 0 | 0 |
+| PANIC | 0 | 4 |
+| EXCEPTION | 0 | 0 |
+| WEDGE-STUCK | 0 | 0 |
+| WEDGE-ALIVE | 0 | 0 |
+| INCONCLUSIVE | 0 | 0 |
+| DEGRADED | 0 | 0 |
+| CLEAN | 4 | 0 |
+| **Total** | 4 | 4 |
+| CLEAN rate | 100% (95% Wilson interval 51%-100%) | 0% (95% Wilson interval 0%-49%) |
+
+The CLEAN rate is over each arm's conclusive boots (INCONCLUSIVE left out).
+
+### Load
+
+The host's 1-minute load average before each boot.
+
+| Arm | Boots with a load | load1 mean | load1 max |
+|---|---:|---:|---:|
+| A | 4 | 0.50 | 0.50 |
+| B | 4 | 0.50 | 0.50 |
+
+A pair whose arms' mean loads differ by more than 25% of the lower mean is redone: the load, not the change, may explain its differences.
+
+- A vs B: 0.50 vs 0.50, 0% apart: comparable
+
+### Pair tests
+
+Fisher's exact test on conclusive boots only (INCONCLUSIVE is left out of every count and denominator). In each pair the earlier arm is the previous one and the later arm the new one. The regression guard fails when the new arm has fewer CLEAN boots with one-sided p < 0.05. A class is marked `removed` when the new arm has none of it and the one-sided p (fewer in new) < 0.05, and `new` when the previous arm has none of it and the one-sided p (more in new) < 0.05. The rate differences (new - previous, in percentage points) are recorded, never gated on.
+
+#### A vs B (A previous, B new)
+
+**Regression guard:** CLEAN 4/4 in A, 0/4 in B; one-sided p (fewer CLEAN in B) = 0.0143: **fails** (p < 0.05)
+
+| Class | A | B | B - A | p fewer in B | p more in B | p two-sided | Marker |
+|---|---:|---:|---:|---:|---:|---:|---|
+| PCZERO | 0/4 | 0/4 | 0 pp | 1 | 1 | 1 | - |
+| PANIC-LOCK | 0/4 | 0/4 | 0 pp | 1 | 1 | 1 | - |
+| PANIC | 0/4 | 4/4 | +100 pp | 1 | 0.0143 | 0.0286 | new |
+| EXCEPTION | 0/4 | 0/4 | 0 pp | 1 | 1 | 1 | - |
+| WEDGE-STUCK | 0/4 | 0/4 | 0 pp | 1 | 1 | 1 | - |
+| WEDGE-ALIVE | 0/4 | 0/4 | 0 pp | 1 | 1 | 1 | - |
+| DEGRADED | 0/4 | 0/4 | 0 pp | 1 | 1 | 1 | - |
+| CLEAN | 4/4 | 0/4 | -100 pp | 0.0143 | 1 | 0.0286 | removed |
+| PANIC+PANIC-LOCK | 0/4 | 4/4 | +100 pp | 1 | 0.0143 | 0.0286 | new |
+
+### Gate 1 IPC
+
+| Arm | IPC round trip, mean over CLEAN boots | n | CLEAN boots without avg= | G1PASS boots |
+|---|---:|---:|---:|---:|
+| A | 6.00 us | 4 | 0 | 4 of 4 |
+| B | n/a | 0 | 0 | 0 of 4 |
+
+Each boot's avg= is whole us, as the kernel truncates it.
+
+### Tripwire per arm
+
+| Arm | Non-CLEAN boots with neither a complete tripwire line nor a fatal report |
+|---|---:|
+| A | 0 |
+| B | n/a (no tripwire line in any boot) |
+
+That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every non-CLEAN boot without a fatal report counts.
+
+From each boot's last complete `[tripwire]` line (the `tw_*` columns of `boots.tsv`), by arm. A cell is "boots with a non-zero value / sum over those boots", or "/ max" for a gauge (marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every boot are left out.
+
+| Counter | A | B |
+|---|---:|---:|
+| Boots | 4 | 4 |
+| Boots with a `v=1` line | 4 | 0 |
+| `tick` | 4/4004 | 0/0 |
+| `tick[CPU 0]` | 4/4004 | 0/0 |
+| `elrmm` | 4/4 | 0/0 |
+| `elrmm[CPU 0]` | 4/4 | 0/0 |
+| `twc` | 4/36 | 0/0 |
+| `twn` | 4/4 | 0/0 |
+| `twmax` (max) | 4/94000 | 0/0 |
+
+### Non-CLEAN boots
+
+| Round | Arm | Class | Last tick | First fatal line / detail | Tripwire | Log |
+|---:|---|---|---:|---|---|---|
+| 1 | B | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-B/run-01.log` |
+| 2 | B | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-B/run-02.log` |
+| 3 | B | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-B/run-03.log` |
+| 4 | B | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-B/run-04.log` |
+--- boots: 8
+--- rustup.log
+--- just.log

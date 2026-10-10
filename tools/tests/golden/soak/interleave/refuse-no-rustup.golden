@@ -1,6 +1,7 @@
 exit 2
 --- stdout
 --- stderr
+soak: warning: AIOS_SOAK_LOADAVG replaces the host's load average with '0.50 0.40 0.30'; only debug builds read it
 soak: error: rustup not found in PATH: installing each arm's pinned toolchain needs rustup 1.28 or later, and network access the first time
 --- out: (none)
 --- boots: 0

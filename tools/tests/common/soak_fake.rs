@@ -702,12 +702,15 @@ static RULES: LazyLock<Vec<(Regex, &'static [u8])>> = LazyLock::new(|| {
         (r"\| Load average \| [^\n]*", b"| Load average | <L> |"),
         (r"after [0-9]+s\)", b"after <N>s)"),
         (r"\| Harness \| [^\n]*", b"| Harness | <HARNESS> |"),
+        (r"above its [0-9]+ CPUs", b"above its <N> CPUs"),
         (
             r"\(load average after the builds: [^)\n]*\)",
             b"(load average after the builds: <L>)",
         ),
+        // The per-boot table's stall cell (the second cell is a class name;
+        // the interleaved report's non-CLEAN rows have an arm letter there).
         (
-            r"(?m)^(\| [0-9]+ \| [A-Z-]+ \| [^|]* \| )[^|]* \|",
+            r"(?m)^(\| [0-9]+ \| [A-Z][A-Z-]+ \| [^|]* \| )[^|]* \|",
             b"${1}<N> |",
         ),
         // bash reports a background job that SIGKILL ended; the port has no such job.
@@ -842,7 +845,8 @@ impl FakeArm {
 /// (`rustup-fails`, `build-fails`, `qemu-changes-at-N`;
 /// `sha256-interrupted-after-1` also installs
 /// [`FAKE_SHA256SUM_AFTER_FIRST_BOOT`]), the fake arms, and whether rustup is
-/// on PATH.
+/// on PATH, and the load average every probe reads ([`DEFAULT_LOADAVG`]
+/// unless set).
 pub struct ArmScenario {
     pub name: &'static str,
     pub args: Vec<String>,
@@ -850,6 +854,8 @@ pub struct ArmScenario {
     pub flags: Vec<String>,
     pub arms: Vec<FakeArm>,
     pub no_rustup: bool,
+    /// `AIOS_SOAK_LOADAVG`: the 1, 5 and 15-minute loads the harness reads.
+    pub loadavg: &'static str,
     /// Send this signal to the harness once the file (relative to the output
     /// directory) shows the kernel booting.
     pub interrupt: Option<(&'static str, &'static str)>,
@@ -872,9 +878,23 @@ impl ArmScenario {
             flags: Vec::new(),
             arms: vec![FakeArm::new("a"), FakeArm::new("b")],
             no_rustup: false,
+            loadavg: DEFAULT_LOADAVG,
             interrupt: None,
         }
     }
+}
+
+/// The load average of an interleave scenario unless it sets its own: below
+/// any host's CPU count, so the load check passes.
+pub const DEFAULT_LOADAVG: &str = "0.50 0.40 0.30";
+
+/// A load average above any host's CPU count.
+pub const HIGH_LOADAVG: &str = "100000.00 1.00 1.00";
+
+/// A CLEAN boot with the `src=g1` and heartbeat tripwire lines, when QEMU
+/// runs to the time limit (`secs=3 stall_secs=2`).
+pub fn clean_script() -> String {
+    format!("{BOOT_HEAD}{CLEAN_TAIL}{G1_TRIPWIRE}exec sleep 30\n")
 }
 
 /// The boot script that panics at once.
@@ -1081,6 +1101,7 @@ pub fn run_arm_scenario(sc: &ArmScenario) -> ArmOutcome {
         .env("PATH", &path)
         .env("AIOS_FAKE_ROOT", &root)
         .env("AIOS_SOAK_MIN_ARM_BASE", &base)
+        .env("AIOS_SOAK_LOADAVG", sc.loadavg)
         .env("RUSTUP_TOOLCHAIN", "the-harness-toolchain")
         .env("CARGO_TARGET_DIR", "/the-harness-target")
         .env_remove("AIOS_EDK2_FW")

@@ -92,9 +92,28 @@ pub fn tail_lines(data: &[u8], n: usize) -> &[u8] {
     data
 }
 
+/// Replaces [`loadavg`] in builds with debug assertions (the profile
+/// `cargo test -p aios-tools` uses), so the fake-QEMU tests can pin the load
+/// that an interleaved soak checks and reports. Release builds (`just tools`,
+/// so `just soak` and CI's soak jobs) never read it.
+pub const LOADAVG_VAR: &str = "AIOS_SOAK_LOADAVG";
+
+/// [`LOADAVG_VAR`]'s value, in a debug-assertion build where it is set.
+pub fn loadavg_override() -> Option<String> {
+    if cfg!(debug_assertions) {
+        std::env::var(LOADAVG_VAR).ok()
+    } else {
+        None
+    }
+}
+
 /// `loadavg`: the 1, 5 and 15-minute load averages separated by spaces, from
 /// `/proc/loadavg` or `sysctl -n vm.loadavg`; empty when neither works.
+/// [`LOADAVG_VAR`] replaces them in debug builds.
 pub fn loadavg() -> String {
+    if let Some(fixed) = loadavg_override() {
+        return fixed;
+    }
     if let Ok(text) = std::fs::read("/proc/loadavg") {
         // cut -d' ' -f1-3: a line without a space is printed whole.
         let line = first_line(&text);

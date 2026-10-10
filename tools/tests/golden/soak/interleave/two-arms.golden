@@ -17,8 +17,10 @@ A run 02/3  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: pa
 A run 03/3  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é
 B run 03/3  EXCEPTION    tick=0      stall=<N> [EL1,BOOT]  lb_last=no  EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff000000081234
 
+soak: A vs B: regression guard passes (CLEAN 0/3 vs 0/3, one-sided p 1); mean load 0.50 vs 0.50, 0% apart: comparable
 soak: interleaved report in <ROOT>/repo/out/summary.md, rows in <ROOT>/repo/out/boots.tsv, each arm's single-run files in arm-X/
 --- stderr
+soak: warning: AIOS_SOAK_LOADAVG replaces the host's load average with '0.50 0.40 0.30'; only debug builds read it
 soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
 --- out: arm-A/build.log arm-A/run-01.log arm-A/run-02.log arm-A/run-03.log arm-A/summary.md arm-A/summary.tsv arm-B/build.log arm-B/run-01.log arm-B/run-02.log arm-B/run-03.log arm-B/summary.md arm-B/summary.tsv arms.tsv boots.tsv summary.md
 --- file arm-A/build.log
@@ -204,6 +206,7 @@ round	position	arm	run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	l
 | Firmware | `<ROOT>/fw.fd` (sha256 `c3bf47ea1f4a4a60`) |
 | Host | <HOST> |
 | Load average | <L> |
+| Load check | passed: load1 0.50 before the builds, not above the host's CPU count |
 | Toolchains | one channel and one rustc for every arm |
 | Arm base | every arm contains `244166f03dbd262e5ed2921769fb515ee7dd0652` (AIOS_SOAK_MIN_ARM_BASE override; the release base is `7167d408f6a43ca9859fb6238f608ca6bdee37d6`, #196) |
 | Harness | <HARNESS> |
@@ -233,6 +236,69 @@ round	position	arm	run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	l
 | CLEAN rate | 0% (95% Wilson interval 0%-56%) | 0% (95% Wilson interval 0%-56%) |
 
 The CLEAN rate is over each arm's conclusive boots (INCONCLUSIVE left out).
+
+### Load
+
+The host's 1-minute load average before each boot.
+
+| Arm | Boots with a load | load1 mean | load1 max |
+|---|---:|---:|---:|
+| A | 3 | 0.50 | 0.50 |
+| B | 3 | 0.50 | 0.50 |
+
+A pair whose arms' mean loads differ by more than 25% of the lower mean is redone: the load, not the change, may explain its differences.
+
+- A vs B: 0.50 vs 0.50, 0% apart: comparable
+
+### Pair tests
+
+Fisher's exact test on conclusive boots only (INCONCLUSIVE is left out of every count and denominator). In each pair the earlier arm is the previous one and the later arm the new one. The regression guard fails when the new arm has fewer CLEAN boots with one-sided p < 0.05. A class is marked `removed` when the new arm has none of it and the one-sided p (fewer in new) < 0.05, and `new` when the previous arm has none of it and the one-sided p (more in new) < 0.05. The rate differences (new - previous, in percentage points) are recorded, never gated on.
+
+#### A vs B (A previous, B new)
+
+**Regression guard:** CLEAN 0/3 in A, 0/3 in B; one-sided p (fewer CLEAN in B) = 1: passes
+
+| Class | A | B | B - A | p fewer in B | p more in B | p two-sided | Marker |
+|---|---:|---:|---:|---:|---:|---:|---|
+| PCZERO | 0/3 | 0/3 | 0 pp | 1 | 1 | 1 | - |
+| PANIC-LOCK | 0/3 | 0/3 | 0 pp | 1 | 1 | 1 | - |
+| PANIC | 3/3 | 0/3 | -100 pp | 0.05 | 1 | 0.1 | - |
+| EXCEPTION | 0/3 | 3/3 | +100 pp | 1 | 0.05 | 0.1 | - |
+| WEDGE-STUCK | 0/3 | 0/3 | 0 pp | 1 | 1 | 1 | - |
+| WEDGE-ALIVE | 0/3 | 0/3 | 0 pp | 1 | 1 | 1 | - |
+| DEGRADED | 0/3 | 0/3 | 0 pp | 1 | 1 | 1 | - |
+| CLEAN | 0/3 | 0/3 | 0 pp | 1 | 1 | 1 | - |
+
+### Gate 1 IPC
+
+| Arm | IPC round trip, mean over CLEAN boots | n | CLEAN boots without avg= | G1PASS boots |
+|---|---:|---:|---:|---:|
+| A | n/a | 0 | 0 | 0 of 3 |
+| B | n/a | 0 | 0 | 0 of 3 |
+
+Each boot's avg= is whole us, as the kernel truncates it.
+
+### Tripwire per arm
+
+| Arm | Non-CLEAN boots with neither a complete tripwire line nor a fatal report |
+|---|---:|
+| A | n/a (no tripwire line in any boot) |
+| B | n/a (no tripwire line in any boot) |
+
+That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); for an older arm every non-CLEAN boot without a fatal report counts.
+
+No boot has a complete `v=1` tripwire line.
+
+### Non-CLEAN boots
+
+| Round | Arm | Class | Last tick | First fatal line / detail | Tripwire | Log |
+|---:|---|---|---:|---|---|---|
+| 1 | A | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-A/run-01.log` |
+| 1 | B | EXCEPTION | 0 | EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff000000081234 | - | `arm-B/run-01.log` |
+| 2 | B | EXCEPTION | 0 | EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff000000081234 | - | `arm-B/run-02.log` |
+| 2 | A | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-A/run-02.log` |
+| 3 | A | PANIC | 0 | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é | - | `arm-A/run-03.log` |
+| 3 | B | EXCEPTION | 0 | EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff000000081234 | - | `arm-B/run-03.log` |
 --- boots: 6
 --- rustup.log
 toolchain install --no-self-update in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset

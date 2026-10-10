@@ -344,7 +344,7 @@ pub fn tsv_row(
 /// The per-boot table's `Tripwire` cell: the last complete line's `src`
 /// (`-` when it has none), `v=<version>` for a line of another schema
 /// version, or `-` without a line.
-fn tripwire_src(line: Option<&Line>) -> Vec<u8> {
+pub fn tripwire_src(line: Option<&Line>) -> Vec<u8> {
     match line {
         None => b"-".to_vec(),
         Some(l) if l.v1.is_some() => text_cell(l.src.as_deref()),
@@ -352,13 +352,20 @@ fn tripwire_src(line: Option<&Line>) -> Vec<u8> {
     }
 }
 
-/// One row of `summary.md`'s per-boot table, with its newline.
-pub fn md_row(idx: &str, c: &Classification) -> Vec<u8> {
-    let tail = match c.class.base() {
+/// The per-boot table's "First fatal line / detail" text: the first fatal
+/// line for a fatal class, the detail otherwise, and for DEGRADED the
+/// [`ipc_text`] ahead of the detail.
+pub fn boot_text(c: &Classification) -> Vec<u8> {
+    match c.class.base() {
         Base::Clean => clean_text(c),
         Base::Wedge | Base::Inconclusive => c.detail.clone(),
         Base::PcZero | Base::Panic | Base::Exception => c.first.clone(),
-    };
+    }
+}
+
+/// One row of `summary.md`'s per-boot table, with its newline.
+pub fn md_row(idx: &str, c: &Classification) -> Vec<u8> {
+    let tail = boot_text(c);
     [
         b"| ",
         idx.as_bytes(),
@@ -568,14 +575,15 @@ struct CounterRow {
     per_boot: Vec<Option<u128>>,
 }
 
-/// The rows of the tripwire table for every key, zero rows included.
-fn counter_rows(boots: &[(Class, Option<V1>)]) -> Vec<CounterRow> {
+/// The rows of a tripwire table for every key, zero rows included, from
+/// each boot's `v=1` line (`None` without one).
+fn counter_rows(boots: &[Option<&V1>]) -> Vec<CounterRow> {
     let mut rows = Vec::new();
     for &key in &Key::ALL {
         let gauge = key.is_gauge();
         let lists: Vec<Option<Vec<u128>>> = boots
             .iter()
-            .map(|(_, v1)| v1.as_ref().map(|v| values(v.value(key))))
+            .map(|v1| v1.map(|v| values(v.value(key))))
             .collect();
         let combine = |vs: &[u128]| -> u128 {
             if gauge {
@@ -615,70 +623,44 @@ fn counter_rows(boots: &[(Class, Option<V1>)]) -> Vec<CounterRow> {
     rows
 }
 
-/// The "Tripwire counters by class" section of `summary.md`, with a leading
-/// blank line: one column per class that has boots, one row per counter
-/// value that is non-zero in some boot. A cell is "boots with a non-zero
-/// value / sum over the class's boots", or "/ max" for a gauge.
-pub fn tripwire_table(tally: &Tally) -> Vec<u8> {
-    let mut md = b"\n### Tripwire counters by class\n\n".to_vec();
-    let boots = &tally.tripwire;
+/// A table of tripwire counters with one column per group of boots, or
+/// `None` when no boot has a `v=1` line. `boots` gives each boot's column
+/// (an index into `columns`) and its `v=1` line. The rows: the boots per
+/// column, those with a `v=1` line, then one row per counter value that is
+/// non-zero in some boot. A cell is "boots with a non-zero value / sum over
+/// the column's boots", or "/ max" for a gauge.
+pub fn counter_table(columns: &[String], boots: &[(usize, Option<&V1>)]) -> Option<Vec<u8>> {
     if boots.iter().all(|(_, v1)| v1.is_none()) {
-        md.extend_from_slice(b"No boot has a complete `v=1` tripwire line.\n");
-        return md;
+        return None;
     }
-    md.extend_from_slice(
-        b"From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). \
-A cell is \"boots with a non-zero value / sum over those boots\", or \"/ max\" for a gauge \
-(marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every \
-boot are left out.\n\n",
-    );
-    let classes: Vec<Class> = Class::ALL
-        .into_iter()
-        .filter(|&c| tally.count(c) > 0)
-        .collect();
     let line = |label: &str, cells: Vec<String>| format!("| {label} | {} |\n", cells.join(" | "));
-    md.extend(
-        line(
-            "Counter",
-            classes.iter().map(|c| c.name().to_string()).collect(),
-        )
-        .into_bytes(),
-    );
-    md.extend(format!("|---|{}\n", "---:|".repeat(classes.len())).into_bytes());
-    md.extend(
-        line(
-            "Boots",
-            classes
-                .iter()
-                .map(|&c| tally.count(c).to_string())
-                .collect(),
-        )
-        .into_bytes(),
-    );
-    let with_line = |c: Class| {
-        boots
-            .iter()
-            .filter(|(k, v1)| *k == c && v1.is_some())
-            .count()
+    // Each column's boots, all of them or those with a `v=1` line.
+    let per_column = |with_line: bool| -> Vec<String> {
+        (0..columns.len())
+            .map(|col| {
+                boots
+                    .iter()
+                    .filter(|b| b.0 == col && (!with_line || b.1.is_some()))
+                    .count()
+                    .to_string()
+            })
+            .collect()
     };
-    md.extend(
-        line(
-            "Boots with a `v=1` line",
-            classes.iter().map(|&c| with_line(c).to_string()).collect(),
-        )
-        .into_bytes(),
-    );
-    for row in counter_rows(boots) {
+    let mut md = line("Counter", columns.to_vec()).into_bytes();
+    md.extend(format!("|---|{}\n", "---:|".repeat(columns.len())).into_bytes());
+    md.extend(line("Boots", per_column(false)).into_bytes());
+    md.extend(line("Boots with a `v=1` line", per_column(true)).into_bytes());
+    let lines: Vec<Option<&V1>> = boots.iter().map(|&(_, v1)| v1).collect();
+    for row in counter_rows(&lines) {
         if !row.per_boot.iter().any(|v| v.is_some_and(|v| v > 0)) {
             continue;
         }
-        let cells = classes
-            .iter()
-            .map(|&class| {
+        let cells = (0..columns.len())
+            .map(|col| {
                 let vs: Vec<u128> = boots
                     .iter()
                     .zip(&row.per_boot)
-                    .filter(|((c, _), _)| *c == class)
+                    .filter(|((c, _), _)| *c == col)
                     .filter_map(|(_, v)| *v)
                     .collect();
                 let non_zero = vs.iter().filter(|&&v| v > 0).count();
@@ -696,6 +678,47 @@ boot are left out.\n\n",
             format!("`{}`", row.label)
         };
         md.extend(line(&label, cells).into_bytes());
+    }
+    Some(md)
+}
+
+/// What a [`counter_table`] cell means, for the text above one.
+pub const COUNTER_TABLE_NOTE: &str =
+    "A cell is \"boots with a non-zero value / sum over those boots\", or \"/ max\" for a gauge \
+(marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every \
+boot are left out.";
+
+/// The "Tripwire counters by class" section of `summary.md`, with a leading
+/// blank line: a [`counter_table`] with one column per class that has boots.
+pub fn tripwire_table(tally: &Tally) -> Vec<u8> {
+    let mut md = b"\n### Tripwire counters by class\n\n".to_vec();
+    let classes: Vec<Class> = Class::ALL
+        .into_iter()
+        .filter(|&c| tally.count(c) > 0)
+        .collect();
+    let names: Vec<String> = classes.iter().map(|c| c.name().to_string()).collect();
+    let boots: Vec<(usize, Option<&V1>)> = tally
+        .tripwire
+        .iter()
+        .map(|(class, v1)| {
+            let col = classes
+                .iter()
+                .position(|c| c == class)
+                .expect("every counted class has a column");
+            (col, v1.as_ref())
+        })
+        .collect();
+    match counter_table(&names, &boots) {
+        None => md.extend_from_slice(b"No boot has a complete `v=1` tripwire line.\n"),
+        Some(table) => {
+            md.extend(
+                format!(
+                    "From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). {COUNTER_TABLE_NOTE}\n\n"
+                )
+                .into_bytes(),
+            );
+            md.extend(table);
+        }
     }
     md
 }

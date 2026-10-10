@@ -7,9 +7,12 @@
 //!   fake rustup and just logs with
 //!   `tests/golden/soak/interleave/<scenario>.golden`
 //!   (`AIOS_BLESS_GOLDENS=1` rewrites them), then checks each scenario's
-//!   properties: the rotation, the refusals before any boot, the build
-//!   skipped with `--no-build`, the status line after every boot, the stops
-//!   for harness errors and a changed QEMU, and the per-arm single-run files.
+//!   properties: the rotation, the refusals before any boot (the load check
+//!   among them, before any build), the build skipped with `--no-build`, the
+//!   status line after every boot, the stops for harness errors and a
+//!   changed QEMU, the per-arm single-run files, the loads in Settings, the
+//!   pair report, and `--fail-on-regression`'s exit status. Every scenario
+//!   pins the load average through `AIOS_SOAK_LOADAVG`.
 //! - `sigint_mid_round_leaves_a_stopped_report` covers a signal during a boot,
 //!   and `sigint_during_a_probe_after_a_boot_is_the_signal_not_a_change` one
 //!   that ends the QEMU check after a boot.
@@ -24,8 +27,9 @@ use std::process::Command;
 
 use common::soak::check_golden;
 use common::soak_fake::{
-    arm_golden_text, exception_script, no_stub_script, panic_script, run_arm_scenario,
-    wait_for_signal_script, ArmOutcome, ArmScenario, At,
+    arm_golden_text, clean_script, exception_script, no_stub_script, panic_script,
+    run_arm_scenario, wait_for_signal_script, ArmOutcome, ArmScenario, At, DEFAULT_LOADAVG,
+    HIGH_LOADAVG,
 };
 use common::{git, isolated, run_aios, unique_dir, TestRepo};
 
@@ -118,6 +122,49 @@ fn scenarios() -> Vec<ArmScenario> {
     );
     first.boots.push(("boot-2.sh".into(), no_stub_script()));
     v.push(first);
+    // Arm A is CLEAN (with tripwire lines) and arm B panics: with 4 rounds,
+    // B's 0/4 against A's 4/4 fails the regression guard (p = 1/70).
+    let mut regression = two_arms(
+        "fail-on-regression-fails",
+        &["a", "b"],
+        &[
+            "--no-build",
+            "--fail-on-regression",
+            "--combine",
+            "PANIC+PANIC-LOCK",
+            "runs=4",
+            "secs=3",
+            "stall_secs=2",
+            "out=out",
+        ],
+    );
+    regression.boots[0] = ("boot-a.sh".into(), clean_script());
+    regression.boots[1] = ("boot-b.sh".into(), panic_script());
+    v.push(regression);
+    v.push(two_arms(
+        "fail-on-regression-passes",
+        &["a", "b"],
+        &[
+            "--no-build",
+            "--fail-on-regression",
+            "runs=1",
+            "secs=35",
+            "out=out",
+        ],
+    ));
+    let mut ignore = two_arms(
+        "ignore-load",
+        &["a", "b"],
+        &[
+            "--no-build",
+            "--ignore-load",
+            "runs=1",
+            "secs=35",
+            "out=out",
+        ],
+    );
+    ignore.loadavg = HIGH_LOADAVG;
+    v.push(ignore);
     let mut changes = two_arms(
         "qemu-changes",
         &["a", "b"],
@@ -152,6 +199,9 @@ fn scenarios() -> Vec<ArmScenario> {
     }));
     v.push(refusal("refuse-build-fails", &build, |sc| {
         sc.flags = vec!["build-fails".into()];
+    }));
+    v.push(refusal("refuse-load", &build, |sc| {
+        sc.loadavg = HIGH_LOADAVG
     }));
     v.push(ArmScenario::new("refuse-one-arm", &["a"], &["out=out"]));
     v.push(ArmScenario::new(
@@ -301,6 +351,15 @@ fn check(sc: &ArmScenario, o: &ArmOutcome) {
             assert!(stderr.contains("AIOS_SOAK_MIN_ARM_BASE overrides the arm base"));
             let md = o.text("summary.md");
             assert!(md.contains("(AIOS_SOAK_MIN_ARM_BASE override; the release base is `7167d408f6a43ca9859fb6238f608ca6bdee37d6`, #196) |"), "{md}");
+            // The load before the builds, after them and at the end, and the
+            // check before the builds.
+            let l = DEFAULT_LOADAVG;
+            assert!(md.contains(&format!("| Load average | before the builds {l}; after the builds {l}; at the end {l} (AIOS_SOAK_LOADAVG override: every load reads '{l}') |\n")), "{md}");
+            assert!(md.contains("| Load check | passed: load1 0.50 before the builds, not above the host's CPU count |\n"), "{md}");
+            assert!(stderr.contains("AIOS_SOAK_LOADAVG replaces the host's load average with '0.50 0.40 0.30'"), "{stderr}");
+            // The pair report: both arms 0 CLEAN, so the guard passes.
+            assert!(md.contains("**Regression guard:** CLEAN 0/3 in A, 0/3 in B; one-sided p (fewer CLEAN in B) = 1: passes\n"), "{md}");
+            assert!(md.contains("- A vs B: 0.50 vs 0.50, 0% apart: comparable\n"), "{md}");
             // The status after each boot, as the next boot's QEMU found it.
             let seen: Vec<String> = o.before.iter().map(|(_, md)| status(md).to_string()).collect();
             let want: Vec<String> = (0..6).map(|k| format!("running ({k} of 6 boots)")).collect();
@@ -348,6 +407,31 @@ fn check(sc: &ArmScenario, o: &ArmOutcome) {
             assert_eq!(md_counts(&md), tsv_counts(o));
             assert!(!o.names().contains(&"arm-A/summary.md"));
         }
+        "fail-on-regression-fails" => {
+            assert_eq!(o.code, 1, "{stderr}");
+            assert_eq!(boot_order(o), "ABBAABBA");
+            let md = o.text("summary.md");
+            assert_eq!(status(&md), "finished (8 boots)");
+            assert!(md.contains("**Regression guard:** CLEAN 4/4 in A, 0/4 in B; one-sided p (fewer CLEAN in B) = 0.0143: **fails** (p < 0.05)\n"), "{md}");
+            assert!(md.contains("| PANIC+PANIC-LOCK | 0/4 | 4/4 | +100 pp | 1 | 0.0143 | 0.0286 | new |\n"), "{md}");
+            assert!(md.contains("| A | 6.00 us | 4 | 0 | 4 of 4 |\n"), "{md}");
+            // A prints tripwire lines and has no unexplained boot; B none.
+            assert!(md.contains("| A | 0 |\n| B | n/a (no tripwire line in any boot) |\n"), "{md}");
+            let out = String::from_utf8_lossy(&o.stdout);
+            assert!(out.contains("soak: A vs B: regression guard FAILS (CLEAN 4/4 vs 0/4, one-sided p 0.0143)"), "{out}");
+            assert!(out.ends_with("soak: a pair's regression guard failed (--fail-on-regression): exit 1\n"), "{out}");
+        }
+        "fail-on-regression-passes" => {
+            assert_eq!(o.code, 0, "{stderr}");
+            assert_eq!(boot_order(o), "AB");
+        }
+        "ignore-load" => {
+            assert_eq!(o.code, 0, "{stderr}");
+            assert_eq!(boot_order(o), "AB");
+            let md = o.text("summary.md");
+            assert!(md.contains("| Load check | skipped (--ignore-load): load1 100000.00 before the builds, above the host's CPU count |\n"), "{md}");
+            assert!(md.contains("| Load average | before the builds 100000.00 1.00 1.00; after the builds 100000.00 1.00 1.00; at the end 100000.00 1.00 1.00 "), "{md}");
+        }
         "harness-errors-two" => {
             assert_eq!(o.code, 0, "{stderr}");
             assert_eq!(boot_order(o), "ABBAAB");
@@ -382,6 +466,14 @@ fn check(sc: &ArmScenario, o: &ArmOutcome) {
         ),
         "refuse-rustup-fails" => assert_refused(o, sc.name, "arm A: rustup toolchain install failed in "),
         "refuse-build-fails" => assert_refused(o, sc.name, "arm A: build failed (just disk); full log: "),
+        "refuse-load" => {
+            assert_refused(o, sc.name, "the host's 1-minute load average is 100000.00, above its ");
+            assert_refused(o, sc.name, "pass --ignore-load to soak anyway");
+            // Before any build: no rustup, no just disk, no output directory.
+            assert_eq!(o.rustup_log, "", "no rustup toolchain install");
+            assert_eq!(o.just_log, "", "no just disk");
+            assert!(o.out.is_none(), "an output directory was made");
+        }
         "refuse-one-arm" => assert_refused(o, sc.name, "--arm needs 2 to 4 arms, got 1"),
         "refuse-five-arms" => assert_refused(o, sc.name, "--arm needs 2 to 4 arms, got 5"),
         "refuse-report-only" => assert_refused(o, sc.name, "--report-only cannot be combined with --arm"),

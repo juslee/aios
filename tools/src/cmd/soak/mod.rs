@@ -22,6 +22,7 @@ pub mod awk;
 pub mod classify;
 pub mod host;
 pub mod interleave;
+pub mod pair;
 pub mod report;
 pub mod runner;
 pub mod signals;
@@ -151,6 +152,16 @@ Options:
                      with --arm: let the arms' toolchain channels and
                      rustc versions differ (a toolchain-change pair); the
                      report says so
+  --combine CLASS+CLASS[+...]
+                     with --arm: add a row for these classes counted
+                     together to every pair's tests (repeatable); e.g.
+                     --combine WEDGE-STUCK+PANIC-LOCK
+  --ignore-load      with --arm: soak even when the host's 1-minute load
+                     average is above its CPU count before the builds (the
+                     loads are still recorded)
+  --fail-on-regression
+                     with --arm: exit 1 when some pair's regression guard
+                     fails
   --classify LOG...  classify existing log files instead of booting; with
                      --out, number them in the order given, take each one's
                      timing from its "[soak] meta" line, and give "-" for what
@@ -158,7 +169,7 @@ Options:
   -h, --help         show this help
 
 key=value aliases (so `just soak runs=5 mode=gpu` works): runs=N secs=T
-mode=text|gpu out=DIR stall_secs=S report_only=1 arm=DIR
+mode=text|gpu out=DIR stall_secs=S report_only=1 arm=DIR combine=CLASS+CLASS
 
 `just soak` runs this command from the directory you invoke just in, so
 relative out= and --classify paths resolve against that directory. The soak
@@ -185,13 +196,15 @@ boots, the tripwire counters by class, and the per-boot table.
 
 Interleave mode (--arm DIR, 2 to 4 times): soak 2 to 4 git checkouts (a
 worktree is fine) in one host session. They are labelled A to D in the order
-given, and A is the "previous" arm of every pair; the same DIR twice is an
-A/A control, built once. Each arm is built once (`rustup toolchain install`,
-then `just disk`, in DIR, without RUSTUP_TOOLCHAIN or CARGO_TARGET_DIR; both
-skipped with --no-build) and its ESP snapshotted; then --runs rounds boot
-every arm once, the arm order moving by one each round (A B, B A, A B, ...),
-each boot on a fresh data disk (--reuse-data is refused). This harness boots and classifies every arm,
-with its own QEMU arguments (an arm's justfile `run` recipe is not used).
+given; every two arms form a pair, the earlier one the "previous" arm and the
+later one the "new" arm. The same DIR twice is an A/A control, built once.
+Each arm is built once (`rustup toolchain install`, then `just disk`, in
+DIR, without RUSTUP_TOOLCHAIN or CARGO_TARGET_DIR; both skipped with
+--no-build) and its ESP snapshotted; then --runs rounds boot every arm once,
+the arm order moving by one each round (A B, B A, A B, ...), each boot on a
+fresh data disk (--reuse-data is refused). This harness boots and
+classifies every arm, with its own QEMU arguments (an arm's justfile `run`
+recipe is not used).
 Before any build, it refuses (exit 2):
   - a missing git, just, rustup, rustc, qemu-system-aarch64 or mcopy
     (rustup is needed with --no-build too: `rustc --version` relies on it
@@ -201,7 +214,11 @@ Before any build, it refuses (exit 2):
   - arms whose `just --evaluate edk2_fw` do not name one absolute firmware
     file;
   - arms whose rust-toolchain.toml channels differ (unless
-    --allow-mixed-toolchains).
+    --allow-mixed-toolchains);
+  - a host whose 1-minute load average is above its CPU count (unless
+    --ignore-load): boots on a loaded host measure the host as much as the
+    arms. The load is read again after the builds and at the end, and
+    before every boot; all are recorded.
 After each arm's build: its `rustc --version`, run in DIR, must match arm
 A's (unless --allow-mixed-toolchains), and a failed `rustup toolchain
 install` is refused. The QEMU binary PATH resolves to (its version line and
@@ -218,13 +235,34 @@ checkout, commit, channel, rustc, kernel and QEMU arguments); boots.tsv
 (round, position and arm, then summary.tsv's columns, one row per boot in
 boot order); and summary.md, rewritten after every boot, whose status line
 reads "running (k of N boots)", "stopped (<reason>) after k of N boots" or
-"finished (N boots)", with the settings, the arms and each arm's class
-counts and CLEAN rate. Exit status: 0 when every boot ran, whatever the
-classes; 2 on a usage, preflight or setup error, or a stop for harness
+"finished (N boots)", with the settings, the arms, each arm's class counts
+and CLEAN rate, and the pair report:
+  - Load: each arm's per-boot load1 mean and max; a pair whose means differ
+    by more than 25% of the lower mean reads "redo the pair";
+  - Pair tests (Fisher's exact test on conclusive boots, INCONCLUSIVE left
+    out), one block per pair: the regression guard (fewer CLEAN in the new
+    arm, one-sided p < 0.05: "fails"), then one row per class and per
+    --combine group with both one-sided p values, the two-sided p, the rate
+    difference (recorded, never gated on), and the markers "removed" (none
+    in the new arm, one-sided p < 0.05) and "new" (none in the previous arm,
+    one-sided p < 0.05); with more than one pair, a Bonferroni note;
+  - Gate 1 IPC: each arm's mean ipc_avg_us over its CLEAN boots, and its
+    G1PASS count;
+  - Tripwire per arm: the non-CLEAN boots with neither a complete tripwire
+    line nor a fatal report (meaningful only for kernels that print tripwire
+    lines; "n/a" for an arm with none), and the tripwire counters by arm;
+  - Non-CLEAN boots: round, arm, class, last tick, first fatal line or
+    detail, tripwire source and log.
+Exit status: 0 when every boot ran, whatever the classes; 1 with
+--fail-on-regression when some pair's regression guard fails; 2 on a usage,
+preflight (the load check included) or setup error, or a stop for harness
 errors or a changed QEMU or firmware; 130, 143, 129 or 131 on a signal (the
 summary's status names it).
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
+Debug builds of aios (the tests') also read AIOS_SOAK_MIN_ARM_BASE (the arm
+base) and AIOS_SOAK_LOADAVG (the load averages) and warn when they do; the
+release build `just soak` runs reads neither.
 Requires qemu-system-aarch64, just, mtools (for `just disk`) and the POSIX
 kill utility. Each boot's QEMU runs in its own process group: the harness
 sends the group SIGTERM when --secs run out and SIGKILL 10 s later, and
@@ -292,7 +330,7 @@ fn show(v: &[u8]) -> String {
 
 /// The option a `--opt=value` or `key=value` word sets, and its value.
 fn assignment(arg: &[u8]) -> Option<(&'static str, &[u8])> {
-    const FORMS: [(&[u8], &str); 13] = [
+    const FORMS: [(&[u8], &str); 15] = [
         (b"--runs=", "runs"),
         (b"runs=", "runs"),
         (b"--secs=", "secs"),
@@ -306,6 +344,8 @@ fn assignment(arg: &[u8]) -> Option<(&'static str, &[u8])> {
         (b"report_only=", "report_only"),
         (b"--arm=", "arm"),
         (b"arm=", "arm"),
+        (b"--combine=", "combine"),
+        (b"combine=", "combine"),
     ];
     FORMS
         .iter()
@@ -327,6 +367,9 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let mut classify = false;
     let mut arms: Vec<OsString> = Vec::new();
     let mut allow_mixed = false;
+    let mut combine: Vec<Vec<classify::Class>> = Vec::new();
+    let mut ignore_load = false;
+    let mut fail_on_regression = false;
     let mut positional: Vec<OsString> = Vec::new();
 
     let mut i = 0;
@@ -349,12 +392,14 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                     }
                     arms.push(value);
                 }
+                "combine" => combine.push(pair::parse_combine(&show(value.as_bytes()))?),
                 _ => report_only = truthy(value.as_bytes())?,
             }
             Ok(())
         };
         match arg {
-            b"--runs" | b"--secs" | b"--mode" | b"--out" | b"--stall-secs" | b"--arm" => {
+            b"--runs" | b"--secs" | b"--mode" | b"--out" | b"--stall-secs" | b"--arm"
+            | b"--combine" => {
                 let Some(value) = args.get(i + 1) else {
                     bail!("option {} needs a value", show(arg));
                 };
@@ -364,6 +409,7 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                     b"--mode" => "mode",
                     b"--out" => "out",
                     b"--arm" => "arm",
+                    b"--combine" => "combine",
                     _ => "stall",
                 };
                 set(key, value.clone())?;
@@ -376,6 +422,8 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
             b"--reuse-data" => fresh_data = false,
             b"--classify" => classify = true,
             b"--allow-mixed-toolchains" => allow_mixed = true,
+            b"--ignore-load" => ignore_load = true,
+            b"--fail-on-regression" => fail_on_regression = true,
             b"-h" | b"--help" => return Ok(Request::Help),
             b"--" => {
                 positional = args[i + 1..].to_vec();
@@ -401,8 +449,17 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let Some(stall_n) = positive(&stall) else {
         bail!("--stall-secs must be a positive integer");
     };
-    if arms.is_empty() && allow_mixed {
-        bail!("--allow-mixed-toolchains needs --arm");
+    if arms.is_empty() {
+        for (given, option) in [
+            (allow_mixed, "--allow-mixed-toolchains"),
+            (!combine.is_empty(), "--combine"),
+            (ignore_load, "--ignore-load"),
+            (fail_on_regression, "--fail-on-regression"),
+        ] {
+            if given {
+                bail!("{option} needs --arm");
+            }
+        }
     }
     if classify {
         if !arms.is_empty() {
@@ -451,7 +508,7 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
             );
         }
         if report_only {
-            bail!("--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes)");
+            bail!("--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes; --fail-on-regression makes a failed regression guard exit 1)");
         }
         if !fresh_data {
             bail!("--reuse-data cannot be combined with --arm: every interleaved boot gets a fresh data disk");
@@ -476,6 +533,9 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
             cfg,
             arms,
             allow_mixed_toolchains: allow_mixed,
+            combine,
+            ignore_load,
+            fail_on_regression,
         })
     })
 }
@@ -589,6 +649,22 @@ pub fn classify_files(
     Ok(if non_clean && !report_only { 1 } else { 0 })
 }
 
+/// Warn when [`host::LOADAVG_VAR`] replaces the host's load average (debug
+/// builds only), so no soak's loads are faked silently.
+fn warn_load_override(err: &mut dyn Write) -> Result<()> {
+    if let Some(fixed) = host::loadavg_override() {
+        runner::warn(
+            err,
+            format!(
+                "{} replaces the host's load average with '{fixed}'; only debug builds read it",
+                host::LOADAVG_VAR
+            )
+            .as_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
 /// Run `aios soak` with its raw arguments. Returns the exit status; `Err` is a
 /// usage or setup error (status 2).
 pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -> Result<u8> {
@@ -610,8 +686,14 @@ pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Wri
             cwd,
             out,
         ),
-        Request::Soak(cfg) => runner::run(&cfg, cwd, out, err),
-        Request::Interleave(req) => interleave::run(&req, cwd, out, err),
+        Request::Soak(cfg) => {
+            warn_load_override(err)?;
+            runner::run(&cfg, cwd, out, err)
+        }
+        Request::Interleave(req) => {
+            warn_load_override(err)?;
+            interleave::run(&req, cwd, out, err)
+        }
     }
 }
 
@@ -817,6 +899,27 @@ mod tests {
         let req = interleave(&["--arm", ".", "--arm", ".", "--allow-mixed-toolchains"]);
         assert_eq!(req.arms, os(&[".", "."]));
         assert!(req.allow_mixed_toolchains);
+        assert!(req.combine.is_empty() && !req.ignore_load && !req.fail_on_regression);
+        let req = interleave(&[
+            "arm=a",
+            "arm=b",
+            "--combine",
+            "WEDGE-STUCK+PANIC-LOCK",
+            "combine=PANIC+EXCEPTION",
+            "--combine=PCZERO+CLEAN",
+            "--ignore-load",
+            "--fail-on-regression",
+        ]);
+        use classify::Class;
+        assert_eq!(
+            req.combine,
+            [
+                vec![Class::WedgeStuck, Class::PanicLock],
+                vec![Class::Panic, Class::Exception],
+                vec![Class::PcZero, Class::Clean],
+            ]
+        );
+        assert!(req.ignore_load && req.fail_on_regression);
         // report_only=0 is not --report-only.
         assert!(
             !interleave(&["arm=a", "arm=b", "report_only=0"])
@@ -836,11 +939,11 @@ mod tests {
         assert_eq!(error(&["arm=", "arm=b"]), "--arm needs a directory");
         assert_eq!(
             error(&["--arm", "a", "--arm", "b", "--report-only"]),
-            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes)"
+            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes; --fail-on-regression makes a failed regression guard exit 1)"
         );
         assert_eq!(
             error(&["report_only=1", "--arm", "a", "--arm", "b"]),
-            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes)"
+            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes; --fail-on-regression makes a failed regression guard exit 1)"
         );
         assert_eq!(
             error(&["--arm", "a", "--arm", "b", "--reuse-data"]),
@@ -858,6 +961,24 @@ mod tests {
             error(&["--classify", "--allow-mixed-toolchains", "x.log"]),
             "--allow-mixed-toolchains needs --arm"
         );
+        // No interleave-only flag is accepted and ignored.
+        for (args, option) in [
+            (&["--combine", "PANIC+PANIC-LOCK"][..], "--combine"),
+            (&["combine=PANIC+PANIC-LOCK"][..], "--combine"),
+            (&["--ignore-load"][..], "--ignore-load"),
+            (&["--fail-on-regression"][..], "--fail-on-regression"),
+            (
+                &["--classify", "--ignore-load", "x.log"][..],
+                "--ignore-load",
+            ),
+        ] {
+            assert_eq!(error(args), format!("{option} needs --arm"), "{args:?}");
+        }
+        assert_eq!(
+            error(&["--arm", "a", "--arm", "b", "--combine", "PANIC"]),
+            "--combine needs two or more classes joined by +, got 'PANIC'"
+        );
+        assert_eq!(error(&["--combine"]), "option --combine needs a value");
         // The shared options are checked first, as in single mode.
         assert_eq!(
             error(&["--arm", "a", "runs=0"]),
