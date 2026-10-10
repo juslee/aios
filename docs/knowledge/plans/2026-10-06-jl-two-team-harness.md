@@ -714,12 +714,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
     Expected: nothing (CLAUDE.md, agent-loop and developer-guide hits are fixed in T15, so run this check again in T15); nothing; one line; `actionlint-ok`. The docs gate shows only `plans-not-empty`.
 
-- [ ] **T15: docs**
+- [x] **T15: docs**
 
   **Files:** Modify `.claude/CLAUDE.md` (the remaining sections of `D/.claude/CLAUDE.md.patch-notes.md.v5`), `docs/project/agent-loop.md`, `docs/project/developer-guide.md`, `docs/project/ai-agent-context.md` (their `.v5` notes in `D/docs/project/`).
 
-  - [ ] Step 1: apply the four notes.
-  - [ ] Acceptance:
+  - [x] Step 1: apply the four notes.
+  - [x] Acceptance:
     ```bash
     cd "$W"
     rg -n 'src/cmd/hook/' .claude/CLAUDE.md docs/project/developer-guide.md
@@ -999,3 +999,11 @@ T11: deviations and gate result (2026-10-10):
 - T11: docs gate: only `plans-not-empty` new (plus the resolved BOOT_LOG baseline entry); both earlier pointer-doctor findings are gone. Acceptance: first two greps print nothing, `brief doctor pause start team`, description names the five skills, merge-and-cleanup count 5, `EnterPlanMode|ExitPlanMode` count 3, fifth grep nothing, team SKILL count 3. `rg` was missing, so `grep -E` ran with the same patterns.
 - T11 review fixes: the `/rename` deviation is resolved (`rename` added to `BUILTIN_COMMANDS`, 29 to 30; the draft's `/rename <team>` wording restored). merge-and-cleanup: unknown gate (no `merge-ready:` line) stops, dead or overdue quiet lease handling, MAIN-MOVED names the squash commit, "its copy skips". implement-phase: leads edit nothing (one sentence covering the update and commit steps), commit message moved to step c, step 11 wording, plan commit with rule 08 frontmatter.
 - T11 review fixes: the parity oracle (`differential_against_check_py`) runs the historical check.py on the live checkout, so the `rename` addition made it differ; `tools/tests/fixtures/docs-check/check-py-rename-builtin.patch` (applied by `materialize_check_py` after the IRQ patch, `fixture::CHECK_PY_RENAME_BUILTIN`) adds `rename` to the oracle's `BUILTIN_COMMANDS`. `cargo fmt`, clippy and `cargo test -p aios-tools` pass.
+
+T15: deviations and gate result (2026-10-10):
+- T15: the notes' line numbers are stale (main moved, T9-T14 landed); every edit was anchored by text.
+- T15: beyond the notes, the simplifier (T12b) is listed in agent-loop's "What runs where" writers row, a new "Simplify (once per PR)" bullet under Reviews, and Spend; in developer-guide's Agents paragraph; in CLAUDE.md's Team & Agent Architecture opening; and in ai-agent-context section 7. The Audit bullet in agent-loop records T12's `uncertain` arg (a round is complete only with no lens failures and no unverified findings). Not added: `/rename` (no doc lists docs-check's built-in commands). agent-loop's brief paragraph and the "Session skills" row names the new brief sections (host QEMU lock, team labels, routing-log count, per-session handoffs).
+- T15: the CLAUDE.md edit also set the Project Identity Toolchain line, as the notes say; the lock-order text is untouched. agent-loop's "Last updated" is 2026-10-10 and its skill count is "Five". The notes' "Agent memory" row deletion and the "Session handoff" replacement were applied to the rows as found (the old row said `.remember/remember.md` and `.remember/now.md`).
+- T15: ai-agent-context section 7 also lost its "Post-implementation audit loop (mandatory)" subsection (the notes call it the duplicated audit-loop description); the Post-PR review workflow stays.
+- T15: the 'remember' grep still hits `.claude/settings.json` (lines 36, 63, 311) and `.claude/hooks/precompact-save.sh` (lines 5, 7): both are T8's. No other hit.
+- T15: docs gate: only `plans-not-empty` new (plus the resolved BOOT_LOG baseline entry); harness-tables, pointer-doctor and repo-paths clean.

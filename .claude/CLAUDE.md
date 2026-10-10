@@ -12,7 +12,7 @@ UEFI target:    aarch64-unknown-uefi  (Phase 1+)
 Host target:    native (for unit tests, shared crate)
 Build system:   just + cargo
 License:        BSD-2-Clause
-Toolchain:      Rust nightly (updated to latest at session start, pinned in rust-toolchain.toml)
+Toolchain:      Rust nightly, pinned in rust-toolchain.toml; changes only through Renovate PRs, installed once by the merging session
 Workspace:      resolver = "2", edition = "2021"
 Linker script:  emitted via build.rs (not .cargo/config.toml), with --orphan-handling=error
 Relocation:     static (relocation-model=static throughout all phases)
@@ -204,13 +204,16 @@ aios/
 │   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
 │   ├── agents/           kernel-dev, worker, doc-writer, simplifier, verifier, code-reviewer,
 │   │                     doc-auditor, skeptic (models and effort: the Agents table below)
-│   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
-│   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
-│   ├── rules/            01-code-conventions … 10-harness-mechanics (auto-loaded)
-│   └── skills/           generate-phase-doc, implement-phase, review-pr-comments, verify-phase,
-│                         write-arch-doc, audit-loop, merge-and-cleanup,
-│                         justin:start, justin:brief, justin:doctor, justin:pause, justin:team
-│                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
+│   ├── hooks/            git-push-guard.py (PreToolUse: Bash, Monitor, Agent, EnterWorktree),
+│   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary; runs the
+│   │                     aios hook registrations: path-guard, route-shadow, repeat-error,
+│   │                     route-outcome), tests/; settings.json also holds the Fable plan gate
+│   ├── rules/            01-code-conventions … 11-teams (auto-loaded)
+│   ├── skills/           generate-phase-doc, implement-phase, review-pr-comments, verify-phase,
+│   │                     write-arch-doc, audit-loop, merge-and-cleanup,
+│   │                     justin:start, justin:brief, justin:doctor, justin:pause, justin:team
+│   │                     (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
+│   └── workflows/        audit-loop.js (one audit round; run by /audit-loop)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
 │   ├── arch/aarch64/     boot.S, daif, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
 │   ├── platform/         Platform trait + per-board (qemu)
@@ -239,10 +242,11 @@ aios/
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
-│                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook programs),
+│                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook
+│                         programs: repeat-error, path-guard, route-shadow, route-outcome),
 │                         src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
 ├── scripts/              soak-matrix.sh (interleaved multi-revision soak; CI: soak-matrix.yml),
-│                         agent/ (brief, checkpoint),
+│                         agent/ (brief, checkpoint, qemu-lock: the host QEMU lock),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```
@@ -251,7 +255,7 @@ aios/
 
 ## Team & Agent Architecture
 
-Single team lead + specialist agents. Fully autonomous — human reviews async via PRs.
+Two attended lead sessions split by domain, `team-build` (harness, tools, CI, features) and `team-fix` (boot-crash fix, kernel bugs, capability lifetime), each launched as `AIOS_TEAM=<team> claude -n <team> --model opus`; or one solo session. The lead is the session, never an agent. Every agent is a subagent; Claude Code teammates are not used. Writers and the verifier work in their own temporary worktree (`isolation: "worktree"`), reset to the branch tip; the lead fast-forwards the branch worktree to their commits, after a Fable review for kernel-dev, and runs the simplifier once per PR before the audit. Reviewers run read-only in the main checkout. Only the verifier starts QEMU. Rules: `.claude/rules/11-teams.md`. Protocol: `docs/project/agent-loop.md` (Teams). Model routing: `docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`.
 
 **Agents** (defined in `.claude/agents/`):
 
@@ -287,10 +291,9 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 **Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 
-**Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
+**Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. `/audit-loop` runs before the PR is marked ready (docs mode for doc-only branches).
 
 **Existing skills reused** (not recreated):
 
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
 - `pr-review-toolkit:review-pr`
-- `remember:remember` (handoff written by `/justin:pause`)

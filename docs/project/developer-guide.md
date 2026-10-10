@@ -2291,43 +2291,21 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 
 ## 8c. Claude Code Agents, Skills & Worktrees
 
-AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and twelve slash-command skills (eight project skills plus the four `/justin:*` session skills) automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+AIOS development runs as one or two attended Claude Code lead sessions (`team-build`, `team-fix`, or a solo session) that spawn specialist agents, plus project skills. The agent roster with models and effort, and the skill list, are in [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture. The rules for placing agents are in `.claude/rules/11-teams.md`; the two-lead protocol and the model-routing hooks are in [agent-loop.md](agent-loop.md) § Teams and § Model routing.
+
+All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
 
 The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
 
 ### Agents
 
-Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows the conventions in `.claude/rules/` (technical facts in `.claude/CLAUDE.md`).
-
-| Agent | Role | Spawned by | Key capabilities |
-| --- | --- | --- | --- |
-| `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
-| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, Bash, Grep, Glob |
-| `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
-| `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
-| `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
-| `doc-auditor` | Validates docs for cross-reference errors, technical accuracy, naming consistency | team-lead or user (prompted by `doc-audit-needed` hook) | Read, Edit, Grep, Glob, Bash |
-
-The doc-auditor deserves special mention: when invoked, it runs in a **recursive loop** — audit → fix → re-audit — until zero issues are found (max 10 passes). The PostToolUse hook does **not** spawn `doc-auditor` directly; instead, it emits a `doc-audit-needed` reminder whenever a markdown file in `docs/` is written or edited, and the team-lead or user then decides when to run the doc-auditor agent to process pending audits.
+Agents are definitions in `.claude/agents/`. A lead session spawns them as subagents; Claude Code teammates are not used. Writers (kernel-dev, worker, doc-writer, simplifier) and the verifier are spawned with `isolation: "worktree"` and work in their own temporary worktree, reset to the branch worktree's tip; the lead fast-forwards the branch worktree to their commits (rule 11, Placement), after a Fable review by code-reviewer for kernel-dev. The simplifier runs once per PR, over the PR's whole diff, before the audit. Readers (code-reviewer, doc-auditor, skeptic) run read-only in the main checkout. No agent keeps `memory:`; durable notes go to `docs/knowledge/lessons/`.
 
 ### Skills (Slash Commands)
 
 Skills are reusable multi-step workflows invoked via slash commands. They encode the project's development patterns so common operations are repeatable and consistent.
 
-| Skill | Trigger | Purpose |
-|---|---|---|
-| `/build-team` | Start of autonomous session | Bootstraps the "aios-dev" team, spawns team-lead who spawns specialists as needed |
-| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, follows phase doc steps including shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review → hand-off (the user merges) |
-| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` with shared crate refactoring step per milestone → `/audit-loop` (auto docs-only mode) → PR |
-| `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
-| `/audit-loop` | Before any PR | Auto-detects scope (docs-only or full), runs recursive two-level audit loop until clean (doc + code review + security/bug review) |
-| `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action from a fixed priority list ([agent-loop.md](agent-loop.md)) |
-| `/justin:brief` | Where the project stands | Summarises `scripts/agent/brief.sh`: git and worktrees, PRs with a merge-ready verdict, main CI, soak, handoff, needs-human issues, next phase-doc step, docs drift |
-| `/justin:doctor` | Docs/harness health check | `just docs-check --all` plus pointer-doctor and harness-tables, grouped by who fixes what; read-only (bare `/doctor` is Claude Code's built-in) |
-| `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
-| `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
-| `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Preserves the PR worktree's soak results and agent memory → squash merges PR (gh deletes the remote+local branch and removes the worktree) → verifies removal → fast-forwards main. Other skills stop at a hand-off instead of merging |
+The skill table, with triggers and purposes, is in `.claude/CLAUDE.md` § Team & Agent Architecture. There are seven project skills plus five `/justin:*` session skills, including `/justin:team <build|fix>` for team mode.
 
 #### Skill usage examples
 
@@ -2346,11 +2324,14 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 
 # Create or update an architecture doc interactively
 /write-arch-doc docs/kernel/memory.md
+
+# In the team-build terminal session (team mode, agent-loop.md § Teams)
+/justin:team build
 ```
 
 ### Worktree Workflow
 
-Many skills use **git worktrees** to isolate work from the main branch. This prevents accidental commits to `main` and allows parallel work (e.g., kernel-dev on Phase N while doc-writer generates Phase N+1 docs).
+Many skills use **git worktrees** to isolate work from the main branch. This prevents accidental commits to `main` and allows parallel work (e.g., team-build's writers on a tools branch while team-fix's kernel-dev works on a crash-fix step).
 
 **Where worktrees live**: `.claude/worktrees/` (gitignored, created on demand)
 
@@ -2365,8 +2346,8 @@ Many skills use **git worktrees** to isolate work from the main branch. This pre
 **Lifecycle**:
 
 ```text
-create worktree → work on branch → commit → push → create PR
-    → review → preserve soak results and agent memory
+create worktree → writers commit on temporary branches from its tip, the lead fast-forwards it and pushes
+    → draft PR → /audit-loop → gh pr ready → review → preserve soak results
     → squash merge (gh removes worktree + local branch) → verify → fast-forward main
 ```
 
@@ -2377,15 +2358,13 @@ create worktree → work on branch → commit → push → create PR
 git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 
 # Work in it
-cd .claude/worktrees/docs-memory
-# ... edit files, commit, push, create PR ...
+# the session stays in the main checkout; writers work from its tip in their own temporary worktrees, and the session fast-forwards it (rule 11)
 
 # Before the PR merges, from the main checkout: copy out what git ignores,
 # because removing the worktree deletes ignored files without asking
 cd /path/to/aios
 mkdir -p target/soak && [ ! -e "target/soak/pr<number>-<run>" ] &&
   cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<number>-<run>"   # per soak run
-# ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
 
 # Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
 gh pr merge <number> --squash --delete-branch
@@ -2439,10 +2418,12 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 
 Agent teams and skills are configured in:
 
-- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables, the plugins it enables (`enabledPlugins`: superpowers, remember, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
-- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/installed/aios` from the main checkout after checking its provenance stamp; its `guard` branch fails closed with an "ask" decision on every path that runs neither a fresh binary nor a runnable `AIOS_TOOLS_BIN` override, which is run without a stamp or freshness test). They live under `.claude/` so edits to them are never auto-approved
-- **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
-- **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `10-harness-mechanics`)
+- **`.claude/settings.json`** — hooks (SessionStart; PreToolUse: the push guard, `aios hook path-guard --agent-type worker`, `route-shadow`, the Fable plan gate on ExitPlanMode (an agent hook on `claude-fable-5-1`); PostToolUse and PostToolUseFailure: `repeat-error`, `route-outcome`; SubagentStop: `route-outcome`), permissions (including the `git reset --hard *` allow for an isolated agent's first command, which the guard confines), environment variables (`RUSTUP_AUTO_INSTALL=0`), `effortLevel: "high"` (the leads' effort; `CLAUDE_CODE_EFFORT_LEVEL` stays unset), the plugins it enables (`enabledPlugins`: superpowers, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
+- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash, Monitor, Agent and EnterWorktree, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; denies every QEMU start that bypasses `scripts/agent/qemu-lock.sh run` or comes while the lock is held, and wrapper calls from any agent but the verifier or from a team lead, pattern kills of QEMU, toolchain installs and removals by agents, spawns that would become teammates or skip a writer's isolation or override a model, EnterWorktree from any agent or a team lead, `git reset --hard` outside an agent's own temporary worktree (an ask on a main thread), and agent commits in the main checkout; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/installed/aios` from the main checkout after checking its provenance stamp; its `guard` branch fails closed with an "ask" decision on every path that runs neither a fresh binary nor a runnable `AIOS_TOOLS_BIN` override, which is run without a stamp or freshness test; its `hook` branch never builds in the foreground and always exits 0, and runs only a fresh binary: on a missing, stale or dirty binary, or one that exits non-zero, `path-guard` denies only the agent types it names and the other hook programs print nothing). They live under `.claude/` so edits to them are never auto-approved
+- **`.claude/agents/*.md`** — individual agent definitions (role, tools, model, effort)
+- **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `11-teams`)
+- **`.claude/workflows/`** — `audit-loop.js`, one audit round of read-only lenses and skeptics, run by `/audit-loop`
+- **`tools/src/cmd/hook/`** — the `aios hook` programs (`repeat-error`, `path-guard`, `route-shadow`, `route-outcome`); design and limits in `docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
 - **`.claude/CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
