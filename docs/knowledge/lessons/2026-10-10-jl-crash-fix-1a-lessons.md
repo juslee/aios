@@ -11,7 +11,7 @@ Crash-fix step 1a changed only the soak harness (`aios soak`, `tools/src/cmd/soa
 
 ## 1. Keep the oracle proof alive across an intended output change by folding to the old classes
 
-**What happened.** The old classifier (the deleted `scripts/soak-qemu.sh`, read from git history) was the oracle for every classify, CLI and harness test. Step 1a changes its output on purpose, so a straight differential would fail on every split boot, and a normaliser that maps the new names back would exist only to hide intended differences. Instead every new class got a base class, and `base_line()` prints the same fields as `line()` with the base class's name in field 1. The differential then checks that `base_line()` is byte-identical to the oracle's line, and a unit test checks that `line()` and `base_line()` differ in field 1 only. The plan review found that this only holds if nothing else derives from the new class: `detail` took notes, and `lb` was computed from the class (`-` for CLEAN). Both now come from the base class, and the new data (IPC figures, tripwire lines, event counts, re-entry fields) rides outside the line. On run 167 the fold showed exactly the expected 10 WEDGE → WEDGE-STUCK and 2 WEDGE → WEDGE-ALIVE, and over all 251 local logs under `target/soak/` only the intended splits (B1 adds PANIC → PANIC-LOCK 3 and WEDGE → WEDGE-ALIVE 3), with no DEGRADED and no `base_line()` difference.
+**What happened.** The old classifier (the deleted `scripts/soak-qemu.sh`, read from git history) was the oracle for every classify, CLI and harness test. Step 1a changes its output on purpose, so a straight differential would fail on every split boot, and a normaliser that maps the new names back would exist only to hide intended differences. Instead every new class got a base class, and `base_line()` prints the same fields as `line()` with the base class's name in field 1. The differential then checks that `base_line()` is byte-identical to the oracle's line, and a unit test checks that `line()` and `base_line()` differ in field 1 only. The plan review found that this only holds if nothing else derives from the new class: `detail` took notes, and `lb` was computed from the class (`-` for CLEAN). Both now come from the base class, and the new data (IPC figures, tripwire lines, event counts, re-entry fields) rides outside the line. On run 167 the fold showed exactly the expected 10 WEDGE → WEDGE-STUCK and 2 WEDGE → WEDGE-ALIVE, on B1 PANIC → PANIC-LOCK 3 and WEDGE → WEDGE-ALIVE 3, and over all 251 local logs under `target/soak/` no DEGRADED (the three local `(0 iters)` logs, `pr209-fix-198` runs 01 and 02 and `baseline-212df62-text` run 04, are PCZERO and stay so: the earlier fatal report decides) and no `base_line()` difference.
 
 **Why it matters.** The fold keeps the strongest test there was (an independent implementation, real logs) while the output evolves, and it turns the step's acceptance into one mechanical assertion. The CLI and harness differentials could not be folded the same way: their outputs gained columns and table rows. They were deleted, and their goldens are now blessed from `aios`.
 
@@ -31,10 +31,11 @@ Crash-fix step 1a changed only the soak harness (`aios soak`, `tools/src/cmd/soa
 
 ## 3. Re-blessing goldens can hide a weakened comparison
 
-**What happened.** Adding `--classify --out` made the CLI test strip the case directory from each CLI golden blob through `String::from_utf8_lossy`. The two `clip-multibyte` lines were re-blessed with U+FFFD where `aios` prints a raw clipped `\xC3` byte. `aios` was unchanged; the test helper had weakened the comparison, and a `--word-diff` review of the re-bless missed it. Three test normalisers broke the same quiet way:
+**What happened.** Adding `--classify --out` made the CLI test strip the case directory from each CLI golden blob through `String::from_utf8_lossy`. The two `clip-multibyte` lines were re-blessed with U+FFFD where `aios` prints a raw clipped `\xC3` byte. `aios` was unchanged; the test helper had weakened the comparison, and a `--word-diff` review of the re-bless missed it. Two test normalisers broke the same quiet way:
 - the `summary.md` stall-cell normaliser matched the class with `[A-Z]+`, so a hyphenated class (PANIC-LOCK, WEDGE-*) kept a host-dependent cell;
-- the per-boot-table normaliser also matched the pair report's non-CLEAN rows and masked their tick;
-- the `summary.tsv` normaliser keyed on the literal 22 columns.
+- the per-boot-table normaliser also matched the pair report's non-CLEAN rows and masked their tick.
+
+A third, the `summary.tsv` normaliser keyed on the literal 22 columns, was caught at plan review and changed to key on the header's column count before it could break.
 
 **Why it matters.** A golden is only as strong as the transformation between the program's bytes and the file. A helper that rewrites bytes, or a normaliser whose pattern matches more or less than intended, changes what the test checks without failing it.
 
@@ -59,8 +60,8 @@ Crash-fix step 1a changed only the soak harness (`aios soak`, `tools/src/cmd/soa
 
 ## 6. The audit loop hardened provenance until each fix became the next round's finding
 
-**What happened.** Implementation ran its ten code and docs tasks with one Opus implementer per task, with a Fable correctness reviewer and a Sonnet gate reviewer; every task was approved within 0–2 fix rounds. The audit loop (diverse read-only finders, three-skeptic verification, a single fixer) then ran its 8-round cap without two consecutive clean rounds. Confirmed findings per round: 16, 12, 6, 5, 8, 4, 7, 5, all fixed. Rounds 1–3 found ordinary defects (a status left at `running` after an error, symlink and HEAD pins, the `ctx=` parse of a torn line). Rounds 4–8 mostly found defects in the provenance hardening that earlier rounds had added to the Harness row of the pair report:
-- its `-dirty` test (round 4 added a host-tools-inputs test beside T8's whole-tree mark; round 6 dropped the whole-tree mark, since an arm's kernel edits had marked the classifier dirty);
+**What happened.** Implementation ran its ten code and docs tasks with one Opus implementer per task, with a Fable correctness reviewer and a Sonnet gate reviewer; every task was approved within 0–2 fix rounds. The audit loop (diverse read-only finders, three-skeptic verification, a single fixer) then ran its 8-round cap without two consecutive clean rounds. Confirmed findings per round: 16, 12, 6, 5, 8, 4, 7, 5, all fixed. Rounds 1–3 found ordinary defects (a status left at `running` after an error, symlink and HEAD pins, the `ctx=` parse of a torn line). From round 5 on, most findings were defects in the provenance hardening that round 4 and later rounds had added to the Harness row of the pair report:
+- its `-dirty` test (round 4 added a host-tools-inputs test beside the whole-tree `-dirty` mark the interleave mode first shipped with; round 6 dropped the whole-tree mark, since an arm's kernel edits had marked the classifier dirty);
 - git replace refs and grafts that could fake both that test and the arm-base ancestry check (round 5);
 - a stale-binary note (round 6) that round 7 rewrote to match the shim's stamp verdicts, including an edit reverted after the build;
 - a TOCTOU between reading HEAD for the row and for the stamp check, and a `just tools` swapping the binary mid-soak (round 8: one pinned commit, a hard link made for the soak);
@@ -91,7 +92,7 @@ The lead stopped at the cap, with the owner's pre-approval of recommended choice
 **How to apply.**
 - Before a soak, re-read each arm's `rust-toolchain.toml`; when the base moved, pick a base on the same channel, or pass `--allow-mixed-toolchains` only for a pair whose point is the toolchain change.
 - Put arm worktrees outside any checkout (`git worktree add --detach ../aios-<sha> <sha>`), so no parent cargo config joins their build.
-- On this Mac the load rule will often refuse a soak. Find what drives the load (during B1 it was iCloud's `fileproviderd`, per the N2 baseline note) before overriding it, and treat a pair the report says to redo as a harness check only.
+- On this Mac the load rule will often refuse a soak. Find what drives the load (during step 1a it was other sessions' builds and tests; the N2 baseline note records `fileproviderd` still running during B1) before overriding it, and treat a pair the report says to redo as a harness check only.
 
 ## 9. Smaller gotchas
 
