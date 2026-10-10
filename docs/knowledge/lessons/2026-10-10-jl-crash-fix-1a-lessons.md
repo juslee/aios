@@ -92,7 +92,7 @@ The lead stopped at the cap, with the owner's pre-approval of recommended choice
 **How to apply.**
 - Before a soak, re-read each arm's `rust-toolchain.toml`; when the base moved, pick a base on the same channel, or pass `--allow-mixed-toolchains` only for a pair whose point is the toolchain change.
 - Put arm worktrees outside any checkout (`git worktree add --detach ../aios-<sha> <sha>`), so no parent cargo config joins their build.
-- On this Mac the load rule will often refuse a soak. Find what drives the load (during step 1a it was other sessions' builds and tests; the [N2 baseline note](../research/2026-10-10-jl-crash-fix-1b-n2-baseline.md) records `fileproviderd` still running during B1) before overriding it, and treat a pair the report says to redo as a harness check only.
+- On this Mac the load rule will often refuse a soak. Find what drives the load (during step 1a, other sessions' builds and tests during the task gates, and macOS `fileproviderd`/Spotlight during the smoke soak, load1 28 on 10 CPUs; the [N2 baseline note](../research/2026-10-10-jl-crash-fix-1b-n2-baseline.md) records `fileproviderd` still running during B1) before overriding it, and treat a pair the report says to redo as a harness check only.
 
 ## 9. Smaller gotchas
 
