@@ -307,8 +307,9 @@ fi
 # main soak only when it finished and its commit is on origin/main with no
 # uncommitted changes; everything else (branch commits, dirty trees, runs still
 # in progress) is reported separately so it is never read as main's state.
-# just soak runs the booted checkout's own tools build, so that commit names the
-# classifier too. An interleaved soak (aios soak --arm, a directory holding
+# just soak runs the booted checkout's own tools build, so in a single soak that
+# commit names the classifier too (with --arm, the top-level summary.md's Harness
+# row names the classifier and each arm's commit only its kernel). An interleaved soak (aios soak --arm, a directory holding
 # arms.tsv) is one run: it is listed on its own, with the status line of its
 # top-level summary.md and each arm's CLEAN count from boots.tsv, and never as
 # the main soak; its arm-X/ directories (single-run files) are not listed.

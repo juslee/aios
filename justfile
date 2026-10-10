@@ -134,7 +134,9 @@ run-direct: build
 #   just soak --arm ../aios-base --arm .       interleave 2-4 checkouts, one boot each per round
 # Runs in the invocation directory ([no-cd]): relative out= and log paths resolve there.
 # The harness is this checkout's own tools build, not the main checkout's (.claude/hooks/aios),
-# so the commit summary.md records names the classifier as well as the kernel.
+# so in a single soak the commit summary.md records names the classifier as well as the kernel;
+# with --arm, the top-level summary.md's Harness row names the classifier and each
+# arm-X/summary.md the arm's kernel commit.
 # Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN
 [no-cd]
 [positional-arguments]

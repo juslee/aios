@@ -506,10 +506,11 @@ pub fn summary_head(info: &SummaryInfo, tally: &Tally) -> Vec<u8> {
     md.extend([&b"| Host | "[..], info.host, b" |\n"].concat());
     md.extend(
         format!(
-            "| Load average | start {}; end {}; per-boot 1-min {} |\n",
+            "| Load average | start {}; end {}; per-boot 1-min {}{} |\n",
             info.load_start,
             info.load_end,
-            load_summary(&load_refs)
+            load_summary(&load_refs),
+            super::host::loadavg_override_note()
         )
         .into_bytes(),
     );

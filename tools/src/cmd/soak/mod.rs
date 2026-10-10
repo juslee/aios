@@ -200,7 +200,9 @@ given; every two arms form a pair, the earlier one the "previous" arm and the
 later one the "new" arm. The same DIR twice is an A/A control, built once.
 Each arm is built once (`rustup toolchain install`, then `just disk`, in
 DIR, without RUSTUP_TOOLCHAIN or CARGO_TARGET_DIR; both skipped with
---no-build) and its ESP snapshotted; then --runs rounds boot every arm once,
+--no-build, which boots the ESP image already in DIR: the summary's Build
+row says so, and the arm-base check then covers DIR's HEAD, not that image)
+and its ESP snapshotted; then --runs rounds boot every arm once,
 the arm order moving by one each round (A B, B A, A B, ...), each boot on a
 fresh data disk (--reuse-data is refused). This harness boots and
 classifies every arm, with its own QEMU arguments (an arm's justfile `run`
@@ -208,7 +210,8 @@ recipe is not used).
 Before any build, it refuses (exit 2):
   - a missing git, just, rustup, rustc, qemu-system-aarch64 or mcopy
     (rustup is needed with --no-build too: `rustc --version` relies on it
-    picking each arm's toolchain);
+    picking each arm's toolchain), or a qemu-system-aarch64 whose --version
+    prints nothing;
   - an arm that does not contain 7167d40 (#196: strict-NX firmware faults
     every older kernel);
   - arms whose `just --evaluate edk2_fw` do not name one absolute firmware
@@ -232,7 +235,8 @@ after that, 3 such boots in a row (in boot order, across arms) stop it
 (exit 2). Those boots stay in the reports, as INCONCLUSIVE.
 Output (default target/soak/<timestamp>-<mode>-arms): arm-X/ for each arm,
 a normal single-run directory (run-NN.log, summary.tsv row by row,
-build.log, and summary.md once the soak finishes); arms.tsv (each arm's
+build.log in the first arm directory of each checkout built (none with
+--no-build), and summary.md once the soak finishes); arms.tsv (each arm's
 checkout, commit, channel, rustc, kernel and QEMU arguments); boots.tsv
 (round, position and arm, then summary.tsv's columns, one row per boot in
 boot order); and summary.md, rewritten after every boot, whose status line
@@ -259,8 +263,9 @@ and CLEAN rate, and the pair report:
 Exit status: 0 when every boot ran, whatever the classes; 1 with
 --fail-on-regression when some pair's regression guard fails; 2 on a usage,
 preflight (the load check included) or setup error, or a stop for harness
-errors or a changed QEMU or firmware; 130, 143, 129 or 131 on a signal (the
-summary's status names it).
+errors or a changed QEMU or firmware; 130, 143, 129 or 131 on a signal (once
+the boots have started, the summary's status names it; a signal during the
+builds leaves only the build logs).
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
 Debug builds of aios (the tests') also read AIOS_SOAK_MIN_ARM_BASE (the arm

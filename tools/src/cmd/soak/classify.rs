@@ -27,6 +27,8 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::bytes::Regex;
+use shared::lock::LockClass;
+use shared::tripwire::Ctx;
 
 use super::awk::{clip, contains, fields, find, num_str, to_num, trim};
 use super::tripwire::{EventCounts, LastLines};
@@ -248,8 +250,11 @@ static ABORT_AT: LazyLock<Regex> = LazyLock::new(|| re(r"(Data|Instruction) Abor
 static INFO: LazyLock<Regex> = LazyLock::new(|| re(r"\[ *[0-9]+\.[0-9]+\] \[[0-9]+\] INFO "));
 static PC0_ABORT: LazyLock<Regex> = LazyLock::new(|| re(r"EC=0x0*2[01] FAR=0x0000000000000000"));
 static ANSI: LazyLock<Regex> = LazyLock::new(|| re(r"\x1b\[[0-9;]*[A-Za-z]"));
-static REENTRY_LOCK: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Z][A-Z0-9_]*(\[[0-9]+\])?"));
-static REENTRY_CTX: LazyLock<Regex> = LazyLock::new(|| re(r" ctx=([a-z][a-z-]*)"));
+// The kernel prints ` on CPU` after the lock and ` holder=` after the ctx, so
+// a token without its follower may be cut short and is not read.
+static REENTRY_LOCK: LazyLock<Regex> =
+    LazyLock::new(|| re(r"^([A-Z][A-Z0-9_]*)(\[[0-9]+\])? on CPU "));
+static REENTRY_CTX: LazyLock<Regex> = LazyLock::new(|| re(r" ctx=([^ \t]+) "));
 static REENTRY_IRQS: LazyLock<Regex> = LazyLock::new(|| re(r" holder_irqs=(on|off)\b"));
 static IPC_AVG: LazyLock<Regex> = LazyLock::new(|| re(r"^avg=([0-9]+) us\b"));
 static IPC_ITERS: LazyLock<Regex> = LazyLock::new(|| re(r" \(([0-9]+) iters\)"));
@@ -257,7 +262,7 @@ static IPC_ITERS: LazyLock<Regex> = LazyLock::new(|| re(r" \(([0-9]+) iters\)"))
 const META: &[u8] = b"[soak] meta ";
 const ELR_ZERO: &[u8] = b"ELR=0x0000000000000000";
 const INST_ABORT_ZERO: &[u8] = b"Instruction Abort at 0x0000000000000000";
-const REENTRY: &[u8] = b"lock re-entry: ";
+const REENTRY: &[u8] = b"lock re-entry:";
 const IPC_LINE: &[u8] = b"[bench] IPC round-trip (same core): ";
 
 /// The figures of an IPC line, from `msg`, the text after its
@@ -274,18 +279,44 @@ fn ipc_of(msg: &[u8]) -> Ipc {
     }
 }
 
+/// The `ctx=` labels the kernel prints (`shared::tripwire::Ctx::name`).
+const CTX_NAMES: [Ctx; 5] = [
+    Ctx::Thread,
+    Ctx::ThreadOff,
+    Ctx::Irq,
+    Ctx::IrqExit,
+    Ctx::Unknown,
+];
+
 /// The fields of the `lock re-entry:` message in a PANIC's joined first fatal
-/// line, or `None` when the line has no such message.
+/// line, or `None` when the line has no such message. A lock or ctx is read
+/// only when its token is whole (its follower is there) and names one of the
+/// kernel's lock statics or contexts, so a token cut short is `None`, never a
+/// different value.
 fn reentry_of(first: &[u8]) -> Option<Reentry> {
-    let msg = &first[find(first, REENTRY)? + REENTRY.len()..];
+    let after = &first[find(first, REENTRY)? + REENTRY.len()..];
+    let msg = &after[after.iter().take_while(|&&b| b == b' ').count()..];
     let group = |r: &Regex| {
         r.captures(msg)
             .and_then(|c| c.get(1))
             .map(|m| m.as_bytes().to_vec())
     };
+    let lock = REENTRY_LOCK.captures(msg).and_then(|c| {
+        let name = c.get(1)?.as_bytes();
+        let index = c.get(2).map_or(&b""[..], |m| m.as_bytes());
+        LockClass::ALL
+            .iter()
+            .any(|l| l.name().as_bytes() == name)
+            .then(|| [name, index].concat())
+    });
+    let ctx = group(&REENTRY_CTX).filter(|t| {
+        CTX_NAMES
+            .iter()
+            .any(|c| c.name().as_bytes() == t.as_slice())
+    });
     Some(Reentry {
-        lock: REENTRY_LOCK.find(msg).map(|m| m.as_bytes().to_vec()),
-        ctx: group(&REENTRY_CTX),
+        lock,
+        ctx,
         holder_irqs: group(&REENTRY_IRQS),
     })
 }
@@ -1094,10 +1125,35 @@ mod tests {
             c.reentry,
             Some(Reentry {
                 lock: Some(b"THREAD_TABLE".to_vec()),
-                ctx: Some(b"irq-e".to_vec()),
+                ctx: None,
                 holder_irqs: None,
             })
         );
+        // A ctx torn into another valid-looking name, a lock cut short or not
+        // one of the kernel's statics, and a message cut right after its
+        // colon read as nothing.
+        for (msg, lock, ctx) in [
+            (
+                "lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq[heartbeat] tick=1000",
+                Some(b"CURRENT_THREAD[0]".to_vec()),
+                None,
+            ),
+            ("lock re-entry: THREAD_TAB", None, None),
+            (
+                "lock re-entry: NOT_A_LOCK on CPU 0 ctx=thread holder=? holder_irqs=off",
+                None,
+                Some(b"thread".to_vec()),
+            ),
+            ("lock re-entry:", None, None),
+        ] {
+            let log = format!(
+                "{KERNEL}PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:\n{msg}\n"
+            );
+            let c = classify(log.as_bytes(), None);
+            assert_eq!(c.class, Class::PanicLock, "{msg}");
+            let r = c.reentry.expect("PANIC-LOCK fields");
+            assert_eq!((r.lock, r.ctx), (lock, ctx), "{msg}");
+        }
     }
 
     #[test]

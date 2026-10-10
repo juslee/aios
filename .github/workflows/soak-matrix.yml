@@ -280,11 +280,11 @@ jobs:
           done
           set +f
           [ "$ALLOW_MIXED_TOOLCHAINS" != true ] || set -- "$@" --allow-mixed-toolchains
-          # exec: the runner's SIGINT/SIGTERM on a timeout or cancel reach
-          # just, which passes them to the soak; it stops the running build
-          # or boot. Once the boots have started, it also marks summary.md
-          # "stopped" before the steps below read it; a soak stopped during
-          # the builds leaves only the build logs.
+          # exec: the runner's signals on a timeout or cancel reach just,
+          # which forwards SIGTERM (not SIGINT) to the soak; that stops the
+          # running build or boot. Once the boots have started, it also
+          # marks summary.md "stopped" before the steps below read it; a
+          # soak stopped during the builds leaves only the build logs.
           exec just soak "$@" runs="$RUNS" secs="$SECS" mode="$MODE" --ignore-load out="$MATRIX_OUT"
       - name: Publish summary
         if: always()

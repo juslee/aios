@@ -1,7 +1,11 @@
 //! Host facts and helper commands for `aios soak`, ported from the former
 //! `scripts/soak-qemu.sh` (blob at `212df62`: `loadavg`, `sha256_of`,
-//! `host_cpus` at L499-517, and the inline probes in `run_soak`). They run the
-//! same utilities as the script, so `summary.md` reads the same on each host.
+//! `host_cpus` at L499-517, and the inline probes in `run_soak`). Those ported
+//! helpers run the same utilities as the script, so `summary.md` reads the
+//! same on each host. Crash-fix step 1a adds the interleave preflight's probes
+//! (toolchain channel, `rustc --version`, HEAD and arm-base checks, the QEMU
+//! version line and full sha256) and the debug-only `AIOS_SOAK_LOADAVG`
+//! override.
 //! Every program `aios soak` runs starts from [`command`], in the C locale,
 //! except the `kill` that `proc::Supervisor` signals QEMU's process group with
 //! (its output is discarded).
@@ -105,6 +109,14 @@ pub fn loadavg_override() -> Option<String> {
     } else {
         None
     }
+}
+
+/// The note every `summary.md` load row carries while [`LOADAVG_VAR`] forges
+/// the load (debug builds only); empty otherwise.
+pub fn loadavg_override_note() -> String {
+    loadavg_override()
+        .map(|fixed| format!(" ({LOADAVG_VAR} override: every load reads '{fixed}')"))
+        .unwrap_or_default()
 }
 
 /// `loadavg`: the 1, 5 and 15-minute load averages separated by spaces, from
@@ -290,14 +302,14 @@ pub fn head_commit(root: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&out).into_owned())
 }
 
-/// Whether commit `base` is an ancestor of `HEAD` in the checkout `root`
+/// Whether commit `base` is an ancestor of `commit` in the checkout `root`
 /// (`git merge-base --is-ancestor`): `Err` when git cannot tell (an unknown
 /// commit, or not a checkout).
-pub fn contains_commit(root: &Path, base: &str) -> Result<bool> {
+pub fn contains_commit(root: &Path, base: &str, commit: &str) -> Result<bool> {
     let status = command("git")
         .arg("-C")
         .arg(root)
-        .args(["merge-base", "--is-ancestor", base, "HEAD"])
+        .args(["merge-base", "--is-ancestor", base, commit])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -307,7 +319,7 @@ pub fn contains_commit(root: &Path, base: &str) -> Result<bool> {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
         _ => bail!(
-            "git merge-base --is-ancestor {base} HEAD failed in {}",
+            "git merge-base --is-ancestor {base} {commit} failed in {}",
             root.display()
         ),
     }
@@ -316,6 +328,12 @@ pub fn contains_commit(root: &Path, base: &str) -> Result<bool> {
 /// The commit under test: `git rev-parse --short HEAD` (or `unknown`), with a
 /// `-dirty` suffix when tracked files have uncommitted changes.
 pub fn git_rev(root: &Path) -> String {
+    git_rev_of(root, "HEAD")
+}
+
+/// [`git_rev`] for `commit` (a full id pinned earlier, say) instead of
+/// whatever `HEAD` names now; the `-dirty` test still reads the work tree.
+pub fn git_rev_of(root: &Path, commit: &str) -> String {
     let root_arg = root.as_os_str();
     let mut rev = output_of(
         "git",
@@ -324,7 +342,7 @@ pub fn git_rev(root: &Path) -> String {
             root_arg,
             OsStr::new("rev-parse"),
             OsStr::new("--short"),
-            OsStr::new("HEAD"),
+            OsStr::new(commit),
         ],
         None,
     )
@@ -532,13 +550,16 @@ mod tests {
             output_of("git", &["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"),
         )
         .expect("hex");
-        assert!(contains_commit(&dir, &first).expect("known"));
-        assert!(contains_commit(&dir, &second).expect("known"));
+        assert!(contains_commit(&dir, &first, "HEAD").expect("known"));
+        assert!(contains_commit(&dir, &second, "HEAD").expect("known"));
+        assert!(!contains_commit(&dir, &second, &first).expect("known"));
         assert_eq!(head_commit(&dir).as_deref(), Some(second.as_str()));
         git(&["checkout", "-q", "--detach", &first]);
         assert_eq!(head_commit(&dir).as_deref(), Some(first.as_str()));
-        assert!(!contains_commit(&dir, &second).expect("known"));
-        assert!(contains_commit(&dir, &"0".repeat(40)).is_err());
+        assert!(!contains_commit(&dir, &second, "HEAD").expect("known"));
+        assert!(contains_commit(&dir, &first, &second).expect("known"));
+        assert!(contains_commit(&dir, &"0".repeat(40), "HEAD").is_err());
+        assert!(git_rev_of(&dir, &second).starts_with(&second[..7]));
         git(&["checkout", "-q", "main"]);
         let rev = git_rev(&dir);
         assert!(

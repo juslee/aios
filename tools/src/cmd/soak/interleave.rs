@@ -10,9 +10,12 @@
 //! Before any build, the preflight refuses (exit 2) a set of arms that would
 //! not be comparable: a host tool missing from `PATH`, an arm that does not
 //! contain [`MIN_ARM_BASE`] (#196: strict-NX firmware faults every older
-//! kernel), arms whose justfiles name different firmware files, or (unless
-//! `--allow-mixed-toolchains`) arms whose `rust-toolchain.toml` channels
-//! differ. It also refuses a host whose 1-minute load average is above its
+//! kernel), arms whose justfiles name different firmware files, a QEMU binary
+//! whose `--version` prints nothing, or (unless `--allow-mixed-toolchains`)
+//! arms whose `rust-toolchain.toml` channels differ. With `--no-build` no arm
+//! is built: each boots the ESP image already in its checkout, the arm-base
+//! check covers the checkout's `HEAD`, not that image, and `summary.md`'s
+//! Build row says so. It also refuses a host whose 1-minute load average is above its
 //! CPU count, unless `--ignore-load`: the check runs before the builds, which
 //! raise the load themselves. After each arm's build, its `rustc --version`
 //! must match the first arm's (same override). The QEMU binary's version line
@@ -23,7 +26,8 @@
 //! The run is report-only: it exits 0 when every boot ran, whatever the
 //! classes, unless `--fail-on-regression` is given and some pair's regression
 //! guard fails ([`pair`], exit 1). Each arm's directory `arm-X/` is a normal
-//! single-run directory (`run-NN.log`, `summary.tsv` row by row, `build.log`,
+//! single-run directory (`run-NN.log`, `summary.tsv` row by row, `build.log`
+//! in the first arm directory of each checkout built (none with `--no-build`),
 //! and `summary.md` once the soak finishes). The top level holds `arms.tsv`,
 //! `boots.tsv` (every boot in boot order) and `summary.md`, rewritten after
 //! every boot through a temporary file and a rename, with a status line and
@@ -471,12 +475,13 @@ fn run_with_base(
         }
         let channel = host::toolchain_channel(&root)
             .with_context(|| format!("arm {label} ({})", shown(dir)))?;
-        // Read before the arm-base check, so a HEAD that moves after this
-        // read fails the check after the build.
+        // Pinned before the arm-base check, which tests this commit rather
+        // than a fresh HEAD; a HEAD that differs from it after the build
+        // fails the soak, and the report names this commit.
         let head = host::head_commit(&root).with_context(|| {
             format!("arm {label} ({}): cannot read its HEAD commit", shown(dir))
         })?;
-        match host::contains_commit(&root, &base.sha) {
+        match host::contains_commit(&root, &base.sha, &head) {
             Ok(true) => {}
             Ok(false) => bail!(
                 "arm {label} ({}) does not contain {} (#196: strict-NX firmware faults every older kernel); soak a later commit",
@@ -540,8 +545,17 @@ fn run_with_base(
     let qemu = host::find_in_path("qemu-system-aarch64")
         .and_then(|p| std::fs::canonicalize(p).ok())
         .context("cannot resolve qemu-system-aarch64 in PATH")?;
+    let qemu_version = host::qemu_version(qemu.as_os_str());
+    if qemu_version.is_empty() {
+        // Fixed::changed compares against this line before every boot: an
+        // empty one would read as a changed binary before boot 1.
+        bail!(
+            "cannot run {} --version; check the QEMU install",
+            qemu.display()
+        );
+    }
     let fixed = Fixed {
-        qemu_version: host::qemu_version(qemu.as_os_str()),
+        qemu_version,
         qemu_sha: host::sha256(&qemu)?,
         firmware_sha: host::sha256(&firmware_path)?,
         qemu,
@@ -725,7 +739,8 @@ fn build_and_boot(
                 head.as_deref().unwrap_or("an unreadable commit")
             );
         }
-        let git_rev = host::git_rev(&c.root);
+        // The pinned commit, not a fresh read of HEAD, which could have moved since the check.
+        let git_rev = host::git_rev_of(&c.root, &c.head);
         out.flush()?;
         let kernel_sha = runner::esp_kernel_sha(
             &c.root,
@@ -831,6 +846,18 @@ fn build_and_boot(
     } else {
         format!("every arm contains `{}` (#196)", base.sha)
     };
+    // Without builds, the check covered each checkout's HEAD, not the image that boots.
+    let (arm_base, build) = if cfg.build {
+        (
+            arm_base,
+            &b"each checkout's ESP image built once (`just disk`) from the commit the arm-base check saw"[..],
+        )
+    } else {
+        (
+            format!("{arm_base}; checked on each checkout's HEAD, not on the ESP image that boots (--no-build)"),
+            &b"skipped (--no-build): each arm boots the ESP image already in its checkout, not one built from the checked commit"[..],
+        )
+    };
     let short = |s: &str| s.chars().take(16).collect::<String>();
     // The file every boot loads, when the justfile's path goes through a link.
     let firmware_via: Vec<u8> = if firmware_raw.as_slice() == bytes(&fixed.firmware) {
@@ -838,15 +865,9 @@ fn build_and_boot(
     } else {
         [&b"` -> `"[..], bytes(&fixed.firmware)].concat()
     };
-    // A debug build's forged load, named in every summary.md it reaches.
-    let load_override = host::loadavg_override()
-        .map(|fixed| {
-            format!(
-                " ({} override: every load reads '{fixed}')",
-                host::LOADAVG_VAR
-            )
-        })
-        .unwrap_or_default();
+    // A debug build's forged load, named in every summary.md it reaches
+    // (report::summary_head names it in each arm's).
+    let load_override = host::loadavg_override_note();
     let settings: Vec<(String, Vec<u8>)> = vec![
         (
             "Design".into(),
@@ -901,6 +922,7 @@ fn build_and_boot(
             format!("{}{load_override}", load_check.text()).into_bytes(),
         ),
         ("Toolchains".into(), toolchains.to_vec()),
+        ("Build".into(), build.to_vec()),
         ("Arm base".into(), arm_base.into_bytes()),
         ("Harness".into(), harness_rev()),
         ("Logs".into(), [&b"`"[..], bytes(&out_dir), b"`"].concat()),
