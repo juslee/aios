@@ -80,8 +80,9 @@
 #                     --agent-type values name (every caller when it names none,
 #                     or when a value is empty), or when the payload has an
 #                     agent_id but no agent_type, or when an agent_type key
-#                     has no non-empty string value or appears twice. A runnable override runs as a
-#                     child with no stamp or freshness test.
+#                     has no non-empty string value or appears twice. A
+#                     runnable override runs as a child with no stamp or
+#                     freshness test.
 #   aios <other> ...  fresh or dirty: run. stale: rebuild in the foreground,
 #                     then run (a failed rebuild prints a warning and runs the
 #                     stale binary instead). missing: build, then run; exit 3
@@ -141,6 +142,13 @@ sub=${1:-}
 hook_prog=
 hook_types=
 hook_types_bad=
+add_hook_type() {
+    if [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]; then
+        hook_types="$hook_types $1"
+    else
+        hook_types_bad=1
+    fi
+}
 # Parsed in a function, so the script's own arguments stay intact for the
 # dispatch below.
 parse_hook_args() {
@@ -150,8 +158,8 @@ parse_hook_args() {
     while [ $# -gt 0 ]; do
         case $1 in
         --agent-type)
-            if [ $# -ge 2 ] && [ -n "$(printf '%s' "$2" | tr -d '[:space:]')" ]; then
-                hook_types="$hook_types $2"
+            if [ $# -ge 2 ]; then
+                add_hook_type "$2"
                 shift 2
             else
                 hook_types_bad=1
@@ -159,11 +167,7 @@ parse_hook_args() {
             fi
             ;;
         --agent-type=*)
-            if [ -n "$(printf '%s' "${1#--agent-type=}" | tr -d '[:space:]')" ]; then
-                hook_types="$hook_types ${1#--agent-type=}"
-            else
-                hook_types_bad=1
-            fi
+            add_hook_type "${1#--agent-type=}"
             shift
             ;;
         *) shift ;;

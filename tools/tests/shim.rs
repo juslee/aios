@@ -360,7 +360,7 @@ impl Sandbox {
         self.install(None, fresh);
     }
 
-    fn run_at(&self, shim: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
+    fn shim_command(&self, shim: &Path, args: &[&str], envs: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(shim);
         isolated(&mut cmd);
         cmd.env("PATH", self.path_env())
@@ -369,7 +369,13 @@ impl Sandbox {
         for (key, value) in envs {
             cmd.env(key, value);
         }
-        cmd.output().expect("run the shim")
+        cmd
+    }
+
+    fn run_at(&self, shim: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
+        self.shim_command(shim, args, envs)
+            .output()
+            .expect("run the shim")
     }
 
     /// `run_at` with `stdin` piped to the shim, as Claude Code pipes a hook's
@@ -381,18 +387,13 @@ impl Sandbox {
         envs: &[(&str, &str)],
         stdin: &str,
     ) -> Output {
-        let mut cmd = Command::new(shim);
-        isolated(&mut cmd);
-        cmd.env("PATH", self.path_env())
-            .current_dir(self.repo.path())
-            .args(args)
+        let mut child = self
+            .shim_command(shim, args, envs)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (key, value) in envs {
-            cmd.env(key, value);
-        }
-        let mut child = cmd.spawn().expect("run the shim");
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run the shim");
         // A hook program that never reads its payload may exit first: the
         // write then fails with a broken pipe, which is no test failure.
         child
@@ -1784,8 +1785,7 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     // A hook program never exits 3 (Claude Code would run the tool): it
     // falls back and prints nothing.
     let out = sandbox.run_stdin_at(&shim, &["hook", "route-outcome"], &[("PATH", &path)], "{}");
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+    assert_silent(&out);
 
     // A stale worktree binary and a slow build: a shim that took the worktree
     // for the main checkout would hold the worktree's build lock on return.
@@ -1894,6 +1894,11 @@ fn worker() -> String {
     payload(r#","agent_type":"worker","agent_id":"a1""#)
 }
 
+/// A payload from `kernel-dev`, an agent type `PG` does not guard.
+fn kernel_dev() -> String {
+    payload(r#","agent_type":"kernel-dev","agent_id":"a1""#)
+}
+
 /// The shim exited 0 with exactly one PreToolUse "deny" decision.
 fn is_deny(out: &Output) -> bool {
     code(out) == 0
@@ -1969,11 +1974,10 @@ fn the_path_guard_fallback_denies_the_guarded_agent_types() {
     assert_silent(&sandbox.run_stdin(&PG, &[], &payload("")));
 
     // 6: no --agent-type value guards every caller.
-    let kernel_dev = payload(r#","agent_type":"kernel-dev","agent_id":"a1""#);
     let out = sandbox.run_stdin(
         &["hook", "path-guard", "--deny", "kernel/"],
         &[],
-        &kernel_dev,
+        &kernel_dev(),
     );
     assert_denies(&out);
 
@@ -1988,7 +1992,7 @@ fn the_path_guard_fallback_denies_the_guarded_agent_types() {
             "kernel/",
         ],
         &[],
-        &kernel_dev,
+        &kernel_dev(),
     );
     assert_denies(&out);
     sandbox.wait_for_background_build();
@@ -2060,8 +2064,7 @@ fn a_failing_hook_binary_falls_back_and_its_output_is_dropped() {
     let out = sandbox.run_stdin(&PG, &envs, &worker());
     assert_denies(&out);
     assert!(!stdout(&out).contains("fake:"), "{}", stdout(&out));
-    let kernel_dev = payload(r#","agent_type":"kernel-dev","agent_id":"a1""#);
-    assert_silent(&sandbox.run_stdin(&PG, &envs, &kernel_dev));
+    assert_silent(&sandbox.run_stdin(&PG, &envs, &kernel_dev()));
 
     assert_silent(&sandbox.run_stdin(&["hook", "repeat-error"], &envs, "{}"));
     assert!(sandbox.no_build_started());
