@@ -15,6 +15,9 @@
 //!   `base_line()` differ in field 1 alone, on every case.
 //! - `ipc_iterations_match_the_kernel_bench` keeps the classifier's CLEAN
 //!   threshold equal to `IPC_ITERATIONS` in `kernel/src/bench.rs`.
+//! - `class_lists_match_class_all` keeps the class lists in the `just soak`
+//!   recipe comment and the developer guide's `just soak` row equal to
+//!   `Class::ALL`.
 //! - `classify_differential_on_real_logs` (ignored) runs the fold differential
 //!   for every `*.log` but `build.log` under the directories in `AIOS_SOAK_REAL_LOGS`
 //!   (colon-separated; real soak logs are never committed, owner decision
@@ -98,6 +101,30 @@ fn ipc_iterations_match_the_kernel_bench() {
         [IPC_ITERATIONS],
         "{}: one `{decl}...;` declaration, equal to the classifier's",
         path.display()
+    );
+}
+
+/// The one line of `rel` (repo-relative) that starts with `prefix`.
+fn line_starting_with(rel: &str, prefix: &str) -> String {
+    let path = repo_root().join(rel);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with(prefix)).collect();
+    assert_eq!(lines.len(), 1, "{rel}: one line starting {prefix:?}");
+    lines[0].to_string()
+}
+
+#[test]
+fn class_lists_match_class_all() {
+    let all = Class::ALL.map(Class::name).join("/");
+    let recipe = line_starting_with("justfile", "# Soak-test boots:");
+    assert!(
+        recipe.ends_with(&format!(" classified {all}")),
+        "justfile `just soak` comment lists other classes than {all}: {recipe}"
+    );
+    let row = line_starting_with("docs/project/developer-guide.md", "| `just soak` |");
+    assert!(
+        row.contains(&format!("({all})")),
+        "developer-guide `just soak` row lists other classes than {all}: {row}"
     );
 }
 

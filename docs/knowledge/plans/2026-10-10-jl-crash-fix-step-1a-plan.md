@@ -642,6 +642,7 @@ The verdict is reported. The harness never stops a running soak over it.
 - T4 (deviation, smallest one keeping D1): where the console line and the per-boot table print a CLEAN boot's `detail`, a DEGRADED boot prints `IPC <N> iters` or `IPC iteration count unreadable` and then, unless the detail is `-`, `; <detail>`, instead of the IPC text alone. The detail of a CLEAN-base boot carries notes such as "qemu exited before the time limit" and the log-only note, which the IPC text alone would hide; `detail` itself is still the oracle's.
 - T4: `summary.tsv` gains `ipc_avg_us` and `ipc_iters` after `log` (24 columns). The fake harness's `summary.tsv` normaliser keyed on the literal 22; it now counts `report::TSV_HEADER`'s columns, pulled forward from T6 because the timing columns would otherwise reach the goldens unnormalised.
 - T4: corpus cases `ipc-10000-iters-clean`, `ipc-0-iters-gate1-fail-degraded`, `ipc-9999-iters-degraded`, `ipc-no-line-degraded`, `ipc-line-cut-degraded`, `ipc-0-iters-log-only-degraded`, `ipc-first-line-decides-degraded` (a guest that booted twice: the first line's 0 decides) and `ipc-0-iters-pczero-stays-fatal`: 6 DEGRADED, corpus 124 cases.
+- T4 (review fix): the `just soak` recipe comment in `justfile` still listed the 8 T3 classes. It now lists DEGRADED too, and `class_lists_match_class_all` (`tools/tests/soak_classify.rs`) asserts that this comment and the developer guide's `just soak` row both list exactly `Class::ALL`, in order, so a later class cannot leave either behind.
 
 ## Lessons Learned
 
