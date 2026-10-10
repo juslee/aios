@@ -34,10 +34,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use super::awk::contains;
-use super::classify::{classify, Class};
+use std::collections::HashMap;
+
+use super::awk::{contains, fields};
+use super::classify::{classify, preprocess, Class};
 use super::host;
-use super::report::{self, BootTiming, SummaryInfo, TSV_HEADER};
+use super::report::{self, BootTiming, SummaryInfo, Tally};
 use super::signals::Interrupts;
 use crate::proc::Supervisor;
 
@@ -137,6 +139,55 @@ pub fn footer(cfg: &Config, elapsed: i64, rc: i32, p: &Progress, load1: &[u8]) -
     s.extend_from_slice(load1);
     s.push(b'\n');
     s
+}
+
+/// The `[soak] meta` values of a log, as [`footer`] wrote them: every
+/// `key=value` token of every footer line (a later one wins, as the
+/// classifier reads them), after the classifier's NUL, CR and ANSI clean-up.
+#[derive(Debug, Default)]
+pub struct Footer(HashMap<Vec<u8>, Vec<u8>>);
+
+impl Footer {
+    /// The footer values of the raw log `raw`.
+    pub fn parse(raw: &[u8]) -> Footer {
+        let mut values = HashMap::new();
+        for line in preprocess(raw).split(|&b| b == b'\n') {
+            if !line.starts_with(b"[soak] meta ") {
+                continue;
+            }
+            for field in fields(line).skip(2) {
+                if let Some(eq) = field.iter().position(|&b| b == b'=').filter(|&eq| eq > 0) {
+                    values.insert(field[..eq].to_vec(), field[eq + 1..].to_vec());
+                }
+            }
+        }
+        Footer(values)
+    }
+
+    /// The value of `key`, if the footer has it.
+    pub fn get(&self, key: &str) -> Option<&[u8]> {
+        self.0.get(key.as_bytes()).map(Vec::as_slice)
+    }
+
+    /// `key` as a whole number, if the footer has it and it is one.
+    fn number<T: std::str::FromStr>(&self, key: &str) -> Option<T> {
+        std::str::from_utf8(self.get(key)?).ok()?.parse().ok()
+    }
+
+    /// The `summary.tsv` timing fields the footer records: those of
+    /// [`Boot::timing`] for a log this harness wrote, `None` for a value it lacks.
+    pub fn timing(&self) -> BootTiming {
+        BootTiming {
+            elapsed: self.number("elapsed"),
+            rc: self.number("qemu_rc"),
+            load1: self.get("load1").map(<[u8]>::to_vec),
+            kstart: self.number("kstart"),
+            hb_first: self.number("hb_first"),
+            bench_start: self.number("bench_start"),
+            g1done: self.number("g1done"),
+            hb_max_gap: self.number("hb_max_gap"),
+        }
+    }
 }
 
 /// `a` + `b` + `c` as one OS string.
@@ -296,14 +347,14 @@ impl Boot {
     /// The boot's `summary.tsv` timing fields.
     pub fn timing(&self) -> BootTiming {
         BootTiming {
-            elapsed: self.elapsed,
-            rc: self.rc,
-            load1: self.load1.clone(),
-            kstart: self.progress.kernel,
-            hb_first: self.progress.hb0,
-            bench_start: self.progress.bench,
-            g1done: self.progress.g1,
-            hb_max_gap: self.progress.gap,
+            elapsed: Some(self.elapsed),
+            rc: Some(self.rc),
+            load1: Some(self.load1.clone()),
+            kstart: Some(self.progress.kernel),
+            hb_first: Some(self.progress.hb0),
+            bench_start: Some(self.progress.bench),
+            g1done: Some(self.progress.g1),
+            hb_max_gap: Some(self.progress.gap),
         }
     }
 }
@@ -409,6 +460,63 @@ pub fn boot_once(
     }))
 }
 
+/// Create the output directory `out_arg` (relative to `cwd`) and return it
+/// canonical. It must be new or empty, and must not be `root` (the
+/// repository root, for a soak): the harness writes its files there and never
+/// overwrites or deletes anything it did not create.
+pub fn fresh_out_dir(cwd: &Path, out_arg: &OsStr, root: Option<&Path>) -> Result<PathBuf> {
+    let out_path = cwd.join(out_arg);
+    let shown = String::from_utf8_lossy(out_arg.as_bytes()).into_owned();
+    if out_path.exists() && !out_path.is_dir() {
+        bail!("--out {shown} exists and is not a directory");
+    }
+    std::fs::create_dir_all(&out_path)
+        .map_err(|_| anyhow::anyhow!("cannot create output directory {shown}"))?;
+    let out_dir =
+        std::fs::canonicalize(&out_path).with_context(|| format!("cannot resolve {shown}"))?;
+    if root == Some(out_dir.as_path()) {
+        bail!("--out must not be the repository root (default: target/soak/<timestamp>-<mode>)");
+    }
+    if std::fs::read_dir(&out_dir)
+        .with_context(|| format!("cannot list {}", out_dir.display()))?
+        .next()
+        .is_some()
+    {
+        bail!(
+            "--out {} is not empty; choose a new or empty directory",
+            out_dir.display()
+        );
+    }
+    Ok(out_dir)
+}
+
+/// Write `summary.md` in `out_dir` (`head`, then the tables of `tally`),
+/// and print the head and where the summary files are.
+pub fn write_summary(
+    out_dir: &Path,
+    head: &[u8],
+    tally: &Tally,
+    out: &mut dyn Write,
+) -> Result<()> {
+    let md = out_dir.join("summary.md");
+    let tsv = out_dir.join("summary.tsv");
+    std::fs::write(&md, [head, &report::summary_tail(tally)].concat())
+        .with_context(|| format!("cannot write {}", md.display()))?;
+    out.write_all(b"\n")?;
+    out.write_all(head)?;
+    out.write_all(
+        &[
+            &b"\nsoak: per-boot table in "[..],
+            bytes(&md),
+            b", machine-readable rows in ",
+            bytes(&tsv),
+            b"\n",
+        ]
+        .concat(),
+    )?;
+    Ok(())
+}
+
 /// What [`run`] has settled before it installs the signal handlers: the
 /// repository, the justfile's paths (the image paths relative to `root`), and
 /// the new or empty output directory.
@@ -454,28 +562,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
             .join(format!("{}-{}", host::timestamp()?, cfg.mode))
             .into_os_string(),
     };
-    let out_path = cwd.join(&out_arg);
-    let shown = String::from_utf8_lossy(out_arg.as_bytes()).into_owned();
-    if out_path.exists() && !out_path.is_dir() {
-        bail!("--out {shown} exists and is not a directory");
-    }
-    std::fs::create_dir_all(&out_path)
-        .map_err(|_| anyhow::anyhow!("cannot create output directory {shown}"))?;
-    let out_dir =
-        std::fs::canonicalize(&out_path).with_context(|| format!("cannot resolve {shown}"))?;
-    if out_dir == root {
-        bail!("--out must not be the repository root (default: target/soak/<timestamp>-<mode>)");
-    }
-    if std::fs::read_dir(&out_dir)
-        .with_context(|| format!("cannot list {}", out_dir.display()))?
-        .next()
-        .is_some()
-    {
-        bail!(
-            "--out {} is not empty; choose a new or empty directory",
-            out_dir.display()
-        );
-    }
+    let out_dir = fresh_out_dir(cwd, &out_arg, Some(&root))?;
 
     let interrupts = Interrupts::install()?;
     let setup = Setup {
@@ -630,7 +717,8 @@ fn build_and_boot(
     }
 
     let tsv = out_dir.join("summary.tsv");
-    std::fs::write(&tsv, TSV_HEADER).with_context(|| format!("cannot write {}", tsv.display()))?;
+    std::fs::write(&tsv, report::tsv_header())
+        .with_context(|| format!("cannot write {}", tsv.display()))?;
 
     let data_word = if cfg.fresh_data { "fresh" } else { "reused" };
     out.write_all(
@@ -651,10 +739,8 @@ fn build_and_boot(
     )?;
 
     let width = cfg.runs_raw.len().max(2);
-    let mut counts = [0u64; Class::COUNT];
+    let mut tally = Tally::default();
     let mut non_clean = false;
-    let mut md_rows: Vec<u8> = Vec::new();
-    let mut loads: Vec<Vec<u8>> = Vec::new();
 
     for n in 1..=cfg.runs {
         if let Some(code) = interrupts.pending() {
@@ -687,26 +773,24 @@ fn build_and_boot(
             format!("run {idx}/{}", cfg.runs_raw).as_bytes(),
             &c,
         ))?;
-        counts[c.class.index()] += 1;
         non_clean |= c.class != Class::Clean;
+        let timing = boot.timing();
         append(
             &tsv,
-            &report::tsv_row(&idx, &cfg.mode, &c, &boot.timing(), &log_name),
+            &report::tsv_row(&idx, &cfg.mode, &c, &timing, &log_name),
         )?;
-        md_rows.extend(report::md_row(&idx, &c));
-        loads.push(boot.load1);
+        tally.add(&idx, &c, &timing);
     }
     drop(scratch); // the ESP snapshot and the fresh data disk
     let load_end = host::loadavg();
 
     let host_line = [&host::uname()[..], b", ", &host::host_cpus(), b" CPUs"].concat();
-    let load_refs: Vec<&[u8]> = loads.iter().map(Vec::as_slice).collect();
     let info = SummaryInfo {
         mode: &cfg.mode,
         runs: &cfg.runs_raw,
         secs: &cfg.secs_raw,
         stall_secs: &cfg.stall_raw,
-        fresh_data: cfg.fresh_data,
+        fresh_data: Some(cfg.fresh_data),
         git_rev: &arm.git_rev,
         kernel_sha: &arm.kernel_sha,
         qemu_version: &qemu_version,
@@ -716,27 +800,13 @@ fn build_and_boot(
         load_end: &load_end,
         out: bytes(&out_dir),
     };
-    let head = report::summary_head(&info, &counts, cfg.runs, &load_refs);
+    let head = report::summary_head(&info, &tally);
     // A signal after the last boot's QEMU exited: the script's trap exited at
     // once, so there is no summary.md.
     if let Some(code) = interrupts.pending() {
         return Ok(code);
     }
-    let md = out_dir.join("summary.md");
-    std::fs::write(&md, &head).with_context(|| format!("cannot write {}", md.display()))?;
-    out.write_all(b"\n")?;
-    out.write_all(&head)?;
-    append(&md, &report::summary_table(&md_rows))?;
-    out.write_all(
-        &[
-            &b"\nsoak: per-boot table in "[..],
-            bytes(&md),
-            b", machine-readable rows in ",
-            bytes(&tsv),
-            b"\n",
-        ]
-        .concat(),
-    )?;
+    write_summary(&out_dir, &head, &tally, out)?;
 
     if let Some(code) = interrupts.pending() {
         return Ok(code);
@@ -808,6 +878,50 @@ mod tests {
             footer(&cfg("text"), 76, 124, &p, b"1.50"),
             b"\n[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=1 hb_first=2 bench_start=7 g1done=8 hb_count=3 hb_last_advance=70 hb_max_gap=5 stall_limit=15 load1=1.50\n"
         );
+    }
+
+    #[test]
+    fn the_footer_reads_back_as_the_boot_s_timing() {
+        let boot = Boot {
+            rc: 124,
+            elapsed: 76,
+            progress: Progress {
+                hb: 3,
+                adv: 70,
+                kernel: 1,
+                hb0: 2,
+                bench: -1,
+                g1: -1,
+                gap: -1,
+            },
+            load1: b"1.50".to_vec(),
+            text: Vec::new(),
+        };
+        let log = [
+            &b"[heartbeat] tick=0\r\n\x1b[0m"[..],
+            &footer(
+                &cfg("gpu"),
+                boot.elapsed,
+                boot.rc,
+                &boot.progress,
+                &boot.load1,
+            ),
+        ]
+        .concat();
+        let f = Footer::parse(&log);
+        assert_eq!(f.timing(), boot.timing());
+        assert_eq!(f.get("mode"), Some(&b"gpu"[..]));
+        assert_eq!(f.get("stall_limit"), Some(&b"15"[..]));
+        // An empty load is kept as written; a log without a footer has nothing.
+        let empty = footer(&cfg("text"), 1, 0, &boot.progress, b"");
+        assert_eq!(Footer::parse(&empty).timing().load1, Some(Vec::new()));
+        assert_eq!(
+            Footer::parse(b"AIOS UEFI stub\n").timing(),
+            BootTiming::default()
+        );
+        // A value that is not a number is unknown.
+        let odd = Footer::parse(b"[soak] meta elapsed=7x qemu_rc=1\n").timing();
+        assert_eq!((odd.elapsed, odd.rc), (None, Some(1)));
     }
 
     #[test]

@@ -49,7 +49,7 @@ const BOOT_BUDGET_SECS: u64 = 20;
 
 /// `aios soak --help`.
 pub const USAGE: &str = r#"Usage: aios soak [options] [key=value ...]
-       aios soak --classify [--stall-secs S] LOG...
+       aios soak --classify [--stall-secs S] [--out DIR] LOG...
        just soak [options] [key=value ...]
 
 Boot AIOS N times under QEMU (same arguments as `just run` / `just run-gpu`),
@@ -130,7 +130,10 @@ Options:
                      gpu:  `just run-gpu` devices plus -display none
                      (default text)
   --out DIR          output directory; must be new or empty and must not be
-                     the repository root (default target/soak/<timestamp>-<mode>)
+                     the repository root (default target/soak/<timestamp>-<mode>).
+                     With --classify: also write summary.tsv and summary.md
+                     for the logs there (no default: without it, nothing is
+                     written)
   --stall-secs S     heartbeat silence at the end that counts as a wedge
                      (default 15)
   --no-build         skip `just disk` and boot the existing ESP image
@@ -138,7 +141,10 @@ Options:
   --reuse-data       boot every run on the repository's data.img, so disk
                      state carries over between boots (like `just run`)
   --report-only      exit 0 even when some boots are not CLEAN
-  --classify LOG...  classify existing log files instead of booting
+  --classify LOG...  classify existing log files instead of booting; with
+                     --out, number them in the order given, take each one's
+                     timing from its "[soak] meta" line, and give "-" for what
+                     logs cannot tell (commit, QEMU, firmware, host, load)
   -h, --help         show this help
 
 key=value aliases (so `just soak runs=5 mode=gpu` works): runs=N secs=T
@@ -149,11 +155,23 @@ relative out= and --classify paths resolve against that directory. The soak
 boots the git checkout that contains that directory.
 
 Output directory: run-NN.log (raw serial output plus a trailing "[soak] meta"
-line), summary.tsv (one row per boot; its last two columns are the Gate 1
-IPC average in whole us, as the kernel truncates it, and the iteration
-count), summary.md (counts, 95% interval for the CLEAN rate, per-boot table)
-and build.log. The ESP snapshot and the fresh
+line), summary.tsv, summary.md and build.log. The ESP snapshot and the fresh
 data disks live in a private .scratch.* subdirectory that is removed at exit.
+
+summary.tsv has one row per boot, with a header line. Read it by column name:
+the first 22 columns are the script-era ones (class, ticks, timing, markers,
+detail, first fatal line, INFO lines, log); then ipc_avg_us (the Gate 1 IPC
+average in whole us, as the kernel truncates it) and ipc_iters; reentry_lock,
+reentry_ctx and reentry_holder_irqs (a PANIC-LOCK's message); ev_ph, ev_self,
+ev_self_irq (ctx=irq or irq-exit) and ev_stuck ("[tripwire-ev]" lock events);
+tw_v, tw_src, tw_cpu, tw_t, tw_ncpu and one tw_<key> per tripwire key, from
+the last complete "[tripwire]" line (docs/kernel/observability.md 6.5: its n=
+must equal its key=value count; a key it leaves out is 0; a line of another
+schema version fills only tw_v and tw_line); g1_elrmm, from the last complete
+src=g1 line; then the whole lines g1_line and tw_line. "-" means unreadable,
+or no such line. summary.md has the settings, the class counts, the CLEAN
+rate with its 95% Wilson interval, the mean Gate 1 IPC average over CLEAN
+boots, the tripwire counters by class, and the per-boot table.
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
 Requires qemu-system-aarch64, just, mtools (for `just disk`) and the POSIX
@@ -186,6 +204,8 @@ pub enum Request {
         files: Vec<OsString>,
         stall_override: Option<u64>,
         report_only: bool,
+        /// `--out DIR`: also write `summary.tsv` and `summary.md` there.
+        out: Option<OsString>,
     },
     Soak(Config),
 }
@@ -321,6 +341,7 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
             files: positional,
             stall_override: stall_given.then_some(stall_n),
             report_only,
+            out,
         });
     }
     if let Some(first) = positional.first() {
@@ -363,21 +384,49 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     }))
 }
 
+/// The one value every log's footer gives for `key`, `mixed` when they
+/// differ, or `-` when none gives one.
+fn common_value(footers: &[runner::Footer], key: &str) -> String {
+    let mut values = footers.iter().filter_map(|f| f.get(key));
+    match values.next() {
+        None => "-".to_string(),
+        Some(first) if values.all(|v| v == first) => show(first),
+        Some(_) => "mixed".to_string(),
+    }
+}
+
 /// `run_classify`: classify each log, print its summary line (and, when it is
 /// not CLEAN, its first fatal line and last INFO lines). Exit 1 when some log
 /// is not CLEAN, unless `report_only`.
+///
+/// With `out`, also write `summary.tsv` and `summary.md` there, as a soak
+/// writes them: the boots are numbered in the order given, the `log` column
+/// is each path as given, and the timing columns come from each log's
+/// `[soak] meta` footer (`-` without one). What a set of logs cannot tell
+/// (the commit, QEMU, the firmware, the host, the load before and after) is
+/// `-`; the mode, `--secs` and the stall limit come from the footers when
+/// they agree.
 pub fn classify_files(
     files: &[OsString],
     stall_override: Option<u64>,
     report_only: bool,
+    out_arg: Option<&OsString>,
     cwd: &Path,
     out: &mut dyn Write,
 ) -> Result<u8> {
     if files.is_empty() {
         bail!("--classify needs at least one log file");
     }
+    let out_dir = out_arg
+        .map(|o| runner::fresh_out_dir(cwd, o, None))
+        .transpose()?;
+    let width = files.len().to_string().len().max(2);
+    let mut tsv = report::tsv_header();
+    let mut tally = report::Tally::default();
+    let mut footers = Vec::new();
+    let mut parents = Vec::new();
     let mut non_clean = false;
-    for file in files {
+    for (n, file) in files.iter().enumerate() {
         let path = cwd.join(file);
         if !path.is_file() {
             bail!("no such log file: {}", show(file.as_bytes()));
@@ -390,6 +439,56 @@ pub fn classify_files(
             non_clean = true;
             out.write_all(&report::classify_details(&c))?;
         }
+        if out_dir.is_some() {
+            let idx = format!("{:0width$}", n + 1);
+            let footer = runner::Footer::parse(&raw);
+            let timing = footer.timing();
+            let mode = footer.get("mode").map_or_else(|| "-".to_string(), show);
+            tsv.extend(report::tsv_row(
+                &idx,
+                &mode,
+                &c,
+                &timing,
+                &show(file.as_bytes()),
+            ));
+            tally.add(&idx, &c, &timing);
+            footers.push(footer);
+            parents.push(path.parent().and_then(|p| std::fs::canonicalize(p).ok()));
+        }
+    }
+    if let Some(dir) = out_dir {
+        let tsv_path = dir.join("summary.tsv");
+        std::fs::write(&tsv_path, &tsv)
+            .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", tsv_path.display()))?;
+        // The directory that holds every log, when there is one.
+        let logs = match parents.first() {
+            Some(Some(first)) if parents.iter().all(|p| p.as_ref() == Some(first)) => {
+                first.as_os_str().as_bytes().to_vec()
+            }
+            _ => b"-".to_vec(),
+        };
+        let stall =
+            stall_override.map_or_else(|| common_value(&footers, "stall_limit"), |n| n.to_string());
+        let runs = files.len().to_string();
+        let mode = common_value(&footers, "mode");
+        let secs = common_value(&footers, "secs");
+        let info = report::SummaryInfo {
+            mode: &mode,
+            runs: &runs,
+            secs: &secs,
+            stall_secs: &stall,
+            fresh_data: None,
+            git_rev: "-",
+            kernel_sha: "-",
+            qemu_version: b"-",
+            firmware: b"-",
+            host: b"-",
+            load_start: "-",
+            load_end: "-",
+            out: &logs,
+        };
+        let head = report::summary_head(&info, &tally);
+        runner::write_summary(&dir, &head, &tally, out)?;
     }
     Ok(if non_clean && !report_only { 1 } else { 0 })
 }
@@ -406,7 +505,15 @@ pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Wri
             files,
             stall_override,
             report_only,
-        } => classify_files(&files, stall_override, report_only, cwd, out),
+            out: out_arg,
+        } => classify_files(
+            &files,
+            stall_override,
+            report_only,
+            out_arg.as_ref(),
+            cwd,
+            out,
+        ),
         Request::Soak(cfg) => runner::run(&cfg, cwd, out, err),
     }
 }
@@ -564,7 +671,8 @@ mod tests {
             Ok(Request::Classify {
                 files: os(&["a.log", "--report-only"]),
                 stall_override: Some(5),
-                report_only: false
+                report_only: false,
+                out: None,
             })
         );
         assert_eq!(
@@ -572,7 +680,8 @@ mod tests {
             Ok(Request::Classify {
                 files: os(&["-x.log"]),
                 stall_override: None,
-                report_only: true
+                report_only: true,
+                out: None,
             })
         );
         // Soak-only options are not checked in --classify mode.
@@ -581,7 +690,8 @@ mod tests {
             Ok(Request::Classify {
                 files: vec![],
                 stall_override: None,
-                report_only: false
+                report_only: false,
+                out: None,
             })
         );
         assert_eq!(

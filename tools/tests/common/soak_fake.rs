@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-use aios_tools::cmd::soak::report::TSV_HEADER;
+use aios_tools::cmd::soak::report::TSV_COLUMNS;
 use regex::bytes::Regex;
 
 use super::isolated;
@@ -99,6 +99,22 @@ exit 1
 
 /// Gate 1 completes and the heartbeat advances: CLEAN if QEMU runs to the limit.
 const CLEAN_TAIL: &str = r"printf '[bench] === Gate 1 Benchmark ===\r\n[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)\r\nGate 1: IPC < 10 us: PASS\r\n=== Gate 1 Complete ===\r\n[heartbeat] tick=1000\r\n'
+";
+
+/// Crash-fix step 1b's output before a `lock re-entry:` panic: a heartbeat
+/// tripwire line, a lock event, the two-line panic and its `src=panic` line,
+/// which is the last complete one. QEMU then exits 1.
+const PANIC_LOCK_TRIPWIRE_TAIL: &str = r"printf '[tripwire] v=1 src=hb cpu=0 t=1 ncpu=4 tick=1,0,0,0 twc=0 twn=0 twmax=0 n=9\r\n'
+printf '[tripwire-ev] kind=stuck cpu=3 lock=THREAD_TABLE idx=- ctx=thread-off owner_cpu=0\r\n'
+printf 'PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:\r\n'
+printf 'lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894\r\n'
+printf '[tripwire] v=1 src=panic cpu=0 t=544 ncpu=4 irqsw=6,0,0,0 twc=9 twn=2 twmax=9 n=9\r\n'
+exit 1
+";
+
+/// The `src=g1` line after Gate 1, then a heartbeat line, both complete.
+const G1_TRIPWIRE: &str = r"printf '[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10\r\n'
+printf '[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10\r\n'
 ";
 
 /// The heartbeat goes on advancing until QEMU is stopped.
@@ -336,6 +352,23 @@ pub fn scenarios() -> Vec<Scenario> {
     );
     no_qemu.no_qemu = true;
     v.push(no_qemu);
+    let mut tripwire = Scenario::new(
+        "tripwire",
+        &[
+            "--no-build",
+            "runs=2",
+            "secs=3",
+            "stall_secs=2",
+            "report_only=1",
+            "out=out",
+        ],
+        format!("{BOOT_HEAD}{PANIC_LOCK_TRIPWIRE_TAIL}"),
+    );
+    tripwire.boots.push((
+        2,
+        format!("{BOOT_HEAD}{CLEAN_TAIL}{G1_TRIPWIRE}exec sleep 30\n"),
+    ));
+    v.push(tripwire);
     v.push(interrupted("interrupt-int", "INT"));
     v.push(interrupted("interrupt-term", "TERM"));
     v
@@ -604,7 +637,7 @@ static RULES: LazyLock<Vec<(Regex, &'static [u8])>> = LazyLock::new(|| {
         (r"\| Load average \| [^\n]*", b"| Load average | <L> |"),
         (r"after [0-9]+s\)", b"after <N>s)"),
         (
-            r"(?m)^(\| [0-9]+ \| [A-Z]+ \| [^|]* \| )[^|]* \|",
+            r"(?m)^(\| [0-9]+ \| [A-Z-]+ \| [^|]* \| )[^|]* \|",
             b"${1}<N> |",
         ),
         // bash reports a background job that SIGKILL ended; the port has no such job.
@@ -634,13 +667,13 @@ pub fn normalize(data: &[u8], root: &Path) -> Vec<u8> {
     for (re, to) in RULES.iter() {
         text = re.replace_all(&text, *to).into_owned();
     }
-    // summary.tsv rows: the stall, elapsed, load1 and harness-time columns.
-    let tsv_columns = TSV_HEADER.split(|&b| b == b'\t').count();
+    // summary.tsv rows (by their column count): the stall, elapsed, load1 and
+    // harness-time columns.
     let lines: Vec<Vec<u8>> = text
         .split(|&b| b == b'\n')
         .map(|line| {
             let mut cells: Vec<&[u8]> = line.split(|&b| b == b'\t').collect();
-            if cells.len() == tsv_columns && cells[0] != b"run" {
+            if cells.len() == TSV_COLUMNS && cells[0] != b"run" {
                 for i in [5, 6, 8, 9, 10, 11, 12, 13] {
                     cells[i] = b"<N>";
                 }

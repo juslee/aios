@@ -2,7 +2,9 @@
 //! the usage errors.
 //!
 //! - `cli_goldens_match_aios` replays every case of `CASES` and compares
-//!   `exit N`, stdout and stderr with `tests/golden/soak/cli/<case>.golden`.
+//!   `exit N`, stdout and stderr (and, for a case with `--out DIR` or
+//!   `out=DIR`, the files written there) with
+//!   `tests/golden/soak/cli/<case>.golden`.
 //!   The goldens were recorded from the deleted `scripts/soak-qemu.sh` (R4's
 //!   oracle) and are kept by aios since crash-fix step 1a split its classes;
 //!   `AIOS_BLESS_GOLDENS=1` rewrites them from aios.
@@ -69,6 +71,44 @@ const CASES: &[(&str, &[&str])] = &[
             "007",
             "--classify",
             "cases/stall-override-wedge.txt",
+        ],
+    ),
+    (
+        "classify-out",
+        &[
+            "--report-only",
+            "--classify",
+            "--out",
+            "out-a",
+            "cases/clean-text.txt",
+            "cases/tripwire-panic-lock-with-events.txt",
+            "cases/tripwire-clean-g1-then-hb.txt",
+            "cases/tripwire-other-schema-last-wedge-alive.txt",
+            "cases/clean-text-log-only.txt",
+        ],
+    ),
+    (
+        "classify-out-kv-stall",
+        &[
+            "out=out-b",
+            "--stall-secs",
+            "5",
+            "--classify",
+            "cases/stall-override-wedge.txt",
+            "cases/clean-text.txt",
+        ],
+    ),
+    (
+        "classify-out-not-empty",
+        &["--classify", "--out", "cases", "cases/clean-text.txt"],
+    ),
+    (
+        "classify-out-is-a-file",
+        &[
+            "--classify",
+            "--out",
+            "cases/clean-text.txt",
+            "cases/clean-text.txt",
         ],
     ),
     ("classify-no-files", &["--classify"]),
@@ -142,13 +182,55 @@ fn args_of(case: &[&str], all: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// `exit N`, stdout and stderr: the golden format.
-fn outcome(run: &Run) -> Vec<u8> {
+/// The `--out DIR` or `out=DIR` of a case, if any.
+fn out_of(case: &[&str]) -> Option<String> {
+    case.iter().enumerate().find_map(|(i, a)| {
+        if *a == "--out" {
+            case.get(i + 1).map(|v| v.to_string())
+        } else {
+            a.strip_prefix("out=").map(str::to_string)
+        }
+    })
+}
+
+/// `data` with `dir` (canonical or as given) replaced by `<DIR>`.
+fn without_dir(data: &[u8], dir: &Path) -> Vec<u8> {
+    let canonical = std::fs::canonicalize(dir).expect("canonicalize the case dir");
+    let mut text = String::from_utf8_lossy(data).into_owned();
+    for form in [canonical.as_path(), dir] {
+        text = text.replace(&*form.to_string_lossy(), "<DIR>");
+    }
+    text.into_bytes()
+}
+
+/// `exit N`, stdout and stderr, then each file in `out` (a `--out`
+/// directory the case created): the golden format. `dir` is the case's
+/// working directory.
+fn outcome(run: &Run, dir: &Path, out: Option<&str>) -> Vec<u8> {
     let mut g = format!("exit {}\n--- stdout\n", run.code).into_bytes();
     g.extend_from_slice(&run.stdout);
     g.extend_from_slice(b"--- stderr\n");
     g.extend_from_slice(&run.stderr);
-    g
+    if let Some(out) = out {
+        let mut names: Vec<String> = std::fs::read_dir(dir.join(out))
+            .map(|entries| {
+                entries
+                    .map(|e| {
+                        e.expect("an entry")
+                            .file_name()
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        for name in names {
+            g.extend(format!("--- file {out}/{name}\n").into_bytes());
+            g.extend(std::fs::read(dir.join(out).join(&name)).expect("read an output file"));
+        }
+    }
+    without_dir(&g, dir)
 }
 
 fn run_aios_soak(dir: &Path, args: &[String]) -> Run {
@@ -163,9 +245,12 @@ fn cli_goldens_match_aios() {
     let diffs: Vec<String> = CASES
         .iter()
         .filter_map(|(name, case)| {
+            // Only an output directory the case creates is part of its golden.
+            let out = out_of(case).filter(|o| !dir.join(o).exists());
+            let run = run_aios_soak(&dir, &args_of(case, &all));
             check_golden(
                 &format!("cli/{name}.golden"),
-                &outcome(&run_aios_soak(&dir, &args_of(case, &all))),
+                &outcome(&run, &dir, out.as_deref()),
             )
         })
         .collect();

@@ -15,7 +15,7 @@ UEFI firmware (fake)
 
 [soak] meta mode=text secs=5 elapsed=<N> qemu_rc=0 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=0 hb_last_advance=<N> hb_max_gap=<N> stall_limit=1 load1=<L>
 --- file summary.tsv
-run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
 --- argv-1
 -machine
 virt,gic-version=3

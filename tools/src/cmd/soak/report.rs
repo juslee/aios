@@ -11,14 +11,89 @@
 //!
 //! Crash-fix step 1a: where the script printed a CLEAN boot's detail, a
 //! DEGRADED boot shows why it is not CLEAN, from its [`Ipc`] figures, ahead of
-//! that detail; and `summary.tsv` gains the `ipc_avg_us` and `ipc_iters`
-//! columns after the script's 22.
+//! that detail. `summary.tsv` gains [`STEP_1A_COLUMNS`], then one `tw_<key>`
+//! column per tripwire key in [`Key::ALL`] order, then [`LINE_COLUMNS`], after
+//! the script's 22 ([`SCRIPT_COLUMNS`]), so positional readers of the first 22
+//! keep working. `summary.md` gains a Gate 1 IPC line, the "Tripwire counters
+//! by class" table and a `Tripwire` column in the per-boot table. A soak and
+//! `--classify --out` both write through [`tsv_row`], [`summary_head`] and
+//! [`summary_tail`], fed by a [`Tally`].
+
+use shared::lock::LockClass;
+use shared::sched::SchedulerClass;
+use shared::tripwire::{BadchanSite, Key, N2Kind, WakeSource, Width, CLASS_COUNT};
 
 use super::awk::to_num;
-use super::classify::{Base, Class, Classification, Ipc};
+use super::classify::{Base, Class, Classification, Ipc, Reentry};
+use super::tripwire::{Line, V1};
 
-/// `summary.tsv`'s header line.
-pub const TSV_HEADER: &[u8] = b"run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tg1done_s\thb_max_gap_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\tipc_avg_us\tipc_iters\n";
+/// The script's `summary.tsv` columns.
+pub const SCRIPT_COLUMNS: [&str; 22] = [
+    "run",
+    "mode",
+    "class",
+    "last_tick",
+    "hb_count",
+    "stall_s",
+    "elapsed_s",
+    "qemu_rc",
+    "load1",
+    "kernel_s",
+    "hb_first_s",
+    "bench_s",
+    "g1done_s",
+    "hb_max_gap_s",
+    "markers",
+    "lb_last",
+    "detail",
+    "first_fatal",
+    "last_info_1",
+    "last_info_2",
+    "last_info_3",
+    "log",
+];
+
+/// Crash-fix step 1a's columns ahead of the per-key ones: the Gate 1 IPC
+/// figures, a PANIC-LOCK's `lock re-entry:` fields, the `[tripwire-ev]`
+/// counts, and the last complete tripwire line's version and prefix.
+pub const STEP_1A_COLUMNS: [&str; 14] = [
+    "ipc_avg_us",
+    "ipc_iters",
+    "reentry_lock",
+    "reentry_ctx",
+    "reentry_holder_irqs",
+    "ev_ph",
+    "ev_self",
+    "ev_self_irq",
+    "ev_stuck",
+    "tw_v",
+    "tw_src",
+    "tw_cpu",
+    "tw_t",
+    "tw_ncpu",
+];
+
+/// The columns after the per-key ones: the last complete `src=g1` line's
+/// `elrmm`, then the whole lines, last because they are long.
+pub const LINE_COLUMNS: [&str; 3] = ["g1_elrmm", "g1_line", "tw_line"];
+
+/// The number of `summary.tsv` columns.
+pub const TSV_COLUMNS: usize =
+    SCRIPT_COLUMNS.len() + STEP_1A_COLUMNS.len() + Key::COUNT + LINE_COLUMNS.len();
+
+/// `summary.tsv`'s header line, with its newline.
+pub fn tsv_header() -> Vec<u8> {
+    let mut names: Vec<String> = SCRIPT_COLUMNS
+        .iter()
+        .chain(&STEP_1A_COLUMNS)
+        .map(|s| s.to_string())
+        .collect();
+    names.extend(Key::ALL.iter().map(|k| format!("tw_{}", k.name())));
+    names.extend(LINE_COLUMNS.iter().map(|s| s.to_string()));
+    let mut header = names.join("\t").into_bytes();
+    header.push(b'\n');
+    header
+}
 
 /// `s` padded with spaces to `width` bytes (`printf %-Ns` under `LC_ALL=C`).
 fn pad(s: &[u8], width: usize) -> Vec<u8> {
@@ -169,20 +244,65 @@ pub fn load_summary(load1: &[&[u8]]) -> String {
     format!("mean {:.2}, max {:.2}", sum / load1.len() as f64, max)
 }
 
-/// Per-boot numbers that come from the harness, not the classifier.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Per-boot numbers that come from the harness, not the classifier: a soak
+/// knows them all; `--classify --out` reads them from a log's `[soak] meta`
+/// footer, and a value the footer lacks is `None` (`-`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BootTiming {
-    pub elapsed: i64,
-    pub rc: i32,
-    pub load1: Vec<u8>,
-    pub kstart: i64,
-    pub hb_first: i64,
-    pub bench_start: i64,
-    pub g1done: i64,
-    pub hb_max_gap: i64,
+    pub elapsed: Option<i64>,
+    pub rc: Option<i32>,
+    pub load1: Option<Vec<u8>>,
+    pub kstart: Option<i64>,
+    pub hb_first: Option<i64>,
+    pub bench_start: Option<i64>,
+    pub g1done: Option<i64>,
+    pub hb_max_gap: Option<i64>,
 }
 
-/// One `summary.tsv` row, with its newline.
+/// A text cell of `summary.tsv`, or `-` when absent.
+fn text_cell(v: Option<&[u8]>) -> Vec<u8> {
+    v.map_or_else(|| b"-".to_vec(), <[u8]>::to_vec)
+}
+
+/// A whole tripwire line as a `summary.tsv` cell: a tab between its tokens
+/// (the parser splits at blanks and tabs alike) becomes a space, so the row
+/// keeps its columns.
+fn line_cell(line: Option<&Line>) -> Vec<u8> {
+    line.map_or_else(
+        || b"-".to_vec(),
+        |l| {
+            l.text
+                .iter()
+                .map(|&b| if b == b'\t' { b' ' } else { b })
+                .collect()
+        },
+    )
+}
+
+/// The `tw_v` to `tw_ncpu` and `tw_<key>` cells of the last complete
+/// tripwire line: decoded for `v=1`; for another schema version, its `v=`
+/// and `-` for the rest; `-` throughout without a line.
+fn tripwire_cells(line: Option<&Line>) -> Vec<Vec<u8>> {
+    let width = 5 + Key::COUNT;
+    let Some(line) = line else {
+        return vec![b"-".to_vec(); width];
+    };
+    let mut cells = vec![text_cell(line.version.as_deref())];
+    match &line.v1 {
+        Some(v1) => {
+            cells.push(text_cell(line.src.as_deref()));
+            cells.push(text_cell(v1.cpu.as_deref()));
+            cells.push(text_cell(v1.t.as_deref()));
+            cells.push(text_cell(v1.ncpu.as_deref()));
+            cells.extend(Key::ALL.iter().map(|&k| v1.value(k).to_vec()));
+        }
+        None => cells.resize(width, b"-".to_vec()),
+    }
+    cells
+}
+
+/// One `summary.tsv` row, with its newline: [`TSV_COLUMNS`] cells in
+/// [`tsv_header`] order.
 pub fn tsv_row(
     idx: &str,
     mode: &str,
@@ -190,8 +310,10 @@ pub fn tsv_row(
     t: &BootTiming,
     log_name: &str,
 ) -> Vec<u8> {
-    let num = |v: i64| v.to_string().into_bytes();
-    let cells: Vec<Vec<u8>> = vec![
+    let num = |v: Option<i64>| v.map_or_else(|| b"-".to_vec(), |n| n.to_string().into_bytes());
+    let count = |n: u64| n.to_string().into_bytes();
+    let reentry = |f: fn(&Reentry) -> Option<&[u8]>| text_cell(c.reentry.as_ref().and_then(f));
+    let mut cells: Vec<Vec<u8>> = vec![
         idx.as_bytes().to_vec(),
         mode.as_bytes().to_vec(),
         c.class.name().as_bytes().to_vec(),
@@ -199,8 +321,8 @@ pub fn tsv_row(
         c.hb.clone(),
         c.stall.clone(),
         num(t.elapsed),
-        t.rc.to_string().into_bytes(),
-        t.load1.clone(),
+        num(t.rc.map(i64::from)),
+        text_cell(t.load1.as_deref()),
         num(t.kstart),
         num(t.hb_first),
         num(t.bench_start),
@@ -216,10 +338,38 @@ pub fn tsv_row(
         log_name.as_bytes().to_vec(),
         opt_cell(c.ipc.avg_us),
         opt_cell(c.ipc.iters),
+        reentry(|r| r.lock.as_deref()),
+        reentry(|r| r.ctx.as_deref()),
+        reentry(|r| r.holder_irqs.as_deref()),
+        count(c.events.ph),
+        count(c.events.self_held),
+        count(c.events.self_irq),
+        count(c.events.stuck),
     ];
+    cells.extend(tripwire_cells(c.tripwire.last.as_ref()));
+    cells.push(text_cell(
+        c.tripwire
+            .g1
+            .as_ref()
+            .and_then(|l| l.v1.as_ref())
+            .map(|v1| v1.value(Key::Elrmm)),
+    ));
+    cells.push(line_cell(c.tripwire.g1.as_ref()));
+    cells.push(line_cell(c.tripwire.last.as_ref()));
     let mut row = cells.join(&b'\t');
     row.push(b'\n');
     row
+}
+
+/// The per-boot table's `Tripwire` cell: the last complete line's `src`
+/// (`-` when it has none), `v=<version>` for a line of another schema
+/// version, or `-` without a line.
+fn tripwire_src(line: Option<&Line>) -> Vec<u8> {
+    match line {
+        None => b"-".to_vec(),
+        Some(l) if l.v1.is_some() => text_cell(l.src.as_deref()),
+        Some(l) => [&b"v="[..], &text_cell(l.version.as_deref())].concat(),
+    }
 }
 
 /// One row of `summary.md`'s per-boot table, with its newline.
@@ -243,19 +393,64 @@ pub fn md_row(idx: &str, c: &Classification) -> Vec<u8> {
         b" | ",
         c.lb.as_bytes(),
         b" | ",
+        &md_cell(&tripwire_src(c.tripwire.last.as_ref())),
+        b" | ",
         &md_cell(&tail),
         b" |\n",
     ]
     .concat()
 }
 
-/// The settings `summary.md` records about a soak.
+/// What `summary.md` needs from the boots, gathered one boot at a time.
+#[derive(Debug, Default)]
+pub struct Tally {
+    /// Boots per class, in [`Class::ALL`] order.
+    counts: [u64; Class::COUNT],
+    /// The per-boot 1-minute loads that are known.
+    loads: Vec<Vec<u8>>,
+    /// Each CLEAN boot's `ipc_avg_us`.
+    clean_ipc: Vec<Option<u64>>,
+    /// Each boot's class and its last complete line, if that line is `v=1`.
+    tripwire: Vec<(Class, Option<V1>)>,
+    /// The per-boot table's rows.
+    rows: Vec<u8>,
+}
+
+impl Tally {
+    /// Count boot `idx`.
+    pub fn add(&mut self, idx: &str, c: &Classification, t: &BootTiming) {
+        self.counts[c.class.index()] += 1;
+        if let Some(load1) = &t.load1 {
+            self.loads.push(load1.clone());
+        }
+        if c.class == Class::Clean {
+            self.clean_ipc.push(c.ipc.avg_us);
+        }
+        let v1 = c.tripwire.last.as_ref().and_then(|l| l.v1.clone());
+        self.tripwire.push((c.class, v1));
+        self.rows.extend(md_row(idx, c));
+    }
+
+    /// The boots counted.
+    pub fn boots(&self) -> u64 {
+        self.counts.iter().sum()
+    }
+
+    /// The boots of `class`.
+    pub fn count(&self, class: Class) -> u64 {
+        self.counts[class.index()]
+    }
+}
+
+/// The settings `summary.md` records about a soak. `--classify --out` gives
+/// `-` for what a set of logs cannot tell.
 pub struct SummaryInfo<'a> {
     pub mode: &'a str,
     pub runs: &'a str,
     pub secs: &'a str,
     pub stall_secs: &'a str,
-    pub fresh_data: bool,
+    /// `None`: not known (`--classify --out`).
+    pub fresh_data: Option<bool>,
     pub git_rev: &'a str,
     pub kernel_sha: &'a str,
     pub qemu_version: &'a [u8],
@@ -266,27 +461,48 @@ pub struct SummaryInfo<'a> {
     pub out: &'a [u8],
 }
 
-/// `summary.md` up to the CLEAN rate (the part also printed to stdout), with
-/// its final newline. `counts` follows [`Class::ALL`]; `runs_n` is the boot count.
-pub fn summary_head(
-    info: &SummaryInfo,
-    counts: &[u64; Class::COUNT],
-    runs_n: u64,
-    load1: &[&[u8]],
-) -> Vec<u8> {
-    let inconclusive = counts[Class::Inconclusive.index()];
-    let clean = counts[Class::Clean.index()];
+/// The Gate 1 IPC line: the mean of `ipc_avg_us` over the CLEAN boots.
+pub fn gate1_ipc(clean_ipc: &[Option<u64>]) -> String {
+    let known: Vec<u64> = clean_ipc.iter().flatten().copied().collect();
+    if known.is_empty() {
+        let why = if clean_ipc.is_empty() {
+            "no CLEAN boot"
+        } else {
+            "no CLEAN boot with a readable avg="
+        };
+        return format!("Gate 1 IPC round trip, mean over CLEAN boots: n/a ({why})\n");
+    }
+    let mean = known.iter().map(|&v| v as f64).sum::<f64>() / known.len() as f64;
+    let left_out = clean_ipc.len() - known.len();
+    let note = if left_out == 0 {
+        String::new()
+    } else {
+        format!(", {left_out} without a readable avg= left out")
+    };
+    format!(
+        "Gate 1 IPC round trip, mean over CLEAN boots: {mean:.2} us (n={}{note}; each boot's avg= is whole us, truncated)\n",
+        known.len()
+    )
+}
+
+/// `summary.md` up to the Gate 1 IPC line (the part also printed to
+/// stdout), with its final newline.
+pub fn summary_head(info: &SummaryInfo, tally: &Tally) -> Vec<u8> {
+    let runs_n = tally.boots();
+    let inconclusive = tally.count(Class::Inconclusive);
+    let clean = tally.count(Class::Clean);
     let conclusive = runs_n - inconclusive;
     let rate_note = if inconclusive == 0 {
         String::new()
     } else {
         format!(" over {conclusive} conclusive boots ({inconclusive} INCONCLUSIVE left out)")
     };
-    let data = if info.fresh_data {
-        "fresh per boot"
-    } else {
-        "reused"
+    let data = match info.fresh_data {
+        Some(true) => "fresh per boot",
+        Some(false) => "reused",
+        None => "-",
     };
+    let load_refs: Vec<&[u8]> = tally.loads.iter().map(Vec::as_slice).collect();
     let mut md = Vec::new();
     md.extend(format!("## AIOS QEMU boot soak ({} mode)\n\n", info.mode).into_bytes());
     md.extend_from_slice(b"| Setting | Value |\n|---|---|\n");
@@ -306,13 +522,13 @@ pub fn summary_head(
             "| Load average | start {}; end {}; per-boot 1-min {} |\n",
             info.load_start,
             info.load_end,
-            load_summary(load1)
+            load_summary(&load_refs)
         )
         .into_bytes(),
     );
     md.extend([&b"| Logs | `"[..], info.out, b"` |\n\n"].concat());
     md.extend_from_slice(b"| Class | Count | Share |\n|---|---:|---:|\n");
-    for (class, count) in Class::ALL.iter().zip(counts) {
+    for (class, count) in Class::ALL.iter().zip(&tally.counts) {
         md.extend(
             format!(
                 "| {} | {count} | {} |\n",
@@ -324,13 +540,195 @@ pub fn summary_head(
     }
     md.extend(format!("| **Total** | {} | |\n\n", info.runs).into_bytes());
     md.extend(format!("CLEAN rate: {}{rate_note}\n", wilson(clean, conclusive)).into_bytes());
+    md.extend(gate1_ipc(&tally.clean_ipc).into_bytes());
     md
 }
 
-/// The per-boot table appended to `summary.md` after the head was printed.
-pub fn summary_table(rows: &[u8]) -> Vec<u8> {
+/// The scheduler classes in `starved`'s index order (`SchedulerClass as
+/// usize`), named as `shared` declares them.
+const SCHEDULER_CLASSES: [SchedulerClass; CLASS_COUNT] = [
+    SchedulerClass::Idle,
+    SchedulerClass::Normal,
+    SchedulerClass::Interactive,
+    SchedulerClass::RealTime,
+];
+
+/// The name of index `i` of a key of `width`: `CPU i`, or the index set's
+/// name from `shared`; the bare number past the end of a set.
+fn index_name(width: Width, i: usize) -> String {
+    let name = match width {
+        Width::Cpu => return format!("CPU {i}"),
+        Width::One => None,
+        Width::Source => WakeSource::ALL.get(i).map(|s| s.name().to_string()),
+        Width::Lock => LockClass::ALL.get(i).map(|l| l.name().to_string()),
+        Width::Class => SCHEDULER_CLASSES.get(i).map(|c| format!("{c:?}")),
+        Width::N2 => N2Kind::ALL.get(i).map(|k| k.name().to_string()),
+        Width::Badchan => BadchanSite::ALL.get(i).map(|b| b.name().to_string()),
+    };
+    name.unwrap_or_else(|| i.to_string())
+}
+
+/// A comma list as numbers; a value that is not a decimal `u64` counts as 0.
+fn values(list: &[u8]) -> Vec<u128> {
+    list.split(|&b| b == b',')
+        .map(|v| {
+            std::str::from_utf8(v)
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map_or(0, u128::from)
+        })
+        .collect()
+}
+
+/// One row of the tripwire table: its label, and each boot's value (`None`
+/// for a boot without a `v=1` line).
+struct CounterRow {
+    label: String,
+    gauge: bool,
+    per_boot: Vec<Option<u128>>,
+}
+
+/// The rows of the tripwire table for every key, zero rows included.
+fn counter_rows(boots: &[(Class, Option<V1>)]) -> Vec<CounterRow> {
+    let mut rows = Vec::new();
+    for &key in &Key::ALL {
+        let gauge = key.is_gauge();
+        let lists: Vec<Option<Vec<u128>>> = boots
+            .iter()
+            .map(|(_, v1)| v1.as_ref().map(|v| values(v.value(key))))
+            .collect();
+        let combine = |vs: &[u128]| -> u128 {
+            if gauge {
+                vs.iter().copied().max().unwrap_or(0)
+            } else {
+                vs.iter().sum()
+            }
+        };
+        let width = key.width();
+        if width == Width::Cpu {
+            rows.push(CounterRow {
+                label: key.name().to_string(),
+                gauge,
+                per_boot: lists.iter().map(|l| l.as_deref().map(combine)).collect(),
+            });
+        }
+        let n = lists.iter().flatten().map(Vec::len).max().unwrap_or(1);
+        if width == Width::One && n == 1 {
+            rows.push(CounterRow {
+                label: key.name().to_string(),
+                gauge,
+                per_boot: lists.iter().map(|l| l.as_ref().map(|v| v[0])).collect(),
+            });
+            continue;
+        }
+        for i in 0..n {
+            rows.push(CounterRow {
+                label: format!("{}[{}]", key.name(), index_name(width, i)),
+                gauge,
+                per_boot: lists
+                    .iter()
+                    .map(|l| l.as_ref().map(|v| v.get(i).copied().unwrap_or(0)))
+                    .collect(),
+            });
+        }
+    }
+    rows
+}
+
+/// The "Tripwire counters by class" section of `summary.md`, with a leading
+/// blank line: one column per class that has boots, one row per counter
+/// value that is non-zero in some boot. A cell is "boots with a non-zero
+/// value / sum over the class's boots", or "/ max" for a gauge.
+pub fn tripwire_table(tally: &Tally) -> Vec<u8> {
+    let mut md = b"\n### Tripwire counters by class\n\n".to_vec();
+    let boots = &tally.tripwire;
+    if boots.iter().all(|(_, v1)| v1.is_none()) {
+        md.extend_from_slice(b"No boot has a complete `v=1` tripwire line.\n");
+        return md;
+    }
+    md.extend_from_slice(
+        b"From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). \
+A cell is \"boots with a non-zero value / sum over those boots\", or \"/ max\" for a gauge \
+(marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every \
+boot are left out.\n\n",
+    );
+    let classes: Vec<Class> = Class::ALL
+        .into_iter()
+        .filter(|&c| tally.count(c) > 0)
+        .collect();
+    let line = |label: &str, cells: Vec<String>| format!("| {label} | {} |\n", cells.join(" | "));
+    md.extend(
+        line(
+            "Counter",
+            classes.iter().map(|c| c.name().to_string()).collect(),
+        )
+        .into_bytes(),
+    );
+    md.extend(format!("|---|{}\n", "---:|".repeat(classes.len())).into_bytes());
+    md.extend(
+        line(
+            "Boots",
+            classes
+                .iter()
+                .map(|&c| tally.count(c).to_string())
+                .collect(),
+        )
+        .into_bytes(),
+    );
+    let with_line = |c: Class| {
+        boots
+            .iter()
+            .filter(|(k, v1)| *k == c && v1.is_some())
+            .count()
+    };
+    md.extend(
+        line(
+            "Boots with a `v=1` line",
+            classes.iter().map(|&c| with_line(c).to_string()).collect(),
+        )
+        .into_bytes(),
+    );
+    for row in counter_rows(boots) {
+        if !row.per_boot.iter().any(|v| v.is_some_and(|v| v > 0)) {
+            continue;
+        }
+        let cells = classes
+            .iter()
+            .map(|&class| {
+                let vs: Vec<u128> = boots
+                    .iter()
+                    .zip(&row.per_boot)
+                    .filter(|((c, _), _)| *c == class)
+                    .filter_map(|(_, v)| *v)
+                    .collect();
+                let non_zero = vs.iter().filter(|&&v| v > 0).count();
+                let agg = if row.gauge {
+                    vs.iter().copied().max().unwrap_or(0)
+                } else {
+                    vs.iter().sum()
+                };
+                format!("{non_zero}/{agg}")
+            })
+            .collect();
+        let label = if row.gauge {
+            format!("`{}` (max)", row.label)
+        } else {
+            format!("`{}`", row.label)
+        };
+        md.extend(line(&label, cells).into_bytes());
+    }
+    md
+}
+
+/// `summary.md` after its head: the tripwire table, then the per-boot table.
+pub fn summary_tail(tally: &Tally) -> Vec<u8> {
+    [tripwire_table(tally), summary_table(&tally.rows)].concat()
+}
+
+/// The per-boot table.
+fn summary_table(rows: &[u8]) -> Vec<u8> {
     [
-        &b"\n| Run | Class | Last tick | Stall | Markers | LB last | First fatal line / detail |\n|---:|---|---:|---:|---|---|---|\n"[..],
+        &b"\n| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |\n|---:|---|---:|---:|---|---|---|---|\n"[..],
         rows,
     ]
     .concat()
@@ -458,7 +856,7 @@ mod tests {
         );
         assert_eq!(
             text(md_row("03", &degraded("-", Some(9_999)))),
-            "| 03 | DEGRADED | 2000 | 1s | EL1,BOOT,G1DONE | - | IPC 9999 iters |\n"
+            "| 03 | DEGRADED | 2000 | 1s | EL1,BOOT,G1DONE | - | - | IPC 9999 iters |\n"
         );
     }
 
@@ -488,11 +886,11 @@ mod tests {
     fn md_row_escapes_pipes_and_picks_detail_or_first_line() {
         assert_eq!(
             text(md_row("07", &c(WEDGE))),
-            "| 07 | WEDGE-STUCK | 0 | 69s | EL1,BOOT | no | heartbeat stuck at tick 0 after the Gate 1 bench started |\n"
+            "| 07 | WEDGE-STUCK | 0 | 69s | EL1,BOOT | no | - | heartbeat stuck at tick 0 after the Gate 1 bench started |\n"
         );
         assert_eq!(
             text(md_row("07", &c(PANIC))),
-            "| 07 | PANIC | 1000 | - | - | no | PANIC: panicked at kernel/src/sched/mod.rs:120:9: / assertion failed: thread.state == Ready |\n"
+            "| 07 | PANIC | 1000 | - | - | no | - | PANIC: panicked at kernel/src/sched/mod.rs:120:9: / assertion failed: thread.state == Ready |\n"
         );
         assert_eq!(md_cell(b"a|b||c"), b"a\\|b\\|\\|c");
     }
@@ -525,47 +923,300 @@ mod tests {
         assert_eq!(load_summary(&[]), "");
     }
 
-    #[test]
-    fn tsv_row_has_24_fields_in_header_order() {
-        let t = BootTiming {
-            elapsed: 76,
-            rc: 124,
-            load1: b"1.50".to_vec(),
-            kstart: 1,
-            hb_first: 2,
-            bench_start: 7,
-            g1done: 8,
-            hb_max_gap: 3,
-        };
-        let row = text(tsv_row("07", "text", &c(WEDGE), &t, "run-07.log"));
-        assert_eq!(
-            row,
-            "07\ttext\tWEDGE-STUCK\t0\t1\t69\t76\t124\t1.50\t1\t2\t7\t8\t3\tEL1,BOOT\tno\t\
-             heartbeat stuck at tick 0 after the Gate 1 bench started\t-\t-\t\
-             [   0.200000] [0] INFO  Boot  Boot sequence complete\t\
-             [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark\trun-07.log\t6\t10000\n"
-        );
-        assert_eq!(row.split('\t').count(), 24);
-        assert_eq!(TSV_HEADER.split(|&b| b == b'\t').count(), 24);
-        // An unreadable figure is `-`.
-        let row = text(tsv_row(
-            "01",
-            "text",
-            &degraded("-", None),
-            &t,
-            "run-01.log",
-        ));
-        assert!(row.ends_with("\trun-01.log\t-\t-\n"), "{row}");
+    /// The cell of column `name` in a `summary.tsv` row.
+    fn cell<'a>(row: &'a str, name: &str) -> &'a str {
+        let header = String::from_utf8(tsv_header()).expect("ASCII");
+        let i = header
+            .trim_end()
+            .split('\t')
+            .position(|h| h == name)
+            .unwrap_or_else(|| panic!("no column {name}"));
+        row.trim_end_matches('\n')
+            .split('\t')
+            .nth(i)
+            .expect("a cell")
+    }
+
+    /// A complete `v=1` tripwire line with the prefix and the `key=value`
+    /// tokens `keys`.
+    fn tw(src: &str, keys: &str) -> String {
+        let n = 5 + keys.split_whitespace().count();
+        format!("[tripwire] v=1 src={src} cpu=0 t=5000 ncpu=4 {keys} n={n}")
+    }
+
+    /// `base` with the log lines `lines` observed, as the classifier's scan does.
+    fn with_lines(mut base: Classification, lines: &[String]) -> Classification {
+        for l in lines {
+            base.tripwire.observe(l.as_bytes());
+            base.events.observe(l.as_bytes());
+        }
+        base
+    }
+
+    fn timing() -> BootTiming {
+        BootTiming {
+            elapsed: Some(76),
+            rc: Some(124),
+            load1: Some(b"1.50".to_vec()),
+            kstart: Some(1),
+            hb_first: Some(2),
+            bench_start: Some(7),
+            g1done: Some(8),
+            hb_max_gap: Some(3),
+        }
     }
 
     #[test]
-    fn summary_head_and_table() {
+    fn tsv_row_has_every_column_in_header_order() {
+        // 22 script columns, 14 step-1a ones, one per key and 3 for the lines.
+        assert_eq!(TSV_COLUMNS, 22 + 14 + Key::COUNT + 3);
+        let header = text(tsv_header());
+        assert_eq!(header.split('\t').count(), TSV_COLUMNS);
+        assert!(header.starts_with(
+            "run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\t\
+             hb_first_s\tbench_s\tg1done_s\thb_max_gap_s\tmarkers\tlb_last\tdetail\tfirst_fatal\t\
+             last_info_1\tlast_info_2\tlast_info_3\tlog\tipc_avg_us\tipc_iters\treentry_lock\t\
+             reentry_ctx\treentry_holder_irqs\tev_ph\tev_self\tev_self_irq\tev_stuck\ttw_v\ttw_src\t\
+             tw_cpu\ttw_t\ttw_ncpu\ttw_tick\ttw_irqsw\t"
+        ));
+        assert!(header.ends_with("\ttw_twmax\tg1_elrmm\tg1_line\ttw_line\n"));
+
+        let row = text(tsv_row("07", "text", &c(WEDGE), &timing(), "run-07.log"));
+        let without_tripwire = "-\t".repeat(5 + Key::COUNT + 3);
+        assert_eq!(
+            row,
+            format!(
+                "07\ttext\tWEDGE-STUCK\t0\t1\t69\t76\t124\t1.50\t1\t2\t7\t8\t3\tEL1,BOOT\tno\t\
+                 heartbeat stuck at tick 0 after the Gate 1 bench started\t-\t-\t\
+                 [   0.200000] [0] INFO  Boot  Boot sequence complete\t\
+                 [   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark\t\
+                 run-07.log\t6\t10000\t-\t-\t-\t0\t0\t0\t0\t{}\n",
+                without_tripwire.trim_end_matches('\t')
+            )
+        );
+        assert_eq!(row.split('\t').count(), TSV_COLUMNS);
+        // An unreadable figure, and a value no footer gave, is `-`.
+        let row = text(tsv_row(
+            "01",
+            "-",
+            &degraded("-", None),
+            &BootTiming::default(),
+            "a.log",
+        ));
+        for name in [
+            "elapsed_s",
+            "qemu_rc",
+            "load1",
+            "kernel_s",
+            "g1done_s",
+            "hb_max_gap_s",
+            "ipc_avg_us",
+            "ipc_iters",
+        ] {
+            assert_eq!(cell(&row, name), "-", "{name}");
+        }
+        assert_eq!(row.split('\t').count(), TSV_COLUMNS);
+    }
+
+    #[test]
+    fn tsv_row_carries_the_tripwire_lines_events_and_lock_re_entry() {
+        let mut p = c(PANIC);
+        p.class = Class::PanicLock;
+        p.reentry = Some(Reentry {
+            lock: Some(b"CURRENT_THREAD[0]".to_vec()),
+            ctx: Some(b"irq-exit".to_vec()),
+            holder_irqs: None,
+        });
+        let hb = tw("hb", "elrmm=1,0,0,0 twc=9 twn=1 twmax=94000");
+        let g1 = tw(
+            "g1",
+            "elrmm=0,2,0,0 lkph=1,0,0,0,0,0,0,0,0 twc=9 twn=1 twmax=94000",
+        );
+        let panic = tw(
+            "panic",
+            "irqsw=6,0,0,0 badchan=4,0,6 twc=9 twn=2 twmax=94000",
+        );
+        let p = with_lines(
+            p,
+            &[
+                hb,
+                g1.clone(),
+                "[tripwire-ev] kind=self cpu=0 lock=THREAD_TABLE idx=- ctx=irq-exit".to_string(),
+                "[tripwire-ev] kind=stuck cpu=3 lock=THREAD_TABLE idx=- ctx=thread-off".to_string(),
+                format!("[heartbeat] tick=6000{panic}"),
+            ],
+        );
+        let row = text(tsv_row("05", "text", &p, &timing(), "run-05.log"));
+        assert_eq!(row.split('\t').count(), TSV_COLUMNS);
+        for (name, want) in [
+            ("class", "PANIC-LOCK"),
+            ("reentry_lock", "CURRENT_THREAD[0]"),
+            ("reentry_ctx", "irq-exit"),
+            ("reentry_holder_irqs", "-"),
+            ("ev_ph", "0"),
+            ("ev_self", "1"),
+            ("ev_self_irq", "1"),
+            ("ev_stuck", "1"),
+            ("tw_v", "1"),
+            ("tw_src", "panic"),
+            ("tw_cpu", "0"),
+            ("tw_t", "5000"),
+            ("tw_ncpu", "4"),
+            ("tw_irqsw", "6,0,0,0"),
+            ("tw_badchan", "4,0,6"),
+            // A key the last line leaves out is 0, whatever earlier lines said.
+            ("tw_elrmm", "0"),
+            ("tw_lkph", "0"),
+            ("tw_twn", "2"),
+            ("g1_elrmm", "0,2,0,0"),
+            ("g1_line", &g1),
+            ("tw_line", &panic),
+        ] {
+            assert_eq!(cell(&row, name), want, "{name}");
+        }
+        assert_eq!(text(md_row("05", &p)).split(" | ").nth(6), Some("panic"));
+    }
+
+    #[test]
+    fn another_schema_version_fills_tw_v_and_tw_line_only() {
+        let v2 = "[tripwire] v=2 src=hb\tcpu=0 t=5000 ncpu=4 newkey=7 n=6";
+        let w = with_lines(c(WEDGE), &[tw("g1", "twc=1 twn=1 twmax=1"), v2.to_string()]);
+        let row = text(tsv_row("07", "text", &w, &timing(), "run-07.log"));
+        assert_eq!(
+            row.split('\t').count(),
+            TSV_COLUMNS,
+            "a tab in a line stays inside its cell"
+        );
+        assert_eq!(cell(&row, "tw_v"), "2");
+        for &key in &Key::ALL {
+            assert_eq!(cell(&row, &format!("tw_{}", key.name())), "-");
+        }
+        for name in ["tw_src", "tw_cpu", "tw_t", "tw_ncpu"] {
+            assert_eq!(cell(&row, name), "-", "{name}");
+        }
+        assert_eq!(cell(&row, "tw_line"), v2.replace('\t', " "));
+        // The g1 line is v=1, with no `elrmm`: 0.
+        assert_eq!(cell(&row, "g1_elrmm"), "0");
+        assert_eq!(text(md_row("07", &w)).split(" | ").nth(6), Some("v=2"));
+        assert_eq!(text(md_row("07", &c(WEDGE))).split(" | ").nth(6), Some("-"));
+    }
+
+    #[test]
+    fn index_names_come_from_shared() {
+        for (i, class) in SCHEDULER_CLASSES.iter().enumerate() {
+            assert_eq!(*class as usize, i, "{class:?}");
+        }
+        assert_eq!(index_name(Width::Cpu, 3), "CPU 3");
+        assert_eq!(index_name(Width::Source, 1), "reply");
+        assert_eq!(index_name(Width::Source, 14), "cancel");
+        assert_eq!(index_name(Width::Lock, 0), "THREAD_TABLE");
+        assert_eq!(index_name(Width::Lock, 3), "WAKEUP_ERRORS");
+        assert_eq!(index_name(Width::Class, 1), "Normal");
+        assert_eq!(index_name(Width::N2, 1), "rblk");
+        assert_eq!(index_name(Width::Badchan, 2), "slot");
+        // Past the end of a set (a later kernel), the bare number.
+        assert_eq!(index_name(Width::Badchan, 3), "3");
+    }
+
+    #[test]
+    fn gate1_ipc_is_the_mean_over_clean_boots() {
+        assert_eq!(
+            gate1_ipc(&[]),
+            "Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)\n"
+        );
+        assert_eq!(
+            gate1_ipc(&[None]),
+            "Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot with a readable avg=)\n"
+        );
+        assert_eq!(
+            gate1_ipc(&[Some(6), Some(7), None]),
+            "Gate 1 IPC round trip, mean over CLEAN boots: 6.50 us (n=2, 1 without a readable avg= left out; each boot's avg= is whole us, truncated)\n"
+        );
+    }
+
+    /// A tally of `boots`, numbered from 1.
+    fn tally(boots: &[Classification]) -> Tally {
+        let mut t = Tally::default();
+        for (n, b) in boots.iter().enumerate() {
+            t.add(&format!("{:02}", n + 1), b, &timing());
+        }
+        t
+    }
+
+    fn of_class(class: &str) -> Classification {
+        let mut b = c(WEDGE);
+        b.class = Class::from_name(class).expect("a class");
+        b
+    }
+
+    #[test]
+    fn the_tripwire_table_counts_boots_and_sums_by_class() {
+        let boots = [
+            with_lines(
+                of_class("CLEAN"),
+                &[tw(
+                    "hb",
+                    "irqsw=3000,2,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=100",
+                )],
+            ),
+            with_lines(
+                of_class("CLEAN"),
+                &[tw(
+                    "hb",
+                    "elrmm=1,0,0,0 starved=0,9,0,0 twc=9 twn=1 twmax=300",
+                )],
+            ),
+            with_lines(
+                of_class("WEDGE-ALIVE"),
+                &[tw(
+                    "hb",
+                    "n2=0,1,0,0 ubrbl=0,1,0,0,0,0,0,0,0,0,0,0,0,0,0 nowaker=1 twc=9 twn=1 twmax=50",
+                )],
+            ),
+            of_class("INCONCLUSIVE"),
+            with_lines(
+                of_class("PANIC-LOCK"),
+                &["[tripwire] v=2 src=panic elrmm=7 n=3".to_string()],
+            ),
+        ];
+        assert_eq!(
+            text(tripwire_table(&tally(&boots))),
+            "\n### Tripwire counters by class\n\n\
+             From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). \
+             A cell is \"boots with a non-zero value / sum over those boots\", or \"/ max\" for a gauge \
+             (marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every \
+             boot are left out.\n\n\
+             | Counter | PANIC-LOCK | WEDGE-ALIVE | INCONCLUSIVE | CLEAN |\n\
+             |---|---:|---:|---:|---:|\n\
+             | Boots | 1 | 1 | 1 | 2 |\n\
+             | Boots with a `v=1` line | 0 | 1 | 0 | 2 |\n\
+             | `irqsw` | 0/0 | 0/0 | 0/0 | 1/3002 |\n\
+             | `irqsw[CPU 0]` | 0/0 | 0/0 | 0/0 | 1/3000 |\n\
+             | `irqsw[CPU 1]` | 0/0 | 0/0 | 0/0 | 1/2 |\n\
+             | `elrmm` | 0/0 | 0/0 | 0/0 | 2/2 |\n\
+             | `elrmm[CPU 0]` | 0/0 | 0/0 | 0/0 | 2/2 |\n\
+             | `n2[rblk]` | 0/0 | 1/1 | 0/0 | 0/0 |\n\
+             | `ubrbl[reply]` | 0/0 | 1/1 | 0/0 | 0/0 |\n\
+             | `nowaker` | 0/0 | 1/1 | 0/0 | 0/0 |\n\
+             | `starved[Normal]` | 0/0 | 0/0 | 0/0 | 1/9 |\n\
+             | `twc` | 0/0 | 1/9 | 0/0 | 2/18 |\n\
+             | `twn` | 0/0 | 1/1 | 0/0 | 2/2 |\n\
+             | `twmax` (max) | 0/0 | 1/50 | 0/0 | 2/300 |\n"
+        );
+        assert_eq!(
+            text(tripwire_table(&tally(&[of_class("CLEAN")]))),
+            "\n### Tripwire counters by class\n\nNo boot has a complete `v=1` tripwire line.\n"
+        );
+    }
+
+    #[test]
+    fn summary_head_and_tail() {
         let info = SummaryInfo {
             mode: "text",
             runs: "3",
             secs: "75",
             stall_secs: "15",
-            fresh_data: true,
+            fresh_data: Some(true),
             git_rev: "abc1234-dirty",
             kernel_sha: "kernel ELF sha256 `0123456789abcdef`",
             qemu_version: b"QEMU emulator version 10.1.0",
@@ -575,12 +1226,19 @@ mod tests {
             load_end: "4.00 5.00 6.00",
             out: b"/out",
         };
-        let head = text(summary_head(
-            &info,
-            &[0, 0, 1, 0, 0, 0, 1, 0, 1],
-            3,
-            &[b"1.00", b"2.00", b"4.00"],
-        ));
+        let mut t = Tally::default();
+        for (idx, class, load) in [
+            ("1", "PANIC", "1.00"),
+            ("2", "INCONCLUSIVE", "2.00"),
+            ("3", "CLEAN", "4.00"),
+        ] {
+            let timing = BootTiming {
+                load1: Some(load.as_bytes().to_vec()),
+                ..BootTiming::default()
+            };
+            t.add(idx, &of_class(class), &timing);
+        }
+        let head = text(summary_head(&info, &t));
         assert_eq!(
             head,
             "## AIOS QEMU boot soak (text mode)\n\n\
@@ -597,12 +1255,28 @@ mod tests {
              | EXCEPTION | 0 | 0% |\n| WEDGE-STUCK | 0 | 0% |\n| WEDGE-ALIVE | 0 | 0% |\n\
              | INCONCLUSIVE | 1 | 33% |\n| DEGRADED | 0 | 0% |\n| CLEAN | 1 | 33% |\n\
              | **Total** | 3 | |\n\n\
-             CLEAN rate: 50% (95% Wilson interval 9%-91%) over 2 conclusive boots (1 INCONCLUSIVE left out)\n"
+             CLEAN rate: 50% (95% Wilson interval 9%-91%) over 2 conclusive boots (1 INCONCLUSIVE left out)\n\
+             Gate 1 IPC round trip, mean over CLEAN boots: 6.00 us (n=1; each boot's avg= is whole us, truncated)\n"
         );
-        assert_eq!(
-            text(summary_table(b"| 1 | x |\n")),
-            "\n| Run | Class | Last tick | Stall | Markers | LB last | First fatal line / detail |\n\
-             |---:|---|---:|---:|---|---|---|\n| 1 | x |\n"
+        let tail = text(summary_tail(&t));
+        assert!(tail.starts_with(&text(tripwire_table(&t))), "{tail}");
+        assert!(
+            tail.ends_with(
+                "\n| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |\n\
+                 |---:|---|---:|---:|---|---|---|---|\n\
+                 | 1 | PANIC | 0 | 69s | EL1,BOOT | no | - | - |\n\
+                 | 2 | INCONCLUSIVE | 0 | 69s | EL1,BOOT | no | - | heartbeat stuck at tick 0 after the Gate 1 bench started |\n\
+                 | 3 | CLEAN | 0 | 69s | EL1,BOOT | no | - | heartbeat stuck at tick 0 after the Gate 1 bench started |\n"
+            ),
+            "{tail}"
         );
+        // Without footers, the data disk and the per-boot load are unknown.
+        let info = SummaryInfo {
+            fresh_data: None,
+            ..info
+        };
+        let head = text(summary_head(&info, &tally(&[])));
+        assert!(head.contains("data disk - |"), "{head}");
+        assert!(head.contains("per-boot 1-min  |"), "{head}");
     }
 }

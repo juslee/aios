@@ -17,9 +17,13 @@
 //! - `ctrl_z_stops_qemu_with_the_harness` covers SIGTSTP during a boot: QEMU
 //!   stops with the harness and its time limit waits for the resume (the
 //!   script's `timeout` killed it at the limit while bash was stopped).
+//! - `classify_out_writes_the_soak_s_rows` checks that `--classify --out` over
+//!   a soak's logs writes the same `summary.tsv` and the same `summary.md`
+//!   tables as the soak did (one writer, timing from the footers).
 
 mod common;
 
+use common::run_aios;
 use common::soak::check_golden;
 use common::soak_fake::{golden_text, run_scenario, scenarios, suspended, Outcome, Scenario};
 
@@ -76,7 +80,7 @@ fn check_raw(sc: &Scenario, o: &Outcome) {
             in_range("qemu_rc", 137, 137);
             in_range("elapsed", 12, 13);
         }
-        "panic-exit" => {
+        "panic-exit" | "tripwire" => {
             in_range("qemu_rc", 1, 1);
             in_range("elapsed", 0, 2);
             in_range("kstart", 0, 2);
@@ -240,5 +244,56 @@ fn ctrl_z_stops_qemu_with_the_harness() {
             .is_some_and(|l| l.iter().any(|n| n == "summary.md")),
         "{:?}",
         o.listing
+    );
+}
+
+/// The output file `name` of an outcome.
+fn file<'a>(o: &'a Outcome, name: &str) -> &'a [u8] {
+    &o.files
+        .iter()
+        .find(|(n, _)| n == name)
+        .unwrap_or_else(|| panic!("no {name}"))
+        .1
+}
+
+/// `summary.md` from its tripwire table on: the part made from the boots alone.
+fn md_tables(md: &[u8]) -> String {
+    let md = String::from_utf8_lossy(md);
+    let at = md
+        .find("\n### Tripwire counters by class\n")
+        .expect("the tripwire table");
+    md[at..].to_string()
+}
+
+#[test]
+fn classify_out_writes_the_soak_s_rows() {
+    let o = run_scenario(&scenario("tripwire"));
+    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stderr));
+    let out = o.root.join("repo/out");
+    let run = run_aios(
+        &out,
+        &[
+            "soak",
+            "--report-only",
+            "--classify",
+            "--out",
+            "../again",
+            "run-01.log",
+            "run-02.log",
+        ],
+    );
+    assert_eq!(run.code, 0, "{}", String::from_utf8_lossy(&run.stderr));
+    let again = o.root.join("repo/again");
+    let tsv = std::fs::read(again.join("summary.tsv")).expect("summary.tsv");
+    // Every column, the timing ones included, since those come from the footers.
+    assert_eq!(
+        String::from_utf8_lossy(&tsv),
+        String::from_utf8_lossy(file(&o, "summary.tsv"))
+    );
+    let md = std::fs::read(again.join("summary.md")).expect("summary.md");
+    assert_eq!(md_tables(&md), md_tables(file(&o, "summary.md")));
+    assert!(
+        String::from_utf8_lossy(&tsv).contains("\tPANIC-LOCK\t"),
+        "the scenario exercises the step-1a columns"
     );
 }

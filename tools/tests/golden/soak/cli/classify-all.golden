@@ -245,8 +245,8 @@ cases/clip-first-200.txt  EXCEPTION    tick=-      stall=-     [-]  lb_last=-  E
     last INFO:   -
                  -
                  -
-cases/clip-multibyte.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaÃ...
-    first fatal: PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaÃ...
+cases/clip-multibyte.txt  PANIC        tick=-      stall=-     [-]  lb_last=-  PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaï¿½...
+    first fatal: PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaï¿½...
     last INFO:   -
                  -
                  -
@@ -528,4 +528,15 @@ cases/ipc-0-iters-pczero-stays-fatal.txt  PCZERO       tick=1000   stall=24s   [
     last INFO:   -
                  -
                  [   0.200000] [0] INFO  Boot  Boot sequence complete
+cases/tripwire-panic-lock-with-events.txt  PANIC-LOCK   tick=0      stall=74s   [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    last INFO:   -
+                 -
+                 [   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/tripwire-clean-g1-then-hb.txt  CLEAN        tick=3000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
+cases/tripwire-other-schema-last-wedge-alive.txt  WEDGE-ALIVE  tick=2000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
 --- stderr

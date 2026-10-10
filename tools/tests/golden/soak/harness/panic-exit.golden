@@ -32,6 +32,7 @@ run 02/2  PANIC        tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: pani
 | **Total** | 2 | |
 
 CLEAN rate: 0% (95% Wilson interval 0%-66%)
+Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)
 
 soak: per-boot table in <ROOT>/repo/out/summary.md, machine-readable rows in <ROOT>/repo/out/summary.tsv
 --- stderr
@@ -86,15 +87,20 @@ boom | with a pipe é
 | **Total** | 2 | |
 
 CLEAN rate: 0% (95% Wilson interval 0%-66%)
+Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)
 
-| Run | Class | Last tick | Stall | Markers | LB last | First fatal line / detail |
-|---:|---|---:|---:|---|---|---|
-| 01 | PANIC | 0 | <N> | EL1,BOOT | no | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
-| 02 | PANIC | 0 | <N> | EL1,BOOT | no | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+### Tripwire counters by class
+
+No boot has a complete `v=1` tripwire line.
+
+| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
+|---:|---|---:|---:|---|---|---|---|
+| 01 | PANIC | 0 | <N> | EL1,BOOT | no | - | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
+| 02 | PANIC | 0 | <N> | EL1,BOOT | no | - | PANIC: panicked at kernel/src/x.rs:1:1: / boom \| with a pipe é |
 --- file summary.tsv
-run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters
-01	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log	-	-
-02	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-02.log	-	-
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
+01	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+02	text	PANIC	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/x.rs:1:1: / boom | with a pipe é	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-02.log	-	-	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
 --- argv-1
 -machine
 virt,gic-version=3

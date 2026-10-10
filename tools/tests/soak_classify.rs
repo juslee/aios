@@ -61,7 +61,7 @@ fn fold(name: &str) -> &str {
 #[test]
 fn corpus_covers_every_class_and_stays_public_safe() {
     let cases = synthetic_cases();
-    assert_eq!(cases.len(), 124, "update this count with the corpus");
+    assert_eq!(cases.len(), 127, "update this count with the corpus");
     for class in Class::ALL {
         let n = cases
             .iter()
