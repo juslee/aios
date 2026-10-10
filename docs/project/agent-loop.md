@@ -118,6 +118,6 @@ Press Esc to interrupt the current turn; close the terminal to end the session. 
 1. Open the repo in Claude Code and run `/justin:start`. Read the brief.
 2. Answer the open `needs-human` issues: comment your decision, then close or relabel the issue.
 3. Review and merge the PRs the brief marks `merge-ready: yes` once you are happy with them (`/merge-and-cleanup <PR>`); gated PRs wait for their `needs-human` issue.
-4. Check main CI and the main soak line in the brief; a red `main` comes first. The "newest other soak" line is an experiment, not main's state.
+4. Check main CI and the main soak line in the brief; a red `main` comes first. The "newest other soak" and "newest interleaved soak" entries are experiments (another commit, or an A/B of several checkouts), not main's state.
 5. Accept the proposed next action or name a different one.
 6. Before you leave: `/justin:pause`.

@@ -5,7 +5,7 @@
 //! same on each host. Crash-fix step 1a adds the interleave preflight's probes
 //! (toolchain channel, `rustc --version`, HEAD and arm-base checks, the QEMU
 //! version line and full sha256), the harness checkout's build-input dirty
-//! test ([`tools_inputs_dirty`]) and stamp check ([`tools_stamp_matches`]),
+//! test ([`tools_inputs_dirty`]) and stamp check ([`tools_stamp`]),
 //! the parent cargo config scan
 //! ([`cargo_home`], [`parent_cargo_configs`]), the [`git`] wrapper every git
 //! call goes through, and the debug-only `AIOS_SOAK_LOADAVG` override.
@@ -467,17 +467,46 @@ pub fn tools_inputs_dirty(root: &Path) -> Option<bool> {
     )
 }
 
-/// What the provenance stamp `just tools` writes beside the installed binary
-/// (`aios.stamp`) says about `exe`, the running binary, in the checkout
-/// `root`: `Some(true)` when the stamp names `root`'s current `HEAD` tree
-/// entries for [`TOOLS_INPUTS`] and `exe`'s git hash, as the
-/// `.claude/hooks/aios` shim's freshness test reads it; `Some(false)` when
-/// either differs (a binary left from an older commit, or one the stamp does
-/// not describe); `None` when there is no stamp or git cannot tell. The
-/// stamp's `source` line is not compared: [`tools_inputs_dirty`] tests the
-/// work tree itself.
-pub fn tools_stamp_matches(root: &Path, exe: &Path) -> Option<bool> {
+/// What the `.claude/hooks/aios` shim's freshness test would say about `exe`,
+/// the running binary, in the checkout `root`, read as the shim's `verdict`
+/// reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolsStamp {
+    /// No input file is newer than `exe`, and the provenance stamp `just
+    /// tools` writes beside it (`aios.stamp`) names `root`'s current `HEAD`
+    /// tree entries for [`TOOLS_INPUTS`], `exe`'s git hash and `source
+    /// clean`, or `source dirty` while a cause of that remains (the shim's
+    /// `fresh` and `dirty-<cause>`).
+    Fresh,
+    /// An input file, editor and Finder files aside, is newer than `exe`: an
+    /// edit since the build, or one reverted since (`git checkout` rewrites
+    /// the file), so `exe` may hold source `HEAD` does not.
+    InputNewer,
+    /// The stamp names other `HEAD` entries or another binary, or is not in
+    /// the recipe's format (a binary left from an older commit, or one the
+    /// stamp does not describe).
+    Mismatch,
+    /// The stamp says `source dirty`, but no cause of that remains: the build
+    /// may hold edits reverted since.
+    DirtyGone,
+}
+
+/// [`ToolsStamp`] for the binary `exe` in the checkout `root`, in the shim's
+/// order: the mtime test, then the stamp, then, for `source dirty`, the
+/// recipe's dirty causes (uncommitted, untracked, ignored or index-flagged
+/// inputs by [`tools_inputs_dirty`], a test git cannot run counting as one;
+/// no `origin/main`; `HEAD` input changes that `origin/main` lacks). `None`
+/// when `exe` has no stamp, or its mtime or git's view of `HEAD` and `exe`
+/// cannot be read.
+pub fn tools_stamp(root: &Path, exe: &Path) -> Option<ToolsStamp> {
     let have = std::fs::read(exe.with_file_name("aios.stamp")).ok()?;
+    let built = std::fs::metadata(exe).and_then(|m| m.modified()).ok()?;
+    if TOOLS_INPUTS
+        .iter()
+        .any(|input| newer_file(&root.join(input), built))
+    {
+        return Some(ToolsStamp::InputNewer);
+    }
     let mut ls: Vec<&OsStr> = ["ls-tree", "HEAD", "--"].iter().map(OsStr::new).collect();
     ls.extend(TOOLS_INPUTS.iter().map(OsStr::new));
     let src = git_output(&ls, Some(root))?;
@@ -498,7 +527,67 @@ pub fn tools_stamp_matches(root: &Path, exe: &Path) -> Option<bool> {
         b"\nsource ",
     ]
     .concat();
-    Some(have.starts_with(&want))
+    let have = chomp(&have);
+    let Some(state) = have.strip_prefix(want.as_slice()) else {
+        return Some(ToolsStamp::Mismatch);
+    };
+    Some(match state {
+        b"clean" => ToolsStamp::Fresh,
+        b"dirty" if tools_dirty_cause(root) => ToolsStamp::Fresh,
+        b"dirty" => ToolsStamp::DirtyGone,
+        _ => ToolsStamp::Mismatch,
+    })
+}
+
+/// Whether a file at or under `path`, other than a directory or an editor or
+/// Finder file, has an mtime after `built`, as the shim's `find $inputs ! -type
+/// d … -newer` finds one: symlinks are not followed, and an entry that cannot
+/// be read is skipped.
+fn newer_file(path: &Path, built: std::time::SystemTime) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if meta.is_dir() {
+        return std::fs::read_dir(path).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| newer_file(&entry.path(), built))
+        });
+    }
+    let name = path.file_name().map_or(&[][..], OsStr::as_bytes);
+    let junk = name == b".DS_Store"
+        || [&b".swp"[..], b".swo", b"~", b".rs.bk"]
+            .iter()
+            .any(|end| name.ends_with(end));
+    !junk && meta.modified().is_ok_and(|m| m > built)
+}
+
+/// Whether the `tools` recipe would stamp a build in `root` `source dirty`
+/// now, by the shim's `dirty_cause`: [`tools_inputs_dirty`] (or git cannot
+/// tell), no `refs/remotes/origin/main`, or `HEAD` input changes since its
+/// merge base with `origin/main`.
+fn tools_dirty_cause(root: &Path) -> bool {
+    if tools_inputs_dirty(root) != Some(false) {
+        return true;
+    }
+    let origin = "refs/remotes/origin/main";
+    if git_output(&["rev-parse", "--verify", "-q", origin], Some(root)).is_none() {
+        return true;
+    }
+    let Some(base) = git_output(&["merge-base", "HEAD", origin], Some(root)) else {
+        return true;
+    };
+    let mut diff: Vec<&OsStr> = ["diff-tree", "--quiet", "-r"]
+        .iter()
+        .map(OsStr::new)
+        .collect();
+    diff.extend([
+        OsStr::from_bytes(&base),
+        OsStr::new("HEAD"),
+        OsStr::new("--"),
+    ]);
+    diff.extend(TOOLS_INPUTS.iter().map(OsStr::new));
+    git_output(&diff, Some(root)).is_none()
 }
 
 /// The cargo home: `$CARGO_HOME`, else `$HOME/.cargo`, as cargo resolves it.
@@ -763,44 +852,92 @@ mod tests {
         assert_eq!(tools_inputs_dirty(&dir), Some(false));
         assert_eq!(tools_inputs_dirty(Path::new("/")), None);
 
-        // The installed binary's stamp, in the recipe's format: it matches
-        // until HEAD's input entries or the binary change, and is absent
-        // beside a binary `just tools` did not install.
+        // The installed binary's stamp, read as the shim reads it: fresh
+        // while it names HEAD's input entries, the binary and a clean source
+        // (or a dirty one whose cause remains) and no input file is newer
+        // than the binary; absent beside a binary `just tools` did not
+        // install.
         let exe = dir.join("installed/aios");
         std::fs::create_dir_all(dir.join("installed")).expect("mkdir");
-        std::fs::write(&exe, "binary").expect("write");
-        let mut ls = vec!["ls-tree", "HEAD", "--"];
-        ls.extend(TOOLS_INPUTS);
-        let src = git_output(&ls, Some(&dir)).expect("ls-tree");
-        let sum = git_output(
-            &[
-                OsStr::new("hash-object"),
-                OsStr::new("--no-filters"),
-                OsStr::new("--"),
-                exe.as_os_str(),
-            ],
-            Some(&dir),
-        )
-        .expect("hash-object");
-        let stamp = [
-            b"aios-tools-stamp 1\n".as_slice(),
-            &src,
-            b"\nbin ",
-            &sum,
-            b"\nsource dirty\n",
-        ]
-        .concat();
-        assert_eq!(tools_stamp_matches(&dir, &exe), None, "no stamp");
-        std::fs::write(dir.join("installed/aios.stamp"), &stamp).expect("write");
-        assert_eq!(tools_stamp_matches(&dir, &exe), Some(true));
-        std::fs::write(&exe, "rebuilt").expect("write");
-        assert_eq!(tools_stamp_matches(&dir, &exe), Some(false), "binary");
-        std::fs::write(&exe, "binary").expect("write");
-        assert_eq!(tools_stamp_matches(&dir, &exe), Some(true));
+        let now = std::time::SystemTime::now();
+        let set_mtime = |path: &Path, secs: u64| {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .and_then(|f| f.set_modified(now + std::time::Duration::from_secs(secs)))
+                .expect("set mtime");
+        };
+        let install = |bin: &str| {
+            std::fs::write(&exe, bin).expect("write");
+            set_mtime(&exe, 100);
+        };
+        let stamp_for = |state: &[u8]| -> Vec<u8> {
+            let mut ls = vec!["ls-tree", "HEAD", "--"];
+            ls.extend(TOOLS_INPUTS);
+            let src = git_output(&ls, Some(&dir)).expect("ls-tree");
+            let sum = git_output(
+                &[
+                    OsStr::new("hash-object"),
+                    OsStr::new("--no-filters"),
+                    OsStr::new("--"),
+                    exe.as_os_str(),
+                ],
+                Some(&dir),
+            )
+            .expect("hash-object");
+            [
+                b"aios-tools-stamp 1\n".as_slice(),
+                &src,
+                b"\nbin ",
+                &sum,
+                b"\nsource ",
+                state,
+                b"\n",
+            ]
+            .concat()
+        };
+        let stamp_path = dir.join("installed/aios.stamp");
+        let stamped = |stamp: &[u8]| {
+            std::fs::write(&stamp_path, stamp).expect("write");
+            tools_stamp(&dir, &exe)
+        };
+        install("binary");
+        assert_eq!(tools_stamp(&dir, &exe), None, "no stamp");
+        let clean = stamp_for(b"clean");
+        let dirty = stamp_for(b"dirty");
+        assert_eq!(stamped(&clean), Some(ToolsStamp::Fresh));
+        assert_eq!(stamped(&dirty), Some(ToolsStamp::Fresh), "no origin/main");
+        assert_eq!(stamped(&stamp_for(b"cleanx")), Some(ToolsStamp::Mismatch));
+        assert_eq!(stamped(b"aios-tools-stamp 1\n"), Some(ToolsStamp::Mismatch));
+        install("rebuilt");
+        assert_eq!(stamped(&clean), Some(ToolsStamp::Mismatch), "binary");
+        install("binary");
+        assert_eq!(stamped(&clean), Some(ToolsStamp::Fresh));
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        assert_eq!(stamped(&dirty), Some(ToolsStamp::DirtyGone), "cause gone");
+        std::fs::write(dir.join("tools/build.rs"), "fn main() {}").expect("write");
+        assert_eq!(stamped(&dirty), Some(ToolsStamp::Fresh), "ignored input");
+        std::fs::remove_file(dir.join("tools/build.rs")).expect("remove");
+        // An edit reverted after the build rewrites the file, which the
+        // mtime test catches; an editor file does not count.
+        std::fs::write(dir.join("tools/src/.DS_Store"), "y").expect("write");
+        set_mtime(&dir.join("tools/src/.DS_Store"), 200);
+        assert_eq!(stamped(&clean), Some(ToolsStamp::Fresh), "editor file");
+        std::fs::write(dir.join("tools/src/main.rs"), "fn main() {}").expect("write");
+        set_mtime(&dir.join("tools/src/main.rs"), 200);
+        assert_eq!(stamped(&clean), Some(ToolsStamp::InputNewer), "revert");
+        set_mtime(&exe, 300);
+        assert_eq!(stamped(&clean), Some(ToolsStamp::Fresh));
         std::fs::write(dir.join("tools/src/lib.rs"), "").expect("write");
         git(&["add", "tools/src/lib.rs"]);
         git(&["commit", "-q", "-m", "four"]);
-        assert_eq!(tools_stamp_matches(&dir, &exe), Some(false), "new commit");
+        set_mtime(&exe, 300);
+        assert_eq!(stamped(&clean), Some(ToolsStamp::Mismatch), "new commit");
+        assert_eq!(
+            stamped(&stamp_for(b"dirty")),
+            Some(ToolsStamp::Fresh),
+            "unmerged"
+        );
         std::fs::remove_dir_all(dir.join("installed")).expect("remove");
 
         // Replace refs are off: one that swaps HEAD for a commit holding a

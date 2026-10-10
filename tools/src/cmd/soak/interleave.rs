@@ -439,12 +439,14 @@ fn tsv_cell(v: &[u8]) -> Vec<u8> {
 /// checkout's host-tools build inputs differ from its `HEAD`, untracked and
 /// ignored files included ([`host::tools_inputs_dirty`]), since cargo builds
 /// from those too; other changes there (an arm's kernel edits, say) do not
-/// touch the classifier. A note follows when the binary's `just tools` stamp
-/// does not match that `HEAD` ([`host::tools_stamp_matches`]: a binary left
-/// from an older commit, as a direct `aios soak` after a pull or the shim's
-/// fallback after a failed rebuild runs), when it has no stamp (a plain cargo
-/// build), and when git cannot test the inputs or the stamp, rather than show
-/// the commit clean. Read once, at the start of the soak and before any arm
+/// touch the classifier. A note follows when the `.claude/hooks/aios` shim
+/// would call the binary stale ([`host::tools_stamp`]: its `just tools` stamp
+/// names an older commit or another binary, as a direct `aios soak` after a
+/// pull or the shim's fallback after a failed rebuild runs; an input file is
+/// newer than the binary, as after an edit made or reverted since the build;
+/// or the stamp says `source dirty` and no cause of that remains), when it has
+/// no stamp (a plain cargo build), and when git cannot test the inputs or the
+/// stamp, rather than show the commit clean. Read once, at the start of the soak and before any arm
 /// build, so a commit or branch switch in that checkout while the arms build
 /// cannot be named as the classifier's.
 fn harness_rev() -> Vec<u8> {
@@ -475,11 +477,17 @@ fn harness_rev() -> Vec<u8> {
                     commit
                 }
             };
-            match host::tools_stamp_matches(&root, &exe) {
-                Some(true) => {}
-                Some(false) => {
+            match host::tools_stamp(&root, &exe) {
+                Some(host::ToolsStamp::Fresh) => {}
+                Some(host::ToolsStamp::Mismatch) => {
                     notes.push("binary not built from this commit (stale stamp; run just tools)")
                 }
+                Some(host::ToolsStamp::InputNewer) => notes.push(
+                    "a build input is newer than the binary; its source is not checked (run just tools)",
+                ),
+                Some(host::ToolsStamp::DirtyGone) => notes.push(
+                    "binary built from uncommitted inputs that are gone; its source is not checked (run just tools)",
+                ),
                 None if exe.with_file_name("aios.stamp").exists() => {
                     notes.push("binary's stamp not checked")
                 }

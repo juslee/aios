@@ -137,7 +137,7 @@ run-direct: build
 # so in a single soak the commit summary.md records names the classifier as well as the kernel;
 # with --arm, the top-level summary.md's Harness row names the classifier and each
 # arm-X/summary.md the arm's kernel commit.
-# Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN
+# Soak-test boots: N sequential QEMU boots (or, with --arm, N rounds over 2-4 checkouts), each classified PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN
 [no-cd]
 [positional-arguments]
 soak *args: tools
