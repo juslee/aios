@@ -144,7 +144,7 @@ Then type `/justin:team build` in `team-build` and `/justin:team fix` in `team-f
 
 | Role | Spawned as | Runs in |
 | --- | --- | --- |
-| kernel-dev, worker, doc-writer, simplifier (writers) | background subagent, `isolation: "worktree"`; first command `git reset --hard <tip>` | its own temporary worktree `.claude/worktrees/agent-<id>`, branch `worktree-agent-<id>`, reset to the branch tip; the lead fast-forwards the branch worktree to its commits |
+| kernel-dev, worker, doc-writer, simplifier (writers) | background subagent, `isolation: "worktree"`; first command `git reset --hard <tip>` | its own temporary worktree `.claude/worktrees/agent-<id>`, branch `worktree-agent-<id>` (a workflow `agent()`: `wf_<run>-<n>`, branch `worktree-wf_<run>-<n>`), reset to the branch tip; the lead fast-forwards the branch worktree to its commits |
 | verifier (the only agent that boots) | background subagent, `isolation: "worktree"`; first command `git reset --hard <sha>` | its own temporary worktree at the sha it boots; run directories go to `<W>/target/soak/` |
 | code-reviewer, doc-auditor, skeptic (readers) | subagent with no isolation, or a Workflow agent inside `/audit-loop` | the main checkout, using `git -C` |
 
@@ -152,7 +152,7 @@ Then type `/justin:team build` in `team-build` and `/justin:team fix` in `team-f
 
 Agents never work in the branch worktree `W` itself, and never call EnterWorktree (Claude Code 2.1.292 refuses it from an isolated agent). For every writer task the lead:
 
-1. records `W`'s tip and puts it in the prompt; the agent's first command is `git reset --hard <tip>` in its own temporary worktree;
+1. records `W`'s tip and puts it in the prompt; the agent's first command is `git reset --hard <tip>` in its own temporary worktree (guard rule 4 allows resets and commits only in the temporary worktree the agent's cwd is in);
 2. on its report, checks the range (`git -C <W> rev-list --first-parent <tip>..worktree-agent-<id>` is exactly the commits it reported, the oldest one's parent is the tip);
 3. for kernel-dev, runs the Fable review (Reviews, below);
 4. fast-forwards: `git -C <W> merge --ff-only worktree-agent-<id>`. A refusal merges nothing; a fresh writer redoes the work from the new tip;

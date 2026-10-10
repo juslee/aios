@@ -1041,10 +1041,14 @@ class TeamRules(TeamCase):
                        cwd=self.repo, agent_id="a1", agent_type="general-purpose")
 
     def test_r4_row6_other_places_and_callers_are_fine(self):
-        self.check("none", None, "git commit -m x", cwd=self.temp, agent_id="a1", agent_type="worker")
-        self.check("none", None, "git commit -m x", cwd=self.branch_wt, agent_id="a1", agent_type="worker")
-        self.check("none", None, "git -C %s commit -m x" % self.temp, cwd=self.repo,
-                   agent_id="a1", agent_type="worker")
+        self.check("none", None, "git commit -m x", cwd=self.temp, agent_id="x", agent_type="worker")
+        # T7b: an agent commits only in the temporary worktree it owns by cwd.
+        for cwd, command, agent_id in [(self.temp, "git commit -m x", "a1"),
+                                       (self.branch_wt, "git commit -m x", "a1"),
+                                       (self.fake, "git commit -m x", "y"),
+                                       (self.repo, "git -C %s commit -m x" % self.temp, "x")]:
+            self.check("deny", "agents commit only in their own temporary worktree", command,
+                       cwd=cwd, agent_id=agent_id, agent_type="worker")
         self.check("none", None, "git commit -m x", cwd=self.repo)
         self.check("none", None, "git commit -m x", cwd=self.repo, team="team-build")
         self.check("none", None, "git log -1", cwd=self.repo, agent_id="a1", agent_type="worker")
@@ -1480,6 +1484,190 @@ class TeamRuleAttacks(TeamCase):
         git(self.tmp.name, "init", "-q", "-b", "main", other)
         self.write("scripts/agent/qemu-lock.sh", "#!/bin/sh\nqemu-system-aarch64 -M virt\n", root=other)
         self.check("deny", "every QEMU start", "cd %s && %s" % (other, run), cwd=self.branch_wt)
+
+
+class WorkflowWorktrees(TeamCase):
+    """T7b: rule 4 for the temporary worktrees of workflow agents
+    (wf_<8 hex>-<3 hex>-<n> on worktree-wf_<same>), owned by the payload's
+    cwd; agent-<id> keeps its id check; both need git's admin directory to
+    carry the worktree's name."""
+
+    RUN = "wf_0123abcd-0ef-1"
+    PEER = "wf_0123abcd-0ef-2"
+
+    def setUp(self):
+        super().setUp()
+        trees = os.path.join(self.repo, ".claude", "worktrees")
+        self.wf = os.path.join(trees, self.RUN)
+        self.peer = os.path.join(trees, self.PEER)
+        git(self.repo, "worktree", "add", "-q", "-b", "worktree-" + self.RUN, self.wf)
+        git(self.repo, "worktree", "add", "-q", "-b", "worktree-" + self.PEER, self.peer)
+        self.wfa = {"cwd": self.wf, "agent_id": "a5f0c2d9e1b7a3c41", "agent_type": "workflow-subagent"}
+        guard.Repo._cache.clear()
+
+    def add_tree(self, path, branch):
+        git(self.repo, "worktree", "add", "-q", "-b", branch, path)
+        guard.Repo._cache.clear()
+        return path
+
+    def test_isolated_workflow_agent_resets_and_commits_in_its_own_worktree(self):
+        for command in ["git reset --hard abc123", "git reset --hard", "git commit -m x",
+                        "git -C %s reset --hard abc" % self.wf, "cd %s && git reset --hard abc" % self.wf,
+                        "git stash", "git rebase main", "git cherry-pick abc",
+                        "git update-ref refs/heads/t HEAD", "git reset --soft HEAD~1"]:
+            self.check("none", None, command, **self.wfa)
+        # Any subdirectory of it is inside it, and agent_type does not matter.
+        sub = os.path.join(self.wf, "kernel")
+        os.makedirs(sub)
+        self.check("none", None, "git reset --hard abc", cwd=sub, agent_id="q", agent_type="worker")
+        self.check_hook("none", None, "git reset --hard abc", **self.wfa)
+        self.check_hook("none", None, "git commit -m x", **self.wfa)
+
+    def test_workflow_agent_targeting_another_worktree_is_denied(self):
+        m = self.repo
+        for target in [self.peer, self.branch_wt, self.temp]:
+            for command in ["git -C %s reset --hard abc" % target,
+                            "cd %s && git reset --hard abc" % target,
+                            "cd %s; git reset --hard" % target]:
+                self.check("deny", "agents reset only their own temporary worktree", command, **self.wfa)
+            for command in ["git -C %s commit -m x" % target, "cd %s && git stash" % target,
+                            "git -C %s branch -f t HEAD" % target]:
+                self.check("deny", "only in their own temporary worktree", command, **self.wfa)
+        for command in ["git -C %s reset --hard abc" % m, "cd %s && git reset --hard" % m]:
+            self.check("deny", "agents reset only their own temporary worktree", command, **self.wfa)
+        self.check("deny", "agents never commit in the main checkout", "git -C %s commit -m x" % m,
+                   **self.wfa)
+        self.check("deny", "in the main checkout", "git -C %s update-ref refs/heads/main HEAD" % m,
+                   **self.wfa)
+        for env in ["GIT_DIR=%s/.git/worktrees/%s GIT_WORK_TREE=%s" % (m, self.PEER, self.peer),
+                    "GIT_WORK_TREE=%s" % self.branch_wt, "GIT_DIR=%s/.git" % m]:
+            self.check("deny", "agents reset only their own temporary worktree",
+                       env + " git reset --hard", **self.wfa)
+            self.check("deny", "agents never change where git writes", env + " git commit -m x",
+                       **self.wfa)
+        for opt in ["-c core.worktree=%s" % self.peer, "--work-tree=%s" % self.branch_wt,
+                    "--git-dir=%s/.git" % m]:
+            self.check("deny", "agents reset only their own temporary worktree",
+                       "git %s reset --hard" % opt, **self.wfa)
+            self.check("deny", "agents never change where git writes", "git %s commit -m x" % opt,
+                       **self.wfa)
+        self.check_hook("deny", "agents reset only their own temporary worktree",
+                        "git -C %s reset --hard abc" % self.peer, **self.wfa)
+        self.check_hook("deny", "only in their own temporary worktree",
+                        "git -C %s commit -m x" % self.branch_wt, **self.wfa)
+
+    def test_ownership_is_by_cwd(self):
+        # A workflow agent whose cwd is a peer's worktree resets the peer (out
+        # of model: the guard stops accidents, not a deliberate cd).
+        self.check("none", None, "git reset --hard abc", cwd=self.peer, agent_id="q",
+                   agent_type="workflow-subagent")
+        # From the main checkout (a non-isolated workflow agent), a branch
+        # worktree or its own wf_ worktree, a -C into another temporary
+        # worktree is not its own, even an agent-<id> one whose id matches.
+        for cwd in [self.repo, self.branch_wt, self.wf]:
+            self.check("deny", "agents reset only their own temporary worktree",
+                       "git -C %s reset --hard abc" % self.temp, cwd=cwd, agent_id="x",
+                       agent_type="worker")
+            self.check("deny", "agents reset only their own temporary worktree",
+                       "git -C %s reset --hard abc" % self.peer, cwd=cwd, agent_id="q",
+                       agent_type="workflow-subagent")
+        self.check("deny", "agents reset only their own temporary worktree",
+                   "git -C %s reset --hard abc" % self.wf, cwd=self.temp, agent_id="x",
+                   agent_type="worker")
+        self.check("deny", "only in their own temporary worktree",
+                   "git -C %s commit -m x" % self.temp, cwd=self.repo, agent_id="x",
+                   agent_type="worker")
+
+    def test_non_isolated_workflow_agent_in_the_main_checkout_is_unchanged(self):
+        kw = {"cwd": self.repo, "agent_id": "a5f0c2d9e1b7a3c41", "agent_type": "workflow-subagent"}
+        self.check("deny", "agents reset only their own temporary worktree", "git reset --hard abc", **kw)
+        self.check("deny", "agents never commit in the main checkout", "git commit -m x", **kw)
+        self.check("deny", "in the main checkout", "git stash", **kw)
+        for command in ["git status", "git log -1", "git fetch", "git stash list"]:
+            self.check("none", None, command, **kw)
+        self.check_hook("deny", "agents never commit in the main checkout", "git commit -m x", **kw)
+
+    def assert_not_temporary(self, cwd, agent_id="q"):
+        guard.Repo._cache.clear()
+        self.assertIsNone(guard.temp_worktree(guard.Repo.get(cwd)), cwd)
+        kw = {"cwd": cwd, "agent_id": agent_id, "agent_type": "workflow-subagent"}
+        self.check("deny", "agents reset only their own temporary worktree", "git reset --hard abc", **kw)
+        self.check("deny", "only in their own temporary worktree", "git commit -m x", **kw)
+
+    def test_look_alike_names_are_not_temporary_worktrees(self):
+        trees = os.path.join(self.repo, ".claude", "worktrees")
+        for name in ["wf_x", "wf_0123abc-0ef-1", "wf_0123abcde-0ef-1", "wf_0123abcd-0e-1",
+                     "wf_0123abcd-0eff-1", "wf_ABCDEF01-0ef-11", "wf_0123abcd-0ef-", "wf_0123abcd-0ef-01",
+                     "wf_0123abcd-0ef-1x", "wf_0123abcd_0ef_1", "wf-0123abcd-0ef-1", "agent-a.b"]:
+            self.assert_not_temporary(self.add_tree(os.path.join(trees, name), "worktree-" + name))
+        # The right name on another branch.
+        self.assert_not_temporary(self.add_tree(os.path.join(trees, "wf_0123abcd-0ef-3"), "claude/w3"))
+        # A branch named worktree-wf_* checked out elsewhere: outside
+        # .claude/worktrees, nested below it, or under another name in it.
+        self.assert_not_temporary(self.add_tree(os.path.join(self.tmp.name, "wf_0123abcd-0ef-4"),
+                                                "worktree-wf_0123abcd-0ef-4"))
+        self.assert_not_temporary(self.add_tree(os.path.join(trees, "sub", "wf_0123abcd-0ef-5"),
+                                                "worktree-wf_0123abcd-0ef-5"))
+        self.assert_not_temporary(self.add_tree(os.path.join(self.repo, ".claude", "wf_0123abcd-0ef-6"),
+                                                "worktree-wf_0123abcd-0ef-6"))
+        self.assert_not_temporary(self.add_tree(os.path.join(trees, "lead"), "worktree-wf_0123abcd-0ef-7"))
+        # The branch worktree and the main checkout are not temporary.
+        self.assert_not_temporary(self.branch_wt)
+        # A symlink at a wf_ path to a worktree that lives elsewhere.
+        real = self.add_tree(os.path.join(self.tmp.name, "real"), "worktree-wf_0123abcd-0ef-8")
+        link = os.path.join(trees, "wf_0123abcd-0ef-8")
+        os.symlink(real, link)
+        self.assert_not_temporary(link)
+        # A symlinked directory inside the worktree is still inside it.
+        os.symlink(self.wf, os.path.join(self.tmp.name, "alias"))
+        self.check("deny", "agents reset only their own temporary worktree",
+                   "git -C %s reset --hard abc" % os.path.join(self.tmp.name, "alias"),
+                   cwd=self.peer, agent_id="q", agent_type="workflow-subagent")
+        self.check("none", None, "git reset --hard abc", cwd=os.path.join(self.tmp.name, "alias"),
+                   agent_id="q", agent_type="workflow-subagent")
+
+    def test_a_worktree_moved_onto_a_temporary_path_is_not_one(self):
+        # git worktree move keeps the admin directory's name, so git's
+        # .git/worktrees/<name> no longer matches the path's name.
+        trees = os.path.join(self.repo, ".claude", "worktrees")
+        for name, agent_id in [("wf_0123abcd-0ef-9", "q"), ("agent-z", "z")]:
+            src = self.add_tree(os.path.join(self.tmp.name, "mv-" + name), "worktree-" + name)
+            dst = os.path.join(trees, name)
+            git(self.repo, "worktree", "move", src, dst)
+            admin = git(dst, "rev-parse", "--absolute-git-dir").strip()
+            self.assertEqual("mv-" + name, os.path.basename(admin))
+            self.assert_not_temporary(dst, agent_id=agent_id)
+
+    def test_agent_worktrees_keep_the_id_check(self):
+        for agent_id in ["x", "agent-x"]:
+            self.check("none", None, "git reset --hard abc", cwd=self.temp, agent_id=agent_id,
+                       agent_type="worker")
+            self.check("none", None, "git commit -m x", cwd=self.temp, agent_id=agent_id,
+                       agent_type="worker")
+        for agent_id in ["y", "a1", "", "agent-y", "a5f0c2d9e1b7a3c41"]:
+            self.check("deny", "agents reset only their own temporary worktree",
+                       "git reset --hard abc", cwd=self.temp, agent_id=agent_id,
+                       agent_type="workflow-subagent")
+            self.check("deny", "only in their own temporary worktree", "git commit -m x",
+                       cwd=self.temp, agent_id=agent_id, agent_type="worker")
+
+    def test_main_thread_is_unchanged(self):
+        for team in ["", "team-build"]:
+            for cwd in [self.repo, self.wf, self.peer, self.branch_wt]:
+                self.check("ask", "exists only for an isolated agent's first command",
+                           "git reset --hard HEAD~1", cwd=cwd, team=team)
+                self.check("none", None, "git commit -m x", cwd=cwd, team=team)
+                self.check("none", None, "git -C %s commit -m x" % self.peer, cwd=cwd, team=team)
+        self.check_hook("ask", "exists only for an isolated agent's first command",
+                        "git reset --hard HEAD~1", cwd=self.wf)
+
+    def test_the_wrapper_in_a_workflow_worktree_is_its_own(self):
+        body = "#!/bin/sh\nqemu-system-aarch64 -M virt\n"
+        self.write("scripts/agent/qemu-lock.sh", body, root=self.wf)
+        self.write("scripts/agent/qemu-lock.sh", body, root=self.peer)
+        self.check("none", None, self.WRAPPER, cwd=self.wf, agent_id="q", agent_type="verifier")
+        self.check("deny", "every QEMU start", "%s/%s" % (self.peer, self.WRAPPER),
+                   cwd=self.wf, agent_id="q", agent_type="verifier")
 
 
 if __name__ == "__main__":

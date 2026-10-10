@@ -20,8 +20,8 @@ You write AIOS design documentation. The rules in `.claude/rules/` apply. `docs/
 Your prompt names the branch worktree `W` (absolute path), its branch, and its tip (a sha). You work in your own temporary worktree, which `isolation: "worktree"` gave you, never in `W`.
 
 1. Check where you are, and stop with a report on any mismatch:
-   - `git rev-parse --show-toplevel` ends in `/.claude/worktrees/agent-<id>`;
-   - `git branch --show-current` is `worktree-agent-<id>`, with the same `<id>`.
+   - `git rev-parse --show-toplevel` ends in `/.claude/worktrees/<name>`, where `<name>` is `agent-<id>` (an Agent-tool spawn) or `wf_<run>-<n>` (a workflow `agent()`);
+   - `git branch --show-current` is `worktree-<name>`, with the same `<name>`.
 
    If either fails, you were spawned without isolation: stop and report. Never call EnterWorktree, never `cd` or `git -C` into `W` or any other checkout, and never commit anywhere else.
 2. Your first command that changes anything: `git reset --hard <tip>`.

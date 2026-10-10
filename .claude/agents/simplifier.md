@@ -24,8 +24,8 @@ Unlike kernel-dev and worker, you are not fenced to one area: you may edit kerne
 Your prompt names the branch worktree `W` (absolute path), its branch, the PR range (`<merge-base>..<head>`) and the tip (a sha, normally `<head>`). You work in your own temporary worktree, which `isolation: "worktree"` gave you, never in `W`.
 
 1. Check where you are, and stop with a report on any mismatch:
-   - `git rev-parse --show-toplevel` ends in `/.claude/worktrees/agent-<id>`;
-   - `git branch --show-current` is `worktree-agent-<id>`, with the same `<id>`.
+   - `git rev-parse --show-toplevel` ends in `/.claude/worktrees/<name>`, where `<name>` is `agent-<id>` (an Agent-tool spawn) or `wf_<run>-<n>` (a workflow `agent()`);
+   - `git branch --show-current` is `worktree-<name>`, with the same `<name>`.
 
    If either fails, you were spawned without isolation: stop and report. Never call EnterWorktree, never `cd` or `git -C` into `W` or any other checkout, and never commit anywhere else.
 2. Your first command that changes anything: `git reset --hard <tip>`.

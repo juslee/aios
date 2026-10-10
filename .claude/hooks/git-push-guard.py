@@ -89,20 +89,32 @@ subagent, AIOS_TEAM from the lead's launch line):
        ask   an agent definition file that cannot be read; an isolation key
              whose value is not plainly worktree (an alias, a block, another
              spelling), spawned without isolation: "worktree"
-  4  Placement
+  4  Placement. An agent's own temporary worktree is
+     <main>/.claude/worktrees/<name> on branch worktree-<name>, git admin
+     directory <git-common-dir>/worktrees/<name>, with <name> agent-<id>
+     (Agent tool; <id> = the payload's agent_id) or wf_<8 hex>-<3 hex>-<n>
+     (workflow agent(); no id check), and the payload's cwd inside it.
        deny  EnterWorktree from any agent and from a team lead; from an
-             agent, git reset --hard outside its own temporary worktree
-             (<main>/.claude/worktrees/agent-<id> on worktree-agent-<id>,
-             <id> = the payload's agent_id); from an agent, in the main
-             checkout: commit/merge/cherry-pick/revert/am, rebase, pull,
-             reset (any mode), update-ref, symbolic-ref (writes), stash (but
-             list/show), commit-tree, fast-import, branch -f/-D/-M/-C,
-             checkout -B, switch -C; any of these from an agent with GIT_DIR,
-             GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE (or another
-             repository-moving GIT_* variable) set, exported or inherited,
-             with --git-dir/--work-tree, or with -c core.worktree/core.bare/
-             include.*
-       ask   git reset --hard from a main thread
+             agent, outside its own temporary worktree (target after -C and
+             cd): git reset --hard, commit/merge/cherry-pick/revert/am,
+             rebase, pull, reset (any mode), update-ref, symbolic-ref
+             (writes), stash (but list/show), commit-tree, fast-import,
+             branch -f/-D/-M/-C, checkout -B, switch -C; any of these from an
+             agent with GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE
+             (or another repository-moving GIT_* variable) set, exported or
+             inherited, with --git-dir/--work-tree, or with -c core.worktree/
+             core.bare/include.*
+       ask   git reset --hard from a main thread; from an agent, one of the
+             others in a directory from a shell expansion
+
+Threat model: the team rules stop accidents by cooperative agents (a wrong
+-C, a wrong cwd, writes to the main checkout or a branch worktree, QEMU
+outside the lock, pattern kills, toolchain changes, spawn shape). They are
+not a sandbox against an agent that deliberately cd's into a peer's
+worktree or rewrites git metadata (a gitfile, worktree config) earlier in
+the same command; that is out of model, and the lead's range check before
+every fast-forward and the reviews are the backstop. The guard keeps no
+state files: an agent can reach any file the guard could keep.
 
 This is defence in depth, not a security boundary: code the guard does not
 read (a Python script, a build step, a justfile recipe) can still run git or
@@ -295,7 +307,9 @@ PKILL_VALUE_OPTS = {"-F", "-G", "-g", "-J", "-j", "-M", "-N", "-P", "-s", "-T", 
                     "-U", "-u"}
 REGEX_META = set(".^$*+?()[]{}|\\")
 QEMU_BINARY = "qemu-system-aarch64"
-AGENT_ID_RE = re.compile(r"agent-(.+)")
+# The temporary worktree names Claude Code 2.1.292 gives: agent-<id> for an
+# Agent-tool spawn, wf_<run>-<n> for a workflow agent() (run = 8 hex - 3 hex).
+TEMP_WORKTREE_RE = re.compile(r"agent-[A-Za-z0-9]+|wf_[0-9a-f]{8}-[0-9a-f]{3}-(?:0|[1-9][0-9]{0,3})")
 PROJECT_TYPE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
@@ -875,6 +889,16 @@ class Repo:
                 roots.append(os.path.realpath(os.path.dirname(lines[1])))
             self.memo["roots"] = roots
         return self.memo["roots"]
+
+    def git_dirs(self):
+        """(git dir, common dir), resolved: for a linked worktree the git dir
+        is its admin directory <common>/worktrees/<name>."""
+        if "git_dirs" not in self.memo:
+            out = self.run("rev-parse", "--path-format=absolute",
+                           "--absolute-git-dir", "--git-common-dir") or ""
+            lines = [os.path.realpath(line) for line in out.splitlines() if line]
+            self.memo["git_dirs"] = tuple(lines) if len(lines) == 2 else (None, None)
+        return self.memo["git_dirs"]
 
     def config(self):
         if "config" not in self.memo:
@@ -1584,11 +1608,20 @@ class Analyzer:
             self.verdict.rule_deny(AGENT_TOOLCHAIN_DENY)
 
     def own_temp_worktree(self, repo):
-        """The agent's own temporary worktree: agent-<id> on worktree-agent-<id>
-        where <id> is the payload's agent_id (or agent_id is agent-<id>)."""
-        wid = temp_worktree(repo)
+        """True when `repo` is a temporary worktree (temp_worktree) that the
+        agent owns: the payload's cwd is inside it, and for agent-<id> also
+        <id> is the payload's agent_id (or agent_id is agent-<id>). A wf_
+        worktree has no id check: workflow agent ids are unrelated to it."""
+        name = temp_worktree(repo)
+        home = self.ctx.get("cwd")
+        if name is None or not isinstance(home, str) or not home:
+            return False
+        if Repo.get(home).roots()[:1] != repo.roots()[:1]:
+            return False
+        if name.startswith("wf_"):
+            return True
         aid = self.ctx.get("agent_id")
-        return wid is not None and isinstance(aid, str) and aid in (wid, "agent-" + wid)
+        return isinstance(aid, str) and aid in (name[len("agent-"):], name)
 
     def git_redirect(self, extra, inline_config):
         """What in this command can move git to another repository, working
@@ -1609,8 +1642,10 @@ class Analyzer:
         return " and ".join(parts)
 
     def check_placement(self, sub, rest, workdir, extra, inline_config):
-        """Rule 4 rows 4-6: git reset --hard, and the commands that commit,
-        move refs or discard work in the main checkout."""
+        """Rule 4 rows 4-6: from an agent, git reset --hard and the commands
+        that commit, move refs or discard work run only in the temporary
+        worktree it owns (own_temp_worktree), with the target resolved from
+        -C and cd; GIT_DIR and the other redirects are denied outright."""
         v = self.verdict
         hard = sub == "reset" and bool(scan_git_options(rest, {"hard": False}))
         if not self.is_agent():
@@ -1633,13 +1668,21 @@ class Analyzer:
                         f"point git {sub} at another repository, working tree, index or config (rule 11)")
         elif unresolved(workdir):
             v.ask(f"git {sub} runs in a directory that comes from a shell expansion; "
-                  "agents never commit or move refs in the main checkout")
+                  "agents commit and move refs only in their own temporary worktree")
+        elif self.own_temp_worktree(Repo.get(workdir)):
+            return
         elif main_checkout(Repo.get(workdir)):
             if change == "commit":
                 v.rule_deny("agents never commit in the main checkout: you were spawned without isolation (rule 11)")
             else:
                 v.rule_deny(f"agents never run git {change} in the main checkout (it moves refs or "
                             "discards work): you were spawned without isolation (rule 11)")
+        elif change == "commit":
+            v.rule_deny("agents commit only in their own temporary worktree, the one their cwd "
+                        "is in (rule 11)")
+        else:
+            v.rule_deny(f"agents run git {change} only in their own temporary worktree, the one "
+                        "their cwd is in (rule 11)")
 
     # -- files that a command publishes ------------------------------------
 
@@ -2451,18 +2494,24 @@ def lock_message(lock):
 
 
 def temp_worktree(repo):
-    """The <id> of an isolated agent's temporary worktree:
-    <main>/.claude/worktrees/agent-<id> on branch worktree-agent-<id> with the
-    same id (the names Claude Code 2.1.292 gives it), else None. Nothing else
-    counts; whose it is, the caller checks against the payload's agent_id."""
+    """The name of the temporary worktree `repo` is in, else None: <name> is
+    agent-<id> or wf_<8 hex>-<3 hex>-<n> (TEMP_WORKTREE_RE), the working tree
+    is exactly <main>/.claude/worktrees/<name> (resolved, so a symlink there
+    to a tree elsewhere does not count), the branch is worktree-<name>, and
+    git's admin directory is <common>/worktrees/<name> (git worktree move
+    keeps the old admin name, so a tree moved onto the path does not count).
+    Whose it is, the caller decides (Analyzer.own_temp_worktree)."""
     roots = repo.roots()
     if len(roots) != 2:
         return None
     top, main = roots
-    m = AGENT_ID_RE.fullmatch(os.path.basename(top))
-    if not m or top != os.path.join(main, ".claude", "worktrees", os.path.basename(top)):
+    name = os.path.basename(top)
+    if not TEMP_WORKTREE_RE.fullmatch(name) or top != os.path.join(main, ".claude", "worktrees", name):
         return None
-    return m.group(1) if repo.current_branch() == "worktree-agent-" + m.group(1) else None
+    admin, common = repo.git_dirs()
+    if common is None or admin != os.path.join(common, "worktrees", name):
+        return None
+    return name if repo.current_branch() == "worktree-" + name else None
 
 
 def main_checkout(repo):
