@@ -20,9 +20,7 @@ if (!['kernel', 'tools', 'both', 'docs'].includes(A.mode)) {
 }
 const W = A.worktree
 const POOL = 6
-const fixedLedger = Array.isArray(A.fixed) ? A.fixed : []
-const refutedLedger = Array.isArray(A.refuted) ? A.refuted : []
-const uncertainLedger = Array.isArray(A.uncertain) ? A.uncertain : []
+const TRIES = 3
 
 const LOCATION = `You run in the main checkout. Use \`git -C ${W}\` for every git command and absolute paths under \`${W}\` for every file. The change is \`${A.base}..${A.head}\` on \`${A.branch}\`. Gate output (sha \`${A.head}\`): \`${A.gates || '(none given)'}\`.
 ${A.context ? `Context and owner decisions that limit scope: ${A.context}` : ''}`
@@ -34,10 +32,13 @@ function ledgerLine(x) {
 }
 
 const MEMO = [
-  fixedLedger.length ? `Already fixed in earlier rounds (do not re-report unless the fix is wrong or incomplete, and then say so):\n${fixedLedger.map(x => '- ' + ledgerLine(x)).join('\n')}` : '',
-  uncertainLedger.length ? `Unverified last round: re-check each one, and re-report it if it is still present:\n${uncertainLedger.map(x => '- ' + ledgerLine(x)).join('\n')}` : '',
-  refutedLedger.length ? `Already refuted by skeptics (do not re-report without new evidence):\n${refutedLedger.map(x => '- ' + ledgerLine(x)).join('\n')}` : '',
-].filter(Boolean).join('\n\n')
+  [A.fixed, 'Already fixed in earlier rounds (do not re-report unless the fix is wrong or incomplete, and then say so):'],
+  [A.uncertain, 'Unverified last round: re-check each one, and re-report it if it is still present:'],
+  [A.refuted, 'Already refuted by skeptics (do not re-report without new evidence):'],
+]
+  .filter(([ledger]) => Array.isArray(ledger) && ledger.length)
+  .map(([ledger, heading]) => `${heading}\n${ledger.map(x => '- ' + ledgerLine(x)).join('\n')}`)
+  .join('\n\n')
 
 const COMPLETENESS = `Also check ISSUE COMPLETENESS: for every item in the plan step or issue text named in the context, decide whether the range fixes it, or leaves it out with a justification the context accepts. Each unaddressed, half-addressed or wrongly addressed item is a finding. Flag any acceptance claim not backed by a test or a check.`
 const TEST_ADEQUACY = `Also check TEST ADEQUACY: do the new or changed host tests and boot self-tests exercise the fixed behaviour (would each fail on the base)? Report only gaps that matter for the defects the range fixes.`
@@ -54,7 +55,7 @@ function codeSet(kind) {
   ]
 }
 
-function docSet() {
+function buildLenses() {
   if (A.mode === 'docs') {
     return [
       { key: 'docs-accuracy', agentType: DOCS, prompt: 'lens: accuracy' },
@@ -62,13 +63,8 @@ function docSet() {
       { key: 'docs-leftovers', agentType: DOCS, prompt: `lens: leftovers\n${LEFTOVERS}` },
     ]
   }
-  return [{ key: 'docs', agentType: DOCS, prompt: '' }]
-}
-
-function buildLenses() {
   // Mode both uses the kernel set: its rules text is a superset of the tools text, and bugs is identical.
-  const kinds = A.mode === 'docs' ? [] : [A.mode === 'tools' ? 'tools' : 'kernel']
-  return [...kinds.flatMap(codeSet), ...docSet()]
+  return [...codeSet(A.mode === 'tools' ? 'tools' : 'kernel'), { key: 'docs', agentType: DOCS, prompt: '' }]
 }
 
 const FINDINGS = {
@@ -126,13 +122,12 @@ function keyOf(f) {
 // is never an empty result: retry, and let callers treat a final null as "no
 // evidence", never as "clean". The first attempt keeps the original prompt and
 // opts so completed agents replay from cache on resume.
-async function run(prompt, opts, tries) {
-  const n = tries || 3
-  for (let t = 1; t <= n; t++) {
+async function run(prompt, opts) {
+  for (let t = 1; t <= TRIES; t++) {
     const o = t === 1 ? opts : { ...opts, label: `${opts.label} retry${t - 1}` }
     const r = await agent(prompt, o)
     if (r) return r
-    log(`${opts.label}: attempt ${t} of ${n} returned nothing`)
+    log(`${opts.label}: attempt ${t} of ${TRIES} returned nothing`)
   }
   return null
 }
@@ -184,10 +179,10 @@ log(`${fresh.length} finding(s) to verify; lens failures: ${lens_failures.length
 
 // ---- Verify ----
 phase('Verify')
+const skepticsFor = f => (f.severity === 'must-fix' ? 3 : 1)
 const tasks = []
 fresh.forEach((f, i) => {
-  const votes = f.severity === 'must-fix' ? 3 : 1
-  for (let s = 0; s < votes; s++) tasks.push({ i, s })
+  for (let s = 0; s < skepticsFor(f); s++) tasks.push({ i, s })
 })
 const SKEPTIC_NOTE = `The finding comes from a reviewer lens and may be wrong. Head sha \`${A.head}\`, base \`${A.base}\`.`
 const verdicts = await pool(tasks.map(t => () => {
@@ -201,9 +196,9 @@ const pre_existing = []
 const refuted = []
 const uncertain = []
 fresh.forEach((f, i) => {
-  const need = f.severity === 'must-fix' ? 2 : 1
+  const asked = skepticsFor(f)
+  const need = Math.floor(asked / 2) + 1 // a majority of the skeptics asked
   const vs = tasks.map((t, n) => (t.i === i ? verdicts[n] : null)).filter(Boolean)
-  const asked = f.severity === 'must-fix' ? 3 : 1
   const count = v => vs.filter(x => x.verdict === v).length
   const detail = { ...f, votes: vs.map(x => ({ verdict: x.verdict, scope: x.scope, reachable: x.reachable, reason: x.reason, evidence: x.evidence })), skeptics_answered: vs.length, skeptics_asked: asked }
   if (count('CONFIRMED') >= need) {
