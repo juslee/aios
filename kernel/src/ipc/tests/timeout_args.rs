@@ -1,12 +1,12 @@
 //! Timeout-argument self-test (#217): IpcCall and IpcRecv through
 //! `syscall_dispatch` with timeouts near `u64::MAX`, run by the PI pair
-//! (`pi_caller_entry` / `pi_server_entry`, process 2, CPU 3) after its three
+//! (`pi_caller_entry` / `pi_server_entry`, process 2, both started on CPU 3) after its three
 //! round trips.
 
 use shared::{ChannelId, Syscall, USER_VA_MIN};
 
-use super::super::channel::ipc_reply;
 use super::syscall_args::svc;
+use crate::ipc::ipc_reply;
 
 /// The timeouts each side passes, in order: `u64::MAX - 1`, which overflowed
 /// `TICK_COUNT + timeout` once the tick count reached 2, then `u64::MAX`,
@@ -58,10 +58,10 @@ pub(super) fn call_side(ch: ChannelId) {
 /// caller reports.
 pub(super) fn server_side(ch: ChannelId) {
     let user = USER_VA_MIN as u64;
-    for t in TIMEOUTS {
+    for (i, t) in TIMEOUTS.into_iter().enumerate() {
         let received = svc(Syscall::IpcRecv, &[u64::from(ch.0), user, 0, t]);
         if received != 0 {
-            crate::kwarn!(Ipc, "Timeout-arg test: recv {:#x} got {}", t, received);
+            crate::kwarn!(Ipc, "Timeout-arg test: recv #{} got {}", i, received);
             continue;
         }
         let replied = ipc_reply(ch, b"REPLY:");

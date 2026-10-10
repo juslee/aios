@@ -26,8 +26,9 @@ use super::{channel_mut, direct, CHANNEL_TABLE};
 // ---------------------------------------------------------------------------
 
 /// The deadline of a wait for `timeout_ticks` that starts now, by
-/// [`deadline_after`]: `None` for `u64::MAX`, otherwise the current tick plus
-/// `timeout_ticks`, saturated. `ipc_call` and `ipc_recv` handle 0 before this.
+/// [`deadline_after`]: the current tick plus `timeout_ticks`, or `None` for
+/// `u64::MAX` and for a sum that would reach `u64::MAX` (a tick never
+/// reached). `ipc_call` and `ipc_recv` handle 0 before this.
 fn deadline_from_now(timeout_ticks: u64) -> Option<u64> {
     deadline_after(TICK_COUNT.load(Ordering::Relaxed), timeout_ticks)
 }
@@ -62,8 +63,8 @@ fn arm_timeout(side: WaitSide, tid: ThreadId, deadline: Option<u64>) {
 /// `timeout_ticks`: maximum ticks to wait for the reply, from when the call
 /// is queued. 0 and `u64::MAX` both mean no timeout: the call waits until a
 /// reply, a cancel or the channel's destruction wakes it (capability-lifetime
-/// ADR §9 keeps 0 unbounded). Any other value is saturated, so a value from
-/// a syscall register cannot overflow (#217). `DEFAULT_TIMEOUT_TICKS` is 5 s.
+/// ADR §9 keeps 0 unbounded), and so does any value whose deadline would
+/// reach `u64::MAX`, so a value from a syscall register cannot overflow (#217). `DEFAULT_TIMEOUT_TICKS` is 5 s.
 ///
 /// Returns bytes received on success, or negative error code.
 pub fn ipc_call(
@@ -276,8 +277,8 @@ pub fn ipc_call(
 ///
 /// `recv_buf`: buffer to receive message payload.
 /// `timeout_ticks`: maximum ticks to wait. 0 is a non-blocking poll and
-/// `u64::MAX` is no timeout; any other value is saturated, so a value from a
-/// syscall register cannot overflow (#217).
+/// `u64::MAX`, or any value whose deadline would reach `u64::MAX`, is no
+/// timeout, so a value from a syscall register cannot overflow (#217).
 ///
 /// Returns (bytes_received, sender_tid) on success, or negative error.
 /// The sender's ThreadId is returned so the receiver knows who to reply to.

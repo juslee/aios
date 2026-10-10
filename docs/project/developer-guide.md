@@ -1751,7 +1751,7 @@ mod tests {
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` unbounded, saturation) |
+| `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |
