@@ -292,17 +292,17 @@ impl Drop for ScratchDir {
     }
 }
 
-fn bytes(p: &Path) -> &[u8] {
+pub(super) fn bytes(p: &Path) -> &[u8] {
     p.as_os_str().as_bytes()
 }
 
-fn warn(err: &mut dyn Write, message: &[u8]) -> Result<()> {
+pub(super) fn warn(err: &mut dyn Write, message: &[u8]) -> Result<()> {
     err.write_all(&[&b"soak: warning: "[..], message, b"\n"].concat())?;
     Ok(())
 }
 
 /// Append `data` to `path`.
-fn append(path: &Path, data: &[u8]) -> Result<()> {
+pub(super) fn append(path: &Path, data: &[u8]) -> Result<()> {
     let mut f = OpenOptions::new()
         .append(true)
         .open(path)
@@ -311,7 +311,7 @@ fn append(path: &Path, data: &[u8]) -> Result<()> {
         .with_context(|| format!("cannot append to {}", path.display()))
 }
 
-fn read(path: &Path) -> Result<Vec<u8>> {
+pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))
 }
 
@@ -321,11 +321,14 @@ fn secs_since(start: Instant) -> i64 {
 }
 
 /// One ESP image under test, as its boots need it: the checkout it was built
-/// in, the firmware QEMU loads (the justfile's `edk2_fw`, as evaluated), the
-/// private snapshot of the ESP that every boot uses, and what the reports
-/// identify it by (the kernel ELF sha256 line and the git rev, with `-dirty`).
+/// in, the QEMU program and the firmware it loads (the justfile's `edk2_fw`,
+/// as evaluated), the private snapshot of the ESP that every boot uses, and
+/// what the reports identify it by (the kernel ELF sha256 line and the git
+/// rev, with `-dirty`). Single mode runs `qemu-system-aarch64` from `PATH`;
+/// interleave mode, the one binary it resolved and checks before every boot.
 pub struct Arm {
     pub root: PathBuf,
+    pub qemu: OsString,
     pub firmware: Vec<u8>,
     pub esp: PathBuf,
     pub kernel_sha: String,
@@ -396,7 +399,7 @@ pub fn boot_once(
     // stopped, as it moves QEMU's time limit, so every progress time and
     // the footer's elapsed share the limit's clock.
     let mut start = Instant::now();
-    let mut command = host::command("qemu-system-aarch64");
+    let mut command = host::command(&arm.qemu);
     // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
     command
         .args(&args)
@@ -460,6 +463,117 @@ pub fn boot_once(
     }))
 }
 
+/// `just disk` in `root`, its output appended to `build_log`. `who` prefixes
+/// the messages (`""` in single mode, `"arm A: "` in interleave mode), and
+/// `env_remove` names variables the build must not inherit. Returns the
+/// signal's exit status when a signal arrived meanwhile.
+pub fn build_esp(
+    root: &Path,
+    build_log: &Path,
+    who: &str,
+    env_remove: Option<&[&str]>,
+    interrupts: &Interrupts,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Option<u8>> {
+    out.write_all(
+        &[
+            format!("soak: {who}building ESP image (just disk) -> ").as_bytes(),
+            bytes(build_log),
+            b"\n",
+        ]
+        .concat(),
+    )?;
+    out.flush()?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(build_log)
+        .with_context(|| format!("cannot create {}", build_log.display()))?;
+    let mut command = host::command("just");
+    command
+        .arg("disk")
+        .current_dir(root)
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    for var in env_remove.unwrap_or_default() {
+        command.env_remove(var);
+    }
+    let status = command.status();
+    if let Some(code) = interrupts.pending() {
+        return Ok(Some(code));
+    }
+    if !status.is_ok_and(|s| s.success()) {
+        err.write_all(host::tail_lines(&read(build_log)?, 30))?;
+        bail!(
+            "{who}build failed (just disk); full log: {}",
+            build_log.display()
+        );
+    }
+    Ok(None)
+}
+
+/// Snapshot the ESP image `disk_rel` of `root` to `esp`, so every boot uses
+/// identical bits even if the tree is rebuilt while the soak runs.
+pub fn snapshot_esp(root: &Path, disk_rel: &[u8], esp: &Path) -> Result<()> {
+    let disk = root.join(OsStr::from_bytes(disk_rel));
+    if !disk.is_file() {
+        bail!(
+            "ESP image {} missing (run without --no-build)",
+            disk.display()
+        );
+    }
+    std::fs::copy(&disk, esp)
+        .with_context(|| format!("cannot copy {} to {}", disk.display(), esp.display()))?;
+    Ok(())
+}
+
+/// What identifies the bits under test: the sha256 line of the kernel ELF
+/// inside the ESP snapshot `esp` (extracted to `scratch_elf`, then removed),
+/// which can differ from `root`'s `kernel_rel` with --no-build (a warning,
+/// prefixed with `who`); or the ESP image's own sha256 when `mcopy` cannot
+/// extract it.
+pub fn esp_kernel_sha(
+    root: &Path,
+    disk_rel: &[u8],
+    kernel_rel: &[u8],
+    esp: &Path,
+    scratch_elf: &Path,
+    who: &str,
+    err: &mut dyn Write,
+) -> Result<String> {
+    let extracted = host::find_in_path("mcopy").is_some()
+        && host::command("mcopy")
+            .arg("-n")
+            .arg("-i")
+            .arg(esp)
+            .arg("::/EFI/AIOS/aios.elf")
+            .arg(scratch_elf)
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+    if !extracted {
+        return Ok(format!(
+            "ESP image sha256 `{}`, kernel not extracted (mcopy)",
+            host::sha256_16(esp)?
+        ));
+    }
+    let sha = format!("kernel ELF sha256 `{}`", host::sha256_16(scratch_elf)?);
+    let target_kernel = root.join(OsStr::from_bytes(kernel_rel));
+    let same = target_kernel.is_file() && read(scratch_elf)? == read(&target_kernel)?;
+    if !same {
+        let d = String::from_utf8_lossy(disk_rel);
+        let k = String::from_utf8_lossy(kernel_rel);
+        warn(
+            err,
+            format!("{who}the kernel in {d} differs from {k}; the soak boots the one in {d}")
+                .as_bytes(),
+        )?;
+    }
+    let _ = std::fs::remove_file(scratch_elf);
+    Ok(sha)
+}
+
 /// Create the output directory `out_arg` (relative to `cwd`) and return it
 /// canonical. It must be new or empty, and must not be `root` (the
 /// repository root, for a soak): the harness writes its files there and never
@@ -498,10 +612,8 @@ pub fn write_summary(
     tally: &Tally,
     out: &mut dyn Write,
 ) -> Result<()> {
-    let md = out_dir.join("summary.md");
+    let md = write_summary_file(out_dir, head, tally)?;
     let tsv = out_dir.join("summary.tsv");
-    std::fs::write(&md, [head, &report::summary_tail(tally)].concat())
-        .with_context(|| format!("cannot write {}", md.display()))?;
     out.write_all(b"\n")?;
     out.write_all(head)?;
     out.write_all(
@@ -515,6 +627,15 @@ pub fn write_summary(
         .concat(),
     )?;
     Ok(())
+}
+
+/// Write `summary.md` in `out_dir`: `head`, then the tables of `tally`.
+/// Returns its path.
+pub fn write_summary_file(out_dir: &Path, head: &[u8], tally: &Tally) -> Result<PathBuf> {
+    let md = out_dir.join("summary.md");
+    std::fs::write(&md, [head, &report::summary_tail(tally)].concat())
+        .with_context(|| format!("cannot write {}", md.display()))?;
+    Ok(md)
 }
 
 /// What [`run`] has settled before it installs the signal handlers: the
@@ -609,45 +730,11 @@ fn build_and_boot(
     let build_log = out_dir.join("build.log");
 
     if cfg.build {
-        out.write_all(
-            &[
-                &b"soak: building ESP image (just disk) -> "[..],
-                bytes(&build_log),
-                b"\n",
-            ]
-            .concat(),
-        )?;
-        out.flush()?;
-        let log = File::create(&build_log)
-            .with_context(|| format!("cannot create {}", build_log.display()))?;
-        let status = host::command("just")
-            .arg("disk")
-            .current_dir(&root)
-            .stdout(log.try_clone()?)
-            .stderr(log)
-            .status();
-        if let Some(code) = interrupts.pending() {
+        if let Some(code) = build_esp(&root, &build_log, "", None, interrupts, out, err)? {
             return Ok(code);
         }
-        if !status.is_ok_and(|s| s.success()) {
-            err.write_all(host::tail_lines(&read(&build_log)?, 30))?;
-            bail!(
-                "build failed (just disk); full log: {}",
-                build_log.display()
-            );
-        }
     }
-    let disk = root.join(OsStr::from_bytes(&disk_rel));
-    if !disk.is_file() {
-        bail!(
-            "ESP image {} missing (run without --no-build)",
-            disk.display()
-        );
-    }
-    // Snapshot the ESP so every boot uses identical bits even if the tree is
-    // rebuilt while the soak runs.
-    std::fs::copy(&disk, &esp)
-        .with_context(|| format!("cannot copy {} to {}", disk.display(), esp.display()))?;
+    snapshot_esp(&root, &disk_rel, &esp)?;
     if !cfg.fresh_data && !data.is_file() {
         out.flush()?;
         let made = host::command("just")
@@ -660,55 +747,25 @@ fn build_and_boot(
     }
 
     let git_rev = host::git_rev(&root);
-    // Identify the bits under test: the kernel ELF inside the ESP snapshot,
-    // which can differ from target/ with --no-build.
-    let esp_kernel = scratch.path().join("aios.elf");
     out.flush()?;
-    let extracted = host::find_in_path("mcopy").is_some()
-        && host::command("mcopy")
-            .arg("-n")
-            .arg("-i")
-            .arg(&esp)
-            .arg("::/EFI/AIOS/aios.elf")
-            .arg(&esp_kernel)
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-    let kernel_sha = if extracted {
-        let sha = format!("kernel ELF sha256 `{}`", host::sha256_16(&esp_kernel)?);
-        let target_kernel = root.join(OsStr::from_bytes(&kernel_rel));
-        let same = target_kernel.is_file() && read(&esp_kernel)? == read(&target_kernel)?;
-        if !same {
-            let d = String::from_utf8_lossy(&disk_rel);
-            let k = String::from_utf8_lossy(&kernel_rel);
-            warn(
-                err,
-                format!("the kernel in {d} differs from {k}; the soak boots the one in {d}")
-                    .as_bytes(),
-            )?;
-        }
-        let _ = std::fs::remove_file(&esp_kernel);
-        sha
-    } else {
-        format!(
-            "ESP image sha256 `{}`, kernel not extracted (mcopy)",
-            host::sha256_16(&esp)?
-        )
-    };
+    let kernel_sha = esp_kernel_sha(
+        &root,
+        &disk_rel,
+        &kernel_rel,
+        &esp,
+        &scratch.path().join("aios.elf"),
+        "",
+        err,
+    )?;
     let arm = Arm {
         root,
+        qemu: OsString::from("qemu-system-aarch64"),
         firmware,
         esp,
         kernel_sha,
         git_rev,
     };
-    let qemu_version = host::command("qemu-system-aarch64")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()
-        .map(|o| host::first_line(&o.stdout).to_vec())
-        .unwrap_or_default();
+    let qemu_version = host::qemu_version(&arm.qemu);
     let load_start = host::loadavg();
     // A signal that ended one of the probes above (git, mcopy, QEMU's version,
     // sysctl) without failing the soak: stop before any report, as the trap did.

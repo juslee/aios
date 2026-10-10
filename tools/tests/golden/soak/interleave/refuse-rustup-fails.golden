@@ -1,0 +1,14 @@
+exit 2
+--- stdout
+soak: arm A: installing its pinned toolchain (rustup toolchain install) -> <ROOT>/repo/out/arm-A/build.log
+--- stderr
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+error: fake rustup cannot install the toolchain
+soak: error: arm A: rustup toolchain install failed in <ROOT>/arms/a (installing each arm's pinned toolchain needs rustup 1.28 or later, and network access the first time); full log: <ROOT>/repo/out/arm-A/build.log
+--- out: arm-A/build.log
+--- file arm-A/build.log
+error: fake rustup cannot install the toolchain
+--- boots: 0
+--- rustup.log
+toolchain install --no-self-update in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset
+--- just.log

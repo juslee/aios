@@ -154,6 +154,14 @@ pub fn uname() -> Vec<u8> {
 /// The first 16 hex digits of the SHA-256 of `path` (`sha256_of FILE | cut -c1-16`),
 /// from `sha256sum`, or `shasum -a 256` where there is none.
 pub fn sha256_16(path: &Path) -> Result<String> {
+    let mut digest = sha256(path)?;
+    digest.truncate(16);
+    Ok(digest)
+}
+
+/// The SHA-256 of `path` in hex (the first field of `sha256sum`'s line), from
+/// `sha256sum`, or `shasum -a 256` where there is none.
+pub fn sha256(path: &Path) -> Result<String> {
     let mut cmd = if find_in_path("sha256sum").is_some() {
         command("sha256sum")
     } else {
@@ -173,7 +181,100 @@ pub fn sha256_16(path: &Path) -> Result<String> {
         .split(|&b| b == b' ')
         .next()
         .unwrap_or(b"");
-    Ok(String::from_utf8_lossy(&digest[..digest.len().min(16)]).into_owned())
+    Ok(String::from_utf8_lossy(digest).into_owned())
+}
+
+/// The first line of `qemu --version` (empty when it cannot run), with
+/// QEMU's stderr passed through.
+pub fn qemu_version(qemu: &OsStr) -> Vec<u8> {
+    command(qemu)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .map(|o| first_line(&o.stdout).to_vec())
+        .unwrap_or_default()
+}
+
+/// The toolchain channel `rust-toolchain.toml` in `root` pins: the quoted
+/// `channel` value of its `[toolchain]` table.
+pub fn toolchain_channel(root: &Path) -> Result<String> {
+    let path = root.join("rust-toolchain.toml");
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    let mut table = "";
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            table = line;
+            continue;
+        }
+        if table != "[toolchain]" {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "channel" {
+            continue;
+        }
+        let value = value.trim();
+        if let Some(channel) = value
+            .strip_prefix('"')
+            .and_then(|v| v.split_once('"'))
+            .map(|(c, _)| c)
+            .filter(|c| !c.is_empty())
+        {
+            return Ok(channel.to_string());
+        }
+    }
+    bail!(
+        "{} has no channel = \"...\" in its [toolchain] table",
+        path.display()
+    )
+}
+
+/// `rustc --version` run in `dir`, without the caller's `RUSTUP_TOOLCHAIN`, so
+/// rustup picks the toolchain `dir`'s `rust-toolchain.toml` pins.
+pub fn rustc_version(dir: &Path) -> Result<String> {
+    let out = command("rustc")
+        .arg("--version")
+        .current_dir(dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .with_context(|| format!("cannot run rustc --version in {}", dir.display()))?;
+    if !out.status.success() {
+        bail!(
+            "rustc --version failed in {} (is the toolchain its rust-toolchain.toml pins installed?)",
+            dir.display()
+        );
+    }
+    Ok(String::from_utf8_lossy(first_line(&out.stdout)).into_owned())
+}
+
+/// Whether commit `base` is an ancestor of `HEAD` in the checkout `root`
+/// (`git merge-base --is-ancestor`): `Err` when git cannot tell (an unknown
+/// commit, or not a checkout).
+pub fn contains_commit(root: &Path, base: &str) -> Result<bool> {
+    let status = command("git")
+        .arg("-C")
+        .arg(root)
+        .args(["merge-base", "--is-ancestor", base, "HEAD"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("cannot run git merge-base")?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => bail!(
+            "git merge-base --is-ancestor {base} HEAD failed in {}",
+            root.display()
+        ),
+    }
 }
 
 /// The commit under test: `git rev-parse --short HEAD` (or `unknown`), with a
@@ -323,7 +424,37 @@ mod tests {
         std::fs::write(&file, b"abc").expect("write");
         // SHA-256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
         assert_eq!(sha256_16(&file).expect("sha"), "ba7816bf8f01cfea");
+        assert_eq!(
+            sha256(&file).expect("sha"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         assert!(sha256_16(&dir.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toolchain_channel_reads_the_toolchain_table() {
+        let dir = std::env::temp_dir().join(format!("aios-host-tc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("rust-toolchain.toml");
+        std::fs::write(
+            &file,
+            "[other]\nchannel = \"no\"\n\n[toolchain]\n# pinned\nchannel = \"nightly-2026-10-09\" # date\ntargets = []\n",
+        )
+        .expect("write");
+        assert_eq!(
+            toolchain_channel(&dir).expect("a channel"),
+            "nightly-2026-10-09"
+        );
+        std::fs::write(&file, "[toolchain]\nchannel = nightly\n").expect("write");
+        assert!(toolchain_channel(&dir).is_err());
+        std::fs::remove_file(&file).expect("remove");
+        assert!(toolchain_channel(&dir).is_err());
+        // The workspace's own file.
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        assert!(toolchain_channel(&workspace)
+            .expect("the workspace pins a channel")
+            .starts_with("nightly-"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -354,6 +485,23 @@ mod tests {
         std::fs::write(dir.join("f"), "1").expect("write");
         git(&["add", "f"]);
         git(&["commit", "-q", "-m", "one"]);
+        let first = String::from_utf8(
+            output_of("git", &["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"),
+        )
+        .expect("hex");
+        std::fs::write(dir.join("g"), "1").expect("write");
+        git(&["add", "g"]);
+        git(&["commit", "-q", "-m", "two"]);
+        let second = String::from_utf8(
+            output_of("git", &["rev-parse", "HEAD"], Some(&dir)).expect("rev-parse"),
+        )
+        .expect("hex");
+        assert!(contains_commit(&dir, &first).expect("known"));
+        assert!(contains_commit(&dir, &second).expect("known"));
+        git(&["checkout", "-q", "--detach", &first]);
+        assert!(!contains_commit(&dir, &second).expect("known"));
+        assert!(contains_commit(&dir, &"0".repeat(40)).is_err());
+        git(&["checkout", "-q", "main"]);
         let rev = git_rev(&dir);
         assert!(
             rev.len() >= 7 && rev.bytes().all(|b| b.is_ascii_hexdigit()),

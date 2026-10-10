@@ -1,0 +1,8 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: rustup not found in PATH: installing each arm's pinned toolchain needs rustup 1.28 or later, and network access the first time
+--- out: (none)
+--- boots: 0
+--- rustup.log
+--- just.log

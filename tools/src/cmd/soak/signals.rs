@@ -28,6 +28,25 @@ use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGTSTP};
 /// The signals caught during a soak, and the exit status each one leads to.
 const CAUGHT: [(i32, usize); 4] = [(SIGINT, 130), (SIGTERM, 143), (SIGHUP, 129), (SIGQUIT, 131)];
 
+/// The name of the signal that leads to exit status `code` (`SIGINT` for
+/// 130), as the interleaved report's status line names it.
+pub fn name_of_exit(code: u8) -> String {
+    const NAMES: [(i32, &str); 4] = [
+        (SIGINT, "SIGINT"),
+        (SIGTERM, "SIGTERM"),
+        (SIGHUP, "SIGHUP"),
+        (SIGQUIT, "SIGQUIT"),
+    ];
+    CAUGHT
+        .iter()
+        .find(|(_, exit)| *exit == usize::from(code))
+        .and_then(|(signal, _)| NAMES.iter().find(|(s, _)| s == signal))
+        .map_or_else(
+            || format!("exit status {code}"),
+            |(_, name)| name.to_string(),
+        )
+}
+
 /// Records the last of SIGINT, SIGTERM, SIGHUP or SIGQUIT to arrive, instead of
 /// letting it end the process, so the caller can stop QEMU and clean up first;
 /// and handles SIGTSTP (see [`Interrupts::defer_suspend`]).
@@ -108,5 +127,19 @@ impl Drop for DeferSuspend<'_> {
         if self.interrupts.take_suspend() {
             self.interrupts.stop_self();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_statuses_name_their_signals() {
+        assert_eq!(name_of_exit(130), "SIGINT");
+        assert_eq!(name_of_exit(143), "SIGTERM");
+        assert_eq!(name_of_exit(129), "SIGHUP");
+        assert_eq!(name_of_exit(131), "SIGQUIT");
+        assert_eq!(name_of_exit(2), "exit status 2");
     }
 }

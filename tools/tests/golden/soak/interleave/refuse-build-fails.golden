@@ -1,0 +1,85 @@
+exit 2
+--- stdout
+soak: arm A: installing its pinned toolchain (rustup toolchain install) -> <ROOT>/repo/out/arm-A/build.log
+soak: arm A: building ESP image (just disk) -> <ROOT>/repo/out/arm-A/build.log
+--- stderr
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+build line 11
+build line 12
+build line 13
+build line 14
+build line 15
+build line 16
+build line 17
+build line 18
+build line 19
+build line 20
+build line 21
+build line 22
+build line 23
+build line 24
+build line 25
+build line 26
+build line 27
+build line 28
+build line 29
+build line 30
+build line 31
+build line 32
+build line 33
+build line 34
+build line 35
+build line 36
+build line 37
+build line 38
+build line 39
+build line 40
+soak: error: arm A: build failed (just disk); full log: <ROOT>/repo/out/arm-A/build.log
+--- out: arm-A/build.log
+--- file arm-A/build.log
+fake rustup: toolchain installed
+build line 1
+build line 2
+build line 3
+build line 4
+build line 5
+build line 6
+build line 7
+build line 8
+build line 9
+build line 10
+build line 11
+build line 12
+build line 13
+build line 14
+build line 15
+build line 16
+build line 17
+build line 18
+build line 19
+build line 20
+build line 21
+build line 22
+build line 23
+build line 24
+build line 25
+build line 26
+build line 27
+build line 28
+build line 29
+build line 30
+build line 31
+build line 32
+build line 33
+build line 34
+build line 35
+build line 36
+build line 37
+build line 38
+build line 39
+build line 40
+--- boots: 0
+--- rustup.log
+toolchain install --no-self-update in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset
+--- just.log
+disk in <ROOT>/arms/a RUSTUP_TOOLCHAIN=unset CARGO_TARGET_DIR=unset

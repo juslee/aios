@@ -1,0 +1,9 @@
+exit 2
+--- stdout
+--- stderr
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+soak: error: the arms boot different firmware (arm A: <ROOT>/fw.fd, arm B: <ROOT>/fw2.fd); every arm must name one firmware file
+--- out: (none)
+--- boots: 0
+--- rustup.log
+--- just.log

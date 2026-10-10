@@ -1,6 +1,7 @@
 //! `aios soak`: boot AIOS repeatedly under QEMU and classify every boot, or
 //! classify saved serial logs (`--classify`). A port of `scripts/soak-qemu.sh`
-//! (deleted in R4; the parity oracle is its blob at `212df62`).
+//! (deleted in R4; the parity oracle is its blob at `212df62`). With `--arm`
+//! (crash-fix step 1a), soak two to four checkouts interleaved ([`interleave`]).
 //!
 //! The command line is parsed by hand, in the script's `case` order, because
 //! the script's syntax is not clap's: `key=value` aliases, options only before
@@ -20,6 +21,7 @@
 pub mod awk;
 pub mod classify;
 pub mod host;
+pub mod interleave;
 pub mod report;
 pub mod runner;
 pub mod signals;
@@ -50,6 +52,7 @@ const BOOT_BUDGET_SECS: u64 = 20;
 
 /// `aios soak --help`.
 pub const USAGE: &str = r#"Usage: aios soak [options] [key=value ...]
+       aios soak --arm DIR --arm DIR [--arm DIR [--arm DIR]] [options]
        aios soak --classify [--stall-secs S] [--out DIR] LOG...
        just soak [options] [key=value ...]
 
@@ -141,7 +144,13 @@ Options:
   --fresh-data       fresh zeroed 256 MiB data disk for every boot (default)
   --reuse-data       boot every run on the repository's data.img, so disk
                      state carries over between boots (like `just run`)
-  --report-only      exit 0 even when some boots are not CLEAN
+  --report-only      exit 0 even when some boots are not CLEAN (not with --arm,
+                     which is always report-only)
+  --arm DIR          interleave mode (see below); give it 2 to 4 times
+  --allow-mixed-toolchains
+                     with --arm: let the arms' toolchain channels and
+                     rustc versions differ (a toolchain-change pair); the
+                     report says so
   --classify LOG...  classify existing log files instead of booting; with
                      --out, number them in the order given, take each one's
                      timing from its "[soak] meta" line, and give "-" for what
@@ -149,7 +158,7 @@ Options:
   -h, --help         show this help
 
 key=value aliases (so `just soak runs=5 mode=gpu` works): runs=N secs=T
-mode=text|gpu out=DIR stall_secs=S report_only=1
+mode=text|gpu out=DIR stall_secs=S report_only=1 arm=DIR
 
 `just soak` runs this command from the directory you invoke just in, so
 relative out= and --classify paths resolve against that directory. The soak
@@ -173,6 +182,47 @@ src=g1 line; then the whole lines g1_line and tw_line. "-" means unreadable,
 or no such line. summary.md has the settings, the class counts, the CLEAN
 rate with its 95% Wilson interval, the mean Gate 1 IPC average over CLEAN
 boots, the tripwire counters by class, and the per-boot table.
+
+Interleave mode (--arm DIR, 2 to 4 times): soak 2 to 4 git checkouts (a
+worktree is fine) in one host session. They are labelled A to D in the order
+given, and A is the "previous" arm of every pair; the same DIR twice is an
+A/A control, built once. Each arm is built once (`rustup toolchain install`,
+then `just disk`, in DIR, without RUSTUP_TOOLCHAIN or CARGO_TARGET_DIR; both
+skipped with --no-build) and its ESP snapshotted; then --runs rounds boot
+every arm once, the arm order moving by one each round (A B, B A, A B, ...),
+each boot on a fresh data disk (--reuse-data is refused). This harness boots and classifies every arm,
+with its own QEMU arguments (an arm's justfile `run` recipe is not used).
+Before any build, it refuses (exit 2):
+  - a missing git, just, rustup, rustc, qemu-system-aarch64 or mcopy
+    (rustup is needed with --no-build too: `rustc --version` relies on it
+    picking each arm's toolchain);
+  - an arm that does not contain 7167d40 (#196: strict-NX firmware faults
+    every older kernel);
+  - arms whose `just --evaluate edk2_fw` do not name one absolute firmware
+    file;
+  - arms whose rust-toolchain.toml channels differ (unless
+    --allow-mixed-toolchains).
+After each arm's build: its `rustc --version`, run in DIR, must match arm
+A's (unless --allow-mixed-toolchains), and a failed `rustup toolchain
+install` is refused. The QEMU binary PATH resolves to (its version line and
+sha256) and the firmware's sha256 are checked again before and after every
+boot; a change stops the soak (exit 2), and the boot it happened during is
+not counted. A boot on which the UEFI stub never ran is a harness error: on
+an arm's first boot it stops the soak at once (exit 2), as in single mode;
+after that, 3 such boots in a row (in boot order, across arms) stop it
+(exit 2). Those boots stay in the reports, as INCONCLUSIVE.
+Output (default target/soak/<timestamp>-<mode>-arms): arm-X/ for each arm,
+a normal single-run directory (run-NN.log, summary.tsv row by row,
+build.log, and summary.md once the soak finishes); arms.tsv (each arm's
+checkout, commit, channel, rustc, kernel and QEMU arguments); boots.tsv
+(round, position and arm, then summary.tsv's columns, one row per boot in
+boot order); and summary.md, rewritten after every boot, whose status line
+reads "running (k of N boots)", "stopped (<reason>) after k of N boots" or
+"finished (N boots)", with the settings, the arms and each arm's class
+counts and CLEAN rate. Exit status: 0 when every boot ran, whatever the
+classes; 2 on a usage, preflight or setup error, or a stop for harness
+errors or a changed QEMU or firmware; 130, 143, 129 or 131 on a signal (the
+summary's status names it).
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
 Requires qemu-system-aarch64, just, mtools (for `just disk`) and the POSIX
@@ -209,6 +259,8 @@ pub enum Request {
         out: Option<OsString>,
     },
     Soak(Config),
+    /// `--arm DIR` two to four times: an interleaved soak.
+    Interleave(interleave::Request),
 }
 
 /// The value as a positive decimal integer, as `is_uint "$v" && [ "$v" -ge 1 ]`
@@ -240,7 +292,7 @@ fn show(v: &[u8]) -> String {
 
 /// The option a `--opt=value` or `key=value` word sets, and its value.
 fn assignment(arg: &[u8]) -> Option<(&'static str, &[u8])> {
-    const FORMS: [(&[u8], &str); 11] = [
+    const FORMS: [(&[u8], &str); 13] = [
         (b"--runs=", "runs"),
         (b"runs=", "runs"),
         (b"--secs=", "secs"),
@@ -252,6 +304,8 @@ fn assignment(arg: &[u8]) -> Option<(&'static str, &[u8])> {
         (b"--stall-secs=", "stall"),
         (b"stall_secs=", "stall"),
         (b"report_only=", "report_only"),
+        (b"--arm=", "arm"),
+        (b"arm=", "arm"),
     ];
     FORMS
         .iter()
@@ -271,6 +325,8 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     let mut report_only = false;
     let mut fresh_data = true;
     let mut classify = false;
+    let mut arms: Vec<OsString> = Vec::new();
+    let mut allow_mixed = false;
     let mut positional: Vec<OsString> = Vec::new();
 
     let mut i = 0;
@@ -287,12 +343,18 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                     stall = value;
                     stall_given = true;
                 }
+                "arm" => {
+                    if value.is_empty() {
+                        bail!("--arm needs a directory");
+                    }
+                    arms.push(value);
+                }
                 _ => report_only = truthy(value.as_bytes())?,
             }
             Ok(())
         };
         match arg {
-            b"--runs" | b"--secs" | b"--mode" | b"--out" | b"--stall-secs" => {
+            b"--runs" | b"--secs" | b"--mode" | b"--out" | b"--stall-secs" | b"--arm" => {
                 let Some(value) = args.get(i + 1) else {
                     bail!("option {} needs a value", show(arg));
                 };
@@ -301,6 +363,7 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
                     b"--secs" => "secs",
                     b"--mode" => "mode",
                     b"--out" => "out",
+                    b"--arm" => "arm",
                     _ => "stall",
                 };
                 set(key, value.clone())?;
@@ -312,6 +375,7 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
             b"--fresh-data" => fresh_data = true,
             b"--reuse-data" => fresh_data = false,
             b"--classify" => classify = true,
+            b"--allow-mixed-toolchains" => allow_mixed = true,
             b"-h" | b"--help" => return Ok(Request::Help),
             b"--" => {
                 positional = args[i + 1..].to_vec();
@@ -338,6 +402,9 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
         bail!("--stall-secs must be a positive integer");
     };
     if classify {
+        if !arms.is_empty() {
+            bail!("--arm cannot be combined with --classify");
+        }
         return Ok(Request::Classify {
             files: positional,
             stall_override: stall_given.then_some(stall_n),
@@ -371,7 +438,26 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
     if mode != "text" && mode != "gpu" {
         bail!("--mode must be text or gpu, got '{mode}'");
     }
-    Ok(Request::Soak(Config {
+    if arms.is_empty() && allow_mixed {
+        bail!("--allow-mixed-toolchains needs --arm");
+    }
+    if !arms.is_empty() {
+        if !(interleave::MIN_ARMS..=interleave::MAX_ARMS).contains(&arms.len()) {
+            bail!(
+                "--arm needs {} to {} arms, got {}",
+                interleave::MIN_ARMS,
+                interleave::MAX_ARMS,
+                arms.len()
+            );
+        }
+        if report_only {
+            bail!("--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes)");
+        }
+        if !fresh_data {
+            bail!("--reuse-data cannot be combined with --arm: every interleaved boot gets a fresh data disk");
+        }
+    }
+    let cfg = Config {
         runs_raw: show(runs.as_bytes()),
         runs: runs_n,
         secs_raw: secs_s,
@@ -382,7 +468,16 @@ pub fn parse(args: &[OsString], err: &mut dyn Write) -> Result<Request> {
         build,
         report_only,
         fresh_data,
-    }))
+    };
+    Ok(if arms.is_empty() {
+        Request::Soak(cfg)
+    } else {
+        Request::Interleave(interleave::Request {
+            cfg,
+            arms,
+            allow_mixed_toolchains: allow_mixed,
+        })
+    })
 }
 
 /// The one value every log's footer gives for `key`, `mixed` when they
@@ -516,6 +611,7 @@ pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Wri
             out,
         ),
         Request::Soak(cfg) => runner::run(&cfg, cwd, out, err),
+        Request::Interleave(req) => interleave::run(&req, cwd, out, err),
     }
 }
 
@@ -698,6 +794,70 @@ mod tests {
         assert_eq!(
             error(&["--stall-secs", "0", "--classify", "a.log"]),
             "--stall-secs must be a positive integer"
+        );
+    }
+
+    fn interleave(args: &[&str]) -> interleave::Request {
+        match parse_str(args).0 {
+            Ok(Request::Interleave(req)) => req,
+            other => panic!("{args:?}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arm_options_select_interleave_mode() {
+        let req = interleave(&["--arm", "a", "arm=b", "--arm=c", "runs=2", "--no-build"]);
+        assert_eq!(req.arms, os(&["a", "b", "c"]));
+        assert!(!req.allow_mixed_toolchains);
+        assert_eq!(
+            (req.cfg.runs, req.cfg.build, req.cfg.report_only),
+            (2, false, false)
+        );
+        assert!(req.cfg.fresh_data);
+        let req = interleave(&["--arm", ".", "--arm", ".", "--allow-mixed-toolchains"]);
+        assert_eq!(req.arms, os(&[".", "."]));
+        assert!(req.allow_mixed_toolchains);
+        // report_only=0 is not --report-only.
+        assert!(
+            !interleave(&["arm=a", "arm=b", "report_only=0"])
+                .cfg
+                .report_only
+        );
+    }
+
+    #[test]
+    fn arm_usage_errors() {
+        assert_eq!(error(&["--arm", "a"]), "--arm needs 2 to 4 arms, got 1");
+        assert_eq!(
+            error(&["arm=a", "arm=b", "arm=c", "arm=d", "arm=e"]),
+            "--arm needs 2 to 4 arms, got 5"
+        );
+        assert_eq!(error(&["--arm"]), "option --arm needs a value");
+        assert_eq!(error(&["arm=", "arm=b"]), "--arm needs a directory");
+        assert_eq!(
+            error(&["--arm", "a", "--arm", "b", "--report-only"]),
+            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes)"
+        );
+        assert_eq!(
+            error(&["report_only=1", "--arm", "a", "--arm", "b"]),
+            "--report-only cannot be combined with --arm: an interleaved soak is always report-only (it exits 0 whatever the classes)"
+        );
+        assert_eq!(
+            error(&["--arm", "a", "--arm", "b", "--reuse-data"]),
+            "--reuse-data cannot be combined with --arm: every interleaved boot gets a fresh data disk"
+        );
+        assert_eq!(
+            error(&["--allow-mixed-toolchains"]),
+            "--allow-mixed-toolchains needs --arm"
+        );
+        assert_eq!(
+            error(&["--arm", "a", "--classify", "x.log"]),
+            "--arm cannot be combined with --classify"
+        );
+        // The shared options are checked first, as in single mode.
+        assert_eq!(
+            error(&["--arm", "a", "runs=0"]),
+            "--runs must be a positive integer"
         );
     }
 

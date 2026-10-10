@@ -3,7 +3,8 @@
 #
 # Prints, as Markdown: git state (branch, dirty files, worktrees, unpushed
 # commits), open PRs with check status and a merge-ready verdict, main CI, the
-# newest soak of a main commit and the newest other soak, the .remember handoff,
+# newest soak of a main commit, the newest other soak and the newest interleaved
+# (aios soak --arm) soak, the .remember handoff,
 # knowledge notes changed since the last session, open needs-human issues, the
 # next unchecked step of the current phase doc, and a one-line docs-check summary.
 #
@@ -307,7 +308,10 @@ fi
 # uncommitted changes; everything else (branch commits, dirty trees, runs still
 # in progress) is reported separately so it is never read as main's state.
 # just soak runs the booted checkout's own tools build, so that commit names the
-# classifier too.
+# classifier too. An interleaved soak (aios soak --arm, a directory holding
+# arms.tsv) is one run: it is listed on its own, with the status line of its
+# top-level summary.md and each arm's CLEAN count from boots.tsv, and never as
+# the main soak; its arm-X/ directories (single-run files) are not listed.
 
 MAIN_TIP=$(git rev-parse -q --verify refs/remotes/origin/main 2>/dev/null || echo "")
 
@@ -375,17 +379,53 @@ print_soak() { # $1 = label, $2 = run dir, $3 = worktree, $4 = mtime
     fi
 }
 
+print_interleaved() { # $1 = run dir, $2 = worktree, $3 = mtime
+    local d=$1 b status
+    b=$(git -C "$2" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "(detached)")
+    status=$(grep -m 1 '^\*\*Status:\*\*' "$d/summary.md" 2>/dev/null | sed 's/^\*\*Status:\*\* *//')
+    echo "- newest interleaved soak: $(rel_path "$d") (worktree on \`$b\`, $(fmt_epoch "$3" '+%Y-%m-%d %H:%M'))"
+    echo "  - status: ${status:-not recorded (no summary.md)}"
+    # Columns by header name: arms.tsv's arm and commit, boots.tsv's arm and class.
+    # shellcheck disable=SC2016 # the backticks are literal Markdown, not expansions
+    awk -F'\t' '
+        FNR == 1 { file++; for (i = 1; i <= NF; i++) col[file, $i] = i; next }
+        file == 1 { a = $col[1, "arm"]; order[++n] = a; commit[a] = $col[1, "commit"]; next }
+        { a = $col[2, "arm"]; boots[a]++; if ($col[2, "class"] == "CLEAN") clean[a]++ }
+        END {
+            if (n == 0) { print "  - arms.tsv lists no arms"; exit }
+            line = "  - CLEAN per arm:"
+            for (i = 1; i <= n; i++) {
+                a = order[i]
+                line = line sprintf("%s arm %s `%s` %d/%d", (i > 1 ? ";" : ""), a, commit[a], clean[a], boots[a])
+            }
+            print line
+        }' "$d/arms.tsv" "$d/boots.tsv" 2>/dev/null
+}
+
 section "Soak"
 main_dir="" main_wt="" main_m=0
 other_dir="" other_wt="" other_m=0
+il_dir="" il_wt="" il_m=0
 while IFS= read -r wt; do
     [ -n "$wt" ] && [ -d "$wt/target/soak" ] || continue
     # A run is any directory under target/soak holding a summary: the default
     # is target/soak/<timestamp>-<mode>/, but just soak's out= can nest
     # runs deeper (e.g. target/soak/167/main-text-r1/).
-    find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv \) 2>/dev/null |
+    find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv -o -name arms.tsv \) 2>/dev/null |
         sed 's|/[^/]*$||' | sort -u >"$TMP/soak-dirs"
     while IFS= read -r d; do
+        # An arm-X/ directory of an interleaved soak is part of that run.
+        [ -f "${d%/*}/arms.tsv" ] && continue
+        if [ -f "$d/arms.tsv" ]; then
+            m=$(mtime "$d/arms.tsv")
+            for f in summary.md boots.tsv; do
+                [ -f "$d/$f" ] && [ "$(mtime "$d/$f")" -gt "$m" ] && m=$(mtime "$d/$f")
+            done
+            if [ "$m" -gt "$il_m" ]; then
+                il_m=$m il_dir=$d il_wt=$wt
+            fi
+            continue
+        fi
         if [ -f "$d/summary.md" ]; then
             m=$(mtime "$d/summary.md")
         elif [ -f "$d/summary.tsv" ]; then
@@ -404,7 +444,7 @@ while IFS= read -r wt; do
 done <<EOF
 $WORKTREES
 EOF
-if [ -z "$main_dir$other_dir" ]; then
+if [ -z "$main_dir$other_dir$il_dir" ]; then
     echo "- no soak results (no summary.* under target/soak/ in any worktree); run \`just soak\` on main"
 else
     if [ -n "$main_dir" ]; then
@@ -414,6 +454,9 @@ else
     fi
     if [ -n "$other_dir" ]; then
         print_soak "newest other soak (not main's state)" "$other_dir" "$other_wt" "$other_m"
+    fi
+    if [ -n "$il_dir" ]; then
+        print_interleaved "$il_dir" "$il_wt" "$il_m"
     fi
 fi
 

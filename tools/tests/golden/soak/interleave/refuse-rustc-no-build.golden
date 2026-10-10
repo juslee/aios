@@ -1,0 +1,9 @@
+exit 2
+--- stdout
+--- stderr
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+soak: error: the arms' compilers differ (arm A: rustc 1.99.0-nightly (fake 2026-10-09), arm B: rustc 1.98.0-nightly (fake 2026-10-01)); pass --allow-mixed-toolchains to soak a toolchain change
+--- out: 
+--- boots: 0
+--- rustup.log
+--- just.log
