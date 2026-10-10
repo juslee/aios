@@ -83,7 +83,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
       - run: cargo fmt --check -p aios-tools
       - run: cargo clippy -p aios-tools --all-targets -- -D warnings
       - run: cargo test -p aios-tools
