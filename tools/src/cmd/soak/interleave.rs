@@ -446,9 +446,16 @@ fn tsv_cell(v: &[u8]) -> Vec<u8> {
 /// newer than the binary, as after an edit made or reverted since the build;
 /// or the stamp says `source dirty` and no cause of that remains), when it has
 /// no stamp (a plain cargo build), and when git cannot test the inputs or the
-/// stamp, rather than show the commit clean. Read once, at the start of the soak and before any arm
-/// build, so a commit or branch switch in that checkout while the arms build
-/// cannot be named as the classifier's.
+/// stamp, rather than show the commit clean. `HEAD` is read once, as a full
+/// id that both the row and the stamp check use, so a commit in that checkout
+/// during the check cannot make the row name one commit while the stamp was
+/// checked against another. The binary is hashed by its path: `just soak`
+/// runs a hard link to the installed binary made for the soak, which a `just
+/// tools` rename meanwhile cannot replace, so the hashed file is the one
+/// running (a direct run of `installed/aios` has no such guard). Read once,
+/// at the start of the soak and before any arm build, so a commit or branch
+/// switch in that checkout while the arms build cannot be named as the
+/// classifier's.
 fn harness_rev() -> Vec<u8> {
     let Ok(exe) = std::env::current_exe() else {
         return b"unknown".to_vec();
@@ -456,18 +463,23 @@ fn harness_rev() -> Vec<u8> {
     let (rev, notes) = match exe.parent().and_then(|dir| host::repo_root(dir).ok()) {
         None => ("unknown".to_string(), Vec::new()),
         Some(root) => {
-            let commit = host::git_output(
-                &[
-                    OsStr::new("-C"),
-                    root.as_os_str(),
-                    OsStr::new("rev-parse"),
-                    OsStr::new("--short"),
-                    OsStr::new("HEAD"),
-                ],
-                None,
-            )
-            .map(|v| String::from_utf8_lossy(&v).into_owned())
-            .unwrap_or_else(|| "unknown".to_string());
+            let head = host::head_commit(&root);
+            let commit = head
+                .as_deref()
+                .and_then(|head| {
+                    host::git_output(
+                        &[
+                            OsStr::new("-C"),
+                            root.as_os_str(),
+                            OsStr::new("rev-parse"),
+                            OsStr::new("--short"),
+                            OsStr::new(head),
+                        ],
+                        None,
+                    )
+                })
+                .map(|v| String::from_utf8_lossy(&v).into_owned())
+                .unwrap_or_else(|| "unknown".to_string());
             let mut notes = Vec::new();
             let rev = match host::tools_inputs_dirty(&root) {
                 Some(false) => commit,
@@ -477,7 +489,7 @@ fn harness_rev() -> Vec<u8> {
                     commit
                 }
             };
-            match host::tools_stamp(&root, &exe) {
+            match head.and_then(|head| host::tools_stamp(&root, &exe, &head)) {
                 Some(host::ToolsStamp::Fresh) => {}
                 Some(host::ToolsStamp::Mismatch) => {
                     notes.push("binary not built from this commit (stale stamp; run just tools)")

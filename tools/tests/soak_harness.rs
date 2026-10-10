@@ -4,9 +4,11 @@
 //! - `harness_goldens_match_aios` runs every scenario with aios, in parallel, and
 //!   compares the normalised stdout, stderr, output files and QEMU arguments with
 //!   `tests/golden/soak/harness/<scenario>.golden`. It also checks the raw
-//!   timing the normalisation hides. The goldens were recorded from the deleted
-//!   `scripts/soak-qemu.sh` (R4's oracle) and are kept by aios since crash-fix
-//!   step 1a split its classes; `AIOS_BLESS_GOLDENS=1` rewrites them from aios.
+//!   timing the normalisation hides. The goldens from before crash-fix step 1a
+//!   were recorded from the deleted `scripts/soak-qemu.sh` (R4's oracle) and
+//!   are kept by aios since step 1a split its classes; the `tripwire`
+//!   scenario, new in step 1a (the script wrote no tripwire columns), was
+//!   recorded from aios. `AIOS_BLESS_GOLDENS=1` rewrites them all from aios.
 //! - `sighup_and_sigquit_stop_qemu_and_clean_up` covers the two signals the
 //!   script did not handle (the port exits 129 or 131 instead of leaving QEMU
 //!   running).

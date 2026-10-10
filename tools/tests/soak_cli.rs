@@ -5,9 +5,11 @@
 //!   `exit N`, stdout and stderr (and, for a case with `--out DIR` or
 //!   `out=DIR`, the files written there) with
 //!   `tests/golden/soak/cli/<case>.golden`.
-//!   The goldens were recorded from the deleted `scripts/soak-qemu.sh` (R4's
-//!   oracle) and are kept by aios since crash-fix step 1a split its classes;
-//!   `AIOS_BLESS_GOLDENS=1` rewrites them from aios.
+//!   The goldens from before crash-fix step 1a were recorded from the deleted
+//!   `scripts/soak-qemu.sh` (R4's oracle) and are kept by aios since step 1a
+//!   split its classes; the `classify-out*` cases, new in step 1a (the script
+//!   had no `--out` for `--classify`), were recorded from aios.
+//!   `AIOS_BLESS_GOLDENS=1` rewrites them all from aios.
 //! - `help_prints_the_usage_whatever_came_before` and
 //!   `classify_works_outside_a_git_checkout` cover the rest.
 //!

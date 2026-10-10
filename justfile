@@ -137,11 +137,33 @@ run-direct: build
 # so in a single soak the commit summary.md records names the classifier as well as the kernel;
 # with --arm, the top-level summary.md's Harness row names the classifier and each
 # arm-X/summary.md the arm's kernel commit.
+# The recipe runs a hard link to installed/aios (and its stamp) made for the
+# soak in target/tools/.soak.XXXXXX/, as the shim's guard does: a `just tools`
+# rename during the soak replaces only installed/aios, so the binary the
+# Harness row's stamp check hashes is the one running. A rename between the
+# two links leaves a pair that does not match, which the row reports as a
+# stale stamp. The shell outlives a signal the soak handles (no-op traps) and
+# exits with the soak's status once the links are removed.
 # Soak-test boots: N sequential QEMU boots (or, with --arm, N rounds over 2-4 checkouts), each classified PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN
 [no-cd]
 [positional-arguments]
 soak *args: tools
-    {{ quote(justfile_directory() / "target" / "tools" / "installed" / "aios") }} soak "$@"
+    #!/bin/sh
+    set -u
+    tools={{ quote(justfile_directory() / "target" / "tools") }}
+    run_dir=
+    trap 'if [ -n "$run_dir" ]; then rm -f "$run_dir/aios" "$run_dir/aios.stamp"; rmdir "$run_dir"; fi 2>/dev/null' EXIT
+    trap ':' HUP INT QUIT TERM
+    if ! run_dir=$(mktemp -d "$tools/.soak.XXXXXX") || ! ln "$tools/installed/aios" "$run_dir/aios"; then
+        echo "just soak: cannot hard-link target/tools/installed/aios into target/tools to run it; check that target/tools is writable" >&2
+        exit 2
+    fi
+    if [ -e "$tools/installed/aios.stamp" ]; then
+        ln "$tools/installed/aios.stamp" "$run_dir/aios.stamp" 2>/dev/null || :
+    fi
+    "$run_dir/aios" soak "$@"
+    status=$?
+    exit "$status"
 
 # kernel is no_std and excluded; the tools crate is excluded too and tested
 # separately with `cargo test -p aios-tools` in CI's Tools (host) job, which has
@@ -191,7 +213,10 @@ test:
 # unmerged input commit look merged.
 # The shim treats a missing or mismatched stamp as stale, and repeats the dirty
 # test on a dirty stamp; the inputs list, the dirty test and the format must
-# match the shim's.
+# match the shim's, and those of tools/src/cmd/soak/host.rs (TOOLS_INPUTS,
+# tools_inputs_dirty, tools_stamp), which reads the stamp for a soak's Harness
+# row; its tests check the inputs list and the exclude anchors against this
+# recipe and the shim.
 # Build the host tools binary target/tools/installed/aios (run through .claude/hooks/aios)
 tools:
     #!/bin/sh

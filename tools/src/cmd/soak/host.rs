@@ -389,8 +389,9 @@ pub fn git_rev_of(root: &Path, commit: &str) -> String {
     rev
 }
 
-/// The host tools' build inputs, as the justfile's `tools` recipe lists them
-/// in `inputs`: cargo reads untracked and ignored files among them (a
+/// The host tools' build inputs, as the justfile's `tools` recipe and the
+/// `.claude/hooks/aios` shim list them in `inputs` (a test checks all three
+/// agree): cargo reads untracked and ignored files among them (a
 /// `tools/build.rs`, a legacy `rust-toolchain`, a `.cargo/config`) as well as
 /// tracked ones.
 const TOOLS_INPUTS: [&str; 8] = [
@@ -404,6 +405,12 @@ const TOOLS_INPUTS: [&str; 8] = [
     "justfile",
 ];
 
+/// The directory inputs the dirty test's exclude pathspecs are anchored
+/// under, and the editor and Finder files they leave out, as the `tools`
+/// recipe and the shim write them (`':(exclude,glob)tools/**/.DS_Store'` …).
+const TOOLS_EXCLUDE_DIRS: [&str; 3] = ["tools", "shared", ".cargo"];
+const TOOLS_JUNK: [&str; 5] = [".DS_Store", "*.swp", "*.swo", "*~", "*.rs.bk"];
+
 /// Whether the checkout `root` holds host-tools build inputs that its `HEAD`
 /// does not: the `tools` recipe's own test, so a harness the recipe stamps
 /// `source dirty` for uncommitted, untracked or ignored inputs reads dirty
@@ -416,7 +423,6 @@ const TOOLS_INPUTS: [&str; 8] = [
 /// files (fsmonitor, the untracked cache, a minimal `checkStat`, an ignored
 /// ctime) turned off. `None` when git cannot tell.
 pub fn tools_inputs_dirty(root: &Path) -> Option<bool> {
-    const JUNK: [&str; 5] = [".DS_Store", "*.swp", "*.swo", "*~", "*.rs.bk"];
     let mut work_tree = OsString::from("--work-tree=");
     work_tree.push(root.as_os_str());
     let mut status: Vec<OsString> = [
@@ -446,9 +452,10 @@ pub fn tools_inputs_dirty(root: &Path) -> Option<bool> {
         .map(OsString::from),
     );
     status.extend(TOOLS_INPUTS.iter().map(OsString::from));
-    for dir in ["tools", "shared", ".cargo"] {
+    for dir in TOOLS_EXCLUDE_DIRS {
         status.extend(
-            JUNK.iter()
+            TOOLS_JUNK
+                .iter()
                 .map(|junk| OsString::from(format!(":(exclude,glob){dir}/**/{junk}"))),
         );
     }
@@ -491,14 +498,17 @@ pub enum ToolsStamp {
     DirtyGone,
 }
 
-/// [`ToolsStamp`] for the binary `exe` in the checkout `root`, in the shim's
-/// order: the mtime test, then the stamp, then, for `source dirty`, the
-/// recipe's dirty causes (uncommitted, untracked, ignored or index-flagged
-/// inputs by [`tools_inputs_dirty`], a test git cannot run counting as one;
-/// no `origin/main`; `HEAD` input changes that `origin/main` lacks). `None`
-/// when `exe` has no stamp, or its mtime or git's view of `HEAD` and `exe`
+/// [`ToolsStamp`] for the binary `exe` in the checkout `root` whose `HEAD`
+/// was read as the commit `head` (a full id, so a commit or checkout in
+/// `root` meanwhile cannot make the stamp be checked against a tree other
+/// than the commit the caller names), in the shim's order: the mtime test,
+/// then the stamp, then, for `source dirty`, the recipe's dirty causes
+/// (uncommitted, untracked, ignored or index-flagged inputs by
+/// [`tools_inputs_dirty`], a test git cannot run counting as one; no
+/// `origin/main`; `head` input changes that `origin/main` lacks). `None`
+/// when `exe` has no stamp, or its mtime or git's view of `head` and `exe`
 /// cannot be read.
-pub fn tools_stamp(root: &Path, exe: &Path) -> Option<ToolsStamp> {
+pub fn tools_stamp(root: &Path, exe: &Path, head: &str) -> Option<ToolsStamp> {
     let have = std::fs::read(exe.with_file_name("aios.stamp")).ok()?;
     let built = std::fs::metadata(exe).and_then(|m| m.modified()).ok()?;
     if TOOLS_INPUTS
@@ -507,7 +517,10 @@ pub fn tools_stamp(root: &Path, exe: &Path) -> Option<ToolsStamp> {
     {
         return Some(ToolsStamp::InputNewer);
     }
-    let mut ls: Vec<&OsStr> = ["ls-tree", "HEAD", "--"].iter().map(OsStr::new).collect();
+    let mut ls: Vec<&OsStr> = ["ls-tree", head, "--"]
+        .into_iter()
+        .map(OsStr::new)
+        .collect();
     ls.extend(TOOLS_INPUTS.iter().map(OsStr::new));
     let src = git_output(&ls, Some(root))?;
     let sum = git_output(
@@ -533,7 +546,7 @@ pub fn tools_stamp(root: &Path, exe: &Path) -> Option<ToolsStamp> {
     };
     Some(match state {
         b"clean" => ToolsStamp::Fresh,
-        b"dirty" if tools_dirty_cause(root) => ToolsStamp::Fresh,
+        b"dirty" if tools_dirty_cause(root, head) => ToolsStamp::Fresh,
         b"dirty" => ToolsStamp::DirtyGone,
         _ => ToolsStamp::Mismatch,
     })
@@ -564,9 +577,10 @@ fn newer_file(path: &Path, built: std::time::SystemTime) -> bool {
 
 /// Whether the `tools` recipe would stamp a build in `root` `source dirty`
 /// now, by the shim's `dirty_cause`: [`tools_inputs_dirty`] (or git cannot
-/// tell), no `refs/remotes/origin/main`, or `HEAD` input changes since its
-/// merge base with `origin/main`.
-fn tools_dirty_cause(root: &Path) -> bool {
+/// tell), no `refs/remotes/origin/main`, or input changes in the commit
+/// `head` (`HEAD`, read once by the caller) since its merge base with
+/// `origin/main`.
+fn tools_dirty_cause(root: &Path, head: &str) -> bool {
     if tools_inputs_dirty(root) != Some(false) {
         return true;
     }
@@ -574,18 +588,14 @@ fn tools_dirty_cause(root: &Path) -> bool {
     if git_output(&["rev-parse", "--verify", "-q", origin], Some(root)).is_none() {
         return true;
     }
-    let Some(base) = git_output(&["merge-base", "HEAD", origin], Some(root)) else {
+    let Some(base) = git_output(&["merge-base", head, origin], Some(root)) else {
         return true;
     };
     let mut diff: Vec<&OsStr> = ["diff-tree", "--quiet", "-r"]
         .iter()
         .map(OsStr::new)
         .collect();
-    diff.extend([
-        OsStr::from_bytes(&base),
-        OsStr::new("HEAD"),
-        OsStr::new("--"),
-    ]);
+    diff.extend([OsStr::from_bytes(&base), OsStr::new(head), OsStr::new("--")]);
     diff.extend(TOOLS_INPUTS.iter().map(OsStr::new));
     git_output(&diff, Some(root)).is_none()
 }
@@ -665,6 +675,40 @@ pub fn repo_root(cwd: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`TOOLS_INPUTS`], [`TOOLS_EXCLUDE_DIRS`] and [`TOOLS_JUNK`] are copies
+    /// of the justfile `tools` recipe's and the `.claude/hooks/aios` shim's
+    /// `inputs` list and exclude pathspecs: a list changed there and not here
+    /// would make every Harness row read stale or miss dirty inputs.
+    #[test]
+    fn tools_inputs_match_the_recipe_and_the_shim() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut excludes: Vec<String> = TOOLS_EXCLUDE_DIRS
+            .iter()
+            .flat_map(|dir| {
+                TOOLS_JUNK
+                    .iter()
+                    .map(move |junk| format!("{dir}/**/{junk}"))
+            })
+            .collect();
+        excludes.sort();
+        for file in ["justfile", ".claude/hooks/aios"] {
+            let text = std::fs::read_to_string(root.join(file)).expect("read");
+            let lists: Vec<&str> = text
+                .lines()
+                .filter_map(|l| l.trim_start().strip_prefix("inputs='"))
+                .map(|rest| rest.split('\'').next().unwrap_or_default())
+                .collect();
+            assert_eq!(lists, [TOOLS_INPUTS.join(" ")], "{file}: inputs='...'");
+            let mut found: Vec<String> = text
+                .split("':(exclude,glob)")
+                .skip(1)
+                .map(|rest| rest.split('\'').next().unwrap_or_default().to_string())
+                .collect();
+            found.sort();
+            assert_eq!(found, excludes, "{file}: exclude pathspecs");
+        }
+    }
 
     #[test]
     fn chomp_and_first_line_follow_the_shell() {
@@ -899,10 +943,14 @@ mod tests {
         let stamp_path = dir.join("installed/aios.stamp");
         let stamped = |stamp: &[u8]| {
             std::fs::write(&stamp_path, stamp).expect("write");
-            tools_stamp(&dir, &exe)
+            tools_stamp(&dir, &exe, &head_commit(&dir).expect("head"))
         };
         install("binary");
-        assert_eq!(tools_stamp(&dir, &exe), None, "no stamp");
+        assert_eq!(
+            tools_stamp(&dir, &exe, &head_commit(&dir).expect("head")),
+            None,
+            "no stamp"
+        );
         let clean = stamp_for(b"clean");
         let dirty = stamp_for(b"dirty");
         assert_eq!(stamped(&clean), Some(ToolsStamp::Fresh));
@@ -928,11 +976,19 @@ mod tests {
         assert_eq!(stamped(&clean), Some(ToolsStamp::InputNewer), "revert");
         set_mtime(&exe, 300);
         assert_eq!(stamped(&clean), Some(ToolsStamp::Fresh));
+        let three = head_commit(&dir).expect("head");
         std::fs::write(dir.join("tools/src/lib.rs"), "").expect("write");
         git(&["add", "tools/src/lib.rs"]);
         git(&["commit", "-q", "-m", "four"]);
         set_mtime(&exe, 300);
         assert_eq!(stamped(&clean), Some(ToolsStamp::Mismatch), "new commit");
+        // The stamp is checked against the commit the caller read, not
+        // whatever HEAD names by the time the check runs.
+        assert_eq!(
+            tools_stamp(&dir, &exe, &three),
+            Some(ToolsStamp::Fresh),
+            "pinned head"
+        );
         assert_eq!(
             stamped(&stamp_for(b"dirty")),
             Some(ToolsStamp::Fresh),
