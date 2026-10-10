@@ -7,8 +7,12 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::observability::metrics::METRICS;
+use crate::observability::tripwire;
 use crate::sched;
+use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use shared::lock::LockClass;
+use shared::tripwire::WakeSource;
 use shared::{NotificationId, MAX_NOTIFICATIONS, MAX_WAITERS_PER_NOTIFICATION};
 use spin::Mutex;
 
@@ -54,8 +58,13 @@ impl NotificationObject {
 
 /// System-wide notification table. Lock ordering: after SHARED_REGION_TABLE,
 /// before CHANNEL_TABLE (per deadlock-prevention §3).
-pub(super) static NOTIFICATION_TABLE: Mutex<[Option<NotificationObject>; MAX_NOTIFICATIONS]> =
-    Mutex::new([const { None }; MAX_NOTIFICATIONS]);
+/// An IRQ-class lock (`sync::IrqSpinLock`): the notification timeout scan
+/// try-locks it from the timer IRQ.
+pub(super) static NOTIFICATION_TABLE: IrqSpinLock<[Option<NotificationObject>; MAX_NOTIFICATIONS]> =
+    IrqSpinLock::new(
+        LockClass::NotificationTable,
+        [const { None }; MAX_NOTIFICATIONS],
+    );
 
 /// Per-thread result slot: stores the matched bits for a thread woken from
 /// notification_wait or IpcSelect. Indexed by ThreadId.0.
@@ -124,6 +133,9 @@ pub fn notification_signal(id: NotificationId, bits: u64) -> Result<(), i64> {
                 notif.word.fetch_and(!matched, Ordering::AcqRel);
                 to_wake[wake_count] = (waiter.tid, matched);
                 wake_count += 1;
+                // The slot was the waiter's last notification reference: its
+                // wake is in flight until the unblock below lands.
+                tripwire::mark_wake_pending(waiter.tid, WakeSource::Sig);
                 *slot = None; // Remove waiter
             }
         }
@@ -145,8 +157,9 @@ pub fn notification_signal(id: NotificationId, bits: u64) -> Result<(), i64> {
                 tid,
                 shared::SelectKind::Notification(id, matched),
                 matched,
+                WakeSource::SelSig,
             ) {
-                sched::unblock(tid);
+                sched::unblock(tid, WakeSource::Sig);
             }
         }
     }
@@ -276,6 +289,9 @@ pub fn notification_destroy(id: NotificationId) {
     for (i, slot) in notif.waiters.iter().enumerate() {
         if let Some(waiter) = slot {
             to_wake[i] = Some(waiter.tid);
+            // The destroyed notification held the waiter's last reference:
+            // its wake is in flight until the unblock below lands.
+            tripwire::mark_wake_pending(waiter.tid, WakeSource::NDestroy);
         }
     }
 
@@ -283,7 +299,7 @@ pub fn notification_destroy(id: NotificationId) {
 
     // Wake all blocked waiters — they'll see None in NOTIFY_RESULTS → timeout error.
     for tid in to_wake.iter().flatten() {
-        sched::unblock(*tid);
+        sched::unblock(*tid, WakeSource::NDestroy);
     }
 
     crate::kinfo!(Ipc, "Notification {} destroyed", id.0);
@@ -294,8 +310,18 @@ pub fn notification_destroy(id: NotificationId) {
 // ---------------------------------------------------------------------------
 
 /// Deadline storage for notification waits (indexed by tid).
-/// The timeout checker in the timer tick handler reads this.
-static NOTIFY_DEADLINES: Mutex<[u64; MAX_THREADS]> = Mutex::new([u64::MAX; MAX_THREADS]);
+/// The timeout checker in the timer tick handler reads this, so it is an
+/// IRQ-class lock (`sync::IrqSpinLock`). The heartbeat scan (`ipc::scan`)
+/// try-locks it too.
+pub(super) static NOTIFY_DEADLINES: IrqSpinLock<[u64; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::NotifyDeadlines, [u64::MAX; MAX_THREADS]);
+
+/// Visit the lock words of NOTIFY_DEADLINES and NOTIFICATION_TABLE, for
+/// `sync::held_by_stream`.
+pub(super) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    f(NOTIFY_DEADLINES.owner_word());
+    f(NOTIFICATION_TABLE.owner_word());
+}
 
 fn set_thread_deadline(tid: ThreadId, deadline: u64) {
     let mut deadlines = NOTIFY_DEADLINES.lock();
@@ -319,12 +345,21 @@ pub fn check_notification_timeouts(now: u64) {
     for tid_idx in 0..MAX_THREADS {
         if deadlines[tid_idx] <= now {
             deadlines[tid_idx] = u64::MAX;
+            let tid = ThreadId(tid_idx as u32);
+            // The deadline was the waiter's timeout waker: its wake is in
+            // flight until the unblock below lands, or is given up.
+            tripwire::mark_wake_pending(tid, WakeSource::Nto);
 
             // Check thread state to determine cleanup path.
             // Use try_lock: called from IRQ context (timer tick), must not block.
             let thread_state = match crate::task::THREAD_TABLE.try_lock() {
                 Some(table) => table[tid_idx].as_ref().map(|t| t.sched.state),
-                None => continue, // Contended — retry next tick.
+                None => {
+                    // Contended: the deadline is already cleared, so this
+                    // wake is abandoned (N3), not in flight.
+                    tripwire::clear_wake_pending(tid);
+                    continue;
+                }
             };
 
             match thread_state {
@@ -342,7 +377,7 @@ pub fn check_notification_timeouts(now: u64) {
                             }
                         }
                     }
-                    sched::unblock(ThreadId(tid_idx as u32));
+                    sched::unblock(tid, WakeSource::Nto);
                 }
                 Some(ThreadState::BlockedSelect) => {
                     // Select timeout — clean up SELECT_WAITERS entry.
@@ -350,10 +385,12 @@ pub fn check_notification_timeouts(now: u64) {
                     if let Some(mut sw) = super::select::SELECT_WAITERS.try_lock() {
                         sw[tid_idx] = None;
                     }
-                    sched::unblock(ThreadId(tid_idx as u32));
+                    sched::unblock(tid, WakeSource::Nsto);
                 }
                 _ => {
                     // Not in a waitable state — ignore (may have been woken already).
+                    // No unblock follows, so no wake is in flight.
+                    tripwire::clear_wake_pending(tid);
                 }
             }
         }

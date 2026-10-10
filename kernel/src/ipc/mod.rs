@@ -10,6 +10,7 @@
 mod channel;
 pub mod direct;
 pub mod notify;
+mod scan;
 pub mod select;
 pub mod shmem;
 mod tests;
@@ -18,6 +19,7 @@ mod timeout;
 use crate::syscall::IpcError;
 use crate::task::process::ProcessId;
 use crate::task::ThreadId;
+use shared::tripwire::WakeSource;
 use spin::Mutex;
 
 // Re-export IPC types from shared crate.
@@ -28,10 +30,20 @@ pub use shared::{
 
 // Re-export channel operations so callers see the same public API.
 pub use channel::{ipc_call, ipc_cancel, ipc_recv, ipc_reply, ipc_send};
+pub(crate) use scan::scan_wakers;
 pub(crate) use tests::channel_create_unchecked;
 pub use tests::init;
 pub(crate) use timeout::wake_with_error;
 pub use timeout::{check_timeouts, current_thread_id, sleep_ticks};
+
+/// Visit the lock words of the IPC's IRQ-class locks (TIMEOUT_QUEUE,
+/// WAKEUP_ERRORS, NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS), for
+/// `sync::held_by_stream`.
+pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    timeout::irq_lock_words(f);
+    notify::irq_lock_words(f);
+    f(select::SELECT_WAITERS.owner_word());
+}
 
 // ---------------------------------------------------------------------------
 // Message ring buffer
@@ -154,7 +166,13 @@ fn channel_slot_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Opti
         // `index()` only returns ids below MAX_CHANNELS, the length of the
         // table array, so this indexing cannot panic.
         Some(idx) => Ok(&mut table[idx]),
-        None => Err(IpcError::Einval as i64),
+        None => {
+            crate::observability::tripwire::bump(
+                shared::tripwire::Key::Badchan,
+                shared::tripwire::BadchanSite::Slot.index(),
+            );
+            Err(IpcError::Einval as i64)
+        }
     }
 }
 
@@ -231,12 +249,17 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
     // Wake any blocked threads with EPIPE (both receiver and caller).
     let wake_recv = ch.waiting_receiver;
     let wake_caller = ch.pending_caller;
+    // The channel held their last waiter references: their wakes are in
+    // flight until wake_with_error reaches unblock.
+    for tid in [wake_recv, wake_caller].into_iter().flatten() {
+        crate::observability::tripwire::mark_wake_pending(tid, WakeSource::ChDestroy);
+    }
     drop(table);
     if let Some(recv_tid) = wake_recv {
-        timeout::wake_with_error(recv_tid, IpcError::Epipe as i64);
+        timeout::wake_with_error(recv_tid, IpcError::Epipe as i64, WakeSource::ChDestroy);
     }
     if let Some(caller_tid) = wake_caller {
-        timeout::wake_with_error(caller_tid, IpcError::Epipe as i64);
+        timeout::wake_with_error(caller_tid, IpcError::Epipe as i64, WakeSource::ChDestroy);
     }
 
     crate::kinfo!(Ipc, "Channel {} destroyed", channel.0);

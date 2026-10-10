@@ -47,8 +47,11 @@ pub fn process_of_thread(tid: ThreadId) -> Option<ProcessId> {
 /// Get the current thread's process ID.
 pub fn current_process_id() -> Option<ProcessId> {
     let cpu = crate::arch::aarch64::exceptions::core_id() as usize;
-    let tid = { *CURRENT_THREAD[cpu].lock() }?;
-    process_of_thread(tid)
+    // Two statements, so that the guard is dropped before the `?` test. In
+    // `{ *lock() }?` (edition 2021) the guard lives to the end of the
+    // statement, and the test's branch can land inside the critical section.
+    let current = *CURRENT_THREAD[cpu].lock();
+    process_of_thread(current?)
 }
 
 /// Error for a `check_*` function whose `process_ref` lookup failed.
@@ -93,6 +96,10 @@ pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
 /// the id up in CHANNEL_TABLE.
 pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Result<(), i64> {
     if channel.index().is_none() {
+        crate::observability::tripwire::bump(
+            shared::tripwire::Key::Badchan,
+            shared::tripwire::BadchanSite::Cap.index(),
+        );
         return Err(IpcError::Einval as i64);
     }
 

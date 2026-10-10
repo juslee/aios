@@ -13,6 +13,7 @@ kernel/src/service/            Service manager
 kernel/src/syscall/            Syscall dispatch and handlers
 kernel/src/drivers/            Device drivers
 kernel/src/storage/            Storage subsystem (Block Engine, WAL, Object Store, etc.)
+kernel/src/sync/               Synchronisation primitives (IrqSpinLock)
 kernel/src/                    Platform-agnostic kernel logic
 shared/src/                    Types crossing kernel/stub boundary
 uefi-stub/src/                 UEFI stub code

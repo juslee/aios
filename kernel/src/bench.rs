@@ -13,6 +13,7 @@ use crate::arch::aarch64::timer;
 use crate::arch::aarch64::uart::UartWriter;
 use crate::cap;
 use crate::ipc::{self, ChannelId};
+use crate::observability::tripwire;
 use crate::sched;
 use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
 use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
@@ -90,6 +91,14 @@ impl BenchResult {
         self.avg_ns() / 1000
     }
 
+    /// Whether the benchmark measured at least one iteration and its average
+    /// is below `limit_us`. A run with no successful iteration has no
+    /// average (`avg_ns` reports 0 for it), so it fails rather than passing
+    /// on that 0.
+    fn passes_below_us(&self, limit_us: u64) -> bool {
+        self.iterations > 0 && self.avg_us() < limit_us
+    }
+
     /// Compute p99 latency using in-place insertion sort on the static buffer.
     fn p99_ns(&self) -> u64 {
         if self.sample_count == 0 {
@@ -155,7 +164,9 @@ static BENCH_YIELD_PARTNER_READY: AtomicBool = AtomicBool::new(false);
 // ---------------------------------------------------------------------------
 
 /// Bench IPC server: sits in ipc_recv loop, replies immediately.
-/// IRQs masked during benchmark to avoid timer preemption skewing results.
+/// Runs with IRQs unmasked throughout, like every other kernel thread, so
+/// the timer can preempt it and the measured workload matches normal
+/// scheduling.
 fn bench_server_entry() -> ! {
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -171,12 +182,6 @@ fn bench_server_entry() -> ! {
 
     // Signal ready.
     BENCH_SERVER_READY.store(true, Ordering::Release);
-
-    // Mask IRQs — the bench main thread uses direct-switch IPC which
-    // doesn't need timer interrupts. This prevents preemption during
-    // measurement from skewing results.
-    // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
-    unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
@@ -225,17 +230,14 @@ fn bench_ipc_same_core(ch: ChannelId) -> BenchResult {
     let send_buf = [0xABu8; 8];
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
-    // Warm up (IRQs still enabled for scheduler).
+    // Warm up.
     for _ in 0..100 {
         let _ = ipc::ipc_call(ch, &send_buf, &mut recv_buf, 1000);
     }
 
-    // Mask IRQs during measurement to prevent timer preemption from
-    // skewing results. IPC direct-switch path is synchronous and doesn't
-    // need timer interrupts.
-    // SAFETY: DAIFSet/DAIFClr #0x2 mask/unmask IRQs. Safe at EL1.
-    unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
-
+    // IRQs stay unmasked during measurement, so timer preemption is part
+    // of the measured workload. Masking here would not hold anyway: the
+    // IPC direct-switch path unmasks IRQs on return.
     for _i in 0..IPC_ITERATIONS {
         let start = timer::read_counter();
         let r = ipc::ipc_call(ch, &send_buf, &mut recv_buf, 1000);
@@ -245,9 +247,6 @@ fn bench_ipc_same_core(ch: ChannelId) -> BenchResult {
             result.record(ns);
         }
     }
-
-    // SAFETY: Restore IRQs after measurement.
-    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     result
 }
@@ -358,6 +357,11 @@ pub fn bench_main_entry() -> ! {
         }
     }
 
+    // The bench prints its block straight to the UART, which has no lock.
+    // Hold CPU 0's tripwire lines back until the block is done, so the two
+    // do not interleave byte by byte.
+    tripwire::set_console_busy(true);
+
     let mut w = UartWriter;
     let _ = writeln!(w, "\n[bench] === Gate 1 Benchmark ===");
 
@@ -431,8 +435,10 @@ pub fn bench_main_entry() -> ! {
     );
 
     // --- Gate 1 verdict ---
-    let ipc_pass = ipc_avg_us < 10;
-    let ctx_pass = ctx_avg_us < 20;
+    // A benchmark with no successful iteration fails: its printed avg of 0
+    // is not a measurement.
+    let ipc_pass = ipc_result.passes_below_us(10);
+    let ctx_pass = ctx_result.passes_below_us(20);
 
     let _ = writeln!(
         w,
@@ -445,6 +451,10 @@ pub fn bench_main_entry() -> ! {
         if ctx_pass { "PASS" } else { "FAIL" }
     );
     let _ = writeln!(w, "[bench] === Gate 1 Complete ===");
+
+    // Ask CPU 0 for the full tripwire line, then free the console for it.
+    tripwire::request_g1_line();
+    tripwire::set_console_busy(false);
 
     // Signal server to exit.
     BENCH_SERVER_EXIT.store(true, Ordering::Release);

@@ -25,6 +25,12 @@
 //! `fixture::CHECK_PY_MIGRATION` patches the materialised check.py's `CLAUDE.md` paths
 //! and its `BEFORE_CLAUDE_RE` exactly as #218 changed aios, and no check logic, so both
 //! tests compare aios against check.py on the same migrated inputs and goldens.
+//!
+//! Crash-fix step 1b changed check.py itself (56c4bf4, on its branch, before R1 deleted
+//! check.py on main): `lock-order` counts `IrqSpinLock` statics beside `Mutex` ones, and
+//! its `list-checks` description says so. `fixture::CHECK_PY_IRQ_SPIN_LOCK` replays that
+//! change on the materialised check.py after `CHECK_PY_MIGRATION`, so the oracle is
+//! 56c4bf4's check.py, migrated; the `list-checks` goldens carry its description.
 
 mod common;
 
@@ -372,13 +378,14 @@ fn differential_against_check_py() {
     }
     eprintln!(
         "differential_against_check_py: compared {} cases and {} live modes, {} difference(s) \
-         ({} running {} with {})",
+         ({} running {} with {} and {})",
         cases.len(),
         LIVE_CASES.len(),
         failures.len(),
         oracle.version,
         fixture::check_py_object(),
-        fixture::CHECK_PY_MIGRATION
+        fixture::CHECK_PY_MIGRATION,
+        fixture::CHECK_PY_IRQ_SPIN_LOCK
     );
     assert!(
         failures.is_empty(),

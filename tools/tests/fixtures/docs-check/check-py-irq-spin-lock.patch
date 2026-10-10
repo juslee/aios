@@ -1,0 +1,23 @@
+diff --git a/scripts/docs/check.py b/scripts/docs/check.py
+index 2c5dd8a..04246a5 100644
+--- a/scripts/docs/check.py
++++ b/scripts/docs/check.py
+@@ -102,7 +102,7 @@ CHECK_DESCRIPTIONS = {
+     "repo-paths": "backticked kernel/ shared/ uefi-stub/ scripts/ paths exist (current-state docs)",
+     "just-recipes": "backticked `just X` recipes exist; public recipes are documented",
+     "test-count": "stated host test counts match #[test] in shared/src",
+-    "lock-order": "production Mutex statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md",
++    "lock-order": "production Mutex/IrqSpinLock statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md",
+     "milestone-status": "merged 'Phase N MK:' milestones vs phase docs, README, development-plan",
+     "phase-count": "phase counts in prose match the development-plan §8 table",
+     "layout": "kernel/src and shared/src modules vs CLAUDE.md layout and rule 05",
+@@ -828,7 +828,8 @@ def code_mutex_statics(repo: Repo) -> dict[str, tuple[str, int]]:
+                 if re.match(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{", nxt):
+                     break  # an inline test module runs to the end of the file by convention
+             m = STATIC_RE.match(line)
+-            if m and re.search(r"\bMutex\s*<", m.group(2)) and m.group(1) not in TEST_LOCKS:
++            # spin::Mutex statics, and the IRQ-class statics (sync::IrqSpinLock, crash-fix step 1b).
++            if m and re.search(r"\b(?:Mutex|IrqSpinLock)\s*<", m.group(2)) and m.group(1) not in TEST_LOCKS:
+                 statics.setdefault(m.group(1), (f, i + 1))
+     return statics
+ 

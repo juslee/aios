@@ -14,8 +14,9 @@
 //! oracle: R1 deleted scripts/docs/check.py, so `check_py` materialises it from git
 //! history (`git cat-file blob <SNAPSHOT_SHA>:scripts/docs/check.py`) into
 //! `CARGO_TARGET_TMPDIR`, patches it with `CHECK_PY_MIGRATION` so that it reads the
-//! project memory at `.claude/CLAUDE.md` as aios does since #218, and `run_check_py`
-//! runs it against any repository.
+//! project memory at `.claude/CLAUDE.md` as aios does since #218, then with
+//! `CHECK_PY_IRQ_SPIN_LOCK` so that `lock-order` counts `IrqSpinLock` statics as aios
+//! does since crash-fix step 1b, and `run_check_py` runs it against any repository.
 //!
 //! The oracle's `re` classes follow its interpreter's Unicode version, so `check_py`
 //! accepts only a `python3` whose `unicodedata.unidata_version` is
@@ -328,8 +329,11 @@ pub const SNAPSHOT_SHA: &str = "33c6b3deabb36055d26d57fb2a60db233c4d3f6f";
 /// updates the links into and out of it and the one baseline entry keyed by its path.
 /// The real-repository goldens were first recorded from check.py on the unmigrated
 /// snapshot and differ from that output only in that path (`CLAUDE.md` became
-/// `.claude/CLAUDE.md`); check.py with `CHECK_PY_MIGRATION` applied, run on the
-/// migrated snapshot, reproduces them byte for byte.
+/// `.claude/CLAUDE.md`) and in the `lock-order` line of `list-checks`, which is the
+/// description of check.py at 56c4bf4 (crash-fix step 1b counts `IrqSpinLock` statics;
+/// the snapshot defines none, so no finding changes); check.py with
+/// `CHECK_PY_MIGRATION` and `CHECK_PY_IRQ_SPIN_LOCK` applied, run on the migrated
+/// snapshot, reproduces them byte for byte.
 pub const SNAPSHOT_MIGRATION: &str = "snapshot-claude-md.patch";
 
 /// The repository that contains `tools/` (the checkout or worktree under test).
@@ -617,7 +621,7 @@ const CHECK_PY_PATH: &str = "scripts/docs/check.py";
 /// faf6d20 (#166) added the file, no later commit on main changed it (the blob is
 /// 6cea366 at faf6d20, at `SNAPSHOT_SHA` and at 201af49, the parent of the deletion),
 /// and 212df62 (#207, R1) deleted it. The oracle runs this version with
-/// `CHECK_PY_MIGRATION` applied.
+/// `CHECK_PY_MIGRATION` and then `CHECK_PY_IRQ_SPIN_LOCK` applied.
 pub fn check_py_object() -> String {
     format!("{SNAPSHOT_SHA}:{CHECK_PY_PATH}")
 }
@@ -634,6 +638,17 @@ pub fn check_py_object() -> String {
 /// still decides what each check finds. `materialize_check_py` applies it with
 /// `git apply` and panics if it does not apply.
 pub const CHECK_PY_MIGRATION: &str = "check-py-claude-md.patch";
+
+/// `tests/fixtures/docs-check/<this>`: a patch against `check_py_object()` with
+/// `CHECK_PY_MIGRATION` applied that replays check.py's crash-fix step 1b change
+/// (56c4bf4, made on its branch before R1 deleted check.py on main): `lock-order` counts
+/// `sync::IrqSpinLock` statics beside `spin::Mutex` ones, and its `list-checks`
+/// description says `Mutex/IrqSpinLock`, as `checks::lock_order` does. Without it the
+/// oracle would report every `IrqSpinLock` static in the live checkout's lock table as
+/// stale. The patched result is 56c4bf4's check.py with `CHECK_PY_MIGRATION` applied.
+/// `materialize_check_py` applies it after `CHECK_PY_MIGRATION` and panics if it does
+/// not apply.
+pub const CHECK_PY_IRQ_SPIN_LOCK: &str = "check-py-irq-spin-lock.patch";
 
 /// The Unicode version (`unicodedata.unidata_version`) the oracle's interpreter must
 /// have: CPython 3.14's, the version `aios_tools::pyre`'s `\d` and `\s` classes were
@@ -658,7 +673,8 @@ const VERSION_PROBE: &str =
     "import sys, unicodedata; print(sys.version.split()[0], unicodedata.unidata_version)";
 
 /// The differential oracle: check.py materialised from git history with
-/// `CHECK_PY_MIGRATION` applied, and the interpreter that runs it.
+/// `CHECK_PY_MIGRATION` and `CHECK_PY_IRQ_SPIN_LOCK` applied, and the interpreter that
+/// runs it.
 pub struct CheckPy {
     /// The absolute path of the resolved `python3` (see `python3_interpreter`).
     pub interpreter: PathBuf,
@@ -668,13 +684,14 @@ pub struct CheckPy {
     pub script: PathBuf,
 }
 
-/// check.py materialised from `check_py_object()` with `CHECK_PY_MIGRATION` applied, and
-/// a working `python3`, resolved once per test process. `Err` is the reason the oracle
-/// is unavailable, for the caller to print when it skips: no usable `python3` on `PATH`,
-/// a `python3` whose Unicode version is not `ORACLE_UNIDATA_VERSION`, or no such git
-/// object (a shallow clone; CI's Tools (host) job checks out with `fetch-depth: 0` and
-/// installs CPython 3.14). A `CHECK_PY_MIGRATION` that does not apply is a defect in
-/// this repository, not a missing tool, so it panics instead of skipping.
+/// check.py materialised from `check_py_object()` with `CHECK_PY_MIGRATION` and
+/// `CHECK_PY_IRQ_SPIN_LOCK` applied, and a working `python3`, resolved once per test
+/// process. `Err` is the reason the oracle is unavailable, for the caller to print when
+/// it skips: no usable `python3` on `PATH`, a `python3` whose Unicode version is not
+/// `ORACLE_UNIDATA_VERSION`, or no such git object (a shallow clone; CI's Tools (host)
+/// job checks out with `fetch-depth: 0` and installs CPython 3.14). A patch that does
+/// not apply is a defect in this repository, not a missing tool, so it panics instead
+/// of skipping.
 pub fn check_py() -> Result<&'static CheckPy, &'static str> {
     static ORACLE: OnceLock<Result<CheckPy, String>> = OnceLock::new();
     ORACLE
@@ -749,10 +766,12 @@ fn materialize_check_py() -> Result<CheckPy, String> {
     fs::write(&partial, &out.stdout)
         .map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
     git(&dir, &["init", "-q", work_name.as_str()]);
-    let migration = fixtures_dir().join(CHECK_PY_MIGRATION);
-    let migration = migration.to_str().expect("fixture path is UTF-8");
-    // `git` panics with git's stderr when the patch does not apply.
-    git(&work, &["apply", migration]);
+    for patch in [CHECK_PY_MIGRATION, CHECK_PY_IRQ_SPIN_LOCK] {
+        let patch = fixtures_dir().join(patch);
+        let patch = patch.to_str().expect("fixture path is UTF-8");
+        // `git` panics with git's stderr when the patch does not apply.
+        git(&work, &["apply", patch]);
+    }
     let script = dir.join("check.py");
     fs::rename(&partial, &script).map_err(|e| format!("cannot write {}: {e}", script.display()))?;
     fs::remove_dir_all(&work).map_err(|e| format!("cannot remove {}: {e}", work.display()))?;

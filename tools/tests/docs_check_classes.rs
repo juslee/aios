@@ -5,7 +5,8 @@
 //!
 //! Each test asserts the exit code and stdout that check.py (at 33c6b3d, with
 //! `fixture::CHECK_PY_MIGRATION` applied, so the repositories keep their project memory
-//! at `.claude/CLAUDE.md` as aios reads it) prints for the same repository. Those
+//! at `.claude/CLAUDE.md` as aios reads it, and `fixture::CHECK_PY_IRQ_SPIN_LOCK`, which
+//! no input here reaches) prints for the same repository. Those
 //! expectations were recorded with `fixture::run_check_py`, and
 //! wherever the oracle is available (`fixture::check_py`) each test also runs check.py
 //! again and requires the same bytes, so the expectations cannot drift from Python.

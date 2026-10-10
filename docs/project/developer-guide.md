@@ -618,13 +618,17 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
 
 The error code is returned to userspace in register `x0` via the `TrapFrame`. Error values are defined in `shared/src/syscall.rs` as `IpcError` enum variants with numeric discriminants.
 
-**Pattern 2: Unrecoverable panic** -- UART output then halt
+**Pattern 2: Unrecoverable panic** -- mask IRQs, UART output, then halt
 
 ```rust
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // 1. mrs DAIF + msr DAIFSet, #0x2: mask IRQs for good, remember irq_was.
+    // 2. PANICKING[cpu]: a second panic on this CPU halts at once.
     let mut w = crate::arch::aarch64::uart::UartWriter;
     let _ = writeln!(&mut w, "PANIC: {}", info);
+    observability::tripwire::print_panic_report(irq_was_on); // [panic] + [tripwire] src=panic
+    observability::drain_logs_after_panic(); // CPU 0 only: empty the log rings
     halt()
 }
 
@@ -637,6 +641,8 @@ fn halt() -> ! {
 ```
 
 Why `wfe` and not `loop {}`? `wfe` (Wait For Event) puts the core in a low-power state. A bare `loop {}` burns full CPU cycles doing nothing. On real hardware, this matters for power consumption and thermal management.
+
+The handler masks IRQs before it prints, so the timer tick cannot preempt the report or run the scheduler on top of the broken state; it takes no lock and calls no `klog!`. After the unchanged `PANIC: ` lines (the soak harness keys on them and captures the message on the next line) it prints a `[panic] cpu=N tid=T|? ctx=<label> irq_was=on|off t=<secs.micros>` line, with `irq_elr=0x…` (the PC the IRQ interrupted) when it panicked in IRQ context, then a full `[tripwire] v=1 src=panic` line. On CPU 0 it then drains the log rings in a bounded loop, unless CPU 0 was already inside a drain. A synchronous exception's report likewise adds `  regs:` (SP, SPSR, TTBR0, VBAR) and `  ctx:` (CPU, thread, IRQ context, in-scheduler) lines and a `src=exc` tripwire line after its unchanged head and Abort lines. `free_pages`, `free_dma_pages` and the compositor's `release_buffer` are `#[track_caller]`, so a bad free's `[mm] BUG: free_pages(` assertion names the caller, not `frame.rs`.
 
 **Pattern 3: Boot validation** -- structured log then explicit halt
 
@@ -1592,7 +1598,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 612+ host-side tests pass |
+| **Test** | `just test` | All 678+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1644,7 +1650,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 612 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 678 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1737,7 +1743,7 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (612 tests):**
+**Current test distribution (678 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
@@ -1746,14 +1752,16 @@ mod tests {
 | `ipc` | 61 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
+| `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
 | `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
 | `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
+| `collections` | 23 | FixedQueue (including `iter`/`contains`), RingBuffer edge cases |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `collections` | 18 | FixedQueue, RingBuffer edge cases |
+| `lock` | 19 | Owner-stamp codec, the re-entry `classify` table, `read_stamp` and waiter-side models (exhaustive CPU switches), `StampedLock` CAS/release and the consistent holder snapshot, a threaded test (Miri-sized) |
 | `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
@@ -1801,7 +1809,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock times at which the kernel started, the first heartbeat, the bench header and `=== Gate 1 Complete ===` appeared, and a new heartbeat last appeared. A boot is `CLEAN` only if all of these hold:
 
-1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs masked on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, that fits the IRQ-masked loop hanging on CPU 0 ("heartbeat stuck at tick 0 after the Gate 1 bench started"). A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
+1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs on, on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, the usual cause is CPU 0's timer IRQ spinning forever, IRQs masked, on a lock that the thread it interrupted holds, such as `THREAD_TABLE` during the bench's IPC ("heartbeat stuck at tick 0 after the Gate 1 bench started"; [crash-fix ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) H3). From crash-fix step 1b that re-entry panics with `lock re-entry:` instead of spinning. A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
 2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the harness's SIGTERM by about 1 s (up to 10 s if SIGKILL is needed). A QEMU process that exits early counts as silent for the rest of the planned time.
 3. The log contains `=== Gate 1 Complete ===`. The bench can hang while the timer keeps running (seen under TCG in CI, with heartbeats reaching tick 79000), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". `G1PASS` is not required, because the IPC latency threshold can legitimately fail on a slow or loaded host.
 4. In gpu mode, the log contains `GpuReady`, `InputReady` and `display handoff complete` (all printed before the bench); otherwise "gpu markers missing".

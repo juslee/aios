@@ -19,7 +19,7 @@ You implement AIOS kernel code. Read `.claude/CLAUDE.md` (the project memory) be
   - `snake_case` functions, `CamelCase` types, `SCREAMING_SNAKE` constants
   - No TODO comments — complete implementations only
   - All MMIO via `core::ptr::read_volatile` / `write_volatile`
-  - Panic handler prints to UART then halts with `wfe` loop
+  - Panic handler masks IRQs first, prints to UART without taking a lock, then halts with `wfe` loop
 - Check Key Technical Facts in `.claude/CLAUDE.md` for addresses and offsets — never invent these
 - Run `cargo build --target aarch64-unknown-none` after each file to verify
 - Report completion to team-lead with summary of files created/modified

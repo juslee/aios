@@ -73,3 +73,34 @@ If the type doesn't touch any of:
 (`alloc::vec![...]`), but the production code itself stays
 `no_std + no_alloc`. The `#[cfg(test)]` blocks pull in `alloc`
 just for assertion construction.
+
+## Amendment (2026-09-24): Miri-checked protocol types
+
+Crash-fix step 1b puts `shared/src/lock.rs` in `shared/`. It holds the
+owner-stamp lock word, the `classify` rule and the `StampedLock`
+CAS/release protocol behind the kernel's detect-only IRQ-class lock.
+That code uses atomics for cross-core sync and `unsafe` for the
+guarded data, which the second heuristic bullet above sends to
+`kernel/`. The exception:
+
+- A type whose correctness is a protocol over atomics (a lock word,
+  memory orderings, a consistent-snapshot rule) and that touches no
+  hardware belongs in `shared/`. There, host threads and `just miri`
+  check it. In `kernel/` its tests would compile and never run.
+- Hardware inputs come in through a trait or a hook that the kernel
+  implements: `CpuView` (the CPU id, which the kernel reads from
+  TPIDR_EL1, and the per-CPU switch generation) and
+  `PreRelease` (the kernel's holder fields). Tests implement them with
+  scripted models, such as an exhaustive CPU-switch model for
+  `read_stamp`.
+- `unsafe` in such a type is limited to what the protocol guards (here
+  the `UnsafeCell` data access and the `Sync` impl), and each block has
+  a `// SAFETY:` comment. No inline asm, MMIO or pointers into kernel
+  memory.
+- The kernel keeps the parts that need hardware or kernel state: DAIF
+  and CPU-id reads (TPIDR_EL1, MPIDR_EL1), counters, printing and panics
+  (`kernel/src/sync/irq_spin_lock.rs`).
+
+The first two heuristic bullets therefore read "`unsafe` for hardware
+or kernel pointers" and "`spin::Mutex`, or atomics that are not
+themselves the protocol under test".

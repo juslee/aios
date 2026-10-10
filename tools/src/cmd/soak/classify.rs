@@ -518,8 +518,9 @@ impl Scan {
                 note(what.as_bytes().to_vec());
             }
         } else if self.tick == 0.0 {
-            // The bench prints its header 500 ticks after it starts, then runs an
-            // IRQ-masked IPC loop; no tick=1000 means CPU 0 took no timer IRQ after that.
+            // The bench prints its header 500 ticks after it starts, then runs its IPC
+            // loop with IRQs on; no tick=1000 means CPU 0 took no timer IRQ after that
+            // (typically its timer IRQ spinning on a lock the interrupted thread holds).
             let what = if self.bench_nr > self.hb_nr && !self.g1done {
                 "heartbeat stuck at tick 0 after the Gate 1 bench started"
             } else {
