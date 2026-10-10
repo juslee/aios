@@ -20,7 +20,7 @@ jobs:
     # Skip bot-triggered events (e.g. Renovate opening/rebasing PRs): the action
     # rejects non-human actors and would otherwise fail the check. Human pushes
     # to bot-authored PRs are still reviewed.
-    if: ${{ !endsWith(github.actor, '[bot]') }}
+    if: ${{ !github.event.pull_request.draft && !endsWith(github.actor, '[bot]') }}
 
     runs-on: ubuntu-latest
     permissions:

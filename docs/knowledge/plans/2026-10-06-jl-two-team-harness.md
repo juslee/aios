@@ -682,12 +682,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
     Expected: `lint-ok`; `3`; nothing from the first `rg`; two lines, one starting `solo-a (` and one `team-fix (`. The docs gate shows only `plans-not-empty`.
 
-- [ ] **T14: remember-retirement references and the review workflow**
+- [x] **T14: remember-retirement references and the review workflow**
 
   **Files:** Modify `.gitignore` (`D/.gitignore.patch-notes.md`), `docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md` (`D/docs/knowledge/discussions/...patch-notes.md.v5`: re-anchored on e430305; no edit touches #232's lines 126 and 225), `.github/workflows/claude-code-review.yml` (`D/.github/workflows/claude-code-review.yml.patch-notes.md`, only if Q4 is yes).
 
-  - [ ] Step 1: apply the three notes.
-  - [ ] Acceptance:
+  - [x] Step 1: apply the three notes.
+  - [x] Acceptance:
     ```bash
     cd "$W"
     rg -n --hidden -g '!.git' -g '!target' -g '!docs/phases' -g '!docs/knowledge/plans' 'remember:remember|remember@claude|precompact-save|\.remember/(now|remember)\.md' .
@@ -954,3 +954,9 @@ Deviations from `brief.sh.patch-notes.md.v4`, all by intent:
 - T13: the team label sits in the PR line as the note says; the jq line was split over three lines for readability. Live check: `#234` prints `{team-build}`, PRs without a label print `{no team}`.
 - T13: `rg` is not installed in the implementer's shell; the acceptance's `rg -n` lines ran as `grep -nE` with the same patterns.
 - T13: `route-outcome` writes compact JSON (`serde_json`), so `"kind":"launched"` matches (`tools/src/cmd/hook/route_outcome.rs`).
+
+Deviations from the T14 notes, all by intent:
+- T14: the discussion-doc note's "Note (<harness PR merge date>)" has no date: the merge date is unknown while the PR is open and a placeholder would be dead text, so the note reads "**Note:** precompact is out of scope; ...".
+- T14: the discussion-doc edits were anchored by text (a script in the scratchpad); every anchor held at its stated line, and #232's lines 126 and 225 are untouched.
+- T14: the claude-code-review.yml note applies as written (Q4 yes); the `if:` is on line 23 as the note says.
+- T14: acceptance, first `rg`: no hit in T14's files. Remaining hits belong to T8 (`.claude/settings.json`: lines 36, 63, 311; `.claude/hooks/precompact-save.sh`), T11 (`.claude/skills/merge-and-cleanup/SKILL.md:124`, `.claude/skills/justin/skills/pause/SKILL.md:14`) and T15 (`.claude/CLAUDE.md:206, 291`, `docs/project/agent-loop.md:60`, `docs/project/developer-guide.md:2443`). Docs gate: only `plans-not-empty` new, plus the expected resolved BOOT_LOG baseline entry.
