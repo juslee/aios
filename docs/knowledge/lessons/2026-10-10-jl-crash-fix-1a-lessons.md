@@ -11,7 +11,7 @@ Crash-fix step 1a changed only the soak harness (`aios soak`, `tools/src/cmd/soa
 
 ## 1. Keep the oracle proof alive across an intended output change by folding to the old classes
 
-**What happened.** The old classifier (the deleted `scripts/soak-qemu.sh`, read from git history) was the oracle for every classify, CLI and harness test. Step 1a changes its output on purpose, so a straight differential would fail on every split boot, and a normaliser that maps the new names back would exist only to hide intended differences. Instead every new class got a base class, and `base_line()` prints the same fields as `line()` with the base class's name in field 1. The differential then checks that `base_line()` is byte-identical to the oracle's line, and a unit test checks that `line()` and `base_line()` differ in field 1 only. The plan review found that this only holds if nothing else derives from the new class: `detail` took notes, and `lb` was computed from the class (`-` for CLEAN). Both now come from the base class, and the new data (IPC figures, tripwire lines, event counts, re-entry fields) rides outside the line. On run 167 the fold showed exactly the expected 10 WEDGE → WEDGE-STUCK and 2 WEDGE → WEDGE-ALIVE, and over all 251 local logs no other change.
+**What happened.** The old classifier (the deleted `scripts/soak-qemu.sh`, read from git history) was the oracle for every classify, CLI and harness test. Step 1a changes its output on purpose, so a straight differential would fail on every split boot, and a normaliser that maps the new names back would exist only to hide intended differences. Instead every new class got a base class, and `base_line()` prints the same fields as `line()` with the base class's name in field 1. The differential then checks that `base_line()` is byte-identical to the oracle's line, and a unit test checks that `line()` and `base_line()` differ in field 1 only. The plan review found that this only holds if nothing else derives from the new class: `detail` took notes, and `lb` was computed from the class (`-` for CLEAN). Both now come from the base class, and the new data (IPC figures, tripwire lines, event counts, re-entry fields) rides outside the line. On run 167 the fold showed exactly the expected 10 WEDGE → WEDGE-STUCK and 2 WEDGE → WEDGE-ALIVE, and over all 251 local logs under `target/soak/` only the intended splits (B1 adds PANIC → PANIC-LOCK 3 and WEDGE → WEDGE-ALIVE 3), with no DEGRADED and no `base_line()` difference.
 
 **Why it matters.** The fold keeps the strongest test there was (an independent implementation, real logs) while the output evolves, and it turns the step's acceptance into one mechanical assertion. The CLI and harness differentials could not be folded the same way: their outputs gained columns and table rows. They were deleted, and their goldens are now blessed from `aios`.
 
@@ -23,11 +23,11 @@ Crash-fix step 1a changed only the soak harness (`aios soak`, `tools/src/cmd/soa
 
 ## 2. A rule that tightens a class silently reclassifies under-specified fixtures
 
-**What happened.** DEGRADED made CLEAN require the IPC line's `(10000 iters)`. None of the 22 CLEAN corpus cases had an IPC line, nor did the fake QEMU's clean tail or one `classify-stall-kv` case, so every one would have become DEGRADED. They modelled healthy boots, which always print the line, and each got the kernel's line before `=== Gate 1 Complete ===`. The real-log test also counted each run directory's `build.log` as a boot (62 logs for run 167's 60 boots); it matched `*.log`.
+**What happened.** DEGRADED made CLEAN require the IPC line's `(10000 iters)`. None of the 22 CLEAN corpus cases had an IPC line, nor did the fake QEMU's clean tail or one `classify-stall-kv` case, so every one would have become DEGRADED. They modelled healthy boots, which always print the line, and each got the kernel's line before `=== Gate 1 Complete ===`. The real-log test also counted each run directory's `build.log` as a boot (62 logs for run 167's 60 boots); it matched `*.log`, and the fix makes it skip `build.log`.
 
 **Why it matters.** Fixtures written for a looser rule carry only what that rule read. A new requirement turns them into cases of a different class, and a re-bless would have recorded that as correct.
 
-**How to apply.** When a change adds a condition to a class, check every fixture of that class for the new evidence before re-blessing, and add the evidence where the fixture models a real boot. Match the harness's own file names (`run-*.log`), never a bare extension.
+**How to apply.** When a change adds a condition to a class, check every fixture of that class for the new evidence before re-blessing, and add the evidence where the fixture models a real boot. When a test globs the harness's output, check what else the directory holds; matching the harness's own file names (`run-*.log`) would be stricter than step 1a's fix, which still matches `*.log` and skips only `build.log`.
 
 ## 3. Re-blessing goldens can hide a weakened comparison
 
@@ -60,7 +60,7 @@ Crash-fix step 1a changed only the soak harness (`aios soak`, `tools/src/cmd/soa
 ## 6. The audit loop hardened provenance until each fix became the next round's finding
 
 **What happened.** Implementation ran its ten code and docs tasks with one Opus implementer per task, with a Fable correctness reviewer and a Sonnet gate reviewer; every task was approved within 0–2 fix rounds. The audit loop (diverse read-only finders, three-skeptic verification, a single fixer) then ran its 8-round cap without two consecutive clean rounds. Confirmed findings per round: 16, 12, 6, 5, 8, 4, 7, 5, all fixed. Rounds 1–3 found ordinary defects (a status left at `running` after an error, symlink and HEAD pins, the `ctx=` parse of a torn line). Rounds 4–8 mostly found defects in the provenance hardening that earlier rounds had added to the Harness row of the pair report:
-- its `-dirty` test (round 4 added it; round 6 narrowed it to host-tools inputs, since an arm's kernel edits had marked the classifier dirty);
+- its `-dirty` test (round 4 added a host-tools-inputs test beside T8's whole-tree mark; round 6 dropped the whole-tree mark, since an arm's kernel edits had marked the classifier dirty);
 - git replace refs and grafts that could fake both that test and the arm-base ancestry check (round 5);
 - a stale-binary note (round 6) that round 7 rewrote to match the shim's stamp verdicts, including an edit reverted after the build;
 - a TOCTOU between reading HEAD for the row and for the stamp check, and a `just tools` swapping the binary mid-soak (round 8: one pinned commit, a hard link made for the soak);
@@ -76,26 +76,26 @@ The lead stopped at the cap, with the owner's pre-approval of recommended choice
 - Every list that must match another list gets a drift test in the commit that creates the copy, and the comments that name the copies are updated with it.
 - Plan the `.claude/` edits a step will need as lead-applied batches before the tasks that depend on them; a fixer that finds one mid-loop can only report it.
 
-## 7. A dispatch on the same ref cancelled the branch's push CI
+## 7. A dispatch on the same ref cancelled the push run's soak job
 
-**What happened.** To check the new `runs` input, CI was dispatched (`workflow_dispatch`) on the branch with `runs=2`. The dispatch shared the push run's concurrency group, so it cancelled the branch's own push CI. Audit round 1 gave each dispatch soak a concurrency group of its own (developer guide §5.6 states the current behaviour).
+**What happened.** To check the new `runs` input, CI was dispatched (`workflow_dispatch`) on the branch with `runs=2`. The dispatch shared the `qemu-soak` job's concurrency group (job-level, keyed on the ref), so it cancelled the push run's `qemu-soak` job. Audit round 1 gave each dispatch soak a concurrency group of its own (developer guide §5.6 states the current behaviour).
 
-**How to apply.** Before adding a manual input to a workflow that already has a `concurrency` group keyed on the ref, decide whether a dispatch should cancel, be cancelled by, or run beside the push run, and key the group on `github.event_name` (or the run id) accordingly. Check the push run still finishes after the first dispatch.
+**How to apply.** Before adding a manual input to a workflow whose jobs have a `concurrency` group keyed on the ref, decide whether a dispatch should cancel, be cancelled by, or run beside the push run, and key the group on `github.event_name` (or the run id) accordingly. Check the push run's jobs still finish after the first dispatch.
 
 ## 8. A soak arm named in a plan goes stale when `main` bumps the toolchain
 
-**What happened.** The working plan's pre-PR smoke soak named af59149 as arm A against the branch. After `main`'s toolchain bump (a9422c9, nightly-2026-10-10) merged into the branch, af59149 pinned an older nightly, and the harness refuses arms with different channels. The lead used `main` ac6d26e as arm A instead. That is the same kernel as the branch, so the smoke soak was an A/A of the kernel that exercised the harness, not a comparison. Host load was about 23–30 on 10 CPUs from macOS `fileproviderd` and Spotlight, so it ran with `--ignore-load`, and the pair report flagged the arms' load means 38% apart ("redo the pair"). Result: 4 boots in ABBA order, status `finished`, exit 0; A gave PCZERO and CLEAN, B CLEAN and PANIC-LOCK (`ctx=irq-exit`); the regression guard passed (p 0.833). Arm B, the worktree under `.claude/worktrees/` inside the main checkout, drew the harness's parent `.cargo/config.toml` warning, as designed.
+**What happened.** The working plan's pre-PR smoke soak named af59149 as arm A against the branch. After `main`'s toolchain bump (a9422c9, nightly-2026-10-10) merged into the branch, af59149 pinned an older nightly, and the harness refuses arms with different channels. The lead used `main` ac6d26e as arm A instead. That is the same kernel source as the branch (no `kernel/` or `shared/` change; the built ELFs differ, `4560846c` against `40405da0`), so the smoke soak was an A/A of the kernel that exercised the harness, not a comparison. Host load1 was 28 before the builds and 31 after them, on 10 CPUs (per-boot means 20.5 for A and 14.9 for B), so it ran with `--ignore-load`, and the pair report flagged the arms' load means 38% apart ("redo the pair"). Result: 4 boots in ABBA order, status `finished`, exit 0; A gave PCZERO and CLEAN, B CLEAN and PANIC-LOCK (`ctx=irq-exit`); the regression guard passed (p 0.833). Arm B, the worktree under `.claude/worktrees/` inside the main checkout, drew the harness's parent `.cargo/config.toml` warning, as designed.
 
 **Why it matters.** A pair is only valid when its arms share a channel, and a commit's channel is fixed while the branch's moves with every merge of `main`. Step 1b's own A/B (af59149 against e211d6d) is unaffected: both pin nightly-2026-10-09, and the harness's channel does not matter, since each arm builds with its own.
 
 **How to apply.**
 - Before a soak, re-read each arm's `rust-toolchain.toml`; when the base moved, pick a base on the same channel, or pass `--allow-mixed-toolchains` only for a pair whose point is the toolchain change.
 - Put arm worktrees outside any checkout (`git worktree add --detach ../aios-<sha> <sha>`), so no parent cargo config joins their build.
-- On this Mac the load rule will often refuse a soak. Find what drives the load (here file-provider indexing) before overriding it, and treat a pair the report says to redo as a harness check only.
+- On this Mac the load rule will often refuse a soak. Find what drives the load (during B1 it was iCloud's `fileproviderd`, per the N2 baseline note) before overriding it, and treat a pair the report says to redo as a harness check only.
 
 ## 9. Smaller gotchas
 
 - `rg` without `--hidden` skips `.github/` and `.claude/`, so a "no references left" check misses workflows and `.claude/CLAUDE.md`. Use `rg --hidden -g '!.git' -g '!target'`.
 - `actionlint` flags `runs-on: ubuntu-26.04` as an unknown label: its runner list predates the image. Ignore that one message.
 - `proc::tests::suspend_stops_the_group_and_moves_the_limit_back` (a 500 ms limit under a 1 s suspend) fails now and then at load1 near 40, mostly in parallel runs; rerun it alone before suspecting a change.
-- The #240 experiment (the echo IPC pair runs when its server is queued on CPU 1) is recorded in the ADR's step 1a note; its fix belongs to #200's step.
+- The #240 experiment (the echo IPC pair runs when its server is queued on CPU 1) is recorded in the ADR's step 1a note. It supports #240's diagnosis (part of it is #200's missing timer IRQs on CPUs 1-3); #200's step is unchanged by it.
