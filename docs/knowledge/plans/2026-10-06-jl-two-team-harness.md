@@ -745,15 +745,15 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
     Expected: a line in each file; a line in each file; both headings; 4 or more; nothing; nothing; nothing; one line. The docs gate shows only `plans-not-empty`, with harness-tables, pointer-doctor and repo-paths clean.
 
-- [ ] **T16: headless end-to-end checks, the wiring lesson and the ADR amendment**
+- [x] **T16: headless end-to-end checks, the wiring lesson and the ADR amendment**
 
   **Files:** Modify `docs/knowledge/lessons/2026-10-06-jl-model-routing-wiring-checks.md` (append E1–E9), `docs/knowledge/lessons/2026-10-06-jl-isolated-writers-fast-forward.md` (append E1 and E5's placement results), `docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md` (dated amendment, `D/docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md.amendment-notes.md.v5`), the plan ("Issues Encountered").
 
-  - [ ] Step 1 (controller): run `D/probe/HEADLESS.md.v5`, section "T16": setup, runs E and G, the checks E1–E9 (E6 is OWNER-PROBES OP2), teardown.
-  - [ ] Step 2: any failing check goes back to the task that owns it (E1, E7: T4/T5/T8; E2: T7; E3, E4: T8; E5: T10/T11; E8: T10, code-reviewer's frontmatter model; E9: T7) as a fix round, then T16 runs again.
-  - [ ] Step 3 (owner): run `D/OWNER-PROBES.md.v5` OP2; paste the report block under "Issues Encountered". A failing OP2 is a fix round for T8/T11 like Step 2.
-  - [ ] Step 4 (implementer): append the results (E1–E9, OP2) to the two lessons; write the ADR amendment with every `<...>` field filled.
-  - [ ] Acceptance: E1–E5 and E7–E9 pass; the OP2 report says `result: pass` (E6); `rg -n '<(date of T16|n|date|version|E8 result)>' docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md` prints nothing; `git -C "$W" diff origin/main --stat -- docs/knowledge/decisions/` shows only additions at the end of the ADR (`git -C "$W" diff origin/main -- docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md | grep -c '^-[^-]'` prints `0`); `git -C "$MAIN" branch --list 'worktree-agent-*'` lists none of T16's temporary branches. The docs gate shows only `plans-not-empty`.
+  - [x] Step 1 (controller): run `D/probe/HEADLESS.md.v5`, section "T16": setup, runs E and G, the checks E1–E9 (E6 is OWNER-PROBES OP2), teardown.
+  - [x] Step 2: any failing check goes back to the task that owns it (E1, E7: T4/T5/T8; E2: T7; E3, E4: T8; E5: T10/T11; E8: T10, code-reviewer's frontmatter model; E9: T7) as a fix round, then T16 runs again.
+  - [x] Step 3 (owner): run `D/OWNER-PROBES.md.v5` OP2; paste the report block under "Issues Encountered". A failing OP2 is a fix round for T8/T11 like Step 2.
+  - [x] Step 4 (implementer): append the results (E1–E9, OP2) to the two lessons; write the ADR amendment with every `<...>` field filled.
+  - [x] Acceptance: E1–E5 and E7–E9 pass; the OP2 report says `result: pass` (E6); `rg -n '<(date of T16|n|date|version|E8 result)>' docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md` prints nothing; `git -C "$W" diff origin/main --stat -- docs/knowledge/decisions/` shows only additions at the end of the ADR (`git -C "$W" diff origin/main -- docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md | grep -c '^-[^-]'` prints `0`); `git -C "$MAIN" branch --list 'worktree-agent-*'` lists none of T16's temporary branches. The docs gate shows only `plans-not-empty`.
 
 - [ ] **T17: gates, audit, distillation**
 
@@ -958,6 +958,21 @@ The guard-attacking review of 92f8fcd found inputs that `git-push-guard.py` allo
 Probe facts (headless, CLI 2.1.292), from the PreToolUse payloads of Bash calls: a workflow `agent()` with `isolation: "worktree"` runs in `<main>/.claude/worktrees/wf_<run>-<n>` on branch `worktree-wf_<run>-<n>` (run ids look like `<8 hex>-<3 hex>`, `n` a small integer, e.g. `wf_117ca996-025-1`); its payload `cwd` is that worktree, its `agent_id` is unrelated to the name, its `agent_type` is `workflow-subagent` (or the agentType passed), and `transcript_path`/`session_id` are the parent session's. Without isolation its `cwd` is the main checkout. An Agent-tool spawn with isolation gets `agent-<id>` on `worktree-agent-<id>` with `agent_id` matching `<id>`. An agent's cwd persists across Bash calls (after `cd X`, the next payload's `cwd` is X). Before T7b, guard rule 4 knew only `agent-<id>`, so every isolated workflow agent was denied its first `git reset --hard`.
 
 A first attempt bound each `wf_` worktree to the first agent id that used it, in a binding store (a state file). It was dropped after two guard-attacking review rounds, both of which found the same class: the store is a file that agents can reach, so an agent could change or pre-empt its own or a peer's binding, and each round's fixes only added more command-text analysis, which cannot see every way a file is written (code the guard does not read writes it too). The per-finding detail of those rounds is in the controller's review reports; it was not committed with the dropped attempt. Owner decision (Decisions Made, 2026-10-10): ownership by cwd, no state files.
+
+### T16 results (2026-10-10)
+
+CLI 2.1.292, `W` at 0b52a6a; run E (26 turns) and run G (rerun: the first G failed only because `--add-dir` is variadic and swallowed the prompt; put `--` before the prompt). E6 is the owner's OP2. Lessons and the ADR amendment are in the same commit.
+
+- E1 pass: the worker's `kernel/` Write was denied by path-guard (5 hits); its `docs/e2e-probe.md` commit was fast-forwarded; the main thread's `kernel/` write (control) was allowed.
+- E2 pass: 4 guard hits (named spawn without isolation, writer without isolation, `model` passed).
+- E3 pass: the `repeat-error` state file was written; "has failed 2 times" appeared 3 times.
+- E4 pass: 7 `route-shadow` records (one per Agent call); `launched`/`stopped` pairs for worker, general-purpose, kernel-dev and code-reviewer; the 3 denied spawns left shadow records only.
+- E5 pass: code-reviewer launched after kernel-dev (round 1: 0 must/should/nit); no new worktrees or temporary branches; 0 agent hooks processed.
+- E6 pass (OP2, owner, interactive): the first ExitPlanMode was blocked by the gate (acceptance was not a command), the rewritten plan passed on the second pass, then the approval dialog; `claude-fable-5-1` dispatched 6 times, 0 `not_found_error`. The "# Notes: OP2" non-working-plan sub-check (should pass unreviewed) was not exercised.
+- E7 pass: with main's pre-#234 binary (no `--agent-type`), the shim fallback denied the worker's `kernel/` Write (5 hits); the lead's docs write was allowed.
+- E8 pass: 3 dispatches to `claude-fable-5-1` (code-reviewer's frontmatter `model: fable`), 0 `not_found_error`.
+- E9 pass: rule 4 messages "agents never call EnterWorktree" 5, "agents reset only their own temporary worktree" 5, "exists only for an isolated agent" 3.
+- Notes: a standalone `sleep 30` is blocked in `-p`; a lead's own Write is fenced by no hook, by design (rule 11).
 
 ### T4 placement
 

@@ -96,3 +96,21 @@ Two more facts:
   | H3 | run A's output: each agent's `git branch --show-current` and reset output; `git -C "$WT" log --format=%s main..`; `cat "$WT/probe-bg.txt"`; run A's step 3 and 6 outputs | each agent ran on `worktree-agent-<id>` and reset to the tip; each `rev-list --first-parent` printed one commit; both `merge --ff-only` fast-forwarded; `claude/probe` holds `probe-bg` and `probe-fg`; `probe-bg.txt` is `bg`; `git branch -d` from the repository root refused ("not fully merged") and with `-C "$WT"` deleted the branch. |
 
   If an agent cannot reset or commit in its own worktree, or the fast-forward is refused, D3 is not available on that CLI: stop relying on it and re-plan before the next writer spawn. Teardown: `rm -rf "$S"`.
+
+## Update 2026-10-10: end-to-end placement results (T16)
+
+T16 ran the placement for real with `claude -p` (CLI 2.1.292):
+
+- **E1 (worker).** The worker committed `docs/e2e-probe.md` on its `worktree-agent-<id>` branch. The commit reached `W`'s branch only through the lead's `git -C <W> merge --ff-only`; the worker never touched `W`.
+- **E5 (kernel-dev).** The kernel-dev range went through the Fable review (round 1: 0 must/should/nit), the fast-forward and the clean-up in that order. No worktree or temporary branch from the run was left (a stray `worktree-agent-abe2b20d` from an earlier session predates it).
+
+### Workflow `agent()` worktrees (T7b)
+
+A Workflow `agent()` with `isolation: "worktree"` does not get the `agent-<id>` shape. Headless probes (CLI 2.1.292) of the PreToolUse payloads of its Bash calls showed:
+
+- it runs in `<main>/.claude/worktrees/wf_<run>-<n>` on branch `worktree-wf_<run>-<n>`; run ids look like `<8 hex>-<3 hex>`, `n` is a small integer (for example `wf_117ca996-025-1`);
+- the payload `cwd` is that worktree, the `agent_id` is unrelated to the name, and `agent_type` is `workflow-subagent` (or the agentType passed); `transcript_path` and `session_id` are the parent session's;
+- without isolation the `cwd` is the main checkout; an Agent-tool spawn with isolation still gets `agent-<id>` on `worktree-agent-<id>`, with an `agent_id` that matches `<id>`;
+- an agent's `cwd` persists across Bash calls (after `cd X`, the next payload's `cwd` is X).
+
+Before T7b, guard rule 4 knew only `agent-<id>`, so every isolated workflow agent was denied its first `git reset --hard`. Rule 4 now accepts both shapes (strict names, git's admin directory carrying the same name) and owns a worktree by payload `cwd`. The owner dropped a state-file binding store after two attack rounds, since a file agents can reach cannot be defended by command-text analysis; the guard stops accidents by cooperative agents, and the lead's range check before every fast-forward is the backstop. The target-resolution gaps that remain (a stopped rebase in the own worktree, `mkdir d && cd d && git commit`) are tracked in #241.

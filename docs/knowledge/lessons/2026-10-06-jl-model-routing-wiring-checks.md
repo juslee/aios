@@ -106,3 +106,30 @@ Probe 2's hooks returned ok true, so it showed only that the full id runs, not t
   | H8 | `jq -c 'select(.tool_name=="ExitPlanMode") \| {keys: (.tool_input \| keys), head: ((.tool_input.plan // "") \| .[0:13]), planFilePath: .tool_input.planFilePath}' "$L"` | keys include `plan` and `planFilePath`, `head` is `# Plan: probe`; no record means `-p` still does not reach ExitPlanMode | no record: check the plan gate interactively (OWNER-PROBES OP2) |
 
   The `SubagentStop` block is not re-checked: no design relies on it. If a later CLI does re-invoke a subagent after such a block, a hook-based step gate becomes possible again, which is a design change for the owner. Teardown: `rm -rf "$S" "$S7" "$S3"`.
+
+## Update 2026-10-10: end-to-end checks (T16)
+
+T16 ran the harness end to end with `claude -p` (CLI 2.1.292, `W` at 0b52a6a): run E (26 turns) exercised a worker, a kernel-dev and a code-reviewer under the project hooks; run G reran the part the first attempt lost. E6 is the owner's interactive OWNER-PROBES OP2. Results:
+
+| # | Check | Result |
+| --- | --- | --- |
+| E1 | A worker's `kernel/` Write is denied; its `docs/` commit reaches `W` by fast-forward | pass: path-guard denied it 5 times ("which this agent may not edit"); the main thread's `kernel/` write (control) was allowed |
+| E2 | Guard rule 3 (spawn shape) | pass: 4 hits (named spawn without isolation, writer without isolation, `model` passed) |
+| E3 | `repeat-error` | pass: the state file was written and "has failed 2 times" appeared 3 times in the transcript |
+| E4 | `route-shadow`, `route-outcome` | pass: 7 `route-shadow` records, one per Agent call (`kind` null: no TYPESAFE result), `launched`/`stopped` pairs for all four agent types; the 3 denied spawns left shadow records only |
+| E5 | The lead-run Fable range review | pass: code-reviewer launched after kernel-dev, round 1 found 0 must/should/nit; no new worktrees or temporary branches; 0 agent hooks processed |
+| E6 | The ExitPlanMode Fable plan gate (OP2, interactive) | pass: see below |
+| E7 | A stale `aios` binary (main's, without `--agent-type`) | pass: the shim fallback denied the worker's `kernel/` Write ("path-guard could not run", 5 hits); the lead's docs write was allowed |
+| E8 | Agent frontmatter `model: fable` | pass: 3 dispatches to `claude-fable-5-1`, 0 `not_found_error` (the same run also dispatched opus 38, sonnet 5, haiku 1 times) |
+| E9 | Guard rule 4 messages | pass: "agents never call EnterWorktree" 5, "agents reset only their own temporary worktree" 5, "exists only for an isolated agent" 3 |
+
+E6, the owner's run, debug counts: `dispatching to claude-fable-5-1` 6, `not_found_error` 0, `planFilePath` 2, "Processing agent hook" 2, "Hook denied" 1. The first ExitPlanMode was blocked ("FABLE-PLAN-GATE block 1/2: Lens: plan ...": the acceptance "it looks right" was not a command); the session rewrote the criterion as a command, the second pass approved it, and the approval dialog followed. The sub-check that a non-working plan ("# Notes: OP2") passes the gate unreviewed was not exercised.
+
+Non-obvious findings:
+
+- **`--add-dir` is variadic in `claude -p`, like `--allowedTools`.** It swallows a following prompt as another directory (run G's first attempt failed this way). Put `--` before the prompt.
+- **A standalone `sleep` is blocked in `-p`** (`sleep 30` was refused). Wait on a condition instead.
+- **Agent frontmatter `model: fable` resolves to `claude-fable-5-1` (E8),** unlike in an agent hook, where `fable` 404s (H7). The two paths are separate; T2's open question is closed.
+- **The ExitPlanMode Fable gate works interactively (E6).** `-p` still never reaches it, so only an owner-run session shows it. A block is retried by the session: it fixed the plan and the second pass approved.
+- **A lead's own Writes are fenced by no hook, by design.** path-guard covers the worker only; the lead's `kernel/` or `docs/` writes are not denied (E1's control, E7's lead write), which rule 11 states.
+- **The shim fallback also fences a worker on a stale binary (E7).** With no `--agent-type` support, "path-guard could not run" denied the worker's `kernel/` Write and nothing else.
