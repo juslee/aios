@@ -7,7 +7,8 @@ pub mod process;
 
 use crate::mm::buddy::PAGE_SIZE;
 use crate::smp::MAX_CORES;
-use spin::Mutex;
+use crate::sync::IrqSpinLock;
+use shared::lock::LockClass;
 
 // Re-export shared types used throughout the kernel.
 pub use shared::{CpuSet, SchedulerClass, ThreadId, ThreadState};
@@ -128,6 +129,13 @@ const _: () = assert!(core::mem::size_of::<FpContext>() == 528);
 /// Maximum threads system-wide.
 pub const MAX_THREADS: usize = 64;
 
+/// The offset from a thread's physical stack base at which
+/// [`Thread::new_kernel`] puts its initial, physical `sp`. Every kernel thread
+/// creator then replaces that `sp` with the stack's virtual top; the
+/// tripwire's restore-site check exempts a never-dispatched context that
+/// still has this default (`observability::tripwire::check_restore`).
+pub const NEW_KERNEL_SP_OFFSET: usize = 4 * PAGE_SIZE;
+
 /// A kernel or user thread.
 #[allow(dead_code)]
 pub struct Thread {
@@ -153,8 +161,9 @@ impl Thread {
     /// Create a new kernel thread.
     ///
     /// Sets up the context so that when this thread is first switched to,
-    /// execution begins at `entry_fn` with the stack at `stack_phys + 4*PAGE_SIZE`
-    /// (top of a 16 KiB stack, growing downward).
+    /// execution begins at `entry_fn` with `sp` at the physical address
+    /// `stack_phys + NEW_KERNEL_SP_OFFSET`. Callers replace `sp` with the
+    /// virtual top of the stack before the thread first runs.
     ///
     /// PSTATE = 0x3C5: EL1h, DAIF all masked (the thread unmasks as needed).
     /// TTBR0 = 0 (kernel threads don't have a user address space).
@@ -182,7 +191,7 @@ impl Thread {
             },
             context: ThreadContext {
                 gp_regs: [0; 31],
-                sp: (stack_phys + 4 * PAGE_SIZE) as u64,
+                sp: (stack_phys + NEW_KERNEL_SP_OFFSET) as u64,
                 pc: entry_fn as u64,
                 pstate: 0x3C5, // EL1h, DAIF masked
                 ttbr0: 0,
@@ -202,14 +211,14 @@ impl Thread {
 // Global thread table
 // ---------------------------------------------------------------------------
 
-/// System-wide thread table. BSS-allocated via `Option<Thread>`.
+/// System-wide thread table, statically allocated as `Option<Thread>` slots
+/// (in `.data`: the lock's holder fields start non-zero).
 ///
-/// Protected by a spinlock. In Phase 3 M11, individual thread access
+/// Protected by the detect-only IRQ-class spinlock (`sync::IrqSpinLock`):
+/// the timer IRQ path takes it too. In Phase 3 M11, individual thread access
 /// will be optimized with per-thread locks or lock-free techniques.
-pub static THREAD_TABLE: Mutex<[Option<Thread>; MAX_THREADS]> = {
-    const NONE: Option<Thread> = None;
-    Mutex::new([NONE; MAX_THREADS])
-};
+pub static THREAD_TABLE: IrqSpinLock<[Option<Thread>; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::ThreadTable, [const { None }; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
 // Per-CPU current thread tracking
@@ -217,8 +226,13 @@ pub static THREAD_TABLE: Mutex<[Option<Thread>; MAX_THREADS]> = {
 
 /// Per-CPU currently running thread ID. Used by the scheduler to know
 /// which thread is active on each core without locking the thread table.
-pub static CURRENT_THREAD: [Mutex<Option<ThreadId>>; MAX_CORES] = {
-    #[allow(clippy::declare_interior_mutable_const)]
-    const NONE: Mutex<Option<ThreadId>> = Mutex::new(None);
-    [NONE; MAX_CORES]
+/// Each entry is an IRQ-class lock that reports its CPU as its index.
+pub static CURRENT_THREAD: [IrqSpinLock<Option<ThreadId>>; MAX_CORES] = {
+    let mut locks = [const { IrqSpinLock::new(LockClass::CurrentThread, None) }; MAX_CORES];
+    let mut cpu = 0;
+    while cpu < MAX_CORES {
+        locks[cpu].set_index(cpu as u8);
+        cpu += 1;
+    }
+    locks
 };

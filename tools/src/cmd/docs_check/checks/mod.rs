@@ -55,7 +55,9 @@ mod registry_tests {
     use crate::cmd::docs_check::model::CHECK_ORDER;
     use crate::cmd::docs_check::output::render_list_checks;
 
-    /// `python3 scripts/docs/check.py --list-checks` output (check.py L1597-1600), byte for byte.
+    /// `python3 scripts/docs/check.py --list-checks` output (check.py L1597-1600; L1598-1601
+    /// at 56c4bf4), byte for byte, as check.py at 56c4bf4 prints it (its `lock-order` line
+    /// names `IrqSpinLock` statics).
     const CHECK_PY_LIST_CHECKS: &str = "\
 md-links           relative [text](path) links resolve to a tracked file or directory
 section-refs       [x.md](path) §N resolves to a numbered heading (hub subfolders included)
@@ -65,7 +67,7 @@ doc-map            doc-map.md paths exist and every architecture doc is listed
 repo-paths         backticked kernel/ shared/ uefi-stub/ scripts/ paths exist (current-state docs)
 just-recipes       backticked `just X` recipes exist; public recipes are documented
 test-count         stated host test counts match #[test] in shared/src
-lock-order         production Mutex statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md
+lock-order         production Mutex/IrqSpinLock statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md
 milestone-status   merged 'Phase N MK:' milestones vs phase docs, README, development-plan
 phase-count        phase counts in prose match the development-plan §8 table
 layout             kernel/src and shared/src modules vs CLAUDE.md layout and rule 05

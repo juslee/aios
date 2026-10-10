@@ -1,7 +1,10 @@
 //! `lock-order`, ported from check.py `code_mutex_statics` and `check_lock_order`
-//! (L813-925): production `Mutex` statics in `kernel/src` versus the lock table of
-//! `docs/kernel/deadlock-prevention.md` sections 3.3-3.4, the `Lock ordering` chain in
-//! [`CLAUDE_MD`], and `lock ordering` comment blocks in kernel code.
+//! (L813-925): production `Mutex` and `IrqSpinLock` statics in `kernel/src` versus the
+//! lock table of `docs/kernel/deadlock-prevention.md` sections 3.3-3.4, the
+//! `Lock ordering` chain in [`CLAUDE_MD`], and `lock ordering` comment blocks in kernel
+//! code. The `IrqSpinLock` match is check.py's crash-fix step 1b change (56c4bf4), made
+//! after the R1 snapshot (33c6b3d). Line numbers are the snapshot's unless a citation
+//! names 56c4bf4, whose added comment line moves everything after L830 down by one.
 //!
 //! `split_outside_braces` replaces check.py's `re.split(r">(?![^{]*})", ...)` (the regex
 //! crate has no lookaround). The patterns are check.py's, compiled with
@@ -45,9 +48,10 @@ static STATIC_RE: LazyLock<Regex> = LazyLock::new(|| {
 static TEST_MOD_RE: LazyLock<Regex> = LazyLock::new(|| {
     pyre::compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{").expect("valid regex")
 });
-/// check.py L831 (`re.search` on the static's type).
-static MUTEX_RE: LazyLock<Regex> =
-    LazyLock::new(|| pyre::compile(r"\bMutex\s*<").expect("valid regex"));
+/// check.py L831-832 (`re.search` on the static's type): `spin::Mutex` statics and the
+/// IRQ-class `sync::IrqSpinLock` statics (crash-fix step 1b, check.py at 56c4bf4).
+static LOCK_TYPE_RE: LazyLock<Regex> =
+    LazyLock::new(|| pyre::compile(r"\b(?:Mutex|IrqSpinLock)\s*<").expect("valid regex"));
 /// check.py L841: the section 3.3-3.4 body of the deadlock doc.
 static TABLE_START: LazyLock<Regex> =
     LazyLock::new(|| pyre::compile(r"^### 3\.3 ").expect("valid regex"));
@@ -80,10 +84,11 @@ pub fn split_outside_braces(s: &str) -> Vec<&str> {
     parts
 }
 
-/// Production `Mutex` statics in `kernel/src`: name -> (file, 1-based line) of the first
-/// definition in file order (check.py `code_mutex_statics`, L817-833). Files named
-/// `tests.rs` or under a `tests/` directory are skipped, and a `#[cfg(test)]` line whose
-/// next non-blank line opens a module ends the scan of that file.
+/// Production `Mutex` and `IrqSpinLock` statics in `kernel/src`: name -> (file, 1-based
+/// line) of the first definition in file order (check.py `code_mutex_statics`, L817-833;
+/// L817-834 at 56c4bf4). Files named `tests.rs` or under a `tests/` directory are
+/// skipped, and a `#[cfg(test)]` line whose next non-blank line opens a module ends the
+/// scan of that file.
 pub fn code_mutex_statics(repo: &Repo) -> BTreeMap<String, (String, usize)> {
     let mut statics = BTreeMap::new();
     for f in repo.files() {
@@ -110,7 +115,7 @@ pub fn code_mutex_statics(repo: &Repo) -> BTreeMap<String, (String, usize)> {
                 continue;
             };
             let name = &caps[1];
-            if MUTEX_RE.is_match(&caps[2]) && !TEST_LOCKS.contains(&name) {
+            if LOCK_TYPE_RE.is_match(&caps[2]) && !TEST_LOCKS.contains(&name) {
                 statics
                     .entry(name.to_string())
                     .or_insert_with(|| (f.clone(), i + 1));
@@ -345,7 +350,7 @@ mod tests {
             &LOCK_NAME_RE,
             &STATIC_RE,
             &TEST_MOD_RE,
-            &MUTEX_RE,
+            &LOCK_TYPE_RE,
             &TABLE_START,
             &TABLE_STOP,
             &LOCK_CELL_RE,
@@ -388,7 +393,7 @@ mod tests {
             .captures("pub(crate) static BETA_LOCK: [spin::Mutex<()>; 4] = x;")
             .expect("a static line");
         assert_eq!(&caps[1], "BETA_LOCK");
-        assert!(MUTEX_RE.is_match(&caps[2]));
+        assert!(LOCK_TYPE_RE.is_match(&caps[2]));
         assert!(TEST_MOD_RE.is_match("pub(crate) mod tests {"));
         assert!(!TEST_MOD_RE.is_match("fn helper() {}"));
     }

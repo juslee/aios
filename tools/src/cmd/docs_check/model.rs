@@ -140,7 +140,7 @@ pub const CHECKS: [(&str, &str); 15] = [
     ),
     (
         "lock-order",
-        "production Mutex statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md",
+        "production Mutex/IrqSpinLock statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md",
     ),
     (
         "milestone-status",

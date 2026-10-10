@@ -51,6 +51,9 @@ GICv3 GICD base:              0x0800_0000
 GICv3 GICR base:              0x080A_0000
 ARM Generic Timer freq:       62.5 MHz on QEMU; 1 ms tick = freq/1000 = 62500
 Timer PPI INTID:              30 (EL1 physical timer)
+Timer IRQs on CPUs 1-3:       none today (#200): init_gicv3_secondary never writes GICR_IGROUPR0, so
+                              PPI 30 stays in Group 0, which the kernel never enables. Only CPU 0
+                              runs the tick work and IRQ-path switches; fixed by its own crash-fix step.
 
 # Boot invariants
 QEMU boots to EL1 directly    (no EL2 setup)
@@ -67,6 +70,23 @@ Boot stack:                   128 KiB `.stack (NOLOAD)` section after .bss, insi
                               A bare `. +=` after a segment's last output section is in no PT_LOAD: never reserved.
 Syscall ABI:                  SVC #0 from EL0; x8 = number, x0-x5 = args, x0 = return.
                               Phase 3 threads run at EL1 → IPC is a direct call, NOT SVC. SVC path wired for future EL0.
+EL1 IRQ entry frame (1b):     irq_el1_entry pushes 192 B onto the interrupted stack: x0-x18, x29,
+                              x30, an xzr pad, and ELR_EL1/SPSR_EL1 as taken at entry (lowest pair).
+                              It restores the GPRs only. irq_frame_check counts an ELR/SPSR that
+                              changed across irq_handler_el1 (elrmm/spsrmm) and restores nothing.
+                              SP at both bl's (interrupted SP - 192, - 176) stays 16-byte aligned.
+TPIDR_EL1 (1b):               MPIDR Aff0, written by boot.S on every CPU (_start, _secondary_entry)
+                              before any Rust code, and by nothing else (not saved or restored on a
+                              switch). The IRQ-class lock stamps its CPU id from it (tripwire::cpu_tpidr;
+                              one inline load under TCG, where an MPIDR read is two helper calls).
+                              kernel_main, secondary_main and note_dispatch count a mismatch (tpidrbad).
+IRQ-path address values (1b): CPUs 1-3 install VBAR_EL1 with adrp while the MMU is off, so their
+                              exception paths run at physical-alias PCs, and any address value
+                              computed there (adrp, Location::caller()) is physical. An address
+                              value computed on the IRQ path and compared, stored or published
+                              across CPUs must be a VA captured at thread level on CPU 0 (e.g.
+                              TEXT_LO/TEXT_HI from kernel_main) or be normalised (v < KERNEL_VIRT
+                              -> v + VIRT_PHYS_OFFSET). Pointers that are only dereferenced are fine.
 
 # MMU strategy (do not get this wrong)
 edk2 state post-EBS:          MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
@@ -99,6 +119,10 @@ on Inner Shareable + Cacheable memory. spin::Mutex (and any atomic RMW: fetch_ad
 swap) HANGS on Non-Cacheable Normal memory.
   Phase 1: use only load(Acquire) / store(Release) for inter-core sync.
   Phase 2 M8: TTBR0 RAM blocks upgraded to WB (Attr3); spinlocks safe after TTBR1 active.
+  Kernel statics are not NC: boot.S maps the image WB + Inner Shareable in the boot TTBR1, and
+  kernel_main runs at its VA from its first instruction, so atomic RMW on statics (e.g. the
+  IrqSpinLock CAS, BOOT_LOG before init_mmu) is safe on every CPU; physical-alias accesses on
+  CPUs 1-3 go through the identity map's RAM block, WB since M8.
 
 # Slab allocator
 Size classes: 5 (64, 128, 256, 512, 4096B); smaller rounds up to 64. Backed by frame allocator (kernel pool).
@@ -120,6 +144,20 @@ Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op r
                               (hit-test walks Z then reads the table; drag handler enters
                               DRAG_STATE then snapshots geometry from the table). None of
                               the compositor mutexes is ever held across ipc_send / ipc_call.
+Dispatch bookkeeping (1b):    tripwire::note_dispatch runs at the 4 CURRENT_THREAD commit sites
+                              (enter_scheduler, schedule, try_direct_switch, try_reply_switch),
+                              right after the write, THREAD_TABLE held, IRQs masked. It bumps
+                              the per-CPU switch generation (SWITCH_GEN[MPIDR cpu]) and writes
+                              CURRENT_TID, the lock-free CURRENT_THREAD mirror (TID_NONE = none).
+                              CURRENT_TID is written only there, under THREAD_TABLE, so it
+                              equals CURRENT_THREAD while THREAD_TABLE is held.
+IRQ-class locks (1b):         THREAD_TABLE, CURRENT_THREAD[N], RUN_QUEUES[N], WAKEUP_ERRORS,
+                              TIMEOUT_QUEUE, NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS
+                              and BOOT_LOG are sync::IrqSpinLock (detect-only): spin::Mutex
+                              exclusion, word = owner stamp (cpu, SWITCH_GEN). A lock() by the
+                              holder's own stream panics "lock re-entry:" (in main it would spin
+                              forever); other contention only counts (tripwire lk* keys).
+                              Positions in deadlock-prevention.md §3.3 are unchanged.
 ```
 
 ---
@@ -190,11 +228,13 @@ aios/
 │   │                     window move/resize, system hotkeys (M25 adds
 │   │                     window/cursor/focus/input_route/hotkey/text)
 │   ├── storage/          BlockEngine, WAL, MemTable, object/version stores, crypto, posix bridge, budget
-│   ├── observability/    structured log, metrics, trace (feature-gated)
+│   ├── observability/    structured log, metrics, trace (feature-gated), tripwire (crash-fix 1b counters)
+│   ├── sync/             IrqSpinLock (detect-only lock of the 9 IRQ-shared statics),
+│   │                     selftest (tripwire-selftest feature, off by default)
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
 ├── shared/src/           types crossing kernel/stub boundary (no_std)
 │   ├── (top-level)       boot, cap, ipc, sched, memory, storage, gpu, input, compositor, syscall,
-│   │                     kaslr, cache, observability, collections, lib
+│   │                     kaslr, cache, observability, collections, lock, tripwire, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):

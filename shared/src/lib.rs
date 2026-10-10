@@ -12,11 +12,13 @@ pub mod input;
 pub mod ipc;
 pub mod kaslr;
 pub mod kits;
+pub mod lock;
 pub mod memory;
 pub mod observability;
 pub mod sched;
 pub mod storage;
 pub mod syscall;
+pub mod tripwire;
 
 /// Physical address type alias.
 pub type PhysAddr = u64;

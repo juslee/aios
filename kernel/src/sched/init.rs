@@ -8,7 +8,9 @@ use core::sync::atomic::Ordering;
 
 use crate::arch::aarch64::exceptions;
 use crate::arch::aarch64::timer::{NEED_RESCHED, TICK_COUNT};
+use crate::observability::tripwire;
 use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId, THREAD_TABLE};
+use shared::tripwire::Key;
 
 use super::{
     alloc_kernel_stack, allocate_thread, phys_to_virt, scheduler::thread_yield, RUN_QUEUES,
@@ -222,8 +224,11 @@ pub fn try_load_balance() {
         }
     }
 
-    // Only migrate if difference > 1.
-    if max_depth <= min_depth + 1 || max_cpu == min_cpu {
+    // Only migrate if difference > 1. `saturating_add`: when every try_lock
+    // above failed (the heartbeat scan holds all the queues), min_depth is
+    // still usize::MAX and `+ 1` would overflow; this returns instead. With
+    // any queue read, the result is the same as `+ 1`.
+    if max_depth <= min_depth.saturating_add(1) || max_cpu == min_cpu {
         return;
     }
 
@@ -261,7 +266,11 @@ pub fn try_load_balance() {
                 .unwrap_or(false)
         };
         if can_migrate {
-            dst.normal.push_back(tid);
+            if dst.normal.push_back(tid) {
+                tripwire::bump_masked(Key::Lb, 0);
+            } else {
+                tripwire::bump_masked(Key::Enqfull, 0);
+            }
             crate::kinfo!(
                 Sched,
                 "Load balance: migrated tid={} from CPU {} to CPU {}",

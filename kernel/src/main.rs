@@ -23,11 +23,13 @@ mod sched;
 mod service;
 mod smp;
 mod storage;
+mod sync;
 mod syscall;
 mod task;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicBool, Ordering};
 use shared::{BootInfo, BOOTINFO_MAGIC};
 
 use crate::boot_phase::{advance_boot_phase, EarlyBootPhase};
@@ -40,6 +42,15 @@ core::arch::global_asm!(include_str!("arch/aarch64/context_switch.S"));
 #[no_mangle]
 pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     use crate::arch::aarch64::exceptions;
+
+    // Count a TPIDR_EL1 that is not this CPU's MPIDR Aff0 (tpidrbad) before
+    // the first IRQ-class lock (kinfo! try-locks BOOT_LOG), which stamps its
+    // CPU id from it. boot.S wrote it just before branching here.
+    observability::tripwire::check_tpidr();
+    // The kernel text bounds for the restore-site checks, as virtual
+    // addresses: taken here, at VA on CPU 0, before smp starts the
+    // secondaries, whose IRQ path runs at physical-alias PCs.
+    observability::tripwire::capture_text_layout();
 
     kinfo!(Boot, "AIOS kernel booting...");
 
@@ -271,6 +282,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
             uspace::switch_address_space(&as_b);
         }
         kinfo!(Mm, "Address space switching verified");
+        // CPU 0's `[smp]` line: a TTBR1 VBAR and address space B's TTBR0
+        // (ASID in bits [63:48]). CPUs 1–3 printed theirs in smp.rs.
+        smp::print_cpu_line(0);
     }
 
     // Final drain before entering idle loop (timer tick takes over in Step 4).
@@ -345,6 +359,14 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     bench::init();
     observability::drain_logs();
 
+    // Tripwire self-test (feature `tripwire-selftest`, off by default): a
+    // thread on CPU 0 that makes the next tick panic with `lock re-entry:`.
+    #[cfg(feature = "tripwire-selftest")]
+    {
+        sync::selftest::init();
+        observability::drain_logs();
+    }
+
     // --- Step 7d: Release secondary cores ---
     sched::start();
     observability::drain_logs();
@@ -387,11 +409,56 @@ fn halt() -> ! {
     }
 }
 
+/// Per-CPU "inside the panic handler" flags. Each CPU loads and stores only
+/// its own entry, with IRQs masked, so no atomic read-modify-write is needed.
+static PANICKING: [AtomicBool; smp::MAX_CORES] = [const { AtomicBool::new(false) }; smp::MAX_CORES];
+
+/// The panic handler (crash-fix step 1b; observability.md §6.5), in this
+/// order:
+///
+/// 1. Mask IRQs for good, remembering whether they were on. No tick runs on
+///    this CPU after a panic, so nothing preempts the report or runs on top
+///    of the broken state.
+/// 2. A panic inside the handler on the same CPU halts at once.
+/// 3. `PANIC: <info>`, unchanged: the soak harness keys on it and captures
+///    the message on the next line.
+/// 4. The `[panic]` line and a full `[tripwire] v=1 src=panic` line
+///    (`tripwire::print_panic_report`).
+/// 5. On CPU 0, drain the log rings (`observability::drain_logs_after_panic`).
+/// 6. Halt with `wfe`.
+///
+/// It takes no lock (the drain only try-locks BOOT_LOG), allocates nothing
+/// and calls no `klog!`.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // SAFETY: UartWriter accesses PL011 MMIO at the current UART base address.
-    // In the panic path, correctness of output is best-effort.
+    let daif: u64;
+    // SAFETY: Reading DAIF and setting DAIF.I are permitted at EL1, where
+    // all kernel code runs. The mask only defers IRQs on this CPU, and this
+    // handler never returns, so nothing relies on IRQs coming back on. The
+    // asm is not `nomem`, so it is a compiler barrier and the report below
+    // stays inside the masked window. At EL0 the access would trap.
+    unsafe {
+        core::arch::asm!(
+            "mrs {daif}, DAIF",
+            "msr DAIFSet, #0x2",
+            daif = out(reg) daif,
+            options(nostack, preserves_flags)
+        );
+    }
+    let irq_was_on = daif & observability::tripwire::DAIF_I == 0;
+    let cpu = usize::from(observability::tripwire::cpu_here()).min(smp::MAX_CORES - 1);
+    if let Some(flag) = PANICKING.get(cpu) {
+        if flag.load(Ordering::Relaxed) {
+            halt();
+        }
+        flag.store(true, Ordering::Relaxed);
+    }
+
+    // UartWriter writes PL011 MMIO at the current UART base address. In the
+    // panic path, correctness of output is best-effort.
     let mut w = crate::arch::aarch64::uart::UartWriter;
     let _ = writeln!(&mut w, "PANIC: {}", info);
+    observability::tripwire::print_panic_report(irq_was_on);
+    observability::drain_logs_after_panic();
     halt()
 }

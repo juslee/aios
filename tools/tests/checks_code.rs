@@ -3,7 +3,8 @@
 //! The expected findings were recorded by calling check.py's own `check_test_count`,
 //! `check_lock_order` and `code_mutex_statics` on the same files (production order).
 //! check.py read the project memory at the root `CLAUDE.md`; these files place it at
-//! `CLAUDE_MD`, so the expectations are check.py's with that path substituted.
+//! `CLAUDE_MD`, so the expectations are check.py's with that path substituted. The
+//! `IrqSpinLock` case was recorded from check.py at 56c4bf4 (crash-fix step 1b).
 
 mod common;
 
@@ -399,6 +400,102 @@ fn lock_order_skips_without_the_deadlock_doc() {
             "docs/kernel/deadlock-prevention.md not found".to_string()
         ))
     );
+}
+
+// The IrqSpinLock case of check.py at 56c4bf4 (crash-fix step 1b): its
+// `code_mutex_statics` and `check_lock_order` on these files gave the expectations below.
+const IRQ_DOCS_KERNEL_DEADLOCK_PREVENTION_MD: &str = r#"# Deadlock Prevention
+
+### 3.3 Lock Hierarchy
+
+| Rank | Lock | Notes |
+|---|---|---|
+| 1 | `TABLE_LOCK` | spin::Mutex |
+| 2 | `THREAD_TABLE` | IrqSpinLock |
+| 3 | `RUN_QUEUES[cpu]` | per-CPU IrqSpinLock array |
+| 4 | `WRAPPED_LOCK` | not a lock type |
+
+### 3.5 Notes
+"#;
+const IRQ_KERNEL_SRC_SYNC_RS: &str = r#"//! Locks.
+
+// Lock ordering: THREAD_TABLE > GHOST_TABLE
+// then RUN_QUEUES.
+
+use crate::sync::IrqSpinLock;
+
+pub static TABLE_LOCK: spin::Mutex<u8> = spin::Mutex::new(0);
+pub static THREAD_TABLE: IrqSpinLock<u8> = IrqSpinLock::new(0);
+pub(crate) static RUN_QUEUES: [IrqSpinLock<u8>; 4] = [const { IrqSpinLock::new(0) }; 4];
+static BOOT_LOG: crate::sync::IrqSpinLock <u8> = crate::sync::IrqSpinLock::new(0);
+static WRAPPED_LOCK: MyIrqSpinLock<u8> = MyIrqSpinLock::new(0);
+static GUARD_SLOT: Option<IrqSpinLockGuard<'static, u8>> = None;
+"#;
+const IRQ_CLAUDE_MD: &str = r#"# Project
+
+```text
+Lock ordering (full, test):   TABLE_LOCK > RUN_QUEUES >
+                              THREAD_TABLE > BOOT_LOG
+```
+"#;
+
+#[test]
+fn lock_order_counts_irq_spin_lock_statics() {
+    let t = TestRepo::with_files(
+        "lock-order-irq",
+        &[
+            (
+                "docs/kernel/deadlock-prevention.md",
+                IRQ_DOCS_KERNEL_DEADLOCK_PREVENTION_MD,
+            ),
+            ("kernel/src/sync.rs", IRQ_KERNEL_SRC_SYNC_RS),
+            (CLAUDE_MD, IRQ_CLAUDE_MD),
+        ],
+    );
+    let repo = open(&t);
+    let statics: BTreeMap<String, (String, usize)> = [
+        ("BOOT_LOG", 11),
+        ("RUN_QUEUES", 10),
+        ("TABLE_LOCK", 8),
+        ("THREAD_TABLE", 9),
+    ]
+    .into_iter()
+    .map(|(name, line)| (name.to_string(), ("kernel/src/sync.rs".to_string(), line)))
+    .collect();
+    assert_eq!(code_mutex_statics(&repo), statics);
+    let got = LockOrder.run(&repo).expect("lock-order runs");
+    let want = vec![
+        finding(
+            "lock-order",
+            "docs/kernel/deadlock-prevention.md",
+            "undocumented:BOOT_LOG",
+            "production lock BOOT_LOG is not in §3.3/§3.4",
+            0,
+        )
+        .with_detail("defined at kernel/src/sync.rs:11"),
+        finding(
+            "lock-order",
+            "docs/kernel/deadlock-prevention.md",
+            "stale:WRAPPED_LOCK",
+            "§3.3/§3.4 lists WRAPPED_LOCK, which is not a Mutex static in kernel/src",
+            10,
+        ),
+        finding(
+            "lock-order",
+            CLAUDE_MD,
+            "order:RUN_QUEUES>THREAD_TABLE",
+            "CLAUDE.md orders RUN_QUEUES before THREAD_TABLE, §3.3 ranks them 3 and 2",
+            5,
+        ),
+        finding(
+            "lock-order",
+            "kernel/src/sync.rs",
+            "unknown:GHOST_TABLE",
+            "lock-ordering comment names GHOST_TABLE, which is not a Mutex static",
+            3,
+        ),
+    ];
+    assert_eq!(got, want);
 }
 
 #[test]

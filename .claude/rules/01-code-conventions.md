@@ -8,7 +8,7 @@
 - No TODO comments in code — complete implementations only
 - Naming: `snake_case` for functions/variables, `CamelCase` for types, `SCREAMING_SNAKE` for constants
 - Error handling: `Result<T, E>` for fallible operations; panics reserved for unrecoverable invariant violations
-- Panic handler: always prints to UART then halts with `wfe` loop (not `loop {}`)
+- Panic handler: masks IRQs first, prints to UART without taking a lock, then halts with `wfe` loop (not `loop {}`)
 - Prefer the best approach over the simplest — choose the design that is cleanest, most maintainable, and architecturally sound, even if a shortcut exists
 
 ## Architecture-Specific (aarch64)
@@ -29,7 +29,7 @@
 - Entry symbols: `#[no_mangle]` on the Rust side
 - Vector table: `.align 7` (128 bytes) per entry in assembly; `ALIGN(2048)` for section in linker script
 - All 16 exception vector entries present; stubs `b .` until real handlers added
-- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → convert SP to virtual → branch to virtual `kernel_main`
+- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → convert SP to virtual → set `TPIDR_EL1` = MPIDR_EL1 Aff0 → branch to virtual `kernel_main` (`_secondary_entry` also sets `TPIDR_EL1` before branching to `secondary_main`)
 - Exception handler: uses direct `putc()` output, not `println!()`, to prevent recursive faults
 
 ## Crate & Dependency Rules
