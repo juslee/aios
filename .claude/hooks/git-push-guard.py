@@ -1353,7 +1353,10 @@ class Analyzer:
     def genuine_wrapper(self, path, cwd):
         """True when `path` resolves to scripts/agent/qemu-lock.sh in the main
         checkout, the project directory, or the agent's own temporary worktree
-        (a copy of the repository). A symlink counts as what it points to."""
+        (a copy of the repository); for a main thread also in the working
+        tree of `cwd` when it is a linked worktree sharing the main checkout's
+        git common dir (rule 04's .claude/worktrees/phase-N). A symlink counts
+        as what it points to."""
         target = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
         roots = []
         payload_cwd = self.ctx.get("cwd")
@@ -1364,6 +1367,10 @@ class Analyzer:
                 roots.append(found[-1])
             if self.is_agent() and self.own_temp_worktree(repo):
                 roots.append(found[0])
+            if not self.is_agent() and found:
+                here = Repo.get(cwd).roots()
+                if len(here) == 2 and here[1] == found[-1]:
+                    roots.append(here[0])
         if os.environ.get("CLAUDE_PROJECT_DIR"):
             roots.append(os.environ["CLAUDE_PROJECT_DIR"])
         for root in roots:
@@ -1389,6 +1396,10 @@ class Analyzer:
             if positional_only or not a.startswith("-") or a == "-":
                 if "=" not in a or positional_only:
                     hits.append(a)
+                # From the first recipe name or override on, every word is a
+                # recipe argument (`soak *args` receives -n, --list, ...), so
+                # only options before it can make just print instead of run.
+                positional_only = True
                 continue
             if a == "--":
                 positional_only = True
@@ -1618,8 +1629,8 @@ class Analyzer:
             return
         what = "commit" if change == "commit" else f"run git {change}"
         if redirect:
-            v.rule_deny(f"agents never {what} in the main checkout; {redirect} in this command "
-                        "can point git at it (rule 11)")
+            v.rule_deny(f"agents never change where git writes: {redirect} in this command can "
+                        f"point git {sub} at another repository, working tree, index or config (rule 11)")
         elif unresolved(workdir):
             v.ask(f"git {sub} runs in a directory that comes from a shell expansion; "
                   "agents never commit or move refs in the main checkout")

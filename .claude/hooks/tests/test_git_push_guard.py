@@ -1133,7 +1133,20 @@ class TeamRuleAttacks(TeamCase):
             "export GIT_WORK_TREE=%s; git merge --ff-only foo" % m,
             "env GIT_INDEX_FILE=/tmp/i git commit -m x",
         ]:
-            self.check("deny", "agents never commit in the main checkout", command, **self.kdev)
+            self.check("deny", "agents never change where git writes", command, **self.kdev)
+
+    def test_i1_config_variables_in_the_own_worktree_name_what_they_do(self):
+        # Round 2 nit: still denied (a config file can set core.worktree), but
+        # the reason says the command changes where git writes, not that the
+        # agent is in the main checkout.
+        for command in ["GIT_CONFIG_GLOBAL=/tmp/c git commit -m x",
+                        "GIT_CONFIG_NOSYSTEM=1 git commit -m x",
+                        "GIT_OBJECT_DIRECTORY=/tmp/o git commit -m x"]:
+            v = self.verdict(command, **self.kdev)
+            self.assertEqual("deny", v.level, (command, v.reasons))
+            text = " ".join(v.reasons)
+            self.assertIn("agents never change where git writes", text, command)
+            self.assertNotIn("main checkout", text, command)
 
     def test_i1_plain_commands_in_the_own_worktree_still_run(self):
         for command in ["git reset --hard abc", "git commit -m x",
@@ -1145,7 +1158,7 @@ class TeamRuleAttacks(TeamCase):
         m = self.repo
         self.check_hook("deny", "agents reset only their own temporary worktree",
                         "GIT_DIR=%s/.git GIT_WORK_TREE=%s git reset --hard" % (m, m), **self.kdev)
-        self.check_hook("deny", "agents never commit in the main checkout",
+        self.check_hook("deny", "agents never change where git writes",
                         "git --git-dir=%s/.git commit -m x" % m, **self.kdev)
         # GIT_DIR inherited by the session reaches the agent's command too.
         self.check_hook("deny", "agents reset only their own temporary worktree",
@@ -1410,6 +1423,20 @@ class TeamRuleAttacks(TeamCase):
             self.assertNotEqual("none", self.verdict(command).level, command)
         self.check_hook("none", None, "qemu-system-aarch64 --version")
 
+    def test_fp_just_options_after_the_first_recipe_are_recipe_arguments(self):
+        # Round 2: `soak *args` receives -n, --list, ... and still soaks.
+        for command in ["just soak -n 3", "just soak --dry-run", "just soak --list", "just soak -h",
+                        "just soak -l", "just soak -e", "just soak --show x", "just soak --version",
+                        "just soak runs=1 -n", "just run -n", "just soak -c true",
+                        "just runs=1 soak -n", "just -q soak --list"]:
+            for kw in [{}, self.kdev]:
+                self.check("deny", "every QEMU start goes through scripts/agent/qemu-lock.sh run",
+                           command, **kw)
+        for command in ["just -n run", "just --show run", "just --list", "just -n soak -n 3",
+                        "just --dry-run soak --list"]:
+            self.check("none", None, command)
+        self.check_hook("deny", "every QEMU start", "just soak -n 3")
+
     def test_fp_unparseable_team_commands_ask(self):
         for command in ["qemu-system-aarch64 'x", "just run 'x", "pkill 'q", "killall \"q",
                         "rustup update 'x"]:
@@ -1437,6 +1464,29 @@ class TeamRuleAttacks(TeamCase):
                 self.check("none", None, command, team=team)
         for command in ["just check", "cargo +nightly fmt", "kill 1234", "bash scripts/agent/brief.sh"]:
             self.check_hook("none", None, command)
+
+    def test_main_thread_wrapper_in_a_linked_branch_worktree(self):
+        # Round 2: a session whose cwd is a linked worktree of the same
+        # repository (rule 04's .claude/worktrees/phase-N) runs that worktree's
+        # own copy of the real wrapper.
+        with open(os.path.join(REAL_ROOT, "scripts", "agent", "qemu-lock.sh")) as fh:
+            self.write("scripts/agent/qemu-lock.sh", fh.read(), root=self.branch_wt)
+        run = "scripts/agent/qemu-lock.sh run --team solo --mode boot --label x --eta-min 1 -- just run"
+        for command in ["scripts/agent/qemu-lock.sh status", run,
+                        "sh scripts/agent/qemu-lock.sh status"]:
+            self.check("none", None, command, cwd=self.branch_wt)
+            self.check_hook("none", None, command, cwd=self.branch_wt)
+        # Not a main thread: an agent that is not the verifier is still denied the run.
+        self.check("deny", "only the verifier starts QEMU", run, cwd=self.branch_wt,
+                   agent_id="x", agent_type="kernel-dev")
+        self.check_hook("deny", "only the verifier starts QEMU", run, cwd=self.branch_wt,
+                        agent_id="x", agent_type="kernel-dev")
+        # A checkout that does not share this repository's git common dir is
+        # not trusted: its copy's body is read.
+        other = os.path.join(self.tmp.name, "other")
+        git(self.tmp.name, "init", "-q", "-b", "main", other)
+        self.write("scripts/agent/qemu-lock.sh", "#!/bin/sh\nqemu-system-aarch64 -M virt\n", root=other)
+        self.check("deny", "every QEMU start", "cd %s && %s" % (other, run), cwd=self.branch_wt)
 
 
 if __name__ == "__main__":
