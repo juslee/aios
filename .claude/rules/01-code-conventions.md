@@ -36,6 +36,6 @@
 
 - All kernel crates: `no_std`, `no_main`
 - All dependencies of `kernel/`, `shared/` and `uefi-stub/`: must be `no_std` compatible
-- Host tools (`tools/`, package `aios-tools`, binary `aios`) are a std crate built for the host: the `no_std`/`no_main` rules and the `no_std` dependency rule do not apply there. Its dependencies are the approved set clap, anyhow, serde, serde_json, regex and signal-hook (R4) (`time` is added by the first PR that uses it), and it forbids `unsafe`.
+- Host tools (`tools/`, package `aios-tools`, binary `aios`) are a std crate built for the host: the `no_std`/`no_main` rules and the `no_std` dependency rule do not apply there. Its dependencies are the approved set clap, anyhow, serde, serde_json, regex and signal-hook (R4) (`time` is added by the first PR that uses it), plus the workspace's own `shared` crate by path (crash-fix step 1a: the tripwire key catalogue), which brings in `sha2` (no default features) transitively and makes `shared/` a build input of the binary. It forbids `unsafe` in its own code; `shared`'s documented `unsafe` comes with the dependency.
 - License: MIT or Apache-2.0 preferred (BSD-2-Clause compatible). **No GPL in kernel/ or shared/**
 - `Cargo.lock`: committed (binary crate, reproducible builds)

@@ -168,7 +168,7 @@ test:
 # the installed binary's git hash, and "source dirty" when the inputs have
 # uncommitted changes (untracked and gitignored files count: an ignored
 # tools/build.rs or .cargo/config still changes the build; the exclude
-# pathspecs, anchored under tools/ and .cargo/ for the reason the shim gives,
+# pathspecs, anchored under tools/, shared/ and .cargo/ for the reason the shim gives,
 # leave out OS and editor files no build reads), or when the index marks an
 # input file assume-unchanged or skip-worktree (git status skips it; `git
 # ls-files -v` tags every other file H), before the build or after it: a file
@@ -218,7 +218,7 @@ tools:
     GIT_NO_REPLACE_OBJECTS=1
     GIT_GRAFT_FILE=/dev/null/no-grafts
     export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
-    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
+    inputs='tools shared Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
     # Print the input files git status lists (or a failure aborts the recipe)
     # and those the index flags hide from it.
     uncommitted() {
@@ -227,6 +227,8 @@ tools:
             status --porcelain --untracked-files=all --ignored=matching -- $inputs \
             ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
             ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
+            ':(exclude,glob)shared/**/.DS_Store' ':(exclude,glob)shared/**/*.swp' ':(exclude,glob)shared/**/*.swo' \
+            ':(exclude,glob)shared/**/*~' ':(exclude,glob)shared/**/*.rs.bk' \
             ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
             ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk' || return 1
         flags=$(git --work-tree="$PWD" ls-files -v -- $inputs) || return 1

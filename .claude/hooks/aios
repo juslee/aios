@@ -6,9 +6,10 @@
 # called from a PR worktree. `just tools` installs it at
 # target/tools/installed/aios, a path cargo never writes, by renaming a complete
 # copy into place, then writes installed/aios.stamp the same way. The stamp
-# records HEAD's tree entries for the build inputs (tools/, Cargo.lock,
-# Cargo.toml, rust-toolchain.toml, a legacy rust-toolchain file if there is
-# one, .cargo/, and the justfile, whose recipe writes the stamp), the git hash
+# records HEAD's tree entries for the build inputs (tools/, shared/ (the
+# tripwire key catalogue aios-tools links), Cargo.lock, Cargo.toml,
+# rust-toolchain.toml, a legacy rust-toolchain file if there is one, .cargo/,
+# and the justfile, whose recipe writes the stamp), the git hash
 # of the installed binary, and whether those inputs were dirty: changed but not
 # committed (untracked and gitignored files included, except the OS and editor
 # files no build reads: .DS_Store, *.swp, *.swo, *~ and *.rs.bk), or tracked
@@ -195,7 +196,7 @@ log="$main/target/tools/build.log"
 # one must count as an input (and make a build dirty). The justfile counts
 # because its `tools` recipe builds the binary and writes the stamp. A missing
 # path is harmless to find (its error is discarded), git ls-tree and git status.
-inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
+inputs='tools shared Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
 
 # Print why the main checkout's inputs are dirty now, by the `tools` recipe's
 # test: changes (uncommitted, untracked or gitignored input files: an ignored
@@ -223,6 +224,8 @@ dirty_cause() {
         status --porcelain --untracked-files=all --ignored=matching -- $inputs \
         ':(exclude,glob)tools/**/.DS_Store' ':(exclude,glob)tools/**/*.swp' ':(exclude,glob)tools/**/*.swo' \
         ':(exclude,glob)tools/**/*~' ':(exclude,glob)tools/**/*.rs.bk' \
+        ':(exclude,glob)shared/**/.DS_Store' ':(exclude,glob)shared/**/*.swp' ':(exclude,glob)shared/**/*.swo' \
+        ':(exclude,glob)shared/**/*~' ':(exclude,glob)shared/**/*.rs.bk' \
         ':(exclude,glob).cargo/**/.DS_Store' ':(exclude,glob).cargo/**/*.swp' ':(exclude,glob).cargo/**/*.swo' \
         ':(exclude,glob).cargo/**/*~' ':(exclude,glob).cargo/**/*.rs.bk' 2>/dev/null) ||
         [ -n "$changes" ]; then

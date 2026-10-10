@@ -20,7 +20,8 @@
 //! CLEAN is DEGRADED unless its Gate 1 IPC line reports [`IPC_ITERATIONS`]
 //! iterations ([`Ipc`]). Every other field is the script's, so
 //! [`Classification::base_line`], which prints the base class, is
-//! byte-identical to the script's output line.
+//! byte-identical to the script's output line. The same scan also collects
+//! step 1b's tripwire output ([`super::tripwire`]), which no class depends on.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -28,6 +29,7 @@ use std::sync::LazyLock;
 use regex::bytes::Regex;
 
 use super::awk::{clip, contains, fields, find, num_str, to_num, trim};
+use super::tripwire::{EventCounts, LastLines};
 
 /// A boot's class. The declaration order is the summary order ([`Class::ALL`]),
 /// with each subclass next to its base class.
@@ -189,6 +191,11 @@ pub struct Classification {
     pub reentry: Option<Reentry>,
     /// The Gate 1 IPC figures, read whatever the class.
     pub ipc: Ipc,
+    /// The last complete `[tripwire]` line, and the last complete `src=g1`
+    /// line, whatever the class.
+    pub tripwire: LastLines,
+    /// The `[tripwire-ev]` lock events, by kind, whatever the class.
+    pub events: EventCounts,
 }
 
 impl Classification {
@@ -357,6 +364,8 @@ struct Scan {
     input: bool,
     handoff: bool,
     ipc: Option<Ipc>,
+    tripwire: LastLines,
+    events: EventCounts,
 }
 
 impl Default for Scan {
@@ -389,6 +398,8 @@ impl Default for Scan {
             input: false,
             handoff: false,
             ipc: None,
+            tripwire: LastLines::default(),
+            events: EventCounts::default(),
         }
     }
 }
@@ -459,6 +470,8 @@ impl Scan {
                 self.ipc = Some(ipc_of(&line[p + IPC_LINE.len()..]));
             }
         }
+        self.tripwire.observe(line);
+        self.events.observe(line);
 
         // Fatal reports. The exception and panic handlers print without a lock,
         // so output from another CPU can split a report line anywhere.
@@ -850,6 +863,8 @@ impl Scan {
             info: [dash(i1), dash(i2), dash(i3)],
             reentry,
             ipc: self.ipc.unwrap_or_default(),
+            tripwire: self.tripwire,
+            events: self.events,
         }
     }
 }
@@ -1246,6 +1261,45 @@ mod tests {
             ipc_line(0)
         );
         assert_eq!(classify(log.as_bytes(), None).class, Class::WedgeAlive);
+    }
+
+    #[test]
+    fn tripwire_output_is_collected_and_changes_no_field_of_the_line() {
+        let plain = healthy(&ipc_line(10_000));
+        let hb =
+            "[tripwire] v=1 src=hb cpu=0 t=1000 ncpu=4 elrmm=0,1,0,0 twc=9 twn=1 twmax=9 n=9\r\n";
+        let g1 =
+            "[tripwire] v=1 src=g1 cpu=0 t=1200 ncpu=4 elrmm=0,2,0,0 twc=9 twn=2 twmax=9 n=9\r\n";
+        let v2 = "[tripwire] v=2 src=hb cpu=0 t=1500 ncpu=4 newkey=1 n=6\r\n";
+        let ev = "[tripwire-ev] kind=self cpu=0 lock=THREAD_TABLE idx=- ctx=irq-exit owner_cpu=0 \
+                  owner_gen=1 holder_tid=3 cur_tid=3 holder_running=0 holder=kernel/src/cap/mod.rs:39\r\n";
+        let with = plain.replacen(
+            "[heartbeat] tick=1000\n",
+            &format!("{hb}{ev}{g1}[heartbeat] tick=1000\n{v2}"),
+            1,
+        );
+        assert_ne!(with, plain);
+        let (a, b) = (
+            classify(plain.as_bytes(), None),
+            classify(with.as_bytes(), None),
+        );
+        assert_eq!((b.class, b.line()), (a.class, a.line()));
+        assert_eq!(a.tripwire, LastLines::default());
+        assert_eq!(a.events, EventCounts::default());
+        // The last complete line is the v=2 one, kept whole and not decoded.
+        let last = b.tripwire.last.expect("a complete line");
+        assert_eq!(last.text, v2.trim_end().as_bytes());
+        assert_eq!((last.version, last.v1), (Some(b"2".to_vec()), None));
+        let g1_line = b.tripwire.g1.expect("the g1 line");
+        assert_eq!(g1_line.text, g1.trim_end().as_bytes());
+        assert_eq!(
+            g1_line
+                .v1
+                .expect("decoded")
+                .value(shared::tripwire::Key::Elrmm),
+            b"0,2,0,0"
+        );
+        assert_eq!((b.events.self_held, b.events.self_irq), (1, 1));
     }
 
     #[test]

@@ -363,6 +363,8 @@ mod tests {
                 avg_us: Some(6),
                 iters: Some(10_000),
             },
+            tripwire: Default::default(),
+            events: Default::default(),
         }
     }
 
