@@ -6,10 +6,9 @@
 //! text into the top-level `summary.md`.
 //!
 //! Pairs are every two arms, the earlier one (in `--arm` order) the previous
-//! arm and the later one the new arm, as the former `scripts/soak-matrix.sh`
-//! paired them. Each test runs on conclusive boots only (INCONCLUSIVE is left
-//! out of every count and denominator), with the new arm in row 1 of the
-//! table ([`super::stats`]):
+//! arm and the later one the new arm. Each test runs on conclusive boots
+//! only (INCONCLUSIVE is left out of every count and denominator), with the
+//! new arm in row 1 of the table ([`super::stats`]):
 //!
 //! - the regression guard: CLEAN counts, one-sided toward fewer CLEAN in the
 //!   new arm; it fails when p < [`ALPHA`];
@@ -146,8 +145,8 @@ fn group_name(classes: &[Class]) -> String {
         .join("+")
 }
 
-/// `p` as C's `printf "%.3g"` prints it (soak-matrix.sh's format): three
-/// significant digits, trailing zeros dropped, an exponent below 1e-4.
+/// `p` as C's `printf "%.3g"` prints it: three significant digits, trailing
+/// zeros dropped, an exponent below 1e-4.
 pub fn p_text(p: f64) -> String {
     if p == 0.0 {
         return "0".to_string();

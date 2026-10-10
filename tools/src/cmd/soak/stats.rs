@@ -13,8 +13,7 @@
 //!   class's counts.
 //! - [`fisher_high`]: P(X ≥ a), toward row 1 having the higher rate.
 //! - [`fisher_two`]: the total probability of the tables no more likely than
-//!   this one, with R's relative tolerance of 1e−7 (`fisher.test`), as the
-//!   former `scripts/soak-matrix.sh` computed it.
+//!   this one, with R's relative tolerance of 1e−7 (`fisher.test`).
 //!
 //! Each p is clamped to 1, since rounding can push a sum of probabilities a
 //! hair above it. The log-factorial sums stay accurate far beyond soak sizes;
@@ -98,7 +97,7 @@ pub fn fisher_high(a: u64, b: u64, c: u64, d: u64) -> f64 {
 /// Two-sided Fisher exact test on `[[a, b], [c, d]]`: the total probability
 /// of the tables with the same margins that are no more likely than this one,
 /// a table counting as no more likely within a relative 1e−7 (R's
-/// `fisher.test` convention, and `soak-matrix.sh`'s).
+/// `fisher.test` convention).
 pub fn fisher_two(a: u64, b: u64, c: u64, d: u64) -> f64 {
     let h = Hyper::new(a, b, c, d);
     let limit = h.p(h.a) * (1.0 + 1e-7);

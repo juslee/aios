@@ -239,9 +239,10 @@ aios/
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
 │                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook programs),
-│                         src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
-├── scripts/              soak-matrix.sh (interleaved multi-revision soak; CI: soak-matrix.yml),
-│                         agent/ (brief, checkpoint),
+│                         src/cmd/soak/ (boot soak harness, just soak: classify, tripwire, stats,
+│                         interleave --arm (2-4 checkouts; CI: soak-matrix.yml), pair report),
+│                         tests/ (goldens, fixtures); depends on shared/ (tripwire key catalogue)
+├── scripts/              agent/ (brief, checkpoint),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```
