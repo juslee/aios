@@ -581,12 +581,12 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
     then `true`, `true`, `true`, `gone`, `true`, `true`, `true`, `true`, `true` (v4's #223 and #203 checks, #223/#229's rules kept, then v5's: the one agent hook on `claude-fable-5-1`, Q8's allow, #232's docs-check allow present once, and no step-gate text). (All pass on the v5 jq output from e430305, `D/.claude/settings.json.v5-output-e430305.json`, 2026-10-09; with Q8 answered no, the second-to-last check fails on its middle clause only.)
 
-- [ ] **T9: rules**
+- [x] **T9: rules**
 
   **Files:** Create `.claude/rules/11-teams.md` (from `D/.claude/rules/11-teams.md.v5`). Modify `.claude/rules/02-quality-gates.md`, `03-git-workflow.md`, `04-phase-workflow.md`, `08-knowledge-hive.md` per `D/.claude/rules/02-03-04-08.patch-notes.md.v5`.
 
-  - [ ] Step 1: add rule 11; apply the four rule patches.
-  - [ ] Acceptance:
+  - [x] Step 1: add rule 11; apply the four rule patches.
+  - [x] Acceptance:
     ```bash
     cd "$W"
     rg -n 'TodoWrite|Team-lead updates|brew upgrade qemu|rebase open worktrees|until it is rebased' .claude/rules
@@ -960,3 +960,7 @@ Deviations from the T14 notes, all by intent:
 - T14: the discussion-doc edits were anchored by text (a script in the scratchpad); every anchor held at its stated line, and #232's lines 126 and 225 are untouched.
 - T14: the claude-code-review.yml note applies as written (Q4 yes); the `if:` is on line 23 as the note says.
 - T14: acceptance, first `rg`: no hit in T14's files. Remaining hits belong to T8 (`.claude/settings.json`: lines 36, 63, 311; `.claude/hooks/precompact-save.sh`), T11 (`.claude/skills/merge-and-cleanup/SKILL.md:124`, `.claude/skills/justin/skills/pause/SKILL.md:14`) and T15 (`.claude/CLAUDE.md:206, 291`, `docs/project/agent-loop.md:60`, `docs/project/developer-guide.md:2443`). Docs gate: only `plans-not-empty` new, plus the expected resolved BOOT_LOG baseline entry.
+
+T9: deviations and gate result (2026-10-10):
+- T9: applied the `.v5` drafts (rule 11 and the patch notes) as written; every anchor held against the current rule files. In rule 04 the UPDATE DOCS list is split into nested "In the change's own commit" and "In the ship pass" bullets; in rule 02 the three audit categories are kept as a "lens descriptions" list under the new paragraph.
+- T9: the docs gate shows one finding beyond `plans-not-empty` (knowledge-hygiene): pointer-doctor `.claude/rules/11-teams.md:12: /justin:team is not a project skill or built-in command`. The skill is created by T11, so the finding clears there; nothing in T9 can avoid it.
