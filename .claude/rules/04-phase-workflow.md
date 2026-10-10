@@ -22,7 +22,7 @@ When implementing Phase N:
      - README.md: Project Structure, Build Commands, status text
      - Developer guide: file sizes, test counts, new patterns
    - `/audit-loop` runs once before `gh pr ready` (rule 02). Fix all issues, commit.
-10. **FINAL GATE**: Run `/verify-phase` + `/audit-loop` one final time before PR — must be 0 issues
+10. **FINAL GATE**: Run `/verify-phase` before `gh pr ready`; the `/audit-loop` is step 9 (rule 02)
 11. **DISTILL**: Read working plan, extract lessons/decisions to knowledge hive, delete plan
 12. **PR**: Open the PR as a draft, run `/audit-loop`, mark it ready, run `/review-pr-comments`, then hand off: report the PR URL and check status and ask the user to run `/merge-and-cleanup` (user-invocable only; never merge yourself)
 

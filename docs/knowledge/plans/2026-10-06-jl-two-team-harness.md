@@ -964,3 +964,4 @@ Deviations from the T14 notes, all by intent:
 T9: deviations and gate result (2026-10-10):
 - T9: applied the `.v5` drafts (rule 11 and the patch notes) as written; every anchor held against the current rule files. In rule 04 the UPDATE DOCS list is split into nested "In the change's own commit" and "In the ship pass" bullets; in rule 02 the three audit categories are kept as a "lens descriptions" list under the new paragraph.
 - T9: the docs gate shows one finding beyond `plans-not-empty` (knowledge-hygiene): pointer-doctor `.claude/rules/11-teams.md:12: /justin:team is not a project skill or built-in command`. The skill is created by T11, so the finding clears there; nothing in T9 can avoid it.
+- T9 review fix: rule 04 step 10 still demanded a second 0-issue audit; now `/verify-phase` only (patch notes missed the line).
