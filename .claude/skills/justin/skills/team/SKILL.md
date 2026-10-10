@@ -2,7 +2,7 @@
 name: team
 description: >
   Makes this session the lead of the AIOS team-build or team-fix team. Each
-  team owns its branches end to end: plan, steps, audit, soak, ship pass, PR,
+  team owns its branches end to end: plan, steps, simplify, audit, soak, ship pass, PR,
   hand-off to the owner. team-build owns the harness, tools, CI, docs drift and
   features; team-fix owns the boot-crash fix, nearby kernel bugs and the
   capability-lifetime work. The skill checks the session, restores state from
@@ -129,19 +129,20 @@ Work on at most two branches at a time. Start only owner-approved work: an `agen
    - When it reports, run Placement: check the range, the Fable review for kernel-dev, the gates, the fast-forward, the clean-up, the push.
    - If the step needs boots, spawn the verifier on the new tip in mode `boot`, at most three boots. A `DEFERRED` result is retried later, never counted as a pass or a failure.
 3. **Merge main** when `origin/main` moved under files this branch changes: spawn the branch's writer with "merge origin/main, resolve conflicts, run the gates", then run Placement (a kernel-dev merge is reviewed on its remerge diff).
-4. **Audit.** Run `/audit-loop <W>`. Do not start a round during the peer's quiet window.
-5. **Soak.** Spawn the verifier.
+4. **Simplify.** Once per PR, after the last task: spawn simplifier with the PR range (`git -C <W> merge-base origin/main HEAD` to head) and the tip, then run Placement on its range. If its report says `KERNEL-BYTES: yes`, spawn the verifier in mode `boot` on the range before the fast-forward. The audit then runs on the simplified head.
+5. **Audit.** Run `/audit-loop <W>`. Do not start a round during the peer's quiet window.
+6. **Soak.** Spawn the verifier.
    - **Gate soak:** six boots in mode `boot`, when kernel or stub bytes changed since the last boots.
    - **Rate, B1 or A/B soak:** mode `quiet`, after the quiet-window protocol (Messages, below).
-6. **Ship pass.** Spawn worker with `run_in_background: false`. The task:
+7. **Ship pass.** Spawn worker with `run_in_background: false`. The task:
    - update the inventory sections listed in rule 11;
    - distil the plan into lessons and decisions, then delete the plan (rule 04, step 11);
    - run docs-check.
 
    Then run Placement.
-7. **Ready.** Run `gh pr ready <n>`, then `/review-pr-comments`. Route each fix to a fresh writer spawn and run Placement; reply and resolve after the fix sha is pushed.
-8. **Hand off to the owner.** Report the PR URL and `gh pr checks <n>`, and ask the owner to run `/merge-and-cleanup <n>`. Never merge.
-9. **After every merge to `main`** (a `MAIN-MOVED` message, or `git fetch` showing a new `origin/main`): list owned branches whose changed files overlap the merged diff, and schedule their merges of `main` (step 3). If the message says the harness changed, finish the current step, then ask the owner to restart this lead.
+8. **Ready.** Run `gh pr ready <n>`, then `/review-pr-comments`. Route each fix to a fresh writer spawn and run Placement; reply and resolve after the fix sha is pushed.
+9. **Hand off to the owner.** Report the PR URL and `gh pr checks <n>`, and ask the owner to run `/merge-and-cleanup <n>`. Never merge.
+10. **After every merge to `main`** (a `MAIN-MOVED` message, or `git fetch` showing a new `origin/main`): list owned branches whose changed files overlap the merged diff, and schedule their merges of `main` (step 3). If the message says the harness changed, finish the current step, then ask the owner to restart this lead.
 
 ## Messages between leads
 
@@ -151,7 +152,7 @@ Every message body starts `From <team>:`. Run ListAgents before each send; if `<
 | --- | --- | --- |
 | `HELLO` | handoff file, labels | note the peer's branches and overlaps |
 | `HEADS-UP <text>` | a branch's diff or an issue | check overlap with owned branches |
-| `MAIN-MOVED <sha> #<n>` | `origin/main` | loop step 9 |
+| `MAIN-MOVED <sha> #<n>` | `origin/main` | loop step 10 |
 | `QUIET-REQ eta=<min> why=<label>` | nothing yet | stop launching builds, audit rounds and boots; let running work finish; reply `QUIET-ACK`, or `QUIET-LATER <time> <reason>` |
 | `QUIET-ACK` | none | the requester asks the owner to pause other host load, then takes the quiet lease |
 | `QUIET-LATER <time> <reason>` | none | the requester waits, or asks the owner to arbitrate |

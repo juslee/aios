@@ -665,6 +665,23 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
     ```
   - [ ] Acceptance: `rg -n 'model:|effort:' .claude/workflows/audit-loop.js` prints nothing; `rg -c 'agentType' .claude/workflows/audit-loop.js` is 3 or more; the run prints `complete,in_diff,lens_failures,pre_existing,refuted,uncertain` and `[]` (a lens failing with an unknown agent type means the run did not start inside `W`). The docs gate shows only `plans-not-empty`.
 
+- [ ] **T12b: the simplifier agent and the ship-pass simplify step**
+
+  **Files:** Create `.claude/agents/simplifier.md` (based on the pr-review-toolkit `code-simplifier` agent, adapted to AIOS; frontmatter and protocol as in `worker.md` and `kernel-dev.md`). Modify `.claude/CLAUDE.md` (the Agents table row and the layout `agents/` line only), `.claude/rules/04-phase-workflow.md` (a bullet before `/audit-loop` in step 9), `.claude/rules/11-teams.md` (writer list, a Simplify bullet before Audit, writer areas), `.claude/rules/02-quality-gates.md` (one clause in the audit section), `.claude/skills/justin/skills/team/SKILL.md` (a loop step before the audit; later steps renumbered, the `MAIN-MOVED` row follows), `.claude/skills/implement-phase/SKILL.md` (a step before `/audit-loop`; steps and the "steps N-M" reference renumbered).
+
+  - [ ] Step 1: write the agent (`model: opus`, `effort: high`, `isolation: worktree`, `maxTurns: 300`; rule 11's writer protocol; behaviour-preserving, scoped to the range's files, leaves reviewer-settled code alone, runs every gate covering a touched file, never boots QEMU and reports `KERNEL-BYTES: yes|no`, rule 01 and "no legacy", one commit per logical simplification) and add the single ship-pass step to the four files plus the one-line rule 02 mention.
+  - [ ] Acceptance (run in the implementer's worktree):
+    ```bash
+    ls .claude/agents | tr '\n' ' '
+    for f in .claude/agents/*.md; do printf '%s %s %s\n' "$(basename "$f" .md)" "$(sed -n 's/^model: //p' "$f")" "$(sed -n 's/^effort: //p' "$f")"; done
+    grep -l '^isolation: worktree$' .claude/agents/simplifier.md
+    grep -c 'git reset --hard <tip>' .claude/agents/simplifier.md
+    grep -n simplifier .claude/rules/04-phase-workflow.md .claude/rules/11-teams.md .claude/skills/justin/skills/team/SKILL.md .claude/skills/implement-phase/SKILL.md .claude/CLAUDE.md
+    /usr/bin/python3 -m unittest discover -s .claude/hooks/tests
+    cargo run -q -p aios-tools --release -- docs-check
+    ```
+    Expected: the agent list includes `simplifier.md`; the loop prints `simplifier opus high` among the others; the `grep -l` prints the file; the count is 1 or more; a hit in each of the five files; the hook tests pass (guard rule 3 reads the new frontmatter); the docs gate shows only `plans-not-empty` as new (harness-tables and pointer-doctor clean).
+
 - [x] **T13: brief.sh**
 
   **Files:** Modify `scripts/agent/brief.sh` per `D/scripts/agent/brief.sh.patch-notes.md.v4`.
@@ -937,6 +954,7 @@ On 2026-10-10, `git worktree remove` of an implementer's temporary worktree fail
 - T2 (2026-10-09): H3 FAILED on 2.1.292 (isolated agents cannot EnterWorktree into W). Owner: D3 becomes isolated + fast-forward (writers commit on their own `worktree-agent-*` branch from the branch tip; the lead `merge --ff-only`s W and removes the temp worktree). H7: SubagentStop blocks are discarded for subagents, and `model: fable` 404s in agent hooks. Owner: D8 becomes a lead-run Fable review before the fast-forward (max 3 rounds); agent hooks use `claude-fable-5-1`. Details: `D/T2-results-2026-10-09.md`.
 
 - T0 (2026-10-09): owner answered Q1 yes, Q3 yes, Q4 yes, Q5 treat stale/dirty as missing, Q6 literal-path `git -C <W>` allows only, Q7 team-build ports soak-matrix.sh in its own PR first (issue #233). CLI 2.1.292; main cae3fff; installed aios stamp `source clean`; `aios hook --help` lists 4 programs.
+- 2026-10-10: owner decision (through the controller's AskUserQuestion): the harness gains a code-simplify pass. Placement: once per PR, in the ship pass, after the last task and before `/audit-loop`, as one simplify task over the PR's whole diff (merge-base with `origin/main` to head), so the audit sees the simplified code. Agent: a new project agent `simplifier` in `.claude/agents/simplifier.md`, versioned in the repo, not the plugin agent. Its `model: opus` and `effort: high` are the controller's choice (it edits kernel code as well as tools), changeable by the owner. Task: T12b.
 - 2026-10-10 05:48: owner answered Q8 yes: add `Bash(git reset --hard *)` to the project allow list, confined by guard rule 4 (agents only in their own `agent-<id>` worktree; asks on a main thread).
 
 ## Lessons Learned

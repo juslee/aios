@@ -21,7 +21,8 @@ When implementing Phase N:
      - `docs/project/doc-map.md`: topic index entries for new or moved architecture docs
      - README.md: Project Structure, Build Commands, status text
      - Developer guide: file sizes, test counts, new patterns
-   - `/audit-loop` runs once before `gh pr ready` (rule 02). Fix all issues, commit.
+   - Once per PR, before the audit, the lead spawns `simplifier` over the PR range (merge-base..head) and runs Placement on its range; a change to kernel, stub or shared bytes needs a verifier gate boot before the fast-forward (rule 11).
+   - `/audit-loop` runs once before `gh pr ready` (rule 02), on the simplified head. Fix all issues, commit.
 10. **FINAL GATE**: Run `/verify-phase` before `gh pr ready`; the `/audit-loop` is step 9 (rule 02)
 11. **DISTILL**: Read working plan, extract lessons/decisions to knowledge hive, delete plan
 12. **PR**: Open the PR as a draft, run `/audit-loop`, mark it ready, run `/review-pr-comments`, then hand off: report the PR URL and check status and ask the user to run `/merge-and-cleanup` (user-invocable only; never merge yourself)

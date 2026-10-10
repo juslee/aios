@@ -17,7 +17,7 @@ Never mark a milestone complete if any gate fails.
 
 ## Post-Implementation Audit Loop (MANDATORY)
 
-Before a PR is marked ready (`gh pr ready`; PRs open as drafts, rule 03), run `/audit-loop`. Each round runs read-only lenses (doc-auditor for docs; code-reviewer with the `rules` and `bugs` lenses for code), and skeptics verify every finding. Only confirmed in-diff findings are fixed on the branch, by a writer; confirmed pre-existing findings become issues. The audit converges on one complete round that confirms nothing. After 4 rounds, or 2 incomplete rounds in a row, the PR stays a draft behind a `needs-human` gate issue.
+Before a PR is marked ready (`gh pr ready`; PRs open as drafts, rule 03), run `/audit-loop`, on the head the once-per-PR simplifier pass produced (rule 11, Simplify). Each round runs read-only lenses (doc-auditor for docs; code-reviewer with the `rules` and `bugs` lenses for code), and skeptics verify every finding. Only confirmed in-diff findings are fixed on the branch, by a writer; confirmed pre-existing findings become issues. The audit converges on one complete round that confirms nothing. After 4 rounds, or 2 incomplete rounds in a row, the PR stays a draft behind a `needs-human` gate issue.
 
 The lens descriptions:
 

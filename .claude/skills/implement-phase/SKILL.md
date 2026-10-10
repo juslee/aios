@@ -117,15 +117,16 @@ The working plan is the plan file the user approved in plan mode (`<planFilePath
 ⛔ **GATE: Do NOT proceed to Knowledge Distillation or PR until ALL of the following pass:**
 
 10. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
-11. Run `/audit-loop` (it must converge before the PR is marked ready)
-12. Ship pass: worker, in the foreground, updates the inventory sections (rule 11): Workspace Layout and the agent and skill tables in `.claude/CLAUDE.md`, `docs/project/doc-map.md`, README, developer-guide counts
-13. Update the phase doc Status to "Complete", check off all Phase Completion Criteria
-14. Update `docs/project/development-plan.md`: mark phase $ARGUMENTS as complete, update §8.1 Actual Progress with dates and deliverables
-15. Commit and push
+11. Simplify, once per PR: spawn simplifier with the PR range (merge-base with `origin/main` to head) and the tip, then run `/justin:team`'s Placement on its range. A change to kernel, stub or shared bytes (`KERNEL-BYTES: yes`) needs a verifier gate boot before the fast-forward
+12. Run `/audit-loop` on the simplified head (it must converge before the PR is marked ready)
+13. Ship pass: worker, in the foreground, updates the inventory sections (rule 11): Workspace Layout and the agent and skill tables in `.claude/CLAUDE.md`, `docs/project/doc-map.md`, README, developer-guide counts
+14. Update the phase doc Status to "Complete", check off all Phase Completion Criteria
+15. Update `docs/project/development-plan.md`: mark phase $ARGUMENTS as complete, update §8.1 Actual Progress with dates and deliverables
+16. Commit and push
 
 ### Phase 6: Knowledge Distillation
 
-16. Read the working plan doc (`docs/knowledge/plans/*-jl-phase-$ARGUMENTS-*.md`) and distill:
+17. Read the working plan doc (`docs/knowledge/plans/*-jl-phase-$ARGUMENTS-*.md`) and distill:
     - **Lessons** (bugs hit, surprises, workarounds, platform quirks) → Write each to `docs/knowledge/lessons/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
     - **Decisions** (why X over Y, trade-offs made, architecture choices) → Write each to `docs/knowledge/decisions/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
     - The plan's "Issues Encountered", "Decisions Made", and "Lessons Learned" sections (filled during Phase 4) are your primary source — distill from those
@@ -135,7 +136,7 @@ The working plan is the plan file the user approved in plan mode (`<planFilePath
 
 ### Phase 7: PR, Review & Hand-off
 
-17. Create the PR to main as a draft using `gh pr create --draft` (add `--label <team>` when `AIOS_TEAM` is set) with this structure:
+18. Create the PR to main as a draft using `gh pr create --draft` (add `--label <team>` when `AIOS_TEAM` is set) with this structure:
 
 ```bash
 gh pr create --title "Phase $ARGUMENTS: <phase name from phase doc>" --body "$(cat <<'EOF'
@@ -155,10 +156,10 @@ EOF
 )"
 ```
 
-⛔ **GATE: Do NOT skip steps 18-19. Your part of the phase is NOT complete until the hand-off.**
+⛔ **GATE: Do NOT skip steps 19-20. Your part of the phase is NOT complete until the hand-off.**
 
-18. Run `gh pr ready`, then `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
-19. Hand off and stop. Merging is user-only (`/merge-and-cleanup` has `disable-model-invocation: true`; see `.claude/rules/03-git-workflow.md`):
+19. Run `gh pr ready`, then `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
+20. Hand off and stop. Merging is user-only (`/merge-and-cleanup` has `disable-model-invocation: true`; see `.claude/rules/03-git-workflow.md`):
     - Report the PR URL and the output of `gh pr checks <number>`
     - Ask the user to run `/merge-and-cleanup` once they approve; it preserves soak results, squash merges, deletes the branches, removes the worktree and fast-forwards main
     - Do not merge, push to `main`, or repeat those steps another way
