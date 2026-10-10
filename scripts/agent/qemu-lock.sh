@@ -255,7 +255,9 @@ in_list() {
 # does not count).
 # shellcheck disable=SC2329 # called from the traps below
 running() {
-    st=$(ps -o stat= -p "$1" 2>/dev/null) && [ -n "$st" ] && case $st in Z*) false ;; *) true ;; esac
+    case $(ps -o stat= -p "$1" 2>/dev/null) in
+    '' | Z*) return 1 ;;
+    esac
 }
 # Wait up to $2 seconds while any pid of the list $1 runs.
 # shellcheck disable=SC2329 # called from stop_tree
@@ -281,23 +283,12 @@ wait_gone() {
 stop_tree() {
     tree=$(tree_of "$1")
     qemus=$(qemu_pids)
+    harness=
     for p in $tree; do
-        in_list "$p" "$qemus" || kill -TERM "$p" 2>/dev/null
+        in_list "$p" "$qemus" || harness="$harness $p"
     done
-    grace=${AIOS_QEMU_LOCK_GRACE:-15}
-    waited=0
-    while [ "$waited" -lt "$grace" ]; do
-        busy=
-        for p in $tree; do
-            if ! in_list "$p" "$qemus" && running "$p"; then
-                busy=1
-                break
-            fi
-        done
-        [ -n "$busy" ] || break
-        sleep 1
-        waited=$((waited + 1))
-    done
+    for p in $harness; do kill -TERM "$p" 2>/dev/null; done
+    wait_gone "$harness" "${AIOS_QEMU_LOCK_GRACE:-15}"
     # The pids seen so far plus whatever the tree has started since.
     all=$tree
     for p in $tree; do all="$all $(tree_of "$p")"; done
