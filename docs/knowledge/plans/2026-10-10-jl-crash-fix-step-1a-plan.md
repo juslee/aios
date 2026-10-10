@@ -287,7 +287,7 @@ One commit each, `Crash fix step 1a: <desc>`, pushed after its checks pass (rule
 
 - [x] **T1. Working plan.** This file.
   - Check: `cargo run -q -p aios-tools -- docs-check`: no new drift except knowledge-hygiene's non-empty `plans/`.
-- [ ] **T2. Runner refactor: `Arm` and `boot_once`.** No change in behaviour.
+- [x] **T2. Runner refactor: `Arm` and `boot_once`.** No change in behaviour.
   - Files: `runner.rs`. An `Arm` holds the checkout root, firmware, the ESP snapshot path, the kernel sha line and the git rev. `boot_once(arm, cfg, n, …) -> BootOutcome` runs one QEMU boot and writes the log and footer. The loop in `build_and_boot` calls it.
   - Tests: the existing unit and harness tests.
   - Check: `cargo test -p aios-tools` with `git status --short tools/tests/golden` empty, so no golden changed.
@@ -626,6 +626,7 @@ The verdict is reported. The harness never stops a running soak over it.
   - `shared/` is a build input of the aios binary (S1); `.claude/` edits are lead-applied in two batches.
   - Interleave mode is report-only, with `--fail-on-regression` as the opt-in gate (S7); the load check runs before the builds (S2); the top-level `summary.md` carries a status and is rewritten after every boot (S3); 3 harness-error boots in a row stop the soak (S4); `brief.sh` reads the interleaved layout (S8).
   - CI `runs` defaults to 5 outside `workflow_dispatch`, is capped at 60, and the job limit is 130 min (S6).
+- T2: `boot_once(arm, cfg, log, data, interrupts) -> Result<BootOutcome>` takes the log path and the data-disk path instead of the boot number `n`, so the caller names the log (`run-NN.log` now, `arm-X/run-NN.log` in T8) and owns the data disk. It makes the fresh data disk (with `cfg.fresh_data`), boots, appends the footer and returns `Booted(Boot { rc, elapsed, progress, load1, text })` or `Interrupted(code)`; `Boot::timing()` builds the `summary.tsv` timing fields. The first-boot stub check, classification and rows stay in the caller, since interleave mode applies its own harness-error rule (S4). `Arm::root` is set but not yet read in single mode; T8's per-arm builds read it.
 
 ## Lessons Learned
 

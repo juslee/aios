@@ -1,8 +1,10 @@
 //! `aios soak`'s boot loop: build the ESP, snapshot it, boot QEMU `runs` times
 //! under a [`Supervisor`], and write `run-NN.log`, `summary.tsv` and
-//! `summary.md`. A port of `cleanup`, `poll_log` and `run_soak` in the former
-//! `scripts/soak-qemu.sh` (blob at `212df62`, L522-801); `timeout(1)` is
-//! replaced by the supervisor, which reports the same exit statuses.
+//! `summary.md`. The snapshot and what identifies it make an [`Arm`], and
+//! [`boot_once`] runs one boot of it. A port of `cleanup`, `poll_log` and
+//! `run_soak` in the former `scripts/soak-qemu.sh` (blob at `212df62`,
+//! L522-801); `timeout(1)` is replaced by the supervisor, which reports the
+//! same exit statuses.
 //!
 //! Accepted divergences from the script:
 //! - Times come from a monotonic clock rounded down to whole seconds, where bash
@@ -267,6 +269,146 @@ fn secs_since(start: Instant) -> i64 {
     i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX)
 }
 
+/// One ESP image under test, as its boots need it: the checkout it was built
+/// in, the firmware QEMU loads (the justfile's `edk2_fw`, as evaluated), the
+/// private snapshot of the ESP that every boot uses, and what the reports
+/// identify it by (the kernel ELF sha256 line and the git rev, with `-dirty`).
+pub struct Arm {
+    pub root: PathBuf,
+    pub firmware: Vec<u8>,
+    pub esp: PathBuf,
+    pub kernel_sha: String,
+    pub git_rev: String,
+}
+
+/// A boot that ran to its end: QEMU exited, could not be spawned (status 127),
+/// or was stopped at its time limit. `load1` is the host's 1-minute load just
+/// before the boot, and `text` the whole log, footer included.
+pub struct Boot {
+    pub rc: i32,
+    pub elapsed: i64,
+    pub progress: Progress,
+    pub load1: Vec<u8>,
+    pub text: Vec<u8>,
+}
+
+impl Boot {
+    /// The boot's `summary.tsv` timing fields.
+    pub fn timing(&self) -> BootTiming {
+        BootTiming {
+            elapsed: self.elapsed,
+            rc: self.rc,
+            load1: self.load1.clone(),
+            kstart: self.progress.kernel,
+            hb_first: self.progress.hb0,
+            bench_start: self.progress.bench,
+            g1done: self.progress.g1,
+            hb_max_gap: self.progress.gap,
+        }
+    }
+}
+
+/// How [`boot_once`] ended.
+pub enum BootOutcome {
+    /// The boot ran to its end, and its log carries the footer.
+    Booted(Boot),
+    /// A signal arrived while QEMU ran: QEMU was stopped and waited for, the
+    /// log has no footer, and the soak ends with this status.
+    Interrupted(u8),
+}
+
+/// Boot `arm` once: with `cfg.fresh_data`, make `data` a fresh data disk;
+/// run QEMU on the arm's ESP snapshot and `data` under a [`Supervisor`],
+/// with its output in `log`; poll the log for progress; then append the
+/// footer. Signals and Ctrl-Z are handled as for the whole soak.
+pub fn boot_once(
+    arm: &Arm,
+    cfg: &Config,
+    log: &Path,
+    data: &Path,
+    interrupts: &Interrupts,
+) -> Result<BootOutcome> {
+    if cfg.fresh_data {
+        // Sparse 256 MiB of zeros: reads the same as create-data-disk's file
+        // without writing 256 MiB per boot.
+        let _ = std::fs::remove_file(data);
+        File::create(data)
+            .and_then(|f| f.set_len(DATA_DISK_BYTES))
+            .map_err(|_| anyhow::anyhow!("cannot create {}", data.display()))?;
+    }
+    let args = qemu_args(&cfg.mode, OsStr::from_bytes(&arm.firmware), &arm.esp, data);
+    let load1 = host::load1();
+    let mut progress = Progress::default();
+
+    let log_file = File::create(log).with_context(|| format!("cannot create {}", log.display()))?;
+    // QEMU's running time: a Ctrl-Z moves it forward by the time spent
+    // stopped, as it moves QEMU's time limit, so every progress time and
+    // the footer's elapsed share the limit's clock.
+    let mut start = Instant::now();
+    let mut command = host::command("qemu-system-aarch64");
+    // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
+    command
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(log_file.try_clone()?)
+        .stderr(log_file);
+    let rc = {
+        // Until QEMU has exited, Ctrl-Z stops QEMU's group before the harness;
+        // nothing the harness waits for meanwhile runs in the terminal's
+        // foreground group. Declared before `qemu`, so it is dropped after it.
+        let _deferred = interrupts.defer_suspend();
+        match Supervisor::spawn(command, Duration::from_secs(cfg.secs), KILL_AFTER) {
+            Err(e) => {
+                // As timeout(1) did when it could not run the command: a note
+                // in the log, and status 127.
+                append(
+                    log,
+                    format!("soak: cannot run qemu-system-aarch64: {e}\n").as_bytes(),
+                )?;
+                127
+            }
+            Ok(mut qemu) => {
+                qemu.warn_as("soak");
+                loop {
+                    qemu.service()?;
+                    if let Some(rc) = qemu.exit_code() {
+                        break rc;
+                    }
+                    let wake = Instant::now() + POLL;
+                    loop {
+                        if let Some(code) = interrupts.pending() {
+                            qemu.terminate()?;
+                            qemu.wait()?;
+                            return Ok(BootOutcome::Interrupted(code));
+                        }
+                        if interrupts.take_suspend() {
+                            let paused = qemu.suspend(|| interrupts.stop_self())?;
+                            start = start.checked_add(paused).unwrap_or(start);
+                        }
+                        qemu.service()?;
+                        let now = Instant::now();
+                        if now >= wake {
+                            break;
+                        }
+                        std::thread::sleep(SLICE.min(wake - now));
+                    }
+                    progress.poll(&read(log)?, secs_since(start));
+                }
+            }
+        }
+    };
+    let elapsed = secs_since(start);
+    progress.poll(&read(log)?, elapsed);
+    append(log, &footer(cfg, elapsed, rc, &progress, &load1))?;
+    Ok(BootOutcome::Booted(Boot {
+        rc,
+        elapsed,
+        progress,
+        load1,
+        text: read(log)?,
+    }))
+}
+
 /// What [`run`] has settled before it installs the signal handlers: the
 /// repository, the justfile's paths (the image paths relative to `root`), and
 /// the new or empty output directory.
@@ -368,7 +510,6 @@ fn build_and_boot(
         kernel_rel,
         out_dir,
     } = setup;
-    let firmware_os = OsStr::from_bytes(&firmware);
     let scratch = ScratchDir::create(&out_dir).map_err(|_| {
         anyhow::anyhow!("cannot create a scratch directory in {}", out_dir.display())
     })?;
@@ -467,6 +608,13 @@ fn build_and_boot(
             host::sha256_16(&esp)?
         )
     };
+    let arm = Arm {
+        root,
+        firmware,
+        esp,
+        kernel_sha,
+        git_rev,
+    };
     let qemu_version = host::command("qemu-system-aarch64")
         .arg("--version")
         .stdin(Stdio::null())
@@ -487,12 +635,12 @@ fn build_and_boot(
     let data_word = if cfg.fresh_data { "fresh" } else { "reused" };
     out.write_all(
         format!(
-            "soak: {} x {}s, mode={}, commit={git_rev}, data={data_word}\n",
-            cfg.runs_raw, cfg.secs_raw, cfg.mode
+            "soak: {} x {}s, mode={}, commit={}, data={data_word}\n",
+            cfg.runs_raw, cfg.secs_raw, cfg.mode, arm.git_rev
         )
         .as_bytes(),
     )?;
-    out.write_all(&[&b"soak: firmware="[..], &firmware, b"\n"].concat())?;
+    out.write_all(&[&b"soak: firmware="[..], &arm.firmware, b"\n"].concat())?;
     out.write_all(
         &[
             &b"soak: logs in "[..],
@@ -515,94 +663,26 @@ fn build_and_boot(
         let idx = format!("{n:0width$}");
         let log_name = format!("run-{idx}.log");
         let log = out_dir.join(&log_name);
-        if cfg.fresh_data {
-            // Sparse 256 MiB of zeros: reads the same as create-data-disk's file
-            // without writing 256 MiB per boot.
-            let _ = std::fs::remove_file(&data);
-            File::create(&data)
-                .and_then(|f| f.set_len(DATA_DISK_BYTES))
-                .map_err(|_| anyhow::anyhow!("cannot create {}", data.display()))?;
-        }
-        let args = qemu_args(&cfg.mode, firmware_os, &esp, &data);
-        let load1 = host::load1();
-        let mut progress = Progress::default();
-
-        let log_file =
-            File::create(&log).with_context(|| format!("cannot create {}", log.display()))?;
-        // QEMU's running time: a Ctrl-Z moves it forward by the time spent
-        // stopped, as it moves QEMU's time limit, so every progress time and
-        // the footer's elapsed share the limit's clock.
-        let mut start = Instant::now();
-        let mut command = host::command("qemu-system-aarch64");
-        // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
-        command
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(log_file.try_clone()?)
-            .stderr(log_file);
-        let rc = {
-            // Until QEMU has exited, Ctrl-Z stops QEMU's group before the harness;
-            // nothing the harness waits for meanwhile runs in the terminal's
-            // foreground group. Declared before `qemu`, so it is dropped after it.
-            let _deferred = interrupts.defer_suspend();
-            match Supervisor::spawn(command, Duration::from_secs(cfg.secs), KILL_AFTER) {
-                Err(e) => {
-                    // As timeout(1) did when it could not run the command: a note
-                    // in the log, and status 127.
-                    append(
-                        &log,
-                        format!("soak: cannot run qemu-system-aarch64: {e}\n").as_bytes(),
-                    )?;
-                    127
-                }
-                Ok(mut qemu) => {
-                    qemu.warn_as("soak");
-                    loop {
-                        qemu.service()?;
-                        if let Some(rc) = qemu.exit_code() {
-                            break rc;
-                        }
-                        let wake = Instant::now() + POLL;
-                        loop {
-                            if let Some(code) = interrupts.pending() {
-                                qemu.terminate()?;
-                                qemu.wait()?;
-                                return Ok(code);
-                            }
-                            if interrupts.take_suspend() {
-                                let paused = qemu.suspend(|| interrupts.stop_self())?;
-                                start = start.checked_add(paused).unwrap_or(start);
-                            }
-                            qemu.service()?;
-                            let now = Instant::now();
-                            if now >= wake {
-                                break;
-                            }
-                            std::thread::sleep(SLICE.min(wake - now));
-                        }
-                        progress.poll(&read(&log)?, secs_since(start));
-                    }
-                }
-            }
+        let boot = match boot_once(&arm, cfg, &log, &data, interrupts)? {
+            BootOutcome::Booted(boot) => boot,
+            BootOutcome::Interrupted(code) => return Ok(code),
         };
-        let elapsed = secs_since(start);
-        progress.poll(&read(&log)?, elapsed);
-        append(&log, &footer(cfg, elapsed, rc, &progress, &load1))?;
 
         // A boot on which the UEFI stub never ran says nothing about the kernel.
         // On the first boot it means the setup is broken (QEMU failed to start,
         // or the firmware never loaded the stub), so stop.
-        let text = read(&log)?;
-        if n == 1 && !contains(&text, b"AIOS UEFI stub") {
-            err.write_all(host::tail_lines(&text, 20))?;
+        if n == 1 && !contains(&boot.text, b"AIOS UEFI stub") {
+            err.write_all(host::tail_lines(&boot.text, 20))?;
             bail!(
-                "the UEFI stub never ran on the first boot (QEMU exit status {rc} after {elapsed}s): check QEMU, the firmware ({}) and the ESP image; see {}",
-                String::from_utf8_lossy(&firmware),
+                "the UEFI stub never ran on the first boot (QEMU exit status {} after {}s): check QEMU, the firmware ({}) and the ESP image; see {}",
+                boot.rc,
+                boot.elapsed,
+                String::from_utf8_lossy(&arm.firmware),
                 log.display()
             );
         }
 
-        let c = classify(&text, None);
+        let c = classify(&boot.text, None);
         out.write_all(&report::format_result(
             format!("run {idx}/{}", cfg.runs_raw).as_bytes(),
             &c,
@@ -613,22 +693,12 @@ fn build_and_boot(
             .expect("a known class");
         counts[slot] += 1;
         non_clean |= c.class != "CLEAN";
-        let timing = BootTiming {
-            elapsed,
-            rc,
-            load1: load1.clone(),
-            kstart: progress.kernel,
-            hb_first: progress.hb0,
-            bench_start: progress.bench,
-            g1done: progress.g1,
-            hb_max_gap: progress.gap,
-        };
         append(
             &tsv,
-            &report::tsv_row(&idx, &cfg.mode, &c, &timing, &log_name),
+            &report::tsv_row(&idx, &cfg.mode, &c, &boot.timing(), &log_name),
         )?;
         md_rows.extend(report::md_row(&idx, &c));
-        loads.push(load1);
+        loads.push(boot.load1);
     }
     drop(scratch); // the ESP snapshot and the fresh data disk
     let load_end = host::loadavg();
@@ -641,10 +711,10 @@ fn build_and_boot(
         secs: &cfg.secs_raw,
         stall_secs: &cfg.stall_raw,
         fresh_data: cfg.fresh_data,
-        git_rev: &git_rev,
-        kernel_sha: &kernel_sha,
+        git_rev: &arm.git_rev,
+        kernel_sha: &arm.kernel_sha,
         qemu_version: &qemu_version,
-        firmware: &firmware,
+        firmware: &arm.firmware,
         host: &host_line,
         load_start: &load_start,
         load_end: &load_end,
