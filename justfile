@@ -131,6 +131,7 @@ run-direct: build
 #   just soak                                  10 text boots x 75 s, logs under target/soak/
 #   just soak runs=20 secs=90 mode=gpu         key=value or --flags go to aios soak
 #   just soak report_only=1                    exit 0 even if some boots are not CLEAN
+#   just soak --arm ../aios-base --arm .       interleave 2-4 checkouts, one boot each per round
 # Runs in the invocation directory ([no-cd]): relative out= and log paths resolve there.
 # The harness is this checkout's own tools build, not the main checkout's (.claude/hooks/aios),
 # so the commit summary.md records names the classifier as well as the kernel.

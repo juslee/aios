@@ -16,8 +16,8 @@
 //! - `ipc_iterations_match_the_kernel_bench` keeps the classifier's CLEAN
 //!   threshold equal to `IPC_ITERATIONS` in `kernel/src/bench.rs`.
 //! - `class_lists_match_class_all` keeps the class lists in the `just soak`
-//!   recipe comment and the developer guide's `just soak` row equal to
-//!   `Class::ALL`.
+//!   recipe comment and the `just soak` rows of the developer guide and the
+//!   README equal to `Class::ALL`.
 //! - `classify_differential_on_real_logs` (ignored) runs the fold differential
 //!   for every `*.log` but `build.log` under the directories in `AIOS_SOAK_REAL_LOGS`
 //!   (colon-separated; real soak logs are never committed, owner decision
@@ -125,6 +125,11 @@ fn class_lists_match_class_all() {
     assert!(
         row.contains(&format!("({all})")),
         "developer-guide `just soak` row lists other classes than {all}: {row}"
+    );
+    let row = line_starting_with("README.md", "| `just soak` |");
+    assert!(
+        row.contains(&format!("({all})")),
+        "README `just soak` row lists other classes than {all}: {row}"
     );
 }
 
