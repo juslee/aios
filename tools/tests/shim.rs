@@ -66,7 +66,10 @@ fn ask_json(reason: &str) -> String {
 /// `FAKE_CARGO_PIDS` names a file to write the recipe's pid and its own to.
 /// `FAKE_CARGO_EXCLUSIVE` logs `overlap` to overlap.log when another build is
 /// running at the same time. `FAKE_CARGO_REMOVE` names a file to remove during
-/// the build, as a build script that deletes itself would.
+/// the build, as a build script that deletes itself would. `FAKE_CARGO_HOLD`
+/// names a file: while it exists the build waits, after logging and before it
+/// writes release/aios (for a minute at most, so a test killed before it
+/// releases the build leaves none behind for long).
 const FAKE_CARGO: &str = r#"#!/bin/sh
 set -u
 if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
@@ -84,6 +87,13 @@ fi
 if [ -n "${FAKE_CARGO_FAIL:-}" ]; then
     echo "fake cargo: the build failed" >&2
     exit 1
+fi
+if [ -n "${FAKE_CARGO_HOLD:-}" ]; then
+    held=0
+    while [ -e "$FAKE_CARGO_HOLD" ] && [ "$held" -lt 1200 ]; do
+        sleep 0.05
+        held=$((held + 1))
+    done
 fi
 sleep "${FAKE_CARGO_DELAY:-0}"
 [ -z "${FAKE_CARGO_NOOP:-}" ] || exit 0
@@ -284,6 +294,20 @@ impl Sandbox {
         self.repo.path().join("target/tools/.building")
     }
 
+    /// The fake cargo's `FAKE_CARGO_HOLD` file for the builds shim calls start.
+    fn hold(&self) -> PathBuf {
+        self.bin_dir.path().join("hold-builds")
+    }
+
+    /// Holds every build that a later shim call starts, before it installs a
+    /// binary, until `wait_for_background_build` releases it. Without the
+    /// hold, the background build a hook starts on a missing or stale binary
+    /// can install a fresh one partway through a test, and the hook calls
+    /// after it run that binary instead of the fallback the test asserts.
+    fn hold_builds(&self) {
+        std::fs::write(self.hold(), "").expect("write the build hold");
+    }
+
     /// Fast-forwards origin/main to HEAD. This stands in for HEAD's changes
     /// merging through a PR and the main checkout then being reset onto the
     /// merged origin/main: a squash merge alone leaves HEAD's own commits off
@@ -364,6 +388,7 @@ impl Sandbox {
         let mut cmd = Command::new(shim);
         isolated(&mut cmd);
         cmd.env("PATH", self.path_env())
+            .env("FAKE_CARGO_HOLD", self.hold())
             .current_dir(self.repo.path())
             .args(args);
         for (key, value) in envs {
@@ -417,7 +442,14 @@ impl Sandbox {
         self.run_at(&self.shim(), args, envs)
     }
 
+    /// Releases a build `hold_builds` holds, then waits for the background
+    /// build to finish.
     fn wait_for_background_build(&self) {
+        match std::fs::remove_file(self.hold()) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => panic!("remove the build hold: {err}"),
+        }
         wait_for("the background build to log a line", || self.built());
         wait_for("the build lock to be released", || !self.lock().exists());
     }
@@ -1951,6 +1983,9 @@ fn a_hook_with_no_binary_starts_a_background_build_and_returns_at_once() {
 #[test]
 fn the_path_guard_fallback_denies_the_guarded_agent_types() {
     let sandbox = Sandbox::new("shim-hook-fallback");
+    // The first call starts a background build: held, it installs no binary
+    // for the later calls to run.
+    sandbox.hold_builds();
 
     // 2: a guarded agent type is denied, with the reason T16 looks for.
     let out = sandbox.run_stdin(&PG, &[], &worker());
@@ -1995,6 +2030,7 @@ fn the_path_guard_fallback_denies_the_guarded_agent_types() {
         &kernel_dev(),
     );
     assert_denies(&out);
+    assert!(!sandbox.bin().exists(), "the held build installed nothing");
     sandbox.wait_for_background_build();
 }
 
@@ -2003,6 +2039,9 @@ fn the_path_guard_fallback_denies_the_guarded_agent_types() {
 #[test]
 fn the_path_guard_fallback_denies_what_it_cannot_read() {
     let sandbox = Sandbox::new("shim-hook-ambiguous");
+    // The first call starts a background build: held, it installs no binary
+    // for the later calls to run.
+    sandbox.hold_builds();
 
     // An agent_type key without a usable string denies, as in the binary.
     for value in [r#""""#, "null", "7", r#"["worker"]"#, r#"{"a":1}"#] {
@@ -2034,6 +2073,7 @@ fn the_path_guard_fallback_denies_what_it_cannot_read() {
     assert_silent(&sandbox.run_stdin(&star, &[], &other));
     let literal = payload(r#","agent_type":"*""#);
     assert_denies(&sandbox.run_stdin(&star, &[], &literal));
+    assert!(!sandbox.bin().exists(), "the held build installed nothing");
     sandbox.wait_for_background_build();
 }
 
@@ -2049,8 +2089,13 @@ fn a_missing_or_foreign_stamp_is_stale_to_a_hook() {
 
     sandbox.install_bin(true);
     std::fs::write(sandbox.stamp(), "foreign\nstamp\nsource clean\n").expect("foreign stamp");
+    // The first call starts a background build: held, it installs no fresh
+    // binary for the second call to run.
+    sandbox.hold_builds();
     assert_denies(&sandbox.run_stdin(&PG, &[], &worker()));
     assert_silent(&sandbox.run_stdin(&["hook", "repeat-error"], &[], "{}"));
+    assert!(!sandbox.no_build_started(), "a background build starts");
+    sandbox.wait_for_background_build();
 }
 
 // Rows 7, 8, 16: a binary that exits non-zero is no decision, and its own
@@ -2089,6 +2134,9 @@ fn a_stale_binary_is_treated_as_missing_by_a_hook() {
     let sandbox = Sandbox::new("shim-hook-stale");
     sandbox.install_bin(false);
     let envs = [("FAKE_CARGO_DELAY", "5")];
+    // The first call starts a background build: held, it installs no fresh
+    // binary for the second call to run, however slowly the calls run.
+    sandbox.hold_builds();
 
     let started = Instant::now();
     let out = sandbox.run_stdin(&["hook", "route-shadow"], &envs, "{}");
