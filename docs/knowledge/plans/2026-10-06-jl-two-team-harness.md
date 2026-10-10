@@ -555,13 +555,13 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
 
   - Placement (2026-10-10): the minimal change 0293e47 is placed. The fix-round attempt (ca445bb) was dropped; the remaining rule-4 target-resolution gaps are issue #241 for R5.
 
-- [ ] **T8: settings** (the owner approves each block; implementer in the foreground)
+- [x] **T8: settings** (the owner approves each block; implementer in the foreground)
 
   **Files:** Modify `.claude/settings.json`. Delete `.claude/hooks/precompact-save.sh`. Drafts: `D/.claude/settings.json.apply.jq.v5`, `D/.claude/settings.json.patch-notes.md.v5`, `D/.claude/hooks/precompact-save.sh.DELETE.md`.
 
-  - [ ] Step 1: show the owner the diff: `S=$(mktemp -d); jq -f "$D/.claude/settings.json.apply.jq.v5" "$W/.claude/settings.json" > "$S/settings.new.json" && diff <(jq -S . "$W/.claude/settings.json") <(jq -S . "$S/settings.new.json")`, block by block (env, effortLevel, hooks, allow, ask, deny, enabledPlugins). `W`'s settings are `main`'s at e430305 or later after T2 Step 4's merge; the jq's output on e430305 is `D/.claude/settings.json.v5-output-e430305.json`. The allow block includes Q8's `Bash(git reset --hard *)` (drop it if the owner answered Q8 no, and record that writers then run in the foreground).
-  - [ ] Step 2: after approval, write it: the implementer copies `$S/settings.new.json` over `W/.claude/settings.json` with the Write tool (the prompt is the owner's approval of that exact content), and `git rm .claude/hooks/precompact-save.sh`.
-  - [ ] Acceptance, run in `W` against `.claude/settings.json`:
+  - [x] Step 1: show the owner the diff: `S=$(mktemp -d); jq -f "$D/.claude/settings.json.apply.jq.v5" "$W/.claude/settings.json" > "$S/settings.new.json" && diff <(jq -S . "$W/.claude/settings.json") <(jq -S . "$S/settings.new.json")`, block by block (env, effortLevel, hooks, allow, ask, deny, enabledPlugins). `W`'s settings are `main`'s at e430305 or later after T2 Step 4's merge; the jq's output on e430305 is `D/.claude/settings.json.v5-output-e430305.json`. The allow block includes Q8's `Bash(git reset --hard *)` (drop it if the owner answered Q8 no, and record that writers then run in the foreground).
+  - [x] Step 2: after approval, write it: the implementer copies `$S/settings.new.json` over `W/.claude/settings.json` with the Write tool (the prompt is the owner's approval of that exact content), and `git rm .claude/hooks/precompact-save.sh`.
+  - [x] Acceptance, run in `W` against `.claude/settings.json`:
     ```bash
     F=.claude/settings.json
     jq -e '.env | (has("CLAUDE_CODE_EFFORT_LEVEL") or has("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")) | not' $F

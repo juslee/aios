@@ -1,9 +1,8 @@
 {
   "env": {
-    "CLAUDE_CODE_EFFORT_LEVEL": "default",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "ENABLE_LSP_TOOL": "1",
-    "ENABLE_AUTO_MODE": "1"
+    "ENABLE_AUTO_MODE": "1",
+    "RUSTUP_AUTO_INSTALL": "0"
   },
   "hooks": {
     "SessionStart": [
@@ -18,7 +17,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Monitor",
+        "matcher": "Bash|Monitor|Agent|EnterWorktree",
         "hooks": [
           {
             "type": "command",
@@ -26,27 +25,90 @@
             "timeout": 20
           }
         ]
-      }
-    ],
-    "PreCompact": [
+      },
       {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/precompact-save.sh",
-            "timeout": 10
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook path-guard --agent-type worker --deny kernel/ --deny uefi-stub/ --deny shared/",
+            "timeout": 20
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook route-shadow",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "agent",
+            "model": "claude-fable-5-1",
+            "timeout": 600,
+            "prompt": "AIOS Fable plan gate (rule 11, Reviews). The hook input is: $ARGUMENTS\n1. tool_input.plan is the plan and tool_input.planFilePath its file. If the plan's first Markdown heading does not start with `# Plan:`, it is not an AIOS working plan: return ok true.\n2. Count the lines containing `FABLE-PLAN-GATE block` in the file at transcript_path. If there are 2 or more, return ok true: the owner reviews the plan next.\n3. Read the section `## Lens: plan` of .claude/agents/code-reviewer.md in the repository that contains cwd, and apply it to the plan. Read the ADRs and architecture sections the plan cites (docs/project/doc-map.md locates them).\n4. With no must-fix finding, return ok true. Otherwise return ok false with a reason that starts `FABLE-PLAN-GATE block <count + 1>/2:` and lists each must-fix finding: the plan step, the problem, the fix."
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'doc-audit-needed'",
-            "if": "Edit(**/docs/**/*.md)"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook repeat-error",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook route-outcome",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook repeat-error",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook route-outcome",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/aios hook route-outcome",
+            "async": true
           }
         ]
       }
@@ -55,18 +117,15 @@
   "permissions": {
     "allow": [
       "Bash(cargo *)",
-      "Bash(rustup *)",
       "Bash(just *)",
       "Bash(AIOS_TOOLS_BIN=target/tools/installed/aios just docs-check)",
       "Bash(/usr/bin/python3 -m unittest discover -s .claude/hooks/tests)",
       "Bash(bash -n .claude/hooks/setup-dev-env.sh)",
-      "Bash(bash -n .claude/hooks/precompact-save.sh)",
       "Bash(sh -n .claude/hooks/aios)",
       "Bash(bash -n scripts/agent/brief.sh)",
       "Bash(bash -n scripts/agent/checkpoint.sh)",
       "Bash(.claude/hooks/aios *)",
       "Bash(objdump *)",
-      "Bash(qemu-system-aarch64 *)",
       "Bash(brew *)",
       "Bash(git add *)",
       "Bash(git commit *)",
@@ -84,17 +143,11 @@
       "Bash(git pull origin *)",
       "Bash(git pull --ff-only origin *)",
       "Bash(git pull *)",
-      "Bash(git rebase origin/main)",
-      "Bash(git rebase main)",
-      "Bash(git rebase --continue)",
-      "Bash(git rebase --abort)",
       "Bash(git push -u origin claude/*)",
       "Bash(git push --set-upstream origin claude/*)",
       "Bash(git push origin claude/*)",
       "Bash(git push origin HEAD:claude/*)",
       "Bash(git push -u origin HEAD:claude/*)",
-      "Bash(git push --force-with-lease origin claude/*)",
-      "Bash(git push --force-with-lease origin HEAD:claude/*)",
       "Bash(git branch)",
       "Bash(git branch -a)",
       "Bash(git branch -r)",
@@ -104,10 +157,6 @@
       "Bash(git branch --show-current)",
       "Bash(git checkout main)",
       "Bash(git switch main)",
-      "Bash(git stash)",
-      "Bash(git stash push *)",
-      "Bash(git stash list *)",
-      "Bash(git stash show *)",
       "Bash(git worktree add *)",
       "Bash(git worktree list *)",
       "Bash(git worktree prune *)",
@@ -163,9 +212,23 @@
       "Bash(touch *)",
       "Bash(echo *)",
       "Bash(cp *)",
-      "Bash(pkill -f \"qemu-system-aarch64*)",
       "WebSearch",
-      "Bash(python3 -m json.tool .claude/settings.json)"
+      "Bash(python3 -m json.tool .claude/settings.json)",
+      "Bash(rustup show)",
+      "Bash(rustup show *)",
+      "Bash(rustup toolchain list)",
+      "Bash(rustup component list *)",
+      "Bash(pgrep -fl qemu-system-aarch64)",
+      "Bash(sysctl -n vm.loadavg)",
+      "Bash(bash scripts/agent/qemu-lock.sh *)",
+      "Bash(git reset --hard *)",
+      "Bash(git fetch origin)",
+      "Bash(git merge --no-edit origin/main)",
+      "Bash(git merge --abort)",
+      "Bash(git rev-parse *)",
+      "Bash(git show *)",
+      "Bash(git merge-base *)",
+      "Bash(gh pr ready *)"
     ],
     "ask": [
       "Bash(gh pr merge*)",
@@ -256,7 +319,19 @@
       "Bash(*>*target/tools*)",
       "Bash(just -*)",
       "Bash(git fetch *:*remotes/*)",
-      "Bash(git pull *:*remotes/*)"
+      "Bash(git pull *:*remotes/*)",
+      "Edit(**/tools/src/cmd/hook/**)",
+      "Write(**/tools/src/cmd/hook/**)",
+      "Bash(rustup install*)",
+      "Bash(rustup uninstall*)",
+      "Bash(rustup update*)",
+      "Bash(rustup toolchain install*)",
+      "Bash(rustup toolchain uninstall*)",
+      "Bash(rustup toolchain remove*)",
+      "Bash(rustup component add*)",
+      "Bash(rustup component remove*)",
+      "Bash(rustup target add*)",
+      "Bash(rustup target remove*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -288,7 +363,9 @@
       "Bash(gh pr merge *--admin*)",
       "mcp__*__delete_repository",
       "Edit(**/target/tools/**)",
-      "Write(**/target/tools/**)"
+      "Write(**/target/tools/**)",
+      "Bash(pkill *qemu*)",
+      "Bash(killall *qemu*)"
     ]
   },
   "extraKnownMarketplaces": {
@@ -308,9 +385,9 @@
     "manage-worktrees-skill@claude-skills-engineering": false,
     "typesafe@typesafe-ai": true,
     "superpowers@claude-plugins-official": true,
-    "remember@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true
-  }
+  },
+  "effortLevel": "high"
 }
