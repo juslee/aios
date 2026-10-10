@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""PreToolUse guard for the Bash and Monitor tools. It works out which git
-and gh commands a shell command would run and stops the ones that must go
-through the user.
+"""PreToolUse guard for the Bash, Monitor, Agent and EnterWorktree tools. For
+a shell command it works out which git and gh commands it would run and
+stops the ones that must go through the user. It also enforces the QEMU,
+toolchain, spawn and worktree rules of .claude/rules/11-teams.md (see "Team
+rules" below).
 
 Claude Code's permission rules match command text. Git accepts unambiguous
 prefixes of long options (`--exe` for `--exec`) and clustered short options
@@ -45,6 +47,33 @@ Decisions (the strictest one wins):
           .github/, .cargo/ or outside the repository
   none  everything else; the permission rules and auto mode decide.
 
+Team rules (rule 11; agent_id and agent_type come from the payload of a
+subagent, AIOS_TEAM from the lead's launch line):
+  1  QEMU starts (qemu-system-aarch64, just run/run-display/run-gpu/run-input/
+     run-direct/debug/soak, aios soak, cargo run -p aios-tools -- soak,
+     scripts/soak-matrix.sh, scripts/agent/qemu-lock.sh run; `soak
+     --classify` starts nothing)
+       deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
+             exists; any start that is not `qemu-lock.sh run`; an agent with
+             no usable agent_type; any agent but the verifier; a team lead
+       none  the verifier, or an owner/solo main thread, running the wrapper
+  2  Toolchain and kills
+       deny  pkill/killall with a qemu argument (everyone); rustup toolchain
+             install/uninstall/remove, update, install, uninstall, component
+             add/remove from an agent
+       ask   the same rustup commands from a main thread
+  3  Agent spawn (tool Agent, or Task)
+       deny  a named spawn without isolation; a project agent type whose
+             frontmatter says isolation: worktree spawned without
+             isolation: "worktree"; a project agent type with model set
+       ask   an agent definition file that cannot be read
+  4  Placement
+       deny  EnterWorktree from any agent and from a team lead; from an
+             agent, git reset --hard outside its own temporary worktree
+             (<main>/.claude/worktrees/agent-<id> on worktree-agent-<id>),
+             and git commit/merge/cherry-pick/revert/am in the main checkout
+       ask   git reset --hard from a main thread
+
 This is defence in depth, not a security boundary: code the guard does not
 read (a Python script, a build step, a justfile recipe) can still run git or
 gh. The ruleset on main is the boundary. The guard fails closed: an
@@ -57,6 +86,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 PROTECTED_BRANCH = "main"
 AGENT_PREFIX = "claude/"
@@ -180,6 +210,24 @@ GQL_DANGEROUS = re.compile(
     r"createRef|createCommitOnBranch|BranchProtectionRule|RepositoryRuleset|"
     r"updateRepository|deleteRepository|archiveRepository|transferRepository|"
     r"updatePullRequestBranch|dismissPullRequestReview", re.I)
+
+
+# Team rules (rules/11-teams.md).
+QEMU_RECIPES = {"run", "run-display", "run-gpu", "run-input", "run-direct",
+                "debug", "soak"}
+# just options that take a value (so it is not mistaken for a recipe name).
+JUST_VALUE_LONGS = {"working-directory", "justfile", "set", "shell", "shell-arg",
+                    "chooser", "color", "command-color", "dotenv-filename",
+                    "dotenv-path", "dump-format", "list-heading", "list-prefix",
+                    "list-submodules", "highlight", "timestamp-format", "tempdir"}
+JUST_VALUE_SHORTS = "dfE"
+QEMU_SCRIPTS = {"soak-matrix.sh", "soak-qemu.sh"}
+GIT_COMMITTERS = {"commit", "merge", "cherry-pick", "revert", "am"}
+RUSTUP_TOP_CHANGES = {"update", "install", "uninstall"}
+RUSTUP_SUB_CHANGES = {"toolchain": {"install", "uninstall", "remove"},
+                      "component": {"add", "remove"}}
+AGENT_ID_RE = re.compile(r"agent-(.+)")
+PROJECT_TYPE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
 class ParseError(Exception):
@@ -687,6 +735,7 @@ class Verdict:
     def __init__(self):
         self.level = "none"
         self.reasons = []
+        self.push_deny = False  # a deny that the main-is-user-only note explains
 
     def add(self, level, reason):
         if reason not in self.reasons:
@@ -698,6 +747,11 @@ class Verdict:
         self.add("ask", reason)
 
     def deny(self, reason):
+        self.push_deny = True
+        self.add("deny", reason)
+
+    def rule_deny(self, reason):
+        """A deny from a team rule (rule 11): the reason stands on its own."""
         self.add("deny", reason)
 
 
@@ -896,8 +950,11 @@ def opt_label(name):
 
 
 class Analyzer:
-    def __init__(self, verdict):
+    def __init__(self, verdict, ctx=None):
         self.verdict = verdict
+        # Who runs the command: agent_id / agent_type from the payload of a
+        # subagent, team from AIOS_TEAM, cwd from the payload.
+        self.ctx = ctx or {}
         # State that earlier commands in the same text leave for later ones.
         self.config_changed = set()   # git subcommands that may change config
         self.head_changed = set()     # git subcommands that may switch branches
@@ -985,7 +1042,7 @@ class Analyzer:
             return
         if head in ("source", "."):
             if idx + 1 < len(words):
-                self.analyze_script(words[idx + 1], state, depth, cmd)
+                self.analyze_script(words[idx + 1], state, depth, cmd, argv=words[idx + 2:])
             return
         for k in range(idx, len(words)):
             name = basename(words[k])
@@ -994,6 +1051,8 @@ class Analyzer:
                 if git_env_risky(env_name) or gh_env_risky(env_name):
                     frame.add(env_name)
                 continue
+            if (k == idx or head in WRAPPERS) and self.check_team_command(words, k):
+                return
             if name == "git":
                 wrapper = head if k > idx else None
                 self.analyze_git(words[k + 1:], cmd, state["cwd"], wrapper, depth)
@@ -1018,7 +1077,8 @@ class Analyzer:
                                             "the guard cannot see what it runs")
                 return
             if k == idx and "/" in words[k]:
-                self.analyze_script(words[k], state, depth, cmd, shebang=True)
+                self.analyze_script(words[k], state, depth, cmd, shebang=True,
+                                    argv=words[k + 1:])
                 return
 
     def awk_runs_commands(self, args, cwd):
@@ -1096,7 +1156,7 @@ class Analyzer:
                 continue
             break
         if i < len(args) and args[i] != "-":
-            self.analyze_script(args[i], state, depth, cmd)
+            self.analyze_script(args[i], state, depth, cmd, argv=args[i + 1:])
             return
         if cmd.heredocs:
             for body in cmd.heredocs:
@@ -1108,7 +1168,9 @@ class Analyzer:
             self.verdict.ask("a shell reads commands from a pipe; the guard cannot "
                              "see what it runs")
 
-    def analyze_script(self, path, state, depth, cmd, shebang=False):
+    def analyze_script(self, path, state, depth, cmd, shebang=False, argv=()):
+        if not unresolved(path) and self.check_qemu_script(path, list(argv)):
+            return
         if unresolved(path):
             self.opaque(state, cmd, f"runs a script whose path ({path}) comes from a "
                                     "shell expansion the guard cannot resolve")
@@ -1126,6 +1188,134 @@ class Analyzer:
             if not first.startswith("#!") or not re.search(r"\b(sh|bash|zsh|dash|ksh)\b", first):
                 return
         self.analyze_text(text, state["cwd"], depth + 1, script=True)
+
+    # -- team rules (rules/11-teams.md) --------------------------------------
+
+    def is_agent(self):
+        return self.ctx.get("agent_id") is not None
+
+    def check_team_command(self, words, k):
+        """Rules 1 and 2 for the command whose name is words[k]. Returns True
+        when the command is a trusted script whose body must not be read."""
+        v = self.verdict
+        word = words[k]
+        name = basename(word)
+        args = words[k + 1:]
+        if name in ("pkill", "killall"):
+            if any("qemu" in a.lower() for a in args):
+                v.rule_deny("never pattern-kill QEMU; TERM the lock owner's pid (rule 11)")
+            return False
+        if name == "rustup":
+            self.check_rustup(args)
+            return False
+        if name in QEMU_SCRIPTS or name == "qemu-lock.sh":
+            return self.check_qemu_script(word, args)
+        kind = None
+        if name == "qemu-system-aarch64":
+            kind = "other"
+        elif name == "just":
+            kind = self.just_starts_qemu(args)
+        elif name == "aios" or (unresolved(word) and args[:1] == ["soak"]):
+            first = next((a for a in args if not a.startswith("-")), None)
+            if first == "soak" and not classify_only(args[args.index("soak") + 1:]):
+                kind = "other"
+            return self.qemu_decision(kind) if kind else False
+        elif name == "cargo":
+            kind = cargo_starts_qemu(args)
+        if kind:
+            self.qemu_decision(kind)
+        return False
+
+    def check_qemu_script(self, path, argv):
+        """A script that starts QEMU: the lock wrapper (only its `run`) and
+        the soak scripts. Returns True when the script was recognised, so its
+        body is not read: the wrapper's own text is not a QEMU start."""
+        name = basename(path)
+        if name == "qemu-lock.sh":
+            if argv[:1] == ["run"]:
+                self.qemu_decision("wrapper")
+            return True
+        if name in QEMU_SCRIPTS:
+            if name == "soak-qemu.sh" and classify_only(argv):
+                return True
+            self.qemu_decision("other")
+            return True
+        return False
+
+    def just_starts_qemu(self, args):
+        hits = []
+        i = 0
+        positional_only = False
+        while i < len(args):
+            a = args[i]
+            i += 1
+            if positional_only or not a.startswith("-") or a == "-":
+                if "=" not in a or positional_only:
+                    hits.append(a)
+                continue
+            if a == "--":
+                positional_only = True
+            elif a.startswith("--"):
+                if "=" not in a and a[2:] in JUST_VALUE_LONGS:
+                    i += 1
+            else:
+                for pos, ch in enumerate(a[1:], 1):
+                    if ch in JUST_VALUE_SHORTS:
+                        if pos == len(a) - 1:
+                            i += 1
+                        break
+        recipes = [h for h in hits if h in QEMU_RECIPES]
+        if not recipes:
+            return None
+        if set(recipes) == {"soak"} and classify_only(args):
+            return None
+        return "other"
+
+    def qemu_decision(self, kind):
+        """Rule 1 rows 1-7 for a command that starts QEMU. `kind` is
+        "wrapper" for qemu-lock.sh run and "other" for anything else."""
+        v = self.verdict
+        held = qemu_lock_dir(self.ctx.get("cwd"))
+        if held and os.path.exists(held):
+            v.rule_deny(lock_message(held))
+        elif kind != "wrapper":
+            v.rule_deny("every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)")
+        elif self.is_agent():
+            agent_type = self.ctx.get("agent_type")
+            if not isinstance(agent_type, str) or not agent_type:
+                v.rule_deny("cannot tell which agent this is; only the verifier starts QEMU")
+            elif agent_type != "verifier":
+                v.rule_deny("only the verifier starts QEMU (rule 11)")
+        elif self.ctx.get("team"):
+            v.rule_deny("team leads route boots to their verifier (rule 11)")
+        return True
+
+    def check_rustup(self, args):
+        pos = [a for a in args if not a.startswith("-") and not a.startswith("+")]
+        if not pos:
+            return
+        subs = RUSTUP_SUB_CHANGES.get(pos[0], ())
+        if pos[0] not in RUSTUP_TOP_CHANGES and not any(p in subs for p in pos[1:]):
+            return
+        if self.is_agent():
+            self.verdict.rule_deny("agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)")
+        else:
+            self.verdict.ask("rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)")
+
+    def check_placement(self, sub, rest, workdir, extra):
+        """Rule 4 rows 4-6: git reset --hard and the commands that commit."""
+        v = self.verdict
+        if sub == "reset" and scan_git_options(rest, {"hard": False}):
+            if not self.is_agent():
+                v.ask("git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)")
+            elif unresolved(workdir) or not temp_worktree(Repo.get(workdir, extra)):
+                v.rule_deny("agents reset only their own temporary worktree (rule 11)")
+        elif sub in GIT_COMMITTERS and self.is_agent():
+            if unresolved(workdir):
+                v.ask(f"git {sub} runs in a directory that comes from a shell expansion; "
+                      "agents never commit in the main checkout")
+            elif main_checkout(Repo.get(workdir, extra)):
+                v.rule_deny("agents never commit in the main checkout: you were spawned without isolation (rule 11)")
 
     # -- files that a command publishes ------------------------------------
 
@@ -1222,6 +1412,7 @@ class Analyzer:
             self.expand_git_alias(sub, rest, args[:i], inline_config, cmd, cwd,
                                   repo, wrapper, depth)
             return
+        self.check_placement(sub, rest, workdir, extra)
         if any(a == "--output" or a.startswith("--output=") for a in rest):
             self.verdict.ask(f"git {sub} --output writes a file at any path, "
                              "including protected ones")
@@ -1763,13 +1954,162 @@ def glob_hits_protected(name):
 # Hook entry point
 # --------------------------------------------------------------------------
 
-def decide(command, cwd):
-    verdict = Verdict()
+def classify_only(args):
+    """`soak --classify LOG...` classifies saved logs and starts no QEMU.
+    Only a --classify before the `--` that ends the options counts."""
+    for a in args:
+        if a == "--":
+            return False
+        if a == "--classify" or a.startswith("--classify="):
+            return True
+    return False
+
+
+def cargo_starts_qemu(args):
+    """`cargo run ... -p aios-tools ... -- soak`: the tools binary's soak."""
+    if "--" not in args:
+        return None
+    before, after = args[:args.index("--")], args[args.index("--") + 1:]
+    if not any("aios-tools" in a or a.endswith("tools/Cargo.toml") for a in before):
+        return None
+    if after[:1] != ["soak"] or classify_only(after[1:]):
+        return None
+    return "other"
+
+
+def qemu_lock_dir(cwd):
+    """<git-common-dir>/aios-agent/qemu.lock, found from the payload's cwd (a
+    temporary worktree shares the common directory with the main checkout)."""
+    if not cwd:
+        return None
+    common = (Repo.get(cwd).run("rev-parse", "--path-format=absolute",
+                                "--git-common-dir") or "").strip()
+    return os.path.join(common, "aios-agent", "qemu.lock") if common else None
+
+
+def lock_message(lock):
+    """The owner file is written after the wrapper's mkdir, so it can be
+    missing while the lock is held; it only supplies this message."""
+    fields = {}
     try:
-        Analyzer(verdict).analyze_text(command, cwd, 0)
+        with open(os.path.join(lock, "owner"), encoding="utf-8", errors="replace") as fh:
+            for line in fh.read().splitlines():
+                key, eq, value = line.partition("=")
+                if eq:
+                    fields[key.strip()] = value.strip()
+    except OSError:
+        pass
+    if "team" not in fields:
+        return "QEMU lock held (owner file not written yet)"
+    eta = fields.get("eta", "?")
+    try:
+        eta = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(eta)))
+    except (ValueError, OverflowError, OSError):
+        pass
+    return (f"QEMU lock held by {fields['team']}/{fields.get('branch', '?')} "
+            f"mode={fields.get('mode', '?')} until {eta} (rule 11)")
+
+
+def temp_worktree(repo):
+    """An isolated agent's own worktree: <main>/.claude/worktrees/agent-<id>
+    on branch worktree-agent-<id> with the same id (the names Claude Code
+    2.1.292 gives it). Nothing else counts."""
+    roots = repo.roots()
+    if len(roots) != 2:
+        return False
+    top, main = roots
+    m = AGENT_ID_RE.fullmatch(os.path.basename(top))
+    if not m or top != os.path.join(main, ".claude", "worktrees", os.path.basename(top)):
+        return False
+    return repo.current_branch() == "worktree-agent-" + m.group(1)
+
+
+def main_checkout(repo):
+    roots = repo.roots()
+    return len(roots) == 2 and roots[0] == roots[1]
+
+
+def decide(command, cwd, ctx=None):
+    verdict = Verdict()
+    ctx = dict(ctx or {})
+    ctx.setdefault("cwd", cwd)
+    try:
+        Analyzer(verdict, ctx).analyze_text(command, cwd, 0)
     except (ParseError, RecursionError) as exc:
         if MENTIONS_GIT.search(command):
             verdict.ask(f"git-push-guard could not parse the command ({exc})")
+    return verdict
+
+
+def frontmatter(text):
+    """Top-level `key: value` pairs between the first two `---` lines;
+    indented lines belong to a nested block and are ignored."""
+    lines = text.splitlines()
+    fields = {}
+    if not lines or lines[0].strip() != "---":
+        return fields
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if line[:1].isspace() or line.startswith("#"):
+            continue
+        key, colon, value = line.partition(":")
+        if colon:
+            fields[key.strip()] = value.strip().strip("'\"")
+    return fields
+
+
+def project_dir(payload, env):
+    base = env.get("CLAUDE_PROJECT_DIR")
+    if base:
+        return base
+    cwd = payload.get("cwd")
+    roots = Repo.get(cwd).roots() if isinstance(cwd, str) and cwd else []
+    return roots[-1] if roots else None
+
+
+def decide_tool(payload, env):
+    """Rule 3 (Agent spawn shape) and rule 4 rows 1-3 (EnterWorktree)."""
+    verdict = Verdict()
+    tool = payload.get("tool_name")
+    if tool == "EnterWorktree":
+        if payload.get("agent_id") is not None:
+            verdict.rule_deny("agents never call EnterWorktree: isolation: \"worktree\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)")
+        elif (env.get("AIOS_TEAM") or "").strip():
+            verdict.rule_deny("team leads stay in the main checkout (rule 11)")
+        return verdict
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        verdict.ask("the Agent call has no readable input; the guard cannot judge the spawn")
+        return verdict
+    for key in ("subagent_type", "name", "isolation", "model"):
+        if tool_input.get(key) is not None and not isinstance(tool_input[key], str):
+            verdict.ask(f"the Agent call's {key} is not a string; the guard cannot judge the spawn")
+            return verdict
+    agent_type = tool_input.get("subagent_type") or ""
+    name, isolation, model = (tool_input.get(k) or "" for k in ("name", "isolation", "model"))
+    if name and not isolation:
+        verdict.rule_deny("a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)")
+    if not PROJECT_TYPE_RE.fullmatch(agent_type):
+        return verdict
+    base = project_dir(payload, env)
+    if base is None:
+        verdict.ask("cannot find the project's agent definitions; the guard cannot judge the spawn")
+        return verdict
+    path = os.path.join(base, ".claude", "agents", agent_type + ".md")
+    if not os.path.lexists(path):
+        return verdict
+    try:
+        with open(path, encoding="utf-8") as fh:
+            fields = frontmatter(fh.read())
+    except (OSError, UnicodeDecodeError) as exc:
+        verdict.ask(f"cannot read the agent definition {path} ({type(exc).__name__}); "
+                    "the guard cannot judge the spawn")
+        return verdict
+    if fields.get("isolation") == "worktree" and isolation != "worktree":
+        verdict.rule_deny(f"{agent_type} is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)")
+    if model:
+        verdict.rule_deny("the agent's frontmatter sets its model; do not pass model (rule 11)")
     return verdict
 
 
@@ -1792,21 +2132,29 @@ def main():
             raise ValueError("payload is not a JSON object")
     except (ValueError, OSError, UnicodeDecodeError) as exc:
         return emit("ask", f"git-push-guard could not read the hook payload ({exc})")
-    if payload.get("tool_name") not in ("Bash", "Monitor"):
-        return 0
-    tool_input = payload.get("tool_input") or {}
-    command = tool_input.get("command") if isinstance(tool_input, dict) else None
-    if not isinstance(command, str) or not command:
-        return 0
-    cwd = payload.get("cwd") or os.getcwd()
+    tool = payload.get("tool_name")
     try:
-        verdict = decide(command, cwd)
+        if tool in ("Agent", "Task", "EnterWorktree"):
+            verdict = decide_tool(payload, os.environ)
+        elif tool in ("Bash", "Monitor"):
+            tool_input = payload.get("tool_input") or {}
+            command = tool_input.get("command") if isinstance(tool_input, dict) else None
+            if not isinstance(command, str) or not command:
+                return 0
+            cwd = payload.get("cwd") or os.getcwd()
+            ctx = {"agent_id": payload.get("agent_id"),
+                   "agent_type": payload.get("agent_type"),
+                   "team": (os.environ.get("AIOS_TEAM") or "").strip(),
+                   "cwd": cwd}
+            verdict = decide(command, cwd, ctx)
+        else:
+            return 0
     except Exception as exc:  # fail closed
         return emit("ask", f"git-push-guard error: {type(exc).__name__}: {exc}")
     if verdict.level == "none":
         return 0
     reason = "git-push-guard: " + "; ".join(verdict.reasons)
-    if verdict.level == "deny":
+    if verdict.level == "deny" and verdict.push_deny:
         reason += (". Pushes to main, force pushes, mirror pushes and admin merges "
                    "are reserved for the user: push a claude/* branch and open a PR "
                    "instead.")
