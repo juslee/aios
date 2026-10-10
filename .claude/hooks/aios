@@ -79,7 +79,8 @@
 #                     PreToolUse deny when the payload's agent_type is one its
 #                     --agent-type values name (every caller when it names none,
 #                     or when a value is empty), or when the payload has an
-#                     agent_id but no agent_type. A runnable override runs as a
+#                     agent_id but no agent_type, or when an agent_type key
+#                     has no non-empty string value or appears twice. A runnable override runs as a
 #                     child with no stamp or freshness test.
 #   aios <other> ...  fresh or dirty: run. stale: rebuild in the foreground,
 #                     then run (a failed rebuild prints a warning and runs the
@@ -195,7 +196,9 @@ ask() {
 # no agent_type; otherwise it prints nothing. The payload is read for its
 # top-level keys only: inside a JSON string every quote is escaped, so a
 # file's content cannot produce `"agent_type"` or `"agent_id"` followed by a
-# colon. A wrong-typed or empty agent_type reads as absent, as in the binary.
+# colon. It is stricter than the binary where it cannot parse JSON: an
+# agent_type key whose value is not a non-empty string, and a payload with more
+# than one agent_type key, are denied (the binary reads one key only).
 hook_fallback() {
     [ "$hook_prog" = path-guard ] || exit 0
     read_payload
@@ -203,13 +206,23 @@ hook_fallback() {
     if [ -n "$hook_types_bad" ] || [ -z "$hook_types" ]; then
         deny=1
     else
+        keys=$(printf '%s\n' "$payload" | grep -o '"agent_type"[[:space:]]*:' | wc -l)
         at=$(printf '%s\n' "$payload" | sed -n 's/.*"agent_type"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | head -n 1)
-        if [ -z "$at" ]; then
+        if [ "$keys" -gt 1 ]; then
+            # Two keys (a nested one, say) are ambiguous: fail closed.
+            deny=1
+        elif [ "$keys" -eq 1 ] && [ -z "$at" ]; then
+            # A key whose value is empty, null or not a string: the binary
+            # denies it, so does the fallback.
+            deny=1
+        elif [ -z "$at" ]; then
             printf '%s\n' "$payload" | grep -q '"agent_id"[[:space:]]*:' && deny=1
         else
+            set -f
             for t in $hook_types; do
                 [ "$t" = "$at" ] && deny=1
             done
+            set +f
         fi
     fi
     if [ -n "$deny" ]; then

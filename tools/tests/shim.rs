@@ -1994,6 +1994,61 @@ fn the_path_guard_fallback_denies_the_guarded_agent_types() {
     sandbox.wait_for_background_build();
 }
 
+// Review fixes: the fallback fails closed on a payload it cannot read as the
+// binary does.
+#[test]
+fn the_path_guard_fallback_denies_what_it_cannot_read() {
+    let sandbox = Sandbox::new("shim-hook-ambiguous");
+
+    // An agent_type key without a usable string denies, as in the binary.
+    for value in [r#""""#, "null", "7", r#"["worker"]"#, r#"{"a":1}"#] {
+        let fields = format!(r#","agent_type":{value}"#);
+        assert_denies(&sandbox.run_stdin(&PG, &[], &payload(&fields)));
+    }
+    let spaced = r#"{"agent_type" : "","tool_name":"Write"}"#;
+    assert_denies(&sandbox.run_stdin(&PG, &[], spaced));
+
+    // More than one agent_type key is ambiguous, in either order.
+    let nested = r#"{"agent_type":"worker","tool_input":{"agent_type":"kernel-dev"}}"#;
+    assert_denies(&sandbox.run_stdin(&PG, &[], nested));
+    let reversed = r#"{"agent_type":"kernel-dev","tool_input":{"agent_type":"worker"}}"#;
+    assert_denies(&sandbox.run_stdin(&PG, &[], reversed));
+    let twice = r#"{"agent_type":"kernel-dev","agent_type":"kernel-dev"}"#;
+    assert_denies(&sandbox.run_stdin(&PG, &[], twice));
+
+    // A glob character in --agent-type is a literal type name.
+    let star = [
+        "hook",
+        "path-guard",
+        "--agent-type",
+        "*",
+        "--deny",
+        "kernel/",
+    ];
+    sandbox.repo.write("zzz", "");
+    let other = payload(r#","agent_type":"zzz""#);
+    assert_silent(&sandbox.run_stdin(&star, &[], &other));
+    let literal = payload(r#","agent_type":"*""#);
+    assert_denies(&sandbox.run_stdin(&star, &[], &literal));
+    sandbox.wait_for_background_build();
+}
+
+// A binary with a foreign or missing stamp is stale to a hook too.
+#[test]
+fn a_missing_or_foreign_stamp_is_stale_to_a_hook() {
+    let sandbox = Sandbox::new("shim-hook-stamp");
+    sandbox.install_bin(true);
+    std::fs::remove_file(sandbox.stamp()).expect("remove the stamp");
+    assert_denies(&sandbox.run_stdin(&PG, &[], &worker()));
+    assert!(!sandbox.no_build_started(), "a background build starts");
+    sandbox.wait_for_background_build();
+
+    sandbox.install_bin(true);
+    std::fs::write(sandbox.stamp(), "foreign\nstamp\nsource clean\n").expect("foreign stamp");
+    assert_denies(&sandbox.run_stdin(&PG, &[], &worker()));
+    assert_silent(&sandbox.run_stdin(&["hook", "repeat-error"], &[], "{}"));
+}
+
 // Rows 7, 8, 16: a binary that exits non-zero is no decision, and its own
 // stdout never leaks.
 #[test]
@@ -2058,10 +2113,11 @@ fn a_hook_with_a_missing_override_falls_back() {
 #[test]
 fn a_hook_binarys_decision_passes_through() {
     let sandbox = Sandbox::new("shim-hook-passthrough");
-    sandbox.install(Some("#!/bin/sh\ncat >/dev/null\necho '{\"d\":1}'\n"), true);
+    // The fake binary echoes its stdin, so the payload must arrive intact.
+    sandbox.install(Some("#!/bin/sh\ncat\n"), true);
     let out = sandbox.run_stdin(&PG, &[], &worker());
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert_eq!(stdout(&out), "{\"d\":1}\n");
+    assert_eq!(stdout(&out), format!("{}\n", worker()));
     assert!(hook_link_dirs(&sandbox).is_empty(), "the link is removed");
 }
 
