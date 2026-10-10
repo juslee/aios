@@ -650,7 +650,7 @@ A task is done when all of these hold, in this order. Gates 1–4 run in the imp
 
   **Files:** Create `.claude/workflows/audit-loop.js`. Draft: `D/.claude/workflows/audit-loop.js.patch-notes.md`; source `<git-common-dir>/aios-agent/audit/branch-audit-loop.v2.js`.
 
-  - [ ] Step 1: the implementer loads the `workflow-authoring` skill, then writes the workflow per the notes (one round, typed lenses, skeptics by severity, a pool of six, the ledger args, the return shape).
+  - [x] Step 1: the implementer loads the `workflow-authoring` skill, then writes the workflow per the notes (one round, typed lenses, skeptics by severity, a pool of six, the ledger args, the return shape).
   - [ ] Step 2 (controller, before the fast-forward): run one docs-mode round headless inside the implementer's worktree `A`, which holds the committed workflow on top of T10's agents (`A` and, after the fast-forward, `W` are the only checkouts where `skeptic` and the new `code-reviewer` exist; Execution, Bootstrap). Set `W` to `A` for this block:
     ```bash
     S=$(mktemp -d); BASE=$(git -C "$W" merge-base origin/main HEAD); HEAD_SHA=$(git -C "$W" rev-parse HEAD)
@@ -927,6 +927,8 @@ The guard-attacking review of 92f8fcd found inputs that `git-push-guard.py` allo
 ### T4 placement
 
 On 2026-10-10, `git worktree remove` of an implementer's temporary worktree failed with "Directory not empty", because VS Code's rust-analyzer had opened it as a cargo workspace and was writing `target/flycheck0`. Git had already unregistered the worktree, so the controller removed the orphan directory, whose commits were already fast-forwarded. Fix: exclude `.claude/worktrees` from rust-analyzer (`rust-analyzer.files.exclude`) in the owner's editor settings, or tolerate the orphan by removing it after checking `git merge-base --is-ancestor <head> W`.
+
+- T12: `.claude/workflows/audit-loop.js` follows the patch notes and the landed `/audit-loop` SKILL.md; no disagreement needed the SKILL to win. Choices where the notes were silent: `fixed` and `refuted` entries may be strings or finding objects and enter every lens prompt as a ledger memo (no code filter, since line numbers move after a fix); mode `both` runs the kernel and tools lens sets and drops a lens whose agent type and prompt are identical (`bugs` runs once, `rules` runs twice); a finding is `in_diff` when more than half of its confirming skeptics say `in-diff`, else `pre_existing`; a must-fix finding is confirmed or refuted by two of three skeptic votes, a should-fix or nit by its one; `lens_failures` lists the keys of lenses that returned nothing after three tries. Docs mode has no code-reviewer lens (the notes' table gives it only the three doc-auditor runs). Checked here: no `model:` or `effort:`, 10 lines with `agentType`, and a stubbed run (6 agents in docs mode, the six return keys). `node --check` cannot parse the script (it is an async-function body with a top-level `return`), so it was parsed as an `AsyncFunction` body.
 
 ## Decisions Made
 
