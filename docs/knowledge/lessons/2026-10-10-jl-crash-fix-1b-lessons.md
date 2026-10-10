@@ -78,7 +78,7 @@ So the stamp reads were the whole cost.
 **Why.** The classes vary from boot to boot, and load inflates both the hangs and the timings. One 30- or 75-second boot gives a class, never a rate.
 
 **Rule.**
-- Record the host's load with every boot. Above the threshold, defer the boot, list it as owed with its acceptance in the working plan, and run every owed boot in one quiet window before the PR.
+- Record the host's load with every boot. Above the threshold, defer the boot, list it as owed with its acceptance in the step's working plan or handoff, and run every owed boot in one quiet window before the PR.
 - Never attribute a class from one boot or from sequential batches. Interleave the arms.
 - Run a host-exclusive soak (a baseline or an A/B pair) only after coordinating with every other session on the host, and kill only your own QEMU process.
 - Before deleting a soak or experiment directory, copy out any log that holds an unexplained signature.
