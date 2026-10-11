@@ -24,7 +24,7 @@ Re-checked on 2026-10-10 at 368d99a:
 - `just tools` in a worktree installs that worktree's own `target/tools/installed/aios`. `AIOS_TOOLS_BIN=target/tools/installed/aios just docs-check` then runs it. That exact form is allow-listed in `.claude/settings.json`. The override is taken relative to the current directory and has no stamp or freshness test (header of `.claude/hooks/aios`). The earlier path `target/tools/release/aios` is gone: the shim uses a copy cargo never writes (#203, #229).
 - `aios docs-check --baseline <file> --update-baseline` rewrites any baseline file, counts included, and keeps `reason` on accepted false positives. The sysroot `llvm-objdump` works: on the kernel built at 368d99a, `-h` shows `.text.boot` at VMA 0xffff000000080000 and LMA 0x40080000, `.text.vectors` at 0x...80800, and the 128 KiB `.stack` after `.bss`.
 - The hook tests run as `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests` (55 tests, all pass, about a minute; also allow-listed).
-- Since #228 the tools tests also run a `check.py` oracle materialised from git history, plus patches in `tools/tests/fixtures/docs-check/`. A branch-only change to the oracle's behaviour needs its own patch there, because branch commits vanish on a squash merge.
+- From #228 the tools tests also ran a `check.py` oracle materialised from git history, plus patches in `tools/tests/fixtures/docs-check/`. #249 retired it (owner decision, 2026-10-11): `goldens_match_aios` against the recorded goldens under `tools/tests/golden/docs-check/` is docs-check's parity gate, and a branch that changes docs-check output on purpose re-records them with `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test docs_check_parity`.
 
 ## How to avoid next time
 
@@ -49,8 +49,7 @@ Expect a diff only for findings the committed baseline deliberately leaves out (
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc -p aios-tools --no-deps --document-private-items` catches broken intra-doc links and unclosed HTML tags in doc comments that clippy and the tests miss. It is not a CI job, and at 368d99a it already fails on an unclosed `<path>` tag in `tools/src/cmd/hook/path_guard.rs`.
 - `tools/tests/common/mod.rs` has `#![allow(dead_code)]`, so unused test helpers never warn; grep their uses by hand.
-- Oracle proof: `AIOS_REQUIRE_CHECK_PY=1 cargo test -q -p aios-tools --test docs_check_parity differential_against_check_py -- --nocapture` prints how many cases and live modes were compared and how many differ; plain `cargo test` hides that on success. Never run the ignored `record_goldens_from_check_py` in a report-only review: it rewrites the goldens (so does `AIOS_BLESS_GOLDENS=1`).
-- A branch-only oracle patch is right when `git diff <sha>^ <sha> -- scripts/docs/check.py` equals the fixture patch except for its `index` line (the fixture applies on top of the migration patch, so the blob ids differ).
+- Never set `AIOS_BLESS_GOLDENS=1` in a report-only review: it rewrites the goldens. A re-blessed golden is right only when its diff is exactly the output change the branch intends.
 
 **The objdump gate**
 

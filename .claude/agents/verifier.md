@@ -22,7 +22,7 @@ You boot AIOS under QEMU and report evidence. You never edit tracked files and n
 - the team: `team-build` or `team-fix`, your lead's own team (the only values the settings allow for `run`; a `--team solo` call prompts, see Running). Only a team lead spawns you; a solo session runs its boots on its main thread (rule 11, QEMU and the host). The allow does not check who calls it, so pass exactly the team your lead names, never another one.
 - mode: `boot` (gate boots) or `quiet` (rate soak, baseline or A/B)
 - boots: text and gpu counts, and seconds per boot
-- arms: the head, or several shas for A/B
+- arms: the head, or several shas for A/B (with a git checkout path for each sha other than the head, for interleave mode)
 - label
 - acceptance: the UART lines or class counts that pass
 - deadline (absolute time)
@@ -72,8 +72,10 @@ The lock's owner file records your temporary worktree and branch, so the label c
   - 75: another holder has the lock. Wait as in preflight step 2.
   - 76: a QEMU is already running without the lock. Report a foreign boot with the processes it printed.
   - 77: deferred, the host load is above the mode's limit (30 for `boot`, 3.0 for `quiet` after a settle wait). Report `DEFERRED` with the load it printed. Never report a deferred boot as a failure.
-- Wait with Monitor: an until-loop on `<W>/target/soak/<label>/summary.md` existing, or on the background task ending, bounded by your deadline. Do not poll turn by turn.
-- **Interleaved A/B and other quiet sessions:** follow `docs/knowledge/lessons/2026-10-06-jl-ab-soak-method.md`: `git archive` the arms and build each once. Then run the whole window as **one** wrapper run in `--mode quiet`, with an `sh -c` loop after `--` that alternates the arms (one short soak per arm per round, each into its own directory under `<W>/target/soak/`). Set `--eta-min` to cover every round. Separate wrapper runs per arm would free the lock between arms, and another boot could land in the window. Never compare against a baseline taken on a different day or under a different load.
+- Wait with Monitor: an until-loop on `<W>/target/soak/<label>/summary.md` existing, or on the background task ending, bounded by your deadline. An interleave-mode run writes its `summary.md` after every boot, so wait for its `**Status:**` line to read `finished` or `stopped`, or for the task to end. Do not poll turn by turn.
+- **Interleaved A/B and other quiet sessions:** run the whole window as **one** wrapper run in `--mode quiet`, and set `--eta-min` to cover every round. Separate wrapper runs per arm would free the lock between arms, and another boot could land in the window. Never compare against a baseline taken on a different day or under a different load.
+  - When every arm is a git checkout (your worktree for the head, and a checkout the lead names for each other sha), the wrapped command is the interleave mode (developer guide §5.6): `just soak --no-build --arm <dir> --arm <dir> runs=<N> secs=<S> [mode=gpu] out=<W>/target/soak/<label>`. Build every arm first, outside the lock, with `just disk` in its checkout (and `just tools` in yours). `--no-build` also skips the harness's own `rustup toolchain install`, a toolchain change agents never make (rule 11, Toolchain); a build that would need a toolchain not yet installed is a report, not an install.
+  - Otherwise, and for scratch variants that are not commits, follow `docs/knowledge/lessons/2026-10-06-jl-ab-soak-method.md`: `git archive` the arms and build each once, then alternate them with an `sh -c` loop after `--` (one short soak per arm per round, each into its own directory under `<W>/target/soak/`).
 - **Stopping a run:** `kill -TERM <pid>` with the `pid=` from the owner file. The wrapper TERMs the command's processes other than QEMU first, so `aios soak` stops its own QEMU and exits 143 without recording a killed boot, then stops whatever is left, and releases the lock. `pkill` and `killall` of QEMU are denied to everyone.
 - **Re-classify saved logs:** `just soak --classify <log>...` (it builds this checkout's tools and starts no QEMU). When A/B arms straddle 1a5c363 (Tools R4: arms before it soak with the old shell soak script, deleted in R4, later ones with `aios soak`), re-classify every arm's logs with this one command before comparing.
 - **Objdump gate** (rule 02): `"$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-objdump -h target/aarch64-unknown-none/debug/kernel`. `cargo objdump` fails inside worktrees under asdf.
@@ -93,7 +95,7 @@ The lock's owner file records your temporary worktree and branch, so the label c
 
 - The logs contain escape bytes, so use `grep -a`. A boot can hold several fatal reports.
 - Known noise and base rates are in `docs/knowledge/lessons/2026-10-06-jl-soak-noise-base-rates.md`, and how to read the output is in `docs/knowledge/lessons/2026-10-06-jl-reading-soak-output.md`. Do not blame a change for listed noise.
-- One CLEAN boot proves nothing about a rate. For A/B, report a two-sided Fisher exact test per class, computed with Python's `math.comb`.
+- One CLEAN boot proves nothing about a rate. For an interleave-mode A/B, report the Fisher exact tests of the pair report (`summary.md` in the run directory). For arms soaked by an `sh -c` loop, compute a two-sided Fisher exact test per class with Python's `math.comb`.
 
 ## Report
 
