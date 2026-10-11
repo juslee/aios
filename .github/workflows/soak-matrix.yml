@@ -1,8 +1,9 @@
 name: Soak matrix
 
-# Interleaved A/B/C boot soak (scripts/soak-matrix.sh): builds 2-4 kernel
-# revisions, then boots them in rounds -- one boot per arm per round, the arm
-# order rotated every round -- all on ONE runner, so every arm shares that
+# Interleaved A/B/C boot soak (`just soak --arm`, the interleave mode of
+# aios soak): checks out 2-4 kernel revisions as worktrees, builds each once,
+# then boots them in rounds -- one boot per arm per round, the arm order
+# rotated every round -- all on ONE runner, so every arm shares that
 # runner's conditions. Arms are never split across jobs. Dispatch only;
 # report-only like the qemu-soak job in ci.yml: the run fails only when the
 # soak could not run or was cut short, never because of the boot classes.
@@ -14,11 +15,11 @@ name: Soak matrix
 # EfiLoaderData execute-never, so an older kernel faults at the jump on every
 # boot. The arms must also pin the same toolchain channel and build with the
 # same compiler (rustc --version, compared after the builds) unless
-# allow_mixed_toolchains is set, which overrides both checks
-# (scripts/soak-matrix.sh --help). An arm is found if it is reachable from a
-# branch or a tag on origin, or from the head of a pull request whose branch
-# is in this repository; GitHub keeps pull request heads after the branch is
-# deleted.
+# allow_mixed_toolchains is set, which overrides both checks. The harness
+# refuses such arms before any boot (`just soak --help`, "Interleave mode").
+# An arm is found if it is reachable from a branch or a tag on origin, or
+# from the head of a pull request whose branch is in this repository; GitHub
+# keeps pull request heads after the branch is deleted.
 #
 # Every arm's build scripts run on the runner, and code running in this job
 # can write to the Actions cache of the dispatching ref whether or not the
@@ -42,10 +43,14 @@ name: Soak matrix
 # baseline: never pool them with local arm64 soaks, or with runs on another
 # runner image.
 #
-# Every boot runs the arm's own harness: scripts/soak-qemu.sh for an arm
-# from before Tools R4 (1a5c363), `just soak` (the arm's own aios soak) for
-# one from R4 on; one dispatch may mix the two. summary.md names each arm's
-# harness.
+# One harness boots and classifies every arm: the dispatching ref's aios
+# soak, built in this job with `just tools`, with its own QEMU arguments (an
+# arm's justfile `run` recipe is not used). So every arm is reported in the
+# dispatching ref's classes and columns, however old the arm, and
+# summary.md's Settings names the harness commit. The harness's load check
+# is skipped (--ignore-load): the runner is single-tenant, and its load at
+# the start reflects this job's own setup steps. The loads are still
+# recorded.
 
 on:
   workflow_dispatch:
@@ -110,15 +115,13 @@ jobs:
     steps:
       # Step time limit, in minutes:
       #   boots   ceil(arms x runs x (secs + 15) / 60)
-      #           15 s per boot covers the harness start (soak-qemu.sh's
-      #           timeout check, or `just soak`'s no-op rebuild check of the
-      #           arm's aios; the ESP snapshot) and QEMU's exit after the
-      #           harness's SIGTERM at the time limit (up to 10 s before
-      #           SIGKILL)
+      #           15 s per boot covers the harness's per-boot work (the fresh
+      #           data disk, the QEMU and firmware checks before and after
+      #           the boot) and QEMU's exit after the harness's SIGTERM at the
+      #           time limit (up to 10 s before SIGKILL)
       #   builds  5 x arms: toolchain install plus a cold debug build of
       #           kernel and stub (the qemu-soak job's warm `just disk` takes
-      #           about 20 s), and for an aios soak arm a cold release build
-      #           of its aios (`just tools`)
+      #           about 20 s); the harness itself is built in its own step
       #   margin  10
       # Defaults, 3 arms: 158 + 15 + 10 = 183 min; 4 arms: 210 + 20 + 10 = 240.
       # The limit must stay <= 340, leaving 20 min of the 360 for setup,
@@ -169,13 +172,13 @@ jobs:
           done
           runs=$((10#$RUNS))
           secs=$((10#$SECS))
-          # soak-matrix.sh's own bounds (--runs 1-1000, --secs 16-3600).
+          # This workflow's bounds (runs 1-1000, secs 16-3600).
           if [ "$runs" -lt 1 ] || [ "$runs" -gt 1000 ]; then
             echo "::error::runs must be from 1 to 1000 (got $runs)"
             exit 1
           fi
-          # Both harnesses (soak-qemu.sh and aios soak) refuse a --secs that
-          # is not above their --stall-secs (15).
+          # The harness refuses a --secs that is not above its --stall-secs
+          # (15).
           if [ "$secs" -le 15 ] || [ "$secs" -gt 3600 ]; then
             echo "::error::secs must be more than 15 (the harness's stall limit) and at most 3600 (got $secs)"
             exit 1
@@ -228,28 +231,62 @@ jobs:
           qemu-system-aarch64 --version
           dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
           test -f "$AIOS_EDK2_FW"
-      # Each arm is built in its own worktree, $RUNNER_TEMP/arm-A and so on,
-      # with that arm's rust-toolchain.toml: soak-matrix.sh first runs
-      # `rustup toolchain install` there, which installs the pinned nightly
-      # with the file's components and targets if the runner lacks it, so
-      # the soak never relies on rustup's auto-install.
-      - name: Soak (${{ inputs.runs }} rounds x ${{ inputs.secs }} s, ${{ inputs.mode }})
-        timeout-minutes: ${{ fromJSON(steps.plan.outputs.soak_minutes) }}
+      # The harness that boots and classifies every arm, built from the
+      # dispatching ref; `just soak` below finds it fresh. Its own step, so a
+      # build failure shows here, not inside the soak.
+      - name: Build the host tools
+        run: just tools
+      # One detached worktree per arm, $RUNNER_TEMP/arm-A and so on, outside
+      # the checkout so no parent .cargo/config.toml leaks into its build.
+      # The same SHA given twice is one worktree passed twice, which the
+      # harness boots as an A/A control, built once.
+      - name: Check out the arms
         run: |
           set -f
           # shellcheck disable=SC2086 # split the refs into words, no globbing
           set -- $REFS
           set +f
-          mixed=""
-          [ "$ALLOW_MIXED_TOOLCHAINS" != true ] || mixed=--allow-mixed-toolchains
-          # exec: the runner's SIGINT/SIGTERM on a timeout or cancel reach the
-          # soak itself, which stops the running build or boot. Once the
-          # boots have started, it also marks summary.md "stopped" before the
-          # steps below read it; a soak stopped during the builds leaves only
-          # the build logs.
-          # shellcheck disable=SC2086 # $mixed is one flag or nothing
-          exec bash scripts/soak-matrix.sh --runs "$RUNS" --secs "$SECS" --mode "$MODE" $mixed \
-            --out "$MATRIX_OUT" --worktrees "$RUNNER_TEMP" --keep-worktrees -- "$@"
+          arms=""
+          seen=""
+          for label in A B C D; do
+            [ "$#" -gt 0 ] || break
+            sha=$1
+            shift
+            dir=""
+            for pair in $seen; do
+              [ "${pair%%=*}" != "$sha" ] || dir=${pair#*=}
+            done
+            if [ -z "$dir" ]; then
+              dir="$RUNNER_TEMP/arm-$label"
+              git worktree add --detach "$dir" "$sha^{commit}"
+              seen="$seen $sha=$dir"
+            fi
+            arms="$arms $dir"
+          done
+          echo "ARM_DIRS=${arms# }" >> "$GITHUB_ENV"
+      # The harness builds each arm in its worktree with that arm's
+      # rust-toolchain.toml: it first runs `rustup toolchain install` there,
+      # which installs the pinned nightly with the file's components and
+      # targets if the runner lacks it, so the soak never relies on rustup's
+      # auto-install.
+      - name: Soak (${{ inputs.runs }} rounds x ${{ inputs.secs }} s, ${{ inputs.mode }})
+        timeout-minutes: ${{ fromJSON(steps.plan.outputs.soak_minutes) }}
+        run: |
+          set -f
+          set --
+          # shellcheck disable=SC2086 # split the arm directories into words, no globbing
+          for dir in $ARM_DIRS; do
+            set -- "$@" --arm "$dir"
+          done
+          set +f
+          [ "$ALLOW_MIXED_TOOLCHAINS" != true ] || set -- "$@" --allow-mixed-toolchains
+          # exec: the runner's signals on a timeout or cancel reach just,
+          # which forwards SIGTERM (not SIGINT) to the soak. That stops a
+          # running boot and marks summary.md "stopped" before the steps
+          # below read it. A toolchain install or build in progress runs
+          # until it exits (or the runner's own kill ends it), and a soak
+          # stopped during the builds leaves only the build logs.
+          exec just soak "$@" runs="$RUNS" secs="$SECS" mode="$MODE" --ignore-load out="$MATRIX_OUT"
       - name: Publish summary
         if: always()
         run: |

@@ -25,9 +25,7 @@
 //! so its `BEFORE_CLAUDE_RE` needs `CLAUDE.md` right after "in"/"from". The memory now
 //! lives at [`CLAUDE_MD`] and harness prose names it by that path, so `BEFORE_CLAUDE_RE`
 //! also accepts the `.claude/` prefix ("Key Technical Facts in `.claude/CLAUDE.md`").
-//! `AFTER_CLAUDE_RE` and the heading test already find `CLAUDE.md` inside the path. The
-//! tests' check.py oracle carries the same widening (`CHECK_PY_MIGRATION` in
-//! `tests/common/fixture.rs`).
+//! `AFTER_CLAUDE_RE` and the heading test already find `CLAUDE.md` inside the path.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;

@@ -51,9 +51,15 @@ GICv3 GICD base:              0x0800_0000
 GICv3 GICR base:              0x080A_0000
 ARM Generic Timer freq:       62.5 MHz on QEMU; 1 ms tick = freq/1000 = 62500
 Timer PPI INTID:              30 (EL1 physical timer)
-Timer IRQs on CPUs 1-3:       none today (#200): init_gicv3_secondary never writes GICR_IGROUPR0, so
-                              PPI 30 stays in Group 0, which the kernel never enables. Only CPU 0
-                              runs the tick work and IRQ-path switches; fixed by its own crash-fix step.
+Timer PPI setup (step 200):   every CPU configures the timer PPI on its own redistributor
+                              (gic::setup_timer_ppi, logic in shared::gic): wake, disable + RWP,
+                              GICR_IGROUPR0 = all Group 1, priority 0x80, level check, enable, readback.
+                              Never rely on firmware: edk2 sets Group 1 on CPU 0 only, and a Group 0
+                              PPI is never signalled (the kernel enables Group 1 only: GICD_CTLR.EnableGrp1,
+                              ICC_IGRPEN1_EL1), so that CPU takes no tick (ppi_grp1=0, tick 0); it does
+                              not fault. INTID comes from the DTB (published before CPU_ON); [smp] lines
+                              report ppi_grp1/ppi_en/ppi_ok.
+                              All 4 CPUs now run the tick work and IRQ-path switches.
 
 # Boot invariants
 QEMU boots to EL1 directly    (no EL2 setup)
@@ -238,15 +244,16 @@ aios/
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
 ├── shared/src/           types crossing kernel/stub boundary (no_std)
 │   ├── (top-level)       boot, cap, ipc, sched, memory, storage, gpu, input, compositor, syscall,
-│   │                     kaslr, cache, observability, collections, lock, tripwire, lib
+│   │                     kaslr, cache, observability, collections, lock, tripwire, gic, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
 │                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook
 │                         programs: repeat-error, path-guard, route-shadow, route-outcome),
-│                         src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
-├── scripts/              soak-matrix.sh (interleaved multi-revision soak; CI: soak-matrix.yml),
-│                         agent/ (brief, checkpoint, qemu-lock: the host QEMU lock),
+│                         src/cmd/soak/ (boot soak harness, just soak: classify, tripwire, stats,
+│                         interleave --arm (2-4 checkouts; CI: soak-matrix.yml), pair report),
+│                         tests/ (goldens, fixtures); depends on shared/ (tripwire key catalogue)
+├── scripts/              agent/ (brief, checkpoint, qemu-lock: the host QEMU lock),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```

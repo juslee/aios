@@ -291,13 +291,18 @@ The current implementation in `kernel/src/arch/aarch64/gic.rs` is GICv3-only:
 pub struct InterruptController {
     gicd_base: usize,   // Distributor MMIO base
     gicr_base: usize,   // Redistributor MMIO base (core 0)
+    timer_ppi_status: Cell<Option<PpiStatus>>, // Boot CPU's timer PPI setup result
 }
 
 impl InterruptController {
     /// Enable an interrupt by INTID.
-    /// PPIs (INTID 16-31): writes GICR_ISENABLER0 in the SGI frame.
+    /// PPIs (INTID 16-31, boot CPU only): the timer PPI. Publishes its INTID
+    /// and runs the per-CPU timer PPI setup (below) on core 0's redistributor.
     /// SPIs (INTID 32+): writes GICD_ISENABLER[n].
     pub fn enable_irq(&self, irq: u32);
+
+    /// The boot CPU's timer PPI setup result, once enable_irq has run.
+    pub fn timer_ppi_status(&self) -> Option<PpiStatus>;
 
     /// Acknowledge an interrupt (read ICC_IAR1_EL1). Returns the INTID.
     pub fn acknowledge(&self) -> u32;
@@ -316,7 +321,18 @@ impl InterruptController {
 }
 ```
 
-The standalone `irq_handler_el1()` function handles IRQ dispatch without an `InterruptController` instance — it reads/writes ICC system registers directly. This avoids passing the controller through the exception vector assembly stubs.
+The standalone `irq_handler_el1()` function handles IRQ dispatch without an `InterruptController` instance — it reads/writes ICC system registers directly. This avoids passing the controller through the exception vector assembly stubs. It runs the timer tick when the acknowledged INTID equals the timer PPI INTID that the boot CPU published (one relaxed load of a static, never the literal 30).
+
+**Per-CPU timer PPI setup (GICv3).** Every CPU configures the timer PPI on its own redistributor and never relies on firmware for its group or priority. edk2 puts the PPIs in Group 1 on the boot CPU's redistributor only, and CPUs 1–3 took no timer IRQs until the kernel did it on every CPU (#200, crash-fix step 200). One function, `setup_timer_ppi(rd_base, cfg, ds)` in `gic.rs`, runs on the boot CPU from `enable_irq` and on CPUs 1–3 from `init_gicv3_secondary`, so the two paths cannot drift apart. With IRQs masked, on the calling CPU's RD_base and SGI_base (RD_base + 0x10000) frames, it:
+
+1. Wakes the redistributor: one bounded loop over `GICR_WAKER` that clears `ProcessorSleep` only while `ChildrenAsleep` reads 1, and otherwise waits.
+2. Disables the PPI (`GICR_ICENABLER0`) and waits, bounded, for `GICR_CTLR.RWP` to clear, so it is reconfigured only while disabled.
+3. Writes `GICR_IGROUPR0` = 0xffffffff (every SGI and PPI in Group 1, the only group the kernel enables, through `GICD_CTLR.EnableGrp1` and `ICC_IGRPEN1_EL1`) and reads it back. Group 0 is never enabled (neither `GICD_CTLR.EnableGrp0` nor `ICC_IGRPEN0_EL1` is set), so a PPI left there is never signalled: the CPU takes no tick and does not fault.
+4. Writes the PPI's priority byte (`GICR_IPRIORITYR`, 0x80: the value edk2 leaves on the boot CPU, non-zero, below the `ICC_PMR_EL1` mask and with its low four bits 0, so it reads back exactly in every priority view) and reads it back.
+5. Reads `GICR_ICFGR1` and checks that the PPI is level-sensitive. The trigger is not written: changing it while enabled is UNPREDICTABLE, and whether a PPI's trigger is programmable is IMPLEMENTATION DEFINED.
+6. Enables the PPI (`GICR_ISENABLER0`), reads the enable register back, and judges the six readings as a `PpiStatus`: one `Pass`, `Fail` or `Unchecked` flag each for wake, RWP, group 1, enabled, priority and level.
+
+The boot CPU publishes two GIC-wide facts before PSCI `CPU_ON`: the timer PPI's INTID from the DTB, and `GICD_CTLR.DS` from the read `init_gicv3` already makes. Under `DS` = 0 (Secure firmware below the kernel) `GICR_IGROUPR0` is RAZ/WI to Non-secure accesses, so the group is firmware's to set and its flag is `Unchecked`; a PPI that firmware left in a Secure group still fails, through the priority readback. A secondary runs the setup before its kmap TTBR1 install, at the redistributor's physical address through the boot identity map, so the setup has no formatting, UART access or reachable panic path, and the CPU reports the status on its `[smp]` line once the UART is mapped ([observability.md §6.5](./observability.md), "SMP lines"). A CPU whose readback fails reports it (`ppi_ok=0` and a `kerror!` naming the failed flags) and runs on: a failed group 1 or enabled flag leaves it without a timer IRQ, while a wake, RWP, priority or level failure can leave the PPI firing. Each redistributor is found as the GICR base plus the CPU index × 0x20000 (no `GICR_TYPER` walk). The offsets, bit positions and readback rules are pure logic in `shared/src/gic.rs`, with host tests, checked against Arm IHI 0069H.b: §12.10 (frames), §12.11.2 `GICR_CTLR`, §12.11.5 `GICR_ICENABLER0`, §12.11.8 `GICR_ICFGR1`, §12.11.12 `GICR_IGROUPR0`, §12.11.14 `GICR_IGRPMODR0` (not accessed: it reads 0 from Non-secure EL1 under either `DS`), §12.11.21 `GICR_IPRIORITYR`, §12.11.25 `GICR_ISENABLER0`, §12.11.42 `GICR_WAKER`, §12.9.4 `GICD_CTLR`, §4.8 and Table 4-9, §4.8.6 and §4.8.7 (priority bits and views).
 
 The target design generalizes this to a variant enum supporting GICv2, GICv3, and Apple AIC:
 
@@ -375,7 +391,7 @@ impl InterruptController {
 | Acknowledge IRQ | Read GICC_IAR | Read ICC_IAR1_EL1 | Read AIC_EVENT |
 | End of interrupt | Write GICC_EOIR | Write ICC_EOIR1_EL1 | Write AIC_SW_CLR |
 | CPU target | GICD_ITARGETSR (bitmap) | GICD_IROUTER (affinity) | AIC_TARGET_CPU |
-| Per-CPU config | GICC_* registers | GICR_* per redistributor | Per-die AIC regs |
+| Per-CPU config | GICC_* registers | GICR_* per redistributor; each CPU sets up its own timer PPI (above) | Per-die AIC regs |
 | IPI mechanism | GICD_SGIR | ICC_SGI1R_EL1 | AIC_IPI_SEND |
 | Max IRQs | 1020 SPIs | 1020+ (LPIs) | ~1024 |
 

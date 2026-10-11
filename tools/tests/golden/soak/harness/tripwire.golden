@@ -1,0 +1,170 @@
+exit 0
+--- stdout
+soak: 2 x 3s, mode=text, commit=<REV>, data=fresh
+soak: firmware=<ROOT>/fw.fd
+soak: logs in <ROOT>/repo/out (load average at start: <L>)
+run 01/2  PANIC-LOCK   tick=0      stall=<N> [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+run 02/2  CLEAN        tick=1000   stall=<N> [EL1,BOOT,G1PASS,G1DONE]
+
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `<REV>` (kernel ELF sha256 `94cc3f95c7b1a13c`) |
+| Boots | 2 x 3s, stall limit 2s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) |
+| Firmware | `<ROOT>/fw.fd` |
+| Host | <HOST> |
+| Load average | <L> |
+| Logs | `<ROOT>/repo/out` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC-LOCK | 1 | 50% |
+| PANIC | 0 | 0% |
+| EXCEPTION | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
+| INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
+| CLEAN | 1 | 50% |
+| **Total** | 2 | |
+
+CLEAN rate: 50% (95% Wilson interval 9%-91%)
+Gate 1 IPC round trip, mean over CLEAN boots: 6.00 us (n=1; each boot's avg= is whole us, truncated)
+
+soak: per-boot table in <ROOT>/repo/out/summary.md, machine-readable rows in <ROOT>/repo/out/summary.tsv
+--- stderr
+soak: warning: --secs 3 leaves under 20s beyond --stall-secs 2 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 2s of a boot is never seen
+--- out: run-01.log run-02.log summary.md summary.tsv
+--- file run-01.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[tripwire] v=1 src=hb cpu=0 t=1 ncpu=4 tick=1,0,0,0 twc=0 twn=0 twmax=0 n=9
+[tripwire-ev] kind=stuck cpu=3 lock=THREAD_TABLE idx=- ctx=thread-off owner_cpu=0
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+[tripwire] v=1 src=panic cpu=0 t=544 ncpu=4 irqsw=6,0,0,0 twc=9 twn=2 twmax=9 n=9
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=1 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=1 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file run-02.log
+UEFI firmware (fake)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.100000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+
+[soak] meta mode=text secs=3 elapsed=<N> qemu_rc=124 kstart=<N> hb_first=<N> bench_start=<N> g1done=<N> hb_count=2 hb_last_advance=<N> hb_max_gap=<N> stall_limit=2 load1=<L>
+--- file summary.md
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `<REV>` (kernel ELF sha256 `94cc3f95c7b1a13c`) |
+| Boots | 2 x 3s, stall limit 2s, data disk fresh per boot |
+| QEMU | QEMU emulator version 99.1.0 (aios test fake) |
+| Firmware | `<ROOT>/fw.fd` |
+| Host | <HOST> |
+| Load average | <L> |
+| Logs | `<ROOT>/repo/out` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC-LOCK | 1 | 50% |
+| PANIC | 0 | 0% |
+| EXCEPTION | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 0 | 0% |
+| INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
+| CLEAN | 1 | 50% |
+| **Total** | 2 | |
+
+CLEAN rate: 50% (95% Wilson interval 9%-91%)
+Gate 1 IPC round trip, mean over CLEAN boots: 6.00 us (n=1; each boot's avg= is whole us, truncated)
+
+### Tripwire counters by class
+
+From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). A cell is "boots with a non-zero value / sum over those boots", or "/ max" for a gauge (marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every boot are left out.
+
+| Counter | PANIC-LOCK | CLEAN |
+|---|---:|---:|
+| Boots | 1 | 1 |
+| Boots with a `v=1` line | 1 | 1 |
+| `tick` | 0/0 | 1/1001 |
+| `tick[CPU 0]` | 0/0 | 1/1001 |
+| `irqsw` | 1/6 | 0/0 |
+| `irqsw[CPU 0]` | 1/6 | 0/0 |
+| `elrmm` | 0/0 | 1/1 |
+| `elrmm[CPU 0]` | 0/0 | 1/1 |
+| `twc` | 1/9 | 1/9 |
+| `twn` | 1/2 | 1/1 |
+| `twmax` (max) | 1/9 | 1/94000 |
+
+| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
+|---:|---|---:|---:|---|---|---|---|
+| 01 | PANIC-LOCK | 0 | <N> | EL1,BOOT | no | panic | PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894 |
+| 02 | CLEAN | 1000 | <N> | EL1,BOOT,G1PASS,G1DONE | - | hb | - |
+--- file summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
+01	text	PANIC-LOCK	0	1	<N>	<N>	1	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT	no	after heartbeat tick 0; qemu exited before the time limit (rc=1)	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-01.log	-	-	THREAD_TABLE	irq-exit	on	0	0	0	1	1	panic	0	544	4	0	6,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	2	9	-	-	[tripwire] v=1 src=panic cpu=0 t=544 ncpu=4 irqsw=6,0,0,0 twc=9 twn=2 twmax=9 n=9
+02	text	CLEAN	1000	2	<N>	<N>	124	<N>	<N>	<N>	<N>	<N>	<N>	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.100000] [0] INFO  Boot  Boot sequence complete	run-02.log	6	10000	-	-	-	0	0	0	0	1	hb	0	1001	4	1001,0,0,0	0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	9	1	94000	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10	[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10
+--- argv-1
+-machine
+virt,gic-version=3
+-cpu
+cortex-a72
+-smp
+4
+-m
+2G
+-nographic
+-bios
+<ROOT>/fw.fd
+-drive
+if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp.img,format=raw
+-device
+virtio-blk-pci,drive=disk0
+-drive
+if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw
+-device
+virtio-blk-device,drive=data0
+-device
+ramfb
+--- argv-2
+-machine
+virt,gic-version=3
+-cpu
+cortex-a72
+-smp
+4
+-m
+2G
+-nographic
+-bios
+<ROOT>/fw.fd
+-drive
+if=none,id=disk0,file=<ROOT>/repo/out/.scratch.XXXXXX/esp.img,format=raw
+-device
+virtio-blk-pci,drive=disk0
+-drive
+if=none,id=data0,file=<ROOT>/repo/out/.scratch.XXXXXX/data.img,format=raw
+-device
+virtio-blk-device,drive=data0
+-device
+ramfb
+--- still running: -

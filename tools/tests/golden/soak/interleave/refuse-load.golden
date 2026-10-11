@@ -1,0 +1,10 @@
+exit 2
+--- stdout
+--- stderr
+soak: warning: AIOS_SOAK_LOADAVG replaces the host's load average with '100000.00 1.00 1.00'; only debug builds read it
+soak: warning: AIOS_SOAK_MIN_ARM_BASE overrides the arm base: every arm must contain 244166f03dbd262e5ed2921769fb515ee7dd0652 instead of 7167d408f6a43ca9859fb6238f608ca6bdee37d6 (#196); only debug builds read it
+soak: error: the host's 1-minute load average is 100000.00, above its <N> CPUs: boots on a loaded host measure the host as much as the arms. Wait for the load to drop, or pass --ignore-load to soak anyway (the loads are recorded)
+--- out: (none)
+--- boots: 0
+--- rustup.log
+--- just.log
