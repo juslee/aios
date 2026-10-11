@@ -104,8 +104,10 @@ unsafe fn mmio_write8(addr: usize, val: u8) {
 /// [`waker_step`]. Returns true when `GICR_WAKER` reads awake within
 /// [`GIC_POLL_LIMIT`] reads.
 ///
-/// Never prints or panics, so CPUs 1-3 can run it before their kmap TTBR1
-/// install.
+/// No formatting, UART access or reachable panic path, so CPUs 1-3 can run
+/// it before their kmap TTBR1 install. The only panic in the dev-profile
+/// build is core's pointer-alignment precondition on the `u32` MMIO
+/// accesses, which a 64 KiB-aligned redistributor frame cannot trip.
 ///
 /// # Safety
 ///
@@ -136,9 +138,14 @@ unsafe fn wake_redistributor(rd_base: usize) -> bool {
 /// check, enable, readback (plan rows 1-7; [`shared::gic`] holds the
 /// offsets and the rules).
 ///
-/// Never prints or panics, so CPUs 1-3 can run it before their kmap TTBR1
-/// install. A wake or RWP poll that runs out sets its flag to `Fail` and the
-/// sequence carries on, so the status names every property that failed.
+/// No formatting, UART access or reachable panic path, so CPUs 1-3 can run
+/// it before their kmap TTBR1 install. The dev-profile build keeps panic
+/// calls that cannot fire: core's pointer-alignment precondition on the
+/// `u32` MMIO accesses (a redistributor frame is 64 KiB aligned) and the
+/// shift and subtract overflow checks in [`PpiConfig`]'s helpers
+/// ([`PpiConfig::new`] admits only INTIDs 16-31). A wake or RWP poll that
+/// runs out sets its flag to `Fail` and the sequence carries on, so the
+/// status names every property that failed.
 ///
 /// # Safety
 ///
@@ -289,8 +296,9 @@ pub fn init_gicv3(gicd_base: usize, gicr_base: usize) -> InterruptController {
 ///
 /// `secondary_main` calls this before its kmap TTBR1 install: `gicr_base` is
 /// the physical GICR base, reached through the boot identity TTBR0, and the
-/// UART is not reachable yet. So this function never prints, panics or
-/// touches the UART; it returns the setup status for the caller to report
+/// UART is not reachable yet. So this function has no formatting, UART
+/// access or reachable panic path (the unreachable dev-profile panics are
+/// [`setup_timer_ppi`]'s); it returns the setup status for the caller to report
 /// once the UART is mapped. `Err` means the published INTID is not a valid
 /// timer PPI configuration, and the redistributor was left untouched; the
 /// boot CPU validates the same INTID and panics before `CPU_ON` if it is
