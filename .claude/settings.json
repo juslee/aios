@@ -53,7 +53,7 @@
             "type": "agent",
             "model": "claude-fable-5-1",
             "timeout": 600,
-            "prompt": "AIOS Fable plan gate (rule 11, Reviews). The hook input is: $ARGUMENTS\n1. tool_input.plan is the plan and tool_input.planFilePath its file. If the plan's first Markdown heading does not start with `# Plan:`, it is not an AIOS working plan: return ok true.\n2. Count the lines containing `FABLE-PLAN-GATE block` in the file at transcript_path. If there are 2 or more, return ok true: the owner reviews the plan next.\n3. Read the section `## Lens: plan` of .claude/agents/code-reviewer.md in the repository that contains cwd, and apply it to the plan. Read the ADRs and architecture sections the plan cites (docs/project/doc-map.md locates them).\n4. With no must-fix finding, return ok true. Otherwise return ok false with a reason that starts `FABLE-PLAN-GATE block <count + 1>/2:` and lists each must-fix finding: the plan step, the problem, the fix."
+            "prompt": "AIOS Fable plan gate (rule 11, Reviews). The hook input is: $ARGUMENTS\n1. tool_input.plan is the plan and tool_input.planFilePath its file. If the plan's first Markdown heading does not start with `# Plan:`, it is not an AIOS working plan: return ok true.\n2. In the file at transcript_path, find each `FABLE-PLAN-GATE block N/2:` where N is a digit (this prompt itself only says `<count + 1>/2`, which has no digit). The count is the highest N found, or 0 if there is none. If the count is 2 or more, return ok true: the owner reviews the plan next.\n3. Read the section `## Lens: plan` of .claude/agents/code-reviewer.md in the repository that contains cwd, and apply it to the plan. Read the ADRs and architecture sections the plan cites (docs/project/doc-map.md locates them).\n4. With no must-fix finding, return ok true. Otherwise return ok false with a reason that starts `FABLE-PLAN-GATE block <count + 1>/2:` and lists each must-fix finding: the plan step, the problem, the fix."
           }
         ]
       }
@@ -227,6 +227,8 @@
       "Bash(sysctl -n vm.loadavg)",
       "Bash(bash scripts/agent/qemu-lock.sh status)",
       "Bash(bash scripts/agent/qemu-lock.sh clear-stale)",
+      "Bash(bash scripts/agent/qemu-lock.sh run --team team-build *)",
+      "Bash(bash scripts/agent/qemu-lock.sh run --team team-fix *)",
       "Bash(git reset --hard *)",
       "Bash(git fetch origin)",
       "Bash(git merge --no-edit origin/main)",
@@ -295,8 +297,6 @@
       "Bash(just * -c*)",
       "Bash(cp *.claude/settings*)",
       "Bash(cp *.claude/hooks/*)",
-      "Bash(sed *.claude/settings*)",
-      "Bash(sed *.claude/hooks/*)",
       "Bash(awk *.claude/settings*)",
       "Bash(awk *.claude/hooks*)",
       "Bash(awk *.git/hooks*)",
