@@ -144,23 +144,25 @@ A failure in the first three is a bug in the step. The rest describe the kernel 
 
 **Arms:**
 
-- A (previous) is `main` at this branch's merge base, checked out in its own worktree, for example `.claude/worktrees/crash-200-base`;
-- B (new) is this branch's tip.
+- A (previous) is `main` at this branch's merge base, 030b3b7 (nightly-2026-10-11), in the worktree `/Users/juslee/dev/aios-030b3b7`. Step 1a's lessons §8 says to keep arm worktrees outside any checkout, so that no parent `.cargo/config.toml` joins their build;
+- B (new) is this branch's tip, in this worktree.
+
+Q7 A runs step 1b's pair first, on its own channel: arms `/Users/juslee/dev/aios-af59149` and `/Users/juslee/dev/aios-e211d6d`, both pinned to nightly-2026-10-09, so step 1a's preflight accepts them as a pair. The commands are the two below with those two arms.
 
 Both arms pin one toolchain and boot one QEMU binary and one firmware image; step 1a's preflight refuses anything else. Both arms carry 1b's detect-only lock, scan A (#236) and the same tripwire schema, so none of these confounds the pair.
 
 **Commands** (attended and host-exclusive, about 75–85 minutes in all, with the owner's go-ahead):
 
 ```sh
-just soak --arm /Users/juslee/dev/aios/.claude/worktrees/crash-200-base \
+just soak --arm /Users/juslee/dev/aios-030b3b7 \
           --arm /Users/juslee/dev/aios/.claude/worktrees/crash-200 runs=20 secs=75
-just soak --arm /Users/juslee/dev/aios/.claude/worktrees/crash-200-base \
+just soak --arm /Users/juslee/dev/aios-030b3b7 \
           --arm /Users/juslee/dev/aios/.claude/worktrees/crash-200 runs=10 secs=75 mode=gpu
 ```
 
 Both commands are report-only by step 1a's D5. The load rule is enforced at the start (a refusal above the CPU count), and the report gives each arm's mean and maximum load. If the arm means differ by more than 25%, the pair is redone. The agent stops only its own QEMU PID.
 
-**What gates (proposed; Q1, Q2, Q12 and Q14 decide, and the answers are written into this plan before T8 runs the pair):**
+**What gates. Pre-registered 2026-10-11, before the pair ran, from the owner's 2026-10-10 16:29 answers: Q1 A, Q2 A, Q12 A, Q14 A.**
 
 1. **The fix itself, mechanically.** In arm B, every boot whose last complete tripwire line has `tick[0]` > 0 also has `tick[1..3]` > 0 in that line. In arm A, every boot with a complete tripwire line has `tick` = 0 on CPUs 1–3. This is read from step 1a's per-CPU `tick` columns.
    - Why the scope: no CPU takes a timer IRQ before the scheduler starts. CPU 0 unmasks after `sched::start` (`main.rs:371`, `:380`), and the secondaries unmask only once `SCHED_READY` is set (`scheduler.rs:55-63`), which `sched::start` does, with a `sev`, before CPU 0 unmasks (`sched/init.rs:108-112`). A boot that panics or faults earlier still prints a complete `src=panic` or `src=exc` line (`observability/tripwire.rs:353-375`), and it reads `tick=0,0,0,0` whatever the fix does. `tick[0]` > 0 shows that the scheduler started, so in scope are every `src=hb` and `src=g1` line plus the `src=panic` and `src=exc` lines taken after CPU 0 ticked.
@@ -175,9 +177,19 @@ Both commands are report-only by step 1a's D5. The load rule is enforced at the 
    | 20 | 55% → 25% | 0.49 |
    | 10 | 10% → 0% (B1's gpu rate) | 0.01 |
 
-   The gpu guard cannot fail at B1's baseline: 1 of 10 against 0 of 10 gives p = 0.50, and arm A needs at least 4 CLEAN of 10 before 0 of 10 in B reaches p < 0.05 (p = 0.043). Proposed (Q12 A): the text guard gates, and the gpu guard is reported as informational. The gpu boots still count in the per-boot attribution (Q2) and the `new` marker. If the guard fails, Q2's ruling applies.
+   The gpu guard cannot fail at B1's baseline: 1 of 10 against 0 of 10 gives p = 0.50, and arm A needs at least 4 CLEAN of 10 before 0 of 10 in B reaches p < 0.05 (p = 0.043). Pre-registered (Q12 A): the text guard gates, and the gpu guard is informational. The gpu boots still count in the per-boot attribution (item 5) and in the `new` marker.
 3. **"Class removed".** No class is a target of this step, so a `removed` marker is reported and not claimed.
 4. **The `new` marker.** A class with 0 boots in A and p < 0.05 for more in B is reported, together with the first fatal line of every boot in that class.
+5. **Attribution (Q2 A and Q14 A).** Every non-CLEAN arm-B boot, in both modes and whatever the guard's p-value, gets a class, the CPU of its first fatal report, and one of these signatures:
+   - **H1:** PCZERO, or an EXCEPTION at a corrupt PC or register, with `elrmm` incrementing on the faulting CPU;
+   - **H3:** PANIC-LOCK, `lock re-entry:` with `ctx=irq` or `irq-exit`;
+   - **N2:** a WEDGE with `n2[rblk]`, `ubrbl[reply]` and `nowaker`;
+   - **N4:** a nested-IRQ signature (`n4`);
+   - **N5:** an EXCEPTION on CPU 0 with EC 0x21 or 0x25 and ELR or FAR in [0x4000_0000, 0x8000_0000);
+   - **newly live self-test (Q14 A):** the first fatal report lies in thread A, the echo IPC pair, cap-denied, the service echo pair or `process_exit`. Each distinct signature gets its own issue;
+   - **unattributed:** anything else.
+
+   The step passes when the item 1 check passes, and either the text guard passes, or it fails and every extra non-CLEAN arm-B boot is attributed. Any unattributed signature in arm B fails the step, whatever the guard says, and goes to the owner.
 
 **Expected movement.** These are predictions, recorded so the PR can compare them with the results; none of them gates. "Today" is B1 (c065b0c) and the tripwire logs since.
 
@@ -532,6 +544,10 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 **Independent audit round 3 (2026-10-11).** One should-fix finding, docs only; no behaviour change.
 
 - observability.md §6.5's sample `[tripwire]` line showed `tick=12001,0,0,0`, the pre-step-200 shape (CPUs 1-3 with no timer IRQs) that the section's own Counters paragraph now calls a failed setup and the Q1 A gate rejects. It now shows a non-zero column on every CPU (`tick=12001,11890,11875,11902`, the values in `shared/src/tripwire.rs`'s module doc).
+
+**Independent audit round 4 (2026-10-11): clean.** The doc, code and security auditors ran separately (17–28 tool calls each) and reported 0 findings; every finding in rounds 1–3 had faced two refuting verifiers. Every kernel change in the audit fixes was a comment.
+
+**Check boot of the final head (2026-10-11 10:27, 8259e7d with main 030b3b7, nightly-2026-10-11, load 11.9).** One text boot (`target/soak/20261011-102751-text`): PANIC-LOCK, `lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit`. That is H3's signature, which B1 also showed on main (CURRENT_THREAD ×1). All four `[smp]` lines read `ppi_ok=1`, and every CPU ticked (`tick=559,572,575,571` at the panic). The build and the setup are sound on the new nightly, and one boot says nothing about the rate.
 
 ## Decisions Made
 
