@@ -11,7 +11,8 @@
 //! - [`PpiConfig`]: a validated (INTID, priority) pair and the masks, byte
 //!   offset and bit position derived from it;
 //! - [`PpiConfig::check`]: what a [`PpiReadback`] says about each property,
-//!   as a [`PpiStatus`] of [`Flag`]s;
+//!   as a [`PpiStatus`] of [`Flag`]s, with the `[smp]` line field values
+//!   ([`Flag::field`]) and the failed flags' names ([`PpiStatus::failed_flags`]);
 //! - [`waker_step`]: the next action of the redistributor wake sequence;
 //! - [`security_disabled`]: `GICD_CTLR.DS` from a `GICD_CTLR` read.
 //!
@@ -279,6 +280,16 @@ impl Flag {
     pub const fn failed(self) -> bool {
         matches!(self, Flag::Fail)
     }
+
+    /// The flag as an `[smp]` line field value: `1` for [`Flag::Pass`], `0`
+    /// for [`Flag::Fail`], `-` for [`Flag::Unchecked`].
+    pub const fn field(self) -> char {
+        match self {
+            Flag::Pass => '1',
+            Flag::Fail => '0',
+            Flag::Unchecked => '-',
+        }
+    }
 }
 
 /// One CPU's timer PPI setup result, one [`Flag`] per property.
@@ -307,6 +318,45 @@ impl PpiStatus {
             || self.enabled.failed()
             || self.priority.failed()
             || self.level.failed())
+    }
+
+    /// Each flag with its name, in the order the setup establishes them.
+    pub const fn flags(&self) -> [(&'static str, Flag); 6] {
+        [
+            ("wake", self.wake),
+            ("rwp", self.rwp),
+            ("group1", self.group1),
+            ("enabled", self.enabled),
+            ("priority", self.priority),
+            ("level", self.level),
+        ]
+    }
+
+    /// The names of the failed flags, for the setup-failure log line.
+    pub const fn failed_flags(&self) -> FailedFlags {
+        FailedFlags(*self)
+    }
+}
+
+/// Displays the names of a [`PpiStatus`]'s [`Flag::Fail`] flags, separated by
+/// spaces, in [`PpiStatus::flags`] order; [`Flag::Unchecked`] flags are not
+/// failures and are not named. Empty when [`PpiStatus::ok`] is true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FailedFlags(PpiStatus);
+
+impl core::fmt::Display for FailedFlags {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut first = true;
+        for (name, flag) in self.0.flags() {
+            if flag.failed() {
+                if !first {
+                    f.write_str(" ")?;
+                }
+                f.write_str(name)?;
+                first = false;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -744,5 +794,61 @@ mod tests {
         assert!(!Flag::Unchecked.failed());
         assert!(Flag::Fail.failed());
         assert!(!Flag::Pass.failed());
+    }
+
+    #[test]
+    fn flag_fields_for_the_smp_line() {
+        assert_eq!(Flag::Pass.field(), '1');
+        assert_eq!(Flag::Fail.field(), '0');
+        assert_eq!(Flag::Unchecked.field(), '-');
+    }
+
+    #[test]
+    fn failed_flags_empty_when_ok() {
+        assert_eq!(alloc::format!("{}", all_pass().failed_flags()), "");
+        let unchecked = PpiStatus {
+            group1: Flag::Unchecked,
+            ..all_pass()
+        };
+        assert_eq!(alloc::format!("{}", unchecked.failed_flags()), "");
+    }
+
+    #[test]
+    fn failed_flags_names_the_skipped_group_write() {
+        // The fault-injection case: the IGROUPR0 write skipped on a CPU 1-3
+        // redistributor, which reads QEMU's reset value 0.
+        let cfg = timer_config();
+        let status = cfg.check(
+            &PpiReadback {
+                igroupr0: 0,
+                ..as_written(cfg)
+            },
+            true,
+        );
+        assert_eq!(status.group1.field(), '0');
+        assert_eq!(alloc::format!("{}", status.failed_flags()), "group1");
+    }
+
+    #[test]
+    fn failed_flags_names_every_failure_in_check_order() {
+        let all_fail = PpiStatus {
+            wake: Flag::Fail,
+            rwp: Flag::Fail,
+            group1: Flag::Fail,
+            enabled: Flag::Fail,
+            priority: Flag::Fail,
+            level: Flag::Fail,
+        };
+        assert_eq!(
+            alloc::format!("{}", all_fail.failed_flags()),
+            "wake rwp group1 enabled priority level"
+        );
+        let two = PpiStatus {
+            rwp: Flag::Fail,
+            group1: Flag::Unchecked,
+            level: Flag::Fail,
+            ..all_pass()
+        };
+        assert_eq!(alloc::format!("{}", two.failed_flags()), "rwp level");
     }
 }

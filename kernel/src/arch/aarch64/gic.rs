@@ -76,6 +76,13 @@ static TIMER_PPI_INTID: AtomicU32 = AtomicU32::new(INTID_NONE);
 /// all; every CPU's readback check takes it.
 static SECURITY_DISABLED: AtomicBool = AtomicBool::new(false);
 
+/// The timer PPI's INTID as the boot CPU published it ([`TIMER_PPI_INTID`]),
+/// for the `[smp]` lines. Thread level; 1023 before the boot CPU sets up the
+/// timer PPI.
+pub fn timer_ppi_intid() -> u32 {
+    TIMER_PPI_INTID.load(Ordering::Relaxed)
+}
+
 /// Read a 32-bit MMIO register.
 #[inline(always)]
 unsafe fn mmio_read32(addr: usize) -> u32 {
