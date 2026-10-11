@@ -24,3 +24,7 @@ Grep, Glob and many MCP tools are not loaded at session start; a habit call fail
 ## Typed-Tool Arguments
 
 Arguments come from the tool's schema, not memory. Never re-send an MCP call that was just rejected for an unknown field or a wrong wrapper key: fetch the schema (ToolSearch `select:<name>`) and fix the shape.
+
+## Protected-Path Reads
+
+`.claude/settings.json` has ask rules for `sed`, `awk` and `cp` on `.claude/settings*` and `.claude/hooks/*`, and for `awk` on `.git/hooks*`. They protect the guard, the shim and the settings from Bash writes, which they cannot tell apart from reads (`sed -n 5p` vs `sed -i`, or a `w` command), so a read-only `sed -n` on those paths prompts the owner and is refused in a background or `-p` run. Read those files with the Read tool (`offset`/`limit` for a line range) and search them with Grep or `grep -n`; never `sed`, `awk` or `cp` them, even to read. Agents briefing other agents pass this on: a prompt that says "read the guard" means the Read tool.
