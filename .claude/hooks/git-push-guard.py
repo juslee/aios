@@ -69,13 +69,20 @@ subagent, AIOS_TEAM from the lead's launch line):
      the expansion state they had on the wrapper call, words that xargs,
      find or parallel append to the call are seen as supplied by them, and
      a wrapped command the guard cannot parse asks without stopping the
-     analysis of the rest. The settings
+     analysis of the rest. A `run` option word (a value, or the word where
+     the options stop) from an expansion that may split into words or be
+     `--` asks, since the guard cannot tell where the wrapped command
+     starts; the words after a literal `--` are still analysed. A
+     subcommand from such an expansion asks and is analysed as a `run`.
+     The genuine wrapper takes the lock of its own repository, so its
+     `run` is checked against that lock. The settings
      allow only the wrapper's `status` and `clear-stale`: a `run` goes
      through the permission prompt (refused in background and -p runs).
        deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
              exists; any start that is not the wrapper; an agent with no
              usable agent_type; any agent but the verifier; a team lead
-       ask   a recipe, subcommand or wrapper path from a shell expansion
+       ask   a recipe, subcommand, wrapper path or `run` option word from a
+             shell expansion
        none  the verifier, or an owner/solo main thread, running the wrapper
   2  Toolchain and kills
        deny  pkill/killall naming qemu or a piece of its binary name
@@ -332,6 +339,11 @@ class ParseError(Exception):
     pass
 
 
+# A word's expansion state (Command.expanded), both truthy.
+BARE_EXPANSION = "bare"
+QUOTED_EXPANSION = "quoted"
+
+
 # --------------------------------------------------------------------------
 # Shell parsing
 # --------------------------------------------------------------------------
@@ -341,7 +353,11 @@ class Command:
 
     def __init__(self):
         self.words = []
-        self.expanded = []  # per word: holds a $ or ` expansion outside single quotes
+        # Per word: False, or the word holds a $ or ` expansion outside single
+        # quotes: BARE_EXPANSION when one is outside any quotes (the shell
+        # splits its result into words), QUOTED_EXPANSION when all are inside
+        # double quotes (it stays one word).
+        self.expanded = []
         self.heredocs = []
         self.stdin_files = []
         self.piped_in = False
@@ -498,16 +514,16 @@ class ShellParser:
             elif c == "$" and i + 1 < self.n and s[i + 1] == "(":
                 self.i = i
                 buf.append(self.read_substitution(2))
-                self.word_expanded = True
+                self.word_expanded = self.word_expanded or QUOTED_EXPANSION
                 i = self.i
             elif c == "`":
                 self.i = i
                 buf.append(self.read_backtick())
-                self.word_expanded = True
+                self.word_expanded = self.word_expanded or QUOTED_EXPANSION
                 i = self.i
             else:
                 if c == "$" and EXPANSION_START.match(s, i + 1):
-                    self.word_expanded = True
+                    self.word_expanded = self.word_expanded or QUOTED_EXPANSION
                 buf.append(c)
                 i += 1
         raise ParseError("unterminated double quote")
@@ -651,10 +667,10 @@ class ShellParser:
                 self.i += 1  # $"..." is a translatable double-quoted string
             elif c == "$" and self.peek(1) == "(":
                 self.add(self.read_substitution(2))
-                self.word_expanded = True
+                self.word_expanded = BARE_EXPANSION
             elif c == "`":
                 self.add(self.read_backtick())
-                self.word_expanded = True
+                self.word_expanded = BARE_EXPANSION
             elif c == "#" and self.word is None:
                 j = s.find("\n", self.i)
                 self.i = self.n if j < 0 else j
@@ -701,7 +717,7 @@ class ShellParser:
                 if c == "{":
                     self.brace = True
                 elif c == "$" and EXPANSION_START.match(s, self.i + 1):
-                    self.word_expanded = True
+                    self.word_expanded = BARE_EXPANSION
                 self.add(c)
                 self.i += 1
         if self.nested:
@@ -1392,19 +1408,27 @@ class Analyzer:
         caller rules and has its body read like any other script. For every
         `run`, the command after its `--` is analysed (analyze_wrapped;
         `flags` is the argv words' expansion state, `via` the wrappers that
-        run the call). Returns True (handled)."""
+        run the call). A subcommand from an expansion that may be `run`
+        (may_split) asks and gets the same `run` analysis. The genuine
+        wrapper's `run` is checked against the lock of the repository it
+        lives in, the one it takes. Returns True (handled)."""
         name = basename(path)
         if name in QEMU_SCRIPTS:
             if not (name == "soak-qemu.sh" and classify_only(argv)):
                 self.qemu_decision("other")
             return True
-        if argv[:1] == ["run"]:
+        genuine = None if unresolved(path) else self.genuine_wrapper(path, state["cwd"])
+        sub_unclear = bool(argv) and may_split(argv[0], flags[0] if flags else False, value=False)
+        if sub_unclear:
+            self.verdict.ask(f"cannot tell which qemu-lock.sh subcommand runs ({argv[0]} comes "
+                             "from a shell expansion)")
+        if argv[:1] == ["run"] or sub_unclear:
             if unresolved(path):
                 self.verdict.ask(f"the QEMU lock wrapper's path ({path}) comes from a shell "
                                  "expansion; the guard cannot tell it is scripts/agent/qemu-lock.sh (rule 11)")
-            self.qemu_decision("wrapper")
+            self.qemu_decision("wrapper", genuine)
             self.analyze_wrapped(argv, flags, cmd, state, depth, via)
-        if not unresolved(path) and not self.genuine_wrapper(path, state["cwd"]):
+        if not unresolved(path) and not genuine:
             self.read_script(path, state, depth, shebang)
         return True
 
@@ -1425,8 +1449,14 @@ class Analyzer:
         that wrapper in front; with no wrapped words the whole command is
         the wrapper's. A wrapped command the guard cannot parse (a `sh -c`
         string, nesting too deep) asks, and the commands after the call are
-        still read."""
-        start = wrapped_start(argv)
+        still read. An option word from an expansion that may be `--` or
+        split into several words (wrapped_start) asks: the wrapper may then
+        run words the guard reads as options, with or without a literal
+        `--`; the words after a literal `--` are still analysed."""
+        start, clear = wrapped_start(argv, flags)
+        if not clear:
+            self.verdict.ask("cannot tell where the command qemu-lock.sh run wraps starts "
+                             "(an option word comes from a shell expansion)")
         supplier = min(set(via) & ARG_WRAPPERS, default=None)
         if start is None or start == len(argv):
             if supplier:
@@ -1451,12 +1481,12 @@ class Analyzer:
             self.wrapped = outer
 
     def genuine_wrapper(self, path, cwd):
-        """True when `path` resolves to scripts/agent/qemu-lock.sh in the main
-        checkout, the project directory, or the agent's own temporary worktree
-        (a copy of the repository); for a main thread also in the working
-        tree of `cwd` when it is a linked worktree sharing the main checkout's
-        git common dir (rule 04's .claude/worktrees/phase-N). A symlink counts
-        as what it points to."""
+        """The root whose scripts/agent/qemu-lock.sh `path` resolves to, else
+        None: the main checkout, the project directory, or the agent's own
+        temporary worktree (a copy of the repository); for a main thread also
+        the working tree of `cwd` when it is a linked worktree sharing the
+        main checkout's git common dir (rule 04's .claude/worktrees/phase-N).
+        A symlink counts as what it points to."""
         target = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
         roots = []
         payload_cwd = self.ctx.get("cwd")
@@ -1477,8 +1507,8 @@ class Analyzer:
             wrapper = os.path.join(root, WRAPPER_PATH)
             real = os.path.join(os.path.realpath(os.path.dirname(wrapper)), os.path.basename(wrapper))
             if target == real and not os.path.islink(real):
-                return True
-        return False
+                return root
+        return None
 
     def just_starts_qemu(self, args, state, depth):
         """The QEMU kind of a just invocation: "other" when it runs a QEMU
@@ -1545,12 +1575,14 @@ class Analyzer:
             return None
         return "other"
 
-    def qemu_decision(self, kind):
+    def qemu_decision(self, kind, lock_root=None):
         """Rule 1 rows 1-7 for a command that starts QEMU. `kind` is
         "wrapper" for qemu-lock.sh run, "other" for anything else, and
         "unclear" when the guard cannot tell whether it starts QEMU. Inside
         the command a wrapper `run` executes (self.wrapped) there is nothing
-        to decide: the wrapper call was decided as "wrapper"."""
+        to decide: the wrapper call was decided as "wrapper". The lock is
+        found from `lock_root` (the genuine wrapper's root: the wrapper takes
+        its own repository's lock), else from the payload's cwd."""
         v = self.verdict
         if self.wrapped:
             return True
@@ -1558,7 +1590,7 @@ class Analyzer:
             v.ask("cannot tell whether this starts QEMU: part of the command comes from a "
                   "shell expansion; every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)")
             return True
-        held = qemu_lock_dir(self.ctx.get("cwd"))
+        held = qemu_lock_dir(lock_root or self.ctx.get("cwd"))
         if held and os.path.exists(held):
             v.rule_deny(lock_message(held))
         elif kind != "wrapper":
@@ -2458,20 +2490,43 @@ def is_qemu_script(path, argv):
     return any(a == "--team" or a.startswith("--team=") for a in opts)
 
 
-def wrapped_start(argv):
-    """Where the command qemu-lock.sh `run` executes starts in argv (argv[0]
-    is "run"): just after the `--` that ends its options, read the way the
-    wrapper reads them (each option takes the next word as its value, so
-    `--label --` is a label). Where the options stop reading that way (an
-    unknown option, which the wrapper refuses, or a word from an expansion),
-    just after the next `--`. None without one: the wrapper refuses a
-    missing command."""
+def may_split(word, flag, value):
+    """True when `word` (after expand_vars; `flag` its expansion state,
+    Command.expanded) can become other words at run time: an expansion
+    outside quotes that the guard could not resolve, or resolved to text
+    with whitespace, which the shell splits into words (one may be `--`);
+    outside a value position (`value` False), also a quoted expansion the
+    guard could not resolve, which may be `--` itself."""
+    if not flag:
+        return False
+    if flag == BARE_EXPANSION and (unresolved(word) or re.search(r"\s", word)):
+        return True
+    return not value and unresolved(word)
+
+
+def wrapped_start(argv, flags):
+    """(start, clear) for the command qemu-lock.sh `run` executes (argv[0]
+    is the subcommand; `flags` the words' expansion state). `start` is where
+    it starts in argv: just after the `--` that ends the options, read the
+    way the wrapper reads them (each option takes the next word as its
+    value, so `--label --` is a label). Where the options stop reading that
+    way (an unknown option, which the wrapper refuses, or a word from an
+    expansion), just after the next `--`. None without one: the wrapper
+    refuses a missing command. `clear` is False when an option value, or
+    the word where the options stop, comes from an expansion that may split
+    or be `--` (may_split): the guard then cannot tell where the wrapper's
+    options end, whether or not a literal `--` follows."""
+    def flag(j):
+        return flags[j] if j < len(flags) else False
     i = 1
     while i + 1 < len(argv) and argv[i] in WRAPPER_VALUE_OPTS:
         i += 2
+    clear = not any(may_split(argv[j], flag(j), value=True) for j in range(2, i, 2))
+    if i < len(argv) and may_split(argv[i], flag(i), value=False):
+        clear = False
     if "--" not in argv[i:]:
-        return None
-    return argv.index("--", i) + 1
+        return None, clear
+    return argv.index("--", i) + 1, clear
 
 
 def command_lookup(args):
@@ -2555,7 +2610,8 @@ def main_checkout_change(sub, args):
 
 
 def qemu_lock_dir(cwd):
-    """<git-common-dir>/aios-agent/qemu.lock, found from the payload's cwd (a
+    """<git-common-dir>/aios-agent/qemu.lock of the repository `cwd` is in
+    (qemu_decision: the genuine wrapper's root, else the payload's cwd; a
     temporary worktree shares the common directory with the main checkout)."""
     if not cwd:
         return None

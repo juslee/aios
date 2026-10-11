@@ -1711,6 +1711,95 @@ class WrappedCommands(TeamCase):
         self.check("deny", "push would update main",
                    self.RUN + deep + "; git push origin HEAD:main")
 
+    # Attack round 2 on d3c40e0: option words and subcommands from expansions.
+
+    def test_option_words_from_an_expansion_ask(self):
+        # Finding 1: an option word from an expansion can be `--` or split
+        # into several words at run time, so the wrapper may run words after
+        # it although no literal `--` is there.
+        starts = "cannot tell where the command qemu-lock.sh run wraps starts"
+        w = "bash scripts/agent/qemu-lock.sh run "
+        for kw, team in [(self.main, "solo"), (self.verifier, "team-fix")]:
+            opts = "--team %s --mode boot --label x --eta-min 5" % team
+            for inner in ["git push origin HEAD:main", "pkill -f qemu", "cargo +nightly build",
+                          "git -C %s commit -m x" % self.repo]:
+                for command in [
+                        w + "$LOCKOPTS " + inner,
+                        'OPTS="%s --"; %s$OPTS %s' % (opts, w, inner),
+                        "%s%s $EXTRA %s" % (w, opts, inner),
+                        "%s%s ${EXTRA} %s" % (w, opts, inner),
+                        '%s%s "$EXTRA" %s' % (w, opts, inner),
+                        "%s--team %s --mode boot --label $LABEL --eta-min 5 %s" % (w, team, inner),
+                        'for o in "--label a --eta-min 5 --"; do %s--team %s --mode boot $o %s; '
+                        "done" % (w, team, inner)]:
+                    self.check("ask", starts, command, **kw)
+            # A literal `--` after the expansion: the words after it are
+            # still analysed, so the unwrapped decision (or a stricter one) wins.
+            for command in [w + "$LOCKOPTS -- git push origin HEAD:main",
+                            'OPTS="%s"; %s$OPTS -- git push origin HEAD:main' % (opts, w),
+                            '%s--team %s --mode boot --label "$LABEL" --eta-min 5 -- '
+                            "git push origin HEAD:main" % (w, team)]:
+                self.check("deny", "main", command, **kw)
+            self.check("ask", starts, w + "$LOCKOPTS -- just soak runs=1", **kw)
+            # A quoted expansion in a value position stays one word, and so
+            # does a variable the guard resolved to one word: unchanged.
+            for command in ['%s--team %s --mode boot --label "$LABEL" --eta-min 5 -- '
+                            "just soak runs=1 secs=75 report_only=1" % (w, team),
+                            'L=x; %s--team %s --mode boot --label $L --eta-min 5 -- '
+                            "just soak runs=1" % (w, team),
+                            '%s--team %s --mode gpu --label "x-$(date +%%s)" --eta-min 5 -- '
+                            "sh -c 'for i in 1 2; do just soak runs=1; done'" % (w, team)]:
+                self.check("none", None, command, **kw)
+        self.check_hook("ask", starts, w + "$LOCKOPTS git push origin HEAD:main")
+        self.check_hook("ask", starts, w + "$LOCKOPTS pkill -f qemu", **self.verifier)
+        self.check_hook("deny", "main", w + "$LOCKOPTS -- git push origin HEAD:main")
+
+    def test_a_subcommand_from_an_expansion_asks(self):
+        # Finding 2: the subcommand may be `run`, so the call gets the run
+        # analysis as well as an ask.
+        which = "cannot tell which qemu-lock.sh subcommand runs"
+        for prefix in ["scripts/agent/qemu-lock.sh ", "bash scripts/agent/qemu-lock.sh "]:
+            call = prefix + "$SUB --team %s --mode boot --label x --eta-min 5 -- "
+            self.check("ask", which, call % "solo" + "just soak runs=1")
+            self.check("ask", which, prefix + '"$SUB"')
+            self.check("deny", "main", call % "solo" + "git push origin HEAD:main")
+            self.check("deny", "never pattern-kill QEMU", call % "team-fix" + "pkill -f qemu",
+                       **self.verifier)
+            self.check("deny", "only the verifier starts QEMU", call % "team-fix" + "just run",
+                       cwd=self.temp, agent_id="x", agent_type="kernel-dev")
+            self.check("deny", "team leads route boots to their verifier",
+                       call % "team-fix" + "just soak runs=1", team="team-fix")
+            # A subcommand the guard resolved is read as itself.
+            self.check("none", None, "SUB=status; " + prefix + "$SUB")
+        self.check_hook("deny", "only the verifier starts QEMU",
+                        "scripts/agent/qemu-lock.sh $SUB --team team-fix --mode boot --label x "
+                        "--eta-min 5 -- just run", cwd=self.temp, agent_id="x",
+                        agent_type="kernel-dev")
+        self.check_hook("ask", which, "scripts/agent/qemu-lock.sh $SUB --team solo --mode boot "
+                                      "--label x --eta-min 5 -- just soak runs=1")
+
+    def test_the_lock_is_the_genuine_wrappers_own(self):
+        # Finding 3: the wrapper takes the lock of the repository it lives in,
+        # so the guard checks that lock, not the one of the payload's cwd.
+        other = os.path.join(self.tmp.name, "other")
+        git(self.tmp.name, "init", "-q", "-b", "main", other)
+        command = ("%s/scripts/agent/qemu-lock.sh run --team solo --mode boot --label x "
+                   "--eta-min 5 -- just soak runs=1" % self.repo)
+        with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": self.repo}):
+            self.check("none", None, command, cwd=other)
+            self.check_hook("none", None, command, cwd=other)
+            self.hold_lock()
+            self.check("deny", "QEMU lock held by", command, cwd=other)
+            self.check_hook("deny", "QEMU lock held by", command, cwd=other)
+            # The lock of the cwd's repository is not the wrapper's.
+            os.remove(os.path.join(self.lock, "owner"))
+            os.rmdir(self.lock)
+            os.makedirs(os.path.join(other, ".git", "aios-agent", "qemu.lock"))
+            self.check("none", None, command, cwd=other)
+            self.check_hook("none", None, command, cwd=other)
+            # Every other QEMU start still checks the cwd's lock.
+            self.check("deny", "QEMU lock held", "just run", cwd=other)
+
 
 class WorkflowWorktrees(TeamCase):
     """T7b: rule 4 for the temporary worktrees of workflow agents
