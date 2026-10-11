@@ -40,7 +40,7 @@ The facts live outside the repository: in the Claude Code config directory, in t
 
 **Session identity.**
 
-- Do not key harness state (the handoff file, the QEMU lock's `--team`, the guard's decisions) on a session's display name. On 2026-10-06 a relaunch did not keep the leads' names (they came back as aios-83 and aios-39), and `claude -n <name>` did not set `CLAUDE_CODE_SESSION_NAME`, so neither the guard nor a skill could read the name. The harness keys on a launch-line variable instead (`AIOS_TEAM`, `AIOS_SESSION`); the reasons are in [the two-team harness ADR](../decisions/2026-10-10-jl-two-team-harness.md). Before keying anything on a display name in a later Claude Code version, check the installed binary as described under *Settings schema questions* above.
+- Before keying anything on a session's display name in a later Claude Code version, check the installed binary as described under *Settings schema questions* above. Why the harness keys on `AIOS_TEAM` and `AIOS_SESSION` instead is in [the two-team harness ADR](../decisions/2026-10-10-jl-two-team-harness.md).
 
 ## How to avoid next time
 

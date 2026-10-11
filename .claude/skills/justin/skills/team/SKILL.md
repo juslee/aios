@@ -105,7 +105,7 @@ When a writer reports `RESULT: committed <tip>..<head> (<n> commits)` and `BRANC
    - No must-fix finding: go on.
    - Must-fix findings: spawn a fresh kernel-dev whose prompt gives `<head>` as its tip (`git reset --hard <head>`), the findings, and the commit message `<message> (Fable review fixes)`. Its range runs this section again from step 1 (its `<tip>` is `<head>`), and the next review covers `<start>..<new head>` plus the earlier findings and answers.
    - After the third round with open must-fix findings, decide each one yourself or ask the owner, and record the ruling in the plan's "Issues Encountered". Only then go on.
-   - worker and doc-writer ranges skip this step (O4).
+   - worker and doc-writer ranges skip this step (owner decision, 2026-10-06; rule 11, Reviews).
 3. **Gates.** The writer's gate output names `<head>` (or the last fix head). A missing or failed gate goes back to a fresh writer.
 4. **Fast-forward.** `git -C <W> merge --ff-only worktree-<name>`.
    - Refused (`W` moved under it): nothing merged. Spawn a fresh writer from the new tip with the same task; it may `git cherry-pick <start>..worktree-<name>` to redo the work, and its range runs this section from step 1. Keep the refused temporary worktree until the redo is fast-forwarded, then remove it and delete its branch with `git -C <W> branch -D worktree-<name>` (the guard asks the owner: it drops commits).

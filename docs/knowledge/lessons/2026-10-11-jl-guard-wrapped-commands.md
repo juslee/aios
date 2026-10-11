@@ -21,12 +21,12 @@ The fix took three rounds. Each was written test first: the guard's tests went f
 
    The second fix (d3c40e0) dropped the re-parse. The wrapper runs its command as `"$@"`, so the guard hands the words to the command analyser as an argument vector. The words keep the expansion flags they had on the call, and the analyser also gets the call's text and a copy of its state. An xargs, find or parallel that runs the call is put in front of the wrapped command. A parse error inside the wrapped command asks, and the outer analysis goes on.
 3. **The attack round on the second fix broke it three more ways.**
-   - The guard read "no literal `--`" as "the wrapper refuses". But an option word from an expansion (`run $LOCKOPTS git push origin HEAD:main`) can split at run time into words that include `--`, so the wrapper ran words nobody analysed (none; deny unwrapped).
+   - The guard read "no literal `--`" as "the wrapper refuses". But an option word from an expansion (`run $LOCKOPTS git push origin HEAD:main`) can split at run time into words that include `--`, so the wrapper ran words nobody analysed: wrapped, the push got no decision; unwrapped, it is denied.
    - A subcommand from an expansion (`qemu-lock.sh $SUB ...`) decided nothing.
    - The guard checked the lock at the payload cwd, while the wrapper takes the lock of its own repository.
 
    The third fix (f294d1d) changed three things. The parser's per-word flag now tells a bare expansion from one only inside double quotes. The guard asks for an option value or option stop that may split or be `--`, and analyses a subcommand from an expansion as a `run` and asks. It checks the genuine wrapper's `run` against its own repository's lock.
-4. **The attack round on the third fix (2026-10-11) approved it.** The bypass review and the regression review both completed. The regression review compared the guard's decisions before and after over 18948 command evaluations: 1120 differed, all intended. No deny or ask reason was lost, and nothing outside the wrapper changed. What remained is out of model and went to #241 for R5.
+4. **The attack round on the third fix (2026-10-11) approved it.** The bypass review and the regression review both completed. The regression review compared the guard's decisions before and after over 18948 command evaluations: 1120 differed, all intended. No deny or ask reason was lost, and nothing outside the wrapper changed. What remained is out of model (below).
 
 ## Why it happened
 
@@ -39,10 +39,21 @@ The fix took three rounds. Each was written test first: the guard's tests went f
 - A wrapper that runs a command its caller supplies (`-- <cmd>`, `"$@"`) is a way around every rule, unless the guard analyses that command under the same rules. Trusting the wrapper's path says nothing about its argument.
 - Hand a nested command to the analyser as the argument vector the wrapper will run. Keep each word's expansion state and the outer call's context: cwd, variables, text, and any argument-appending tool in front. Never turn the words back into shell text and re-parse them.
 - Keep a parse failure local. An unparseable nested string asks, and the rest of the command is still analysed, so a later deny stays a deny.
-- Quoting decides what an expansion can become. A bare unresolved expansion can split into any words, `--` included. One inside double quotes stays one word, except for `"$@"` and array forms, which the guard does not model (#241). When an expansion fills a word that decides structure (where options stop, which subcommand runs) and could change that structure, the guard must ask.
+- Quoting decides what an expansion can become. A bare unresolved expansion can split into any words, `--` included. One inside double quotes stays one word, except for `"$@"` and array forms, which the guard does not model (Out of model, below). When an expansion fills a word that decides structure (where options stop, which subcommand runs) and could change that structure, the guard must ask.
 - Check the state the wrapped tool uses (the lock of the wrapper's own repository), not the state at the caller's cwd.
 - Every guard fix gets its own attack round and a regression comparison of decisions before and after over a large command set. Account for every difference, and require zero lost reasons and zero differences outside the changed rule.
-- A stated threat model ends the loop. The leftovers of the last round need deliberate same-command constructions, or tools the stateless text guard cannot see, so they were listed in #241 and not patched. Compare T7b, where each parser patch added new false allows and denies.
+- A stated threat model ends the loop. The leftovers of the last round need deliberate same-command constructions, or tools the stateless text guard cannot see, so they are listed below and not patched. Compare the rule 4 gaps of #241 (T7b), where each parser patch added new false allows and denies.
+
+## Out of model
+
+The guard is a stateless text analyser for cooperative agents (its threat model, in the docstring of `.claude/hooks/git-push-guard.py`). It does not see through these constructions, and they are not patched:
+
+- **A variable assigned earlier in the same command is not word-split.** In `X='eval git push origin HEAD:main;'; bash scripts/agent/qemu-lock.sh run ... -- $X soak`, the guard does not analyse the push that `$X` splits into, wrapped or not.
+- **`"$@"` and array expansions inside double quotes** can expand to several words. The guard treats them as one word.
+- **Pids passed through a file between separate commands.** `pgrep ... >f` in one call and `kill $(cat f)` in a later one are each judged alone, so the second is not seen as a pattern kill.
+- **Kills inside programs the guard does not parse**, such as a Python script or a build step.
+
+When R5 (#241) ports the guard to Rust, give each of these a table test pinned to its current decision, so that changing one is deliberate.
 
 ## How to avoid next time
 

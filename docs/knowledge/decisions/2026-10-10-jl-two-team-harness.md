@@ -32,7 +32,7 @@ PR #234 (`claude/harness-teams`) replaced the single `team-lead` agent and the `
 
 - **`memory: project` splits an agent's notes across worktrees.** The notes are kept under `.claude/agent-memory/` in the checkout the agent runs in, and that directory is gitignored. Writers now run in their own temporary worktrees, and every branch has its own worktree. Each run therefore saw only the notes written in that checkout, and the notes were lost with the worktree unless something copied them out first. `/merge-and-cleanup` carried a copy step for that reason.
 - **Memory gives read-only agents write access.** When an agent sets `memory:`, Claude Code lets it edit files under `.claude/agent-memory/`. code-reviewer, doc-auditor, skeptic and verifier are meant to be read-only (`disallowedTools: Write, Edit, NotebookEdit`). A `memory:` key would undo that.
-- **The remember plugin duplicated `/justin:pause`.** Once pause writes one handoff per session, the plugin's shared `remember.md` and its PreCompact save did the same job a second way. The owner retired the plugin on 2026-10-06 under the standing no-legacy rule (rule 01, No Legacy).
+- **The remember plugin duplicated `/justin:pause`.** Once pause writes one handoff per session, the plugin's shared `remember.md` and its PreCompact save did the same job a second way. The owner retired the plugin on 2026-10-05 under the standing no-legacy rule (rule 01, No Legacy).
 
 **How to apply.**
 
@@ -42,12 +42,19 @@ PR #234 (`claude/harness-teams`) replaced the single `team-lead` agent and the `
 
 ### The guard analyses what the QEMU lock wrapper runs, and `run` needs the owner's approval
 
-**Decision (owner, 2026-10-10).** Guard rule 1 analyses the command after `qemu-lock.sh run`'s `--` as if it were typed on its own at the call's cwd, so every rule applies to it: push and merge, rules 1–4, kills, toolchain, placement. Only the QEMU start it wraps, which is the wrapper's job, gets no rule 1 decision of its own. Where the guard cannot tell what the wrapper will run, it asks. That covers an option word or subcommand from an expansion that may split, and a wrapped command it cannot parse. No wrapped command gets a weaker decision than it gets unwrapped. The project settings allow only the wrapper's `status` and `clear-stale`, so every `run` goes through the permission prompt.
+**Decision (owner, 2026-10-10).** Guard rule 1 analyses the command after `qemu-lock.sh run`'s `--` as if it were typed on its own at the call's cwd, so every rule applies to it: push and merge, rules 1–4, kills, toolchain, placement. Only the QEMU start it wraps, which is the wrapper's job, gets no rule 1 decision of its own. Where the guard cannot tell what the wrapper will run, it asks. That covers an option word or subcommand from an expansion that may split, and a wrapped command it cannot parse. Apart from that rule 1 exemption, no wrapped command gets a weaker decision than it gets unwrapped. The project settings allow only the wrapper's `status` and `clear-stale`, so every `run` goes through the permission prompt.
 
 **Why.** PR #234's security review found a bypass. Because the guard trusted the genuine wrapper without analysing its command, `qemu-lock.sh run ... -- git push origin HEAD:main`, `gh pr merge`, pattern kills, toolchain changes and placement changes passed both the guard and the `Bash(bash scripts/agent/qemu-lock.sh *)` allow. The wrapper's job is the lock, not the command, because the caller picks the command. The guard is defence in depth, not a boundary, so narrowing the allow keeps a person in front of every boot. [The wrapped-command lesson](../lessons/2026-10-11-jl-guard-wrapped-commands.md) covers how the analysis is built and the attack rounds it took.
 
 **How to apply.**
 
-- Do not widen the allow back to `qemu-lock.sh *`. An allow for `run` is an owner decision (#244), made knowing that the guard is then the only check on the wrapped command.
+- Do not widen the allow back to `qemu-lock.sh *`. An allow for `run` is an owner decision, made knowing that the guard is then the only check on the wrapped command.
 - A refused `run` is reported, never retried or reworded (rule 03, `verifier.md`). A refusal can come from the owner, or from an agent or session that runs in the background or with `-p`, so a lead spawns a verifier that boots in the foreground (rule 11).
 - A new wrapper that runs a caller's command gets the same treatment: the guard analyses its command, and the settings allow only its subcommands that run nothing.
+
+## Consequences
+
+- The options these decisions rejected stay rejected: keying state on the display name, keeping `memory: project` on the agents, and trusting the QEMU lock wrapper by its path.
+- An agent's finding reaches other worktrees and sessions only through a commit to `docs/knowledge/`.
+- Every `qemu-lock.sh run` call from a Claude Code session prompts the owner. A lead spawns a verifier that boots in the foreground, so the lead waits while it runs.
+- The retirement leaves one-time cleanup for the owner after the merge (Decision above).

@@ -9,7 +9,13 @@ status: final
 
 ## What happened
 
-`scripts/agent/qemu-lock.sh` is rule 11's host QEMU lock, added in PR #234. That PR changed no kernel code, so it was tested without a single QEMU boot: a real boot takes minutes and holds the very lock under test. The cases ran on 2026-10-06 (v3 draft), 2026-10-09 (v4) and 2026-10-10 (review fixes) as throwaway smoke scripts kept in the working plan, so the repository has no test file for the script. Issue #243 asks for a test of each deferred qemu-lock edge case, written in "the existing shell test harness with a temp lock path", before the fix. That harness is the recipe below.
+`scripts/agent/qemu-lock.sh` is rule 11's host QEMU lock, added in PR #234. That PR changed no kernel code, so it was tested without a single QEMU boot: a real boot takes minutes and holds the very lock under test. The cases ran on 2026-10-06 (v3 draft), 2026-10-09 (v4) and 2026-10-10 (review fixes) as throwaway smoke scripts that were never committed, so the repository has no test file for the script. Issue #243 asks for a test of each deferred qemu-lock edge case, written in "the existing shell test harness with a temp lock path", before the fix. That harness is the recipe below, which replaces the throwaway scripts.
+
+## Why it happened
+
+- The lock path is fixed to the script's own repository, so a test of the worktree's copy would take the host's real lock. A test needs a copy in a scratch repository and a fake QEMU, and nothing in the tree set that up.
+- The cases lived only in the PR's working plan, which was deleted when the PR was distilled.
+- Since PR #234, guard rule 1 and the project settings make every in-session `run` prompt and deny a fake QEMU start, so the cases cannot run unattended inside Claude Code.
 
 ## What we learned
 
@@ -35,7 +41,7 @@ Test hooks, set as environment variables:
 - `AIOS_QEMU_LOCK_SETTLE_STEP` and `AIOS_QEMU_LOCK_GRACE` shorten the 30 s settle step and the 15 s stop grace (2 is enough).
 - `AIOS_QEMU_LOCK_KILL=true` stands in for a SIGKILL that fails.
 
-The script must stay POSIX `sh`: `shellcheck -s sh` and `dash -n` exit 0, and the cases run under both `sh` and `dash`. Pass `--mode boot --label <x> --eta-min 1` unless the table says otherwise. The wrapper writes its refusals (held, foreign QEMU, deferred, survivors, usage) to stderr. To stop a holder, run `kill -TERM "$(sed -n 's/^pid=//p' "$L/owner")"`.
+The script must stay POSIX `sh`: `shellcheck -s sh` and `dash -n` exit 0, and the cases run under both `sh` and `dash`. Pass `--mode boot --label <x> --eta-min 1` unless the table says otherwise. In the table, `LOADAVG=` and `GRACE=` stand for `AIOS_QEMU_LOCK_LOADAVG=` and `AIOS_QEMU_LOCK_GRACE=`. The wrapper writes its refusals (held, foreign QEMU, deferred, survivors, usage) to stderr. To stop a holder, run `kill -TERM "$(sed -n 's/^pid=//p' "$L/owner")"`.
 
 | Case | How | Expected |
 | --- | --- | --- |

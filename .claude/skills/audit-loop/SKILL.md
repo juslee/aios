@@ -73,7 +73,7 @@ Never fix pre-existing findings on this branch. For each confirmed one:
 
 ## Why one round per run
 
-The committed `audit-loop.js` replaced `branch-audit-loop.v2.js`, an uncommitted engine. In one Workflow run, v2 ran up to 8 rounds, each with finders, three skeptics per finding and an in-run fixer, and stopped only after two clean rounds. On 2026-09-29 one v2 run spawned 753 agents.
+A workflow that looped rounds and fixed findings inside one run once spawned 753 agents in that run (2026-09-29).
 
 Keep the split:
 

@@ -17,7 +17,7 @@ A Workflow script is neither a module nor a CommonJS file. It is the body of an 
 
 ## What we learned
 
-A `node --check` failure on a Workflow script is not a syntax error, and a pass would prove nothing about how the Workflow tool reads it.
+A `node --check` failure at the top-level `return` (or at a top-level `await`) is not a syntax error, and a pass proves nothing about how the Workflow tool reads the script. Node reports only the first error it finds, so a failure at an earlier line can still be a real one.
 
 ## How to avoid next time
 
