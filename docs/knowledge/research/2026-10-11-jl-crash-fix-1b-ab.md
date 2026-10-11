@@ -148,7 +148,7 @@ In 01–05 and 07–10, `n2`, `ub*` (apart from `ubmove`) and `nowaker` are 0.
 | 08 | EXCEPTION, CPU 0 | H1 | FAR 0xffe0e0e0, ELR 0xffff0000000bbe54 (`gpu_transfer_to_host`+0xdc). t=19, `irqsw`=1, `elrmm`=1. |
 | 10 | PANIC, CPU 0 | bad-free (H1 downstream) | `service.rs:450:9`: `free_pages(0x320, 0x200000000000000)`. tid=16. `src=panic` t=26: `irqsw`=1, `elrmm`=1, `spsrmm`=1. |
 
-In all 8, the lock keys (`lkself`, `lktry`, `lkph`, `lkphrun`, `lkstk`), `n2`, `ub*`, `nowaker`, `n4`, `tpidrbad`, `pcnull`, `pcphys`, `pcother` and `spbad` are 0. The CLEAN boots 06 and 09 have `elrmm`=0 at the `src=g1` line (tick about 613) and 1 by tick about 1001.
+In all 8, the lock keys (`lkself`, `lktry`, `lkph`, `lkphrun`, `lkstk`), `n2`, `ub*` (apart from `ubmove`: run 03 has `ubmove[to]`=2, as do the CLEAN boots 06 and 09), `nowaker`, `n4`, `tpidrbad`, `pcnull`, `pcphys`, `pcother` and `spbad` are 0. The CLEAN boots 06 and 09 have `elrmm`=0 at the `src=g1` line (tick about 613) and 1 by tick about 1001.
 
 ### Tally
 
@@ -165,7 +165,7 @@ In all 8, the lock keys (`lkself`, `lktry`, `lkph`, `lkphrun`, `lkstk`), `n2`, `
 
 Step 1b is detect-only. It changes no scheduling except the near-no-op bench-masking removal (F6), so the expected effect is relabelling: failures keep their rate and gain names. That is what the pair shows.
 
-- **Text: WEDGE-STUCK 4 → 0 and PANIC-LOCK 0 → 2.** The stalls that wedged A at the bench start with no output now panic in B with a named lock, context and generation: `lock re-entry: THREAD_TABLE ... ctx=irq-exit holder_irqs=on`. The combined rows (4/20 vs 2/20, p 0.661) show no change in the rate of the underlying failure. That A's four wedges are the same failure is inferred from timing, not proven.
+- **Text: WEDGE-STUCK 4 → 0 and PANIC-LOCK 0 → 2.** The stalls that wedged A at the bench start with no output now panic in B with a named lock, context and generation: `lock re-entry: THREAD_TABLE ... ctx=irq-exit holder_irqs=on`. The combined rows (4/20 vs 2/20, p 0.661) detect no change in the rate of the underlying failure, which is not the same as showing the rates are equal. That A's four wedges are the same failure is inferred from timing, not proven.
 - **gpu: the same relabelling at smaller counts.** WEDGE-STUCK goes 2 → 0 and 1 → 0, and PANIC-LOCK 0 → 1 and 0 → 0. The bad-free panics now print their caller (`compositor/service.rs:450` instead of `frame.rs:51`). A PANIC on CPU 0 now stops the heartbeat (N8) instead of running on to tick 45000. EXCEPTION 4 → 7 in the first gpu run is within noise (p 0.185, loads 36% apart) and is 4 → 5 in the redo.
 - **No regression in CLEAN.** Text 15/20 vs 17/20 (p 0.882), gpu 1/10 vs 0/10 (p 0.5), redo 1/10 vs 2/10 (p 0.895). The Gate 1 latency marker drops (G1PASS 15 → 11 of 20 in text) by the accepted lock cost. It is recorded, not gated.
 - **What is not significant.** No class difference reaches p < 0.05 in any run. The closest, text WEDGE-STUCK 4 → 0 (one-sided p 0.053), just misses the `removed` marker; the ADR's statistics bullet predicted about 0.056 for 4 → 0 at 30 boots. PANIC-LOCK 0 → 2 alone gives p 0.244. These counts cannot show that step 1b changed any rate, and step 1b is not meant to. What the pair establishes is attribution: every B failure has a tripwire line or fatal dump, and most name their mechanism.
