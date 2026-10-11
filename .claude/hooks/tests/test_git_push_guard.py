@@ -2009,7 +2009,6 @@ class ProtectedSed(TeamCase):
             "/usr/bin/sed -n 1p .claude/settings.json",
             "gsed -n 1p .claude/settings.local.json",
             "sed -nE '/a|b/p' .claude/hooks/x",
-            "sed -n --posix -e 1p .claude/hooks/x",
             "sed --quiet --expression=1p --expression '$=' .claude/hooks/x",
             "sed -n '1~2p;$=' .claude/hooks/x",
             "sed -n '/^[a-z]/p;/[[:space:]]$/p' .claude/hooks/x",
@@ -2076,6 +2075,7 @@ class ProtectedSed(TeamCase):
             "F=.claude/settings.json; sed -n 1p a > \"$F\"",
             "cd .claude/hooks && sed -n 1p x > out",
             "sed 's/a/b/' < .claude/hooks/x",
+            "sed -n --posix -e 1p .claude/hooks/x",
         ]
 
     def test_read_only_sed_on_protected_paths_runs(self):
@@ -2305,9 +2305,13 @@ class ProtectedSed(TeamCase):
 
     def test_protected_path_inside_a_substitution_is_a_hit(self):
         # The old settings asks matched the subcommand's whole text, so a
-        # path inside a here-string's "$(...)" or a <(...) operand counts.
+        # path inside a here-string's "$(...)" or a <(...) operand counts,
+        # and such a body asks whatever the script (it may write the path).
         for _, kw in self.callers():
             for command in [
+                    'sed -n 1p <<< "$(cat .claude/hooks/x)"',
+                    "sed -n '$p' <(cat .claude/settings.json)",
+                    "sed -n 1p < <(cat .claude/hooks/x)",
                     'sed \'s/a/b/\' <<< "$(cat .claude/hooks/x)"',
                     "sed 's/a/b/' <(cat .claude/hooks/x)",
                     'sed -n \'s/a/b/p\' <<< "$(< .claude/hooks/x)"',
@@ -2321,9 +2325,6 @@ class ProtectedSed(TeamCase):
                     "sed 's/a/b/' <<< \"`cat .claude/hooks/x`\""]:
                 self.check("ask", self.ASK, command, **kw)
             for command in [
-                    'sed -n 1p <<< "$(cat .claude/hooks/x)"',
-                    "sed -n '$p' <(cat .claude/settings.json)",
-                    "sed -n 1p < <(cat .claude/hooks/x)",
                     "cat .claude/hooks/x | sed 's/a/b/'",
                     "sed 's/a/b/' <<< \"$(cat docs/x.md)\""]:
                 self.check("none", None, command, **kw)
@@ -2337,7 +2338,83 @@ class ProtectedSed(TeamCase):
             self.check_hook("ask", self.ASK, 'sed \'s/a/b/\' <<< "$(cat .claude/hooks/x)"', **kw)
             self.check_hook("ask", self.ASK, "sed s/a/b/ <(cat .claude/settings.json)", **kw)
             self.check_hook("none", None, 'sed -n 1p "$CLAUDE_PROJECT_DIR/.claude/hooks/x"', **kw)
-            self.check_hook("none", None, "sed -n 1p <(cat .claude/settings.json)", **kw)
+            self.check_hook("ask", self.ASK, "sed -n 1p <(cat .claude/settings.json)", **kw)
+
+    # -- parity fixes (recheck: non-read options, writing bodies) -----------
+
+    def test_options_outside_the_strict_read_list_ask(self):
+        # Only -n -E -r -s -u -z -e and --quiet --silent --regexp-extended
+        # --separate --unbuffered --null-data --expression are strict reads.
+        for _, kw in self.callers():
+            for command in [
+                    "sed --posix -n 1p .claude/hooks/x",
+                    "sed --debug -n 1p .claude/hooks/x",
+                    "sed --sandbox -n 1p .claude/hooks/x",
+                    "sed -n --posix -e 1p .claude/settings.json",
+                    "sed -n --debug -e 1p .claude/settings.json",
+                    "sed -n --sandbox 1p .claude/settings.local.json",
+                    "sed --zero-terminated -n 1p .claude/hooks/x",
+                    "sed --help .claude/hooks/x",
+                    "sed --version .claude/settings.json",
+                    "sed -n --version 1p .claude/hooks/x",
+                    "sed -n --help 1p .claude/hooks/x"]:
+                self.check("ask", "option --", command, **kw)
+            for command in [
+                    "sed --quiet --regexp-extended --separate --unbuffered --null-data "
+                    "--expression 1p .claude/hooks/x",
+                    "sed --silent -s -u -z -r -E -n -e 1p .claude/settings.json",
+                    "cd .claude && sed --version"]:
+                self.check("none", None, command, **kw)
+
+    def test_protected_path_inside_a_body_asks_whatever_the_script(self):
+        # A $( ), backtick, <( ), >( ), here-string or heredoc body in a sed
+        # command may write the path itself: `sed -n 1p <(cat > F)` truncates F.
+        body = "a substitution, here-string or heredoc body names"
+        for _, kw in self.callers():
+            for command in [
+                    "sed -n 1p notes.txt > >(tee .claude/hooks/x)",
+                    "sed -n 1p notes.txt > >(cat > .claude/hooks/x)",
+                    "sed -n 1p notes.txt 2> >(tee .claude/settings.json)",
+                    "sed -n 1p >(tee .claude/hooks/x)",
+                    "sed -n 1p <(cat > .claude/hooks/x)",
+                    "sed -n 1p <(tee .claude/hooks/x < /dev/null)",
+                    "sed -n 1p <(echo x > .claude/hooks/x)",
+                    "sed -n 1p <(cp notes.txt .claude/hooks/x)",
+                    "sed -n 1p <(awk 'BEGIN{print > \".claude/hooks/x\"}')",
+                    'sed -n 1p <<< "$(echo x > .claude/hooks/x)"',
+                    'sed -n 1p notes.txt <<< "$(cp notes.txt .claude/settings.json)"',
+                    'sed -n 1p notes.txt <<< "`echo x > .claude/hooks/x`"',
+                    "sed -n 1p <<EOF\n$(echo x > .claude/hooks/x)\nEOF",
+                    "sed -n 1p <<'EOF'\n.claude/settings.json\nEOF",
+                    'sed -n 1p "$(git rev-parse --show-toplevel)/.claude/hooks/x$(rm -f .claude/hooks/x)"',
+                    'sed -n 1p "$(rm -f .claude/hooks/x; pwd)/notes.txt"',
+                    'sed -n 1p "$(dirname "$(echo x > .claude/settings.json)")/notes.txt"',
+                    "sed -n 1p .claude/hooks/x <(echo x > .claude/hooks/y)",
+                    "env sed -n 1p <(echo x > .claude/hooks/x)",
+                    "sh -c 'sed -n 1p <(echo x > .claude/hooks/x)'"]:
+                self.check("ask", body, command, **kw)
+            for command in [
+                    'sed -n 1p "$(git rev-parse --show-toplevel)/.claude/settings.json"',
+                    'sed -n 1p "$CLAUDE_PROJECT_DIR/.claude/hooks/x"',
+                    'sed -n 1p "$(pwd)/.claude/hooks/x"',
+                    "sed -n 1p .claude/hooks/x | head",
+                    "sed -n 1p .claude/hooks/x <(cat notes.txt)",
+                    "sed -n 1p .claude/hooks/x > >(head -1)",
+                    "sed -n 1p notes.txt <<< \"$(cat docs/x.md)\" .claude/settings.json"]:
+                self.check("none", None, command, **kw)
+
+    def test_recheck_parity_fixes_through_the_hook(self):
+        for root, kw in self.callers():
+            kw = dict(kw)
+            kw.setdefault("cwd", root)
+            self.check_hook("ask", self.ASK, "sed --posix -n 1p .claude/hooks/x", **kw)
+            self.check_hook("ask", self.ASK, "sed --sandbox -n 1p .claude/hooks/x", **kw)
+            self.check_hook("ask", self.ASK, "sed -n 1p notes.txt > >(tee .claude/hooks/x)", **kw)
+            self.check_hook("ask", self.ASK, "sed -n 1p <(echo x > .claude/hooks/x)", **kw)
+            self.check_hook("ask", self.ASK, 'sed -n 1p "$(rm -f .claude/hooks/x; pwd)/notes.txt"',
+                            **kw)
+            self.check_hook("none", None,
+                            'sed -n 1p "$(git rev-parse --show-toplevel)/.claude/settings.json"', **kw)
 
 
 if __name__ == "__main__":

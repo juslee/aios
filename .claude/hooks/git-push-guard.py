@@ -58,11 +58,16 @@ Decisions (the strictest one wins):
           or an enclosing one (around a sh -c string) mentions .claude or
           the cwd is a .claude directory or inside .claude/hooks; or, in
           such a cwd, a script that may open a file itself (w, W, r, R, e,
-          s///w or s///e, -f, an expansion). It asks unless it is a strict
-          read: options only -n -E -r -s -u -z, -e/--expression and their
-          long forms, --posix, --debug, --sandbox (no -i, -I, --in-place,
-          -f, -l, -a, anything else), none after the first operand (BSD sed
-          reads them as files and that operand as the script); every script
+          s///w or s///e, -f, an expansion). A $( ), backtick, <( ), >( ),
+          here-string or heredoc body of the command that names them asks
+          whatever the script (the body may write them: <(cat > F),
+          > >(tee F), <<< "$(cp x F)"). Otherwise it asks unless it is a
+          strict read: options only -n -E -r -s -u -z, -e and their long
+          forms --quiet, --silent, --regexp-extended, --separate,
+          --unbuffered, --null-data, --expression (no -i, -I, --in-place,
+          -f, -l, -a, --posix, --debug, --sandbox, --zero-terminated,
+          --help, --version, anything else), none after the first operand
+          (BSD sed reads them as files and that operand as the script); every script
           literal (no expansion) and made only of the commands p P = q Q l
           n N d D g G h H x { } with an optional ! and address or range
           (line number, $, first~step, /regex/ that GNU and BSD sed end in
@@ -310,13 +315,12 @@ SED_NAMES = {"sed", "gsed"}
 SED_PROTECTED = re.compile(r"\.claude/+(?:settings|hooks)", re.I)
 SED_ASK = ("sed may write a protected path (.claude/settings*, .claude/hooks/*): only "
            "read-only sed scripts run without a prompt ({})")
-# Options that change neither files nor what the script may do, the same on
-# GNU and BSD sed or rejected by the one that lacks them. -e and
-# --expression take the script; everything else asks.
+# Options of a strict read (the owner's list: -n -E -r -s -u -z and their
+# long forms), the same on GNU and BSD sed or rejected by the one that lacks
+# them. -e and --expression take the script; everything else asks.
 SED_SHORT_OPTS = set("nErsuz")
 SED_LONG_OPTS = {"--quiet", "--silent", "--regexp-extended", "--separate", "--unbuffered",
-                 "--null-data", "--zero-terminated", "--posix", "--debug", "--sandbox",
-                 "--help", "--version"}
+                 "--null-data"}
 # Script commands that only print, move between lines or use the hold space.
 SED_READ_COMMANDS = set("pP=qQlnNdDgGhHx")
 # GNU sed's long options (a unique prefix selects one).
@@ -441,7 +445,7 @@ QUOTED_EXPANSION = "quoted"
 
 class Command:
     __slots__ = ("words", "expanded", "heredocs", "stdin_files", "out_files", "piped_in",
-                 "src")
+                 "src", "bodies")
 
     def __init__(self):
         self.words = []
@@ -457,6 +461,9 @@ class Command:
         self.out_files = []
         self.piped_in = False
         self.src = ""  # the command's own source text
+        # The source text of each $( ), $(( )), backtick, <( ) and >( ) body
+        # in the command (the words keep only "$(...)" or "`...`").
+        self.bodies = []
 
 
 class ShellParser:
@@ -679,12 +686,15 @@ class ShellParser:
                 elif self.s[j] == ")":
                     depth -= 1
                     if depth == 0:
+                        self.cmd.bodies.append(self.s[self.i + 3:j - 1])
                         self.i = j + 1
                         return "$((...))"
                 j += 1
             raise ParseError("unterminated $((")
         sub = ShellParser(self.s, self.i + skip, self.out, True, self.depth + 1)
-        self.i = sub.parse() + 1
+        end = sub.parse()
+        self.cmd.bodies.append(self.s[self.i + skip:end])
+        self.i = end + 1
         return "$(...)"
 
     def read_backtick(self):
@@ -698,6 +708,7 @@ class ShellParser:
                 i += 2
             elif c == "`":
                 inner = "".join(buf)
+                self.cmd.bodies.append(inner)
                 ShellParser(inner, 0, self.out, False, self.depth + 1).parse()
                 self.i = i + 1
                 return "`...`"
@@ -1366,8 +1377,11 @@ class Analyzer:
         """sed run as words[k] (`flags`: the words' expansion state; `via`:
         the wrappers that run it) that may touch .claude/settings* or
         .claude/hooks/* (the settings ask only awk and cp there): asks
-        unless every script is read-only (sed_problem) and no output
-        redirection names those paths. It may touch them when the command's
+        when a substitution, here-string or heredoc body of the command
+        (cmd.bodies, cmd.heredocs) names those paths, whatever the script,
+        as the body may write them; otherwise unless every script is
+        read-only (sed_problem) and no output redirection names those
+        paths. It may touch them when the command's
         source text (substitution bodies included) or a word of the command
         (with its wrappers, here-strings and redirection targets, these as
         written, expansions included), as written or resolved against the
@@ -1405,7 +1419,10 @@ class Analyzer:
         # substitutions (a here-string's "$(cat ...)", an operand's
         # <(cat ...)), and its words with the variables the guard knows.
         named = any(SED_PROTECTED.search(w) for w in [cmd.src] + words + cmd.heredocs + ins)
-        hit = (bool(outs) or named
+        # A body that names them may write them whatever sed's script is
+        # (`sed -n 1p <(cat > F)`, `> >(tee F)`, <<< "$(cp x F)").
+        in_body = any(SED_PROTECTED.search(b) for b in cmd.bodies + cmd.heredocs)
+        hit = (bool(outs) or named or in_body
                or any(protected(w) for w in sed_files(args, flags, cwd) + ins
                       if not unresolved(w)))
         texts = [t for t, script in self.texts if not script]
@@ -1420,7 +1437,11 @@ class Analyzer:
             hit = sed_may_open(args, flags)
         if not hit:
             return
-        problem = sed_problem(args, flags, named)
+        if in_body:
+            problem = ("a substitution, here-string or heredoc body names .claude/settings* "
+                       "or .claude/hooks/*")
+        else:
+            problem = sed_problem(args, flags, named)
         if not problem and outs:
             problem = f"its output is redirected into {outs[0]}"
         if problem:
@@ -1639,6 +1660,7 @@ class Analyzer:
         inner.words = ([supplier] if supplier else []) + argv[start:]
         inner.expanded = ([False] if supplier else []) + flags[start:]
         inner.src = cmd.src
+        inner.bodies = cmd.bodies
         sub = {"cwd": state["cwd"], "vars": dict(state["vars"]), "text": state["text"],
                "script": state["script"], "pid_vars": set(state["pid_vars"])}
         outer = self.wrapped
