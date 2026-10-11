@@ -335,13 +335,13 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
   - the PPI disable window;
   - that nothing new runs on the IRQ path except the INTID compare;
   - every address the IRQ path publishes across CPUs, which is now live on CPUs 1–3 at physical-alias PCs: the `kva_of` sites (holder `Location`s, `irq_spin_lock.rs:299`), `irq_elr` in the panic report (`observability/tripwire.rs:345-372`), and any other value computed on the IRQ path and stored, compared or printed by another CPU (the `.claude/CLAUDE.md` rule "IRQ-path address values (1b)"). Boot check 5's `holder=` check is the runtime half of this.
-- [ ] **T8. Merge `main` after step 1a lands, then run the A/B pair:**
+- [x] **T8. Merge `main` after step 1a lands, then run the A/B pair:**
   - re-run the gates;
   - write the owner's Q1, Q2, Q12 and Q14 answers into "What gates" before the pair starts (pre-registration), and commit that;
   - with the owner's go-ahead, run the pair as above;
   - write the research note, comment on #240 and fill in the expected-movement table.
   - If Q2's ruling fails the step, stop and report to the owner.
-  - Not ticked (2026-10-11): the pair ran, and the note, the observed column and the #240 draft are written, but item 5 leaves gpu B runs 04 and 09 unattributed, so the pre-registered rule sends the step to the owner. Three owner questions are open (Issues Encountered, T8).
+  - Done 2026-10-11. The pair ran, and the note, the observed column and the #240 draft are written. Item 5 left gpu B runs 04 and 09 unattributed, so the rule sent them to the owner, who ruled them pre-existing exposure, ruled the `holder=` check met but not exercised, and ruled run-08 H1 only (Issues Encountered, T8; the note's "Owner rulings").
 - [ ] **T9. Distil and hand off:**
   - lessons and decisions into `docs/knowledge/`, then delete this plan;
   - push the branch (`git push -u origin claude/crash-fix-step-200-gic-groups`), open the PR and run `/review-pr-comments`;
@@ -550,7 +550,7 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 
 **Check boot of the final head (2026-10-11 10:27, 8259e7d with main 030b3b7, nightly-2026-10-11, load 11.9).** One text boot (`target/soak/20261011-102751-text`): PANIC-LOCK, `lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit`. That is H3's signature, which B1 also showed on main (CURRENT_THREAD ×1). All four `[smp]` lines read `ppi_ok=1`, and every CPU ticked (`tick=559,572,575,571` at the panic). The build and the setup are sound on the new nightly, and one boot says nothing about the rate.
 
-**T8. A/B pair (2026-10-11): main 030b3b7 (A, ELF `2b646f6de2ae54a7`) against 82caf24 (B, ELF `690350af4860ed7f`), nightly-2026-10-11.** `target/soak/20261011-t8-200-text` (20 + 20) and `target/soak/20261011-t8-200-gpu` (10 + 10). Full results, per-boot attribution and the owner questions: [the T8 research note](../research/2026-10-11-jl-crash-fix-200-ab.md).
+**T8. A/B pair (2026-10-11): main 030b3b7 (A, ELF `2b646f6de2ae54a7`) against 82caf24 (B, ELF `690350af4860ed7f`), nightly-2026-10-11.** `target/soak/20261011-t8-200-text` (20 + 20) and `target/soak/20261011-t8-200-gpu` (10 + 10). Full results, per-boot attribution and the owner rulings: [the T8 research note](../research/2026-10-11-jl-crash-fix-200-ab.md).
 
 - Pair reports: text CLEAN A 15/20 (75%), B 13/20 (65%), guard p = 0.366; gpu A 1/10, B 0/10, p = 0.5 (informational). Text B is PCZERO 5 and EXCEPTION 2; text A is PANIC-LOCK 2, EXCEPTION 1, WEDGE-ALIVE 1, DEGRADED 1. gpu B is EXCEPTION 7, PANIC 2, PANIC-LOCK 1; gpu A EXCEPTION 7, PANIC 2. Load means 1% (text) and 11% (gpu) apart: comparable. One marker: text PCZERO `new` (0/20 against 5/20, p = 0.0236).
 - Item 1 (the fix, mechanically): passes. All 60 boots in scope, none out of scope; arm B `tick[1..3]` > 0 in 30/30 and `ppi_ok=1` on all four CPUs in 30/30; arm A `tick[1..3]` = 0 in 30/30.
@@ -565,6 +565,11 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 ## Decisions Made
 
 - Owner, 2026-10-10 16:29: every recommendation in "Open questions" taken (Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A with B as fallback, Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A).
+- Owner, 2026-10-11, T8 rulings:
+  - The bad-free PANIC in gpu B runs 04 and 09 is pre-existing exposure (same rate in arm A; CPUs 1–3 not yet switching), so the step passes.
+  - The `holder=` check is met but not exercised.
+  - Text B run-08 is H1 only, with no self-test issue.
+- Owner, 2026-10-11, step 1b's gpu pair: both runs (load imbalance 36% and 26%, both 2/20 against 2/20 CLEAN) are accepted as they are, with no third run, and the quiet-host window closed.
 - Merge (2026-10-11): the branch merged `main` f3b039b (#237 toolchain, #242 settings, #245 serde_json, #246 step 1a), a merge commit after the earlier d88002d. The new merge base f3b039b is arm A. Its `kernel/` and `shared/` sources are identical to 353f619's; only `rust-toolchain.toml` moved, to nightly-2026-10-10 (`rustc 1.101.0-nightly (32dba69d6 2026-10-09)` in this worktree). 353f619 pins nightly-2026-10-09, which 1a's preflight refuses next to this branch. T0 therefore reads the GIC state from a checkout of f3b039b instead of 353f619: GIC state is firmware state, and the kernel source is the same.
 - Merge, Q7 A (facts only, nothing decided): step 1b's pair, af59149 against e211d6d, pins nightly-2026-10-09 in both arms. Both contain 7167d40, so 1a's preflight accepts them as a pair on their own. Next to a current arm (f3b039b or this branch, nightly-2026-10-10) the channel check refuses them unless `--allow-mixed-toolchains`, which would make it a toolchain-change soak; that matters only for a three-arm run like Q7 C. 1a's lessons note §8 records the same check refusing af59149 against 1a's own branch.
 - T0, row 5: CPU 0's INTID-30 priority byte reads 0x80, which is non-zero, below `ICC_PMR_EL1` (0xFF) and has its low four bits 0. Row 5's rules hold, so Q13 B does not apply: **priority = 0x80 on every CPU**, CPU 0 included (a write of the value it already holds), and the priority flag is checked on every CPU. T1's `PpiConfig` tests and T2's setup use 0x80; CPU 0's registers stay byte-identical for boot check 3.
