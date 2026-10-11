@@ -11,9 +11,6 @@
 //!   so a regex-syntax update to a newer Unicode version fails it rather than drifting
 //!   from CPython silently. Older interpreters differ: CPython 3.12 and 3.13 (Unicode
 //!   15.0 and 15.1) match only 680 of those code points (not, for example, U+1E5F1).
-//!   The CPython side is pinned by the docs-check differential oracle, which accepts
-//!   only an interpreter whose `unicodedata.unidata_version` is 16.0.0
-//!   (`tests/common/fixture.rs`).
 //! - `\s` becomes [`SPACE`] and `\S` becomes [`NON_SPACE`], outside and inside a
 //!   character class (as a nested class, which the crate supports). The crate's `\s`
 //!   is Unicode White_Space; Python's `\s` (the `str.isspace()` characters) also has

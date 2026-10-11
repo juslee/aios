@@ -3,13 +3,9 @@
 //! control separators U+001C..U+001F where a check's pattern, `str.isdigit()` or `int()`
 //! meets them.
 //!
-//! Each test asserts the exit code and stdout that check.py (at 33c6b3d, with
-//! `fixture::CHECK_PY_MIGRATION` applied, so the repositories keep their project memory
-//! at `.claude/CLAUDE.md` as aios reads it, and `fixture::CHECK_PY_IRQ_SPIN_LOCK`, which
-//! no input here reaches) prints for the same repository. Those
-//! expectations were recorded with `fixture::run_check_py`, and
-//! wherever the oracle is available (`fixture::check_py`) each test also runs check.py
-//! again and requires the same bytes, so the expectations cannot drift from Python.
+//! Each test asserts the exit code and stdout that check.py (at 33c6b3d, patched to read
+//! the project memory at `.claude/CLAUDE.md` as aios does since #218) printed for the
+//! same repository: the expectations below are check.py's recorded output.
 //! Before #205 (`[0-9]` for `\d`, the crate's plain `\s`), aios's exit code or stdout
 //! differed from check.py's for every one of these repositories.
 //!
@@ -20,42 +16,22 @@
 
 mod common;
 
-use common::fixture;
 use common::{run_aios, TestRepo};
 use serde_json::Value;
 
-/// `aios docs-check <args>` in `repo`: its exit code and stdout, after requiring that
-/// check.py prints the same when it can run.
-fn run_like_check_py(repo: &TestRepo, args: &[&str]) -> (i32, String) {
+/// `aios docs-check <args>` in `repo`: its exit code and stdout.
+fn run_docs_check(repo: &TestRepo, args: &[&str]) -> (i32, String) {
     let aios = run_aios(repo.path(), &[&["docs-check"][..], args].concat());
-    let got = (
+    (
         aios.code,
         String::from_utf8_lossy(&aios.stdout).into_owned(),
-    );
-    match fixture::check_py() {
-        Ok(_) => {
-            let python = fixture::run_check_py(repo.path(), repo.path(), args);
-            assert_eq!(
-                got,
-                (
-                    python.code,
-                    String::from_utf8_lossy(&python.stdout).into_owned()
-                ),
-                "aios (left) and check.py (right) differ on {args:?}; aios stderr: {}; \
-                 check.py stderr: {}",
-                String::from_utf8_lossy(&aios.stderr),
-                String::from_utf8_lossy(&python.stderr)
-            );
-        }
-        Err(reason) => eprintln!("check.py not run: {reason}"),
-    }
-    got
+    )
 }
 
 /// `aios docs-check <args>` in `repo` exits `code` with exactly `stdout`, check.py's
-/// recorded output, and prints what check.py prints when it can run.
+/// recorded output.
 fn assert_like_check_py(repo: &TestRepo, args: &[&str], code: i32, stdout: &str) {
-    let (got_code, got_stdout) = run_like_check_py(repo, args);
+    let (got_code, got_stdout) = run_docs_check(repo, args);
     assert_eq!(
         (got_code, got_stdout.as_str()),
         (code, stdout),
@@ -321,7 +297,7 @@ fn decimal_digits_in_history_tables_and_claims() {
         DIGITS_STATUS,
     );
     // The §8 row's phase goes through int() into its key: `§8:phase-1`, in ASCII.
-    let (code, json) = run_like_check_py(&repo, &["--json", "--check", "milestone-status"]);
+    let (code, json) = run_docs_check(&repo, &["--json", "--check", "milestone-status"]);
     assert_eq!(code, 1);
     let json: Value = serde_json::from_str(&json).expect("--json prints JSON");
     let keys: Vec<&str> = json["findings"]
