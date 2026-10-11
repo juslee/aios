@@ -36,7 +36,7 @@ Two spec claims the plan had written from memory were wrong. The primary text (I
 
 ## 2. A PPI in the wrong group is silent: the CPU never ticks, and nothing faults
 
-**What happened.** The kernel enables Group 1 only (`ICC_IGRPEN1_EL1`, `GICD_CTLR.EnableGrp1`). The step's first `.claude/CLAUDE.md` fact and hal.md said a Group 0 PPI would be signalled as FIQ into the `b .` vectors. The first independent audit round corrected that: with Group 0 disabled, the PPI is never signalled at all. T3's fault injection showed it. A local build that skipped the `IGROUPR0` write on CPU 2 booted CLEAN. CPU 2's `[smp]` line read `ppi_grp1=0 ppi_ok=0`, and `tick[2]` stayed 0 in all 45 heartbeat lines while the other three CPUs ticked.
+**What happened.** The kernel enables Group 1 only (`ICC_IGRPEN1_EL1`, `GICD_CTLR.EnableGrp1`). The step's first `.claude/CLAUDE.md` fact and hal.md said a Group 0 PPI would be signalled as FIQ into the `b .` vectors. The first independent audit round corrected that: with Group 0 disabled, the PPI is never signalled at all. A fault-injection boot showed it. A local build that skipped the `IGROUPR0` write on CPU 2 booted CLEAN. CPU 2's `[smp]` line read `ppi_grp1=0 ppi_ok=0`, and `tick[2]` stayed 0 in all 45 heartbeat lines while the other three CPUs ticked.
 
 **Why it matters.** The fault leaves no class change, no exception and no hang, so a soak classifier cannot see it. #200 went unnoticed until step 1b added a per-CPU `tick` counter. A thread that was moved to a non-ticking CPU behind a thread that never yields simply never ran: #240's echo IPC pair, cap-denied, test thread A and the service echo pair printed none of their self-test lines in the 32 pre-step boots read before the pair (B1's 30 plus 2 from `pr239-20261010-115625-text`).
 
@@ -97,7 +97,7 @@ Per CPU, the list is `GICR_CTLR`, `GICR_WAKER`, `IGROUPR0`, `IGRPMODR0`, `ISENAB
 - one boot (text B run-08) that fitted two buckets: H1's corrupt register, and a first report naming a newly live self-test's thread;
 - a check (`holder=` on CPUs 1–3) whose trigger occurred only once, with unset holder fields, so it was neither passed nor failed as written.
 
-The pre-registered verdict was "not passed", and T8 stopped. The owner ruled the PANIC pre-existing exposure, the run-08 boot H1 only, and the `holder=` check met but not exercised.
+The pre-registered verdict was "not passed", and the A/B pair's reading stopped there. The owner ruled the PANIC pre-existing exposure, the run-08 boot H1 only, and the `holder=` check met but not exercised.
 
 **Why it matters.** Without signatures registered in advance, every exposed defect would have been argued after the fact. Even with them, three outcomes fell outside rules written before the data existed. The regression guard alone could not decide the step: at 20 text boots per arm its power was 0.35, and at B1's gpu baseline (1 of 10 CLEAN) the gpu guard could not fail.
 
@@ -115,7 +115,7 @@ The pre-registered verdict was "not passed", and T8 stopped. The owner ruled the
 
 **What happened.**
 
-- T7's `/audit-loop` ran in a workflow agent. Workflow agents cannot spawn subagents, so one agent ran the doc, code and security audits itself: 4 rounds, 5 fixes, then 1, then two clean rounds.
+- The in-workflow `/audit-loop` ran in a workflow agent. Workflow agents cannot spawn subagents, so one agent ran the doc, code and security audits itself: 4 rounds, 5 fixes, then 1, then two clean rounds.
 - The lead then ran an independent loop with separate auditors. Its first three rounds found 3, 1 and 1 more should-fix findings, then a clean round. One finding was a factual error in `.claude/CLAUDE.md` and hal.md (the Group 0 FIQ claim, section 2). Another was a code comment pointing into the working plan, which would have dangled once the plan was deleted.
 - Doc-writer agents have only Read, Write, Edit, Grep and Glob (`.claude/agents/doc-writer.md`), so they cannot run `docs-check`, `rg` or the gates on their own edits.
 
