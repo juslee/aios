@@ -23,7 +23,7 @@ Grep, Glob and many MCP tools are not loaded at session start; a habit call fail
 
 ## Search Commands
 
-There is no `rg` binary on `PATH`. In the Bash tool, `rg` and `grep` are Claude Code shell functions defined by the session's shell snapshot, and some sessions have no `rg`. On 2026-10-10, two implementer runs had none and ran their acceptance `rg -n` lines as `grep -nE`. `bash -c`, `sh -c`, scripts, hooks and `just` recipes never get either function.
+There is no `rg` binary on `PATH`. In the Bash tool, `rg` and `grep` are Claude Code shell functions defined by the session's shell snapshot, and some sessions have no `rg`. `bash -c`, `sh -c`, scripts, hooks and `just` recipes never get either function.
 
 - If `command -v rg` prints nothing, run the same pattern with `grep -nE` (`grep -rnE` for a tree). Without `-E`, `grep` uses basic regex, so `a|b` matches only the literal text `a|b`.
 - Never write `rg` into a script, hook, recipe or acceptance command. Use `grep -E` there.

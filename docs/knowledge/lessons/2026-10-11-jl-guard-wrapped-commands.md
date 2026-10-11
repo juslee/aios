@@ -13,7 +13,7 @@ Guard rule 1 (`.claude/hooks/git-push-guard.py`) lets the verifier and an owner 
 
 The fix took three rounds. Each was written test first: the guard's tests went from 126 to 133, 137 and 140, and the tests that pin each hole failed on the head before its fix. Each fix but the last was broken by the attack round that followed it:
 
-1. **First fix (19a120c).** For every `run`, the guard analyses the words after the `--` that ends the wrapper's options, read the way the wrapper reads them, as a nested command at the call's cwd. A QEMU start in that command gets no rule 1 decision of its own. The settings allow narrows to `status` and `clear-stale`, an owner edit of `.claude/settings.json` (rule 11, Config).
+1. **First fix (19a120c).** For every `run`, the guard analyses the words after the `--` that ends the wrapper's options, read the way the wrapper reads them, as a nested command at the call's cwd. A QEMU start in that command gets no rule 1 decision of its own.
 2. **The attack round on the first fix broke it three ways.**
    - The fix re-parsed `shell_join` of the wrapped words, and `shlex.quote` turned every word from an unresolved expansion into a literal. The checks keyed on a word's expansion flag therefore never fired: `-- "$SHELL" -c 'git push origin HEAD:main'`, `-- $GIT push ...` and `-- sh -c "$CMD"` were allowed when wrapped and asked unwrapped.
    - The nested analysis never saw the words xargs appends, so `printf 'HEAD:main\n' | xargs qemu-lock.sh run ... -- git push origin` was allowed.
@@ -27,6 +27,8 @@ The fix took three rounds. Each was written test first: the guard's tests went f
 
    The third fix (f294d1d) changed three things. The parser's per-word flag now tells a bare expansion from one only inside double quotes. The guard asks for an option value or option stop that may split or be `--`, and analyses a subcommand from an expansion as a `run` and asks. It checks the genuine wrapper's `run` against its own repository's lock.
 4. **The attack round on the third fix (2026-10-11) approved it.** The bypass review and the regression review both completed. The regression review compared the guard's decisions before and after over 18948 command evaluations: 1120 differed, all intended. No deny or ask reason was lost, and nothing outside the wrapper changed. What remained is out of model (below).
+
+The permission layer was fixed apart from the guard. In a separate commit, a189f7a (2026-10-11), the owner narrowed the settings allow from `qemu-lock.sh *` to the wrapper's `status` and `clear-stale`, an edit of `.claude/settings.json` that agents do not make (rule 11, Config).
 
 ## Why it happened
 
@@ -52,11 +54,12 @@ The guard is a stateless text analyser for cooperative agents (its threat model,
 - **`"$@"` and array expansions inside double quotes** can expand to several words. The guard treats them as one word.
 - **Pids passed through a file between separate commands.** `pgrep ... >f` in one call and `kill $(cat f)` in a later one are each judged alone, so the second is not seen as a pattern kill.
 - **Kills inside programs the guard does not parse**, such as a Python script or a build step.
+- **A trusted wrapper edited before it runs.** Rule 1 trusts the genuine wrapper by realpath, as the main checkout's, the project's or the agent's own temporary worktree's `scripts/agent/qemu-lock.sh`, and does not read its body. A verifier that rewrites the copy in its own temporary worktree (a `sed -i` from Bash, say) and then calls it runs whatever the edit says. Only the command after `--` is analysed.
 
-When R5 (#241) ports the guard to Rust, give each of these a table test pinned to its current decision, so that changing one is deliberate.
+When R5 (the guard's Rust port, row R5 of [the Rust agent tools discussion](../discussions/2026-09-22-jl-rust-agent-tools.md)) ports the guard, give each of these a table test pinned to its current decision, so that changing one is deliberate. #241 collects the guard work deferred to R5.
 
 ## How to avoid next time
 
 - When a rule trusts a tool by path or name, write down what that tool runs for its caller, and analyse that under the same rules.
 - Review every `Bash(<tool> *)` allow for a subcommand or option that runs something, and narrow it to subcommands that run nothing (here `status` and `clear-stale`).
-- For R5 (the Rust guard, #241): keep the per-word expansion state (bare or quoted), pass nested commands as argument vectors, keep parse errors local, and port the T17 tests in `.claude/hooks/tests/test_git_push_guard.py` into the table.
+- For R5 (the guard's Rust port; its deferred work is collected in #241): keep the per-word expansion state (bare or quoted), pass nested commands as argument vectors, keep parse errors local, and port the T17 tests in `.claude/hooks/tests/test_git_push_guard.py` into the table.

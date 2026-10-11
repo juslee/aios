@@ -77,7 +77,7 @@ Use the Agent tool. Never pass `name` or `model`. The guard (rule 3) denies a na
 
 - Pass `subagent_type` (chosen by area, rule 11) and `isolation: "worktree"`.
 - One writer per branch worktree at a time (rule 11, Placement); two writers at once only on two different branches.
-- Run them in the background, except for a task that edits `.claude/**` and a verifier task that boots (its `qemu-lock.sh run` call prompts, rule 11): spawn those with `run_in_background: false`, so the prompt reaches the owner.
+- Run them in the background, except for a task that edits `.claude/**` and a verifier task that boots (no allow rule covers its `qemu-lock.sh run` call, rule 11): spawn those with `run_in_background: false`, so the prompt reaches the owner.
 - Before the spawn, record the tip: `git -C <W> rev-parse HEAD`.
 - The prompt states:
   - `W` (absolute branch worktree path), the branch, and the tip: "your first command that changes anything is `git reset --hard <tip>`";

@@ -53,21 +53,24 @@ Probe 2's hooks returned ok true, so it showed only that the full id runs, not t
   claude --version
   S=$(mktemp -d); sh "$D/probe/setup.sh.v5" "$S"
   R=$S/repo; WT=$R/.claude/worktrees/probe; L=$R/.git/probe-hooks.jsonl
-  BASE="env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT AIOS_PROBE_BIN=$MAIN/target/tools/installed/aios AIOS_HOOK_STATE_DIR=$S/hookstate"
+  probe_env() { env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT \
+    AIOS_PROBE_BIN="$MAIN/target/tools/installed/aios" AIOS_HOOK_STATE_DIR="$S/hookstate" "$@"; }
   TOOLS="Bash,Read,Write,Edit,Grep,Glob,Agent,ToolSearch"
   ```
+
+  The environment prefix is a function, not a string variable: zsh does not word-split an unquoted `$VAR`, so a `$BASE claude ...` line fails there with `command not found: env -u ...`. A function runs the same in zsh, bash and sh.
 
   Run A (placement, effort, stops, the join):
 
   ```sh
-  cd "$R" && $BASE claude -p --model opus --output-format json --allowedTools "$TOOLS" \
+  cd "$R" && probe_env claude -p --model opus --output-format json --allowedTools "$TOOLS" \
     --debug-file "$S/run-a.debug" "$(sed -e "s#@WT@#$WT#g" -e "s#@R@#$R#g" -e "s#@LOG@#$L#g" "$D/probe/run-a.v5.txt")" >"$S/run-a.json"
   ```
 
   Run B (the ExitPlanMode input):
 
   ```sh
-  cd "$R" && $BASE claude -p --model opus --permission-mode plan --output-format json \
+  cd "$R" && probe_env claude -p --model opus --permission-mode plan --output-format json \
     --debug-file "$S/run-b.debug" \
     "Plan a one-step change: add the line probe to README.md. Write the plan as Markdown whose first line is '# Plan: probe', then call ExitPlanMode with it. Do not edit any file." >"$S/run-b.json"
   ```
@@ -147,14 +150,15 @@ claude --version
 git -C "$MAIN" worktree add .claude/worktrees/harness-e2e -b claude/harness-e2e-scratch "$(git -C "$W" rev-parse HEAD)"
 W2=$MAIN/.claude/worktrees/harness-e2e; S=$(mktemp -d)
 git -C "$MAIN" worktree list --porcelain >"$S/worktrees-before.txt"
-E2E="env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT AIOS_TOOLS_BIN=$W/target/tools/installed/aios AIOS_HOOK_STATE_DIR=$S/hooks"
+e2e_env() { env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT \
+  AIOS_TOOLS_BIN="$W/target/tools/installed/aios" AIOS_HOOK_STATE_DIR="$S/hooks" "$@"; }   # a function: zsh does not split a string variable (T2 above)
 TOOLS_E="Bash,Read,Write,Edit,Grep,Glob,LSP,Agent,EnterWorktree,ToolSearch"
 ```
 
 Run E (the harness end to end):
 
 ```sh
-cd "$W" && $E2E claude -p --model opus --output-format json --allowedTools "$TOOLS_E" --add-dir "$W2" --debug-file "$S/run-e.debug" \
+cd "$W" && e2e_env claude -p --model opus --output-format json --allowedTools "$TOOLS_E" --add-dir "$W2" --debug-file "$S/run-e.debug" \
   -- "$(sed -e "s#@W2@#$W2#g" "$D/probe/run-e.v5.txt")" >"$S/run-e.json"
 ```
 
@@ -187,24 +191,6 @@ The `--` before each prompt is needed because `--add-dir` takes several values. 
 
 Teardown: for every temporary worktree not in `worktrees-before.txt`, run `git -C "$MAIN" worktree remove --force <path>` and `git -C "$MAIN" branch -D <worktree-agent-…>`; the guard puts both to the owner. Then run `git -C "$MAIN" worktree remove --force "$W2"`, `git -C "$MAIN" branch -D claude/harness-e2e-scratch`, `git -C "$MAIN" worktree remove --force "$O"` and `rm -rf "$S"`. Record the CLI version the checks ran on.
 
-## Cross-session messaging without the agent-teams flag (OP1)
+## Owner probes
 
-The harness removed `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` from the project env, because aios uses no Claude Code teammates (rule 11). The two leads still message each other across sessions. That should keep working, because cross-session messaging has its own gate. The evidence comes from reading the 2.1.285 and 2.1.289 binaries, not from a run. They carry a separate gate message, `[uds-messaging] Skipped: cross-session messaging gate off`, and they have held messages and the `crossSessionInbound` setting, none of which depends on agent teams. A headless `-p` run cannot check this, because it needs two live sessions. The first real check is OWNER-PROBES OP1 (`OWNER-PROBES.md.v5` in the design folder named above). It runs when both leads restart from the main checkout after the harness merges; running it is a post-merge owner step in PR #234's hand-off.
-
-With the project flag gone, OP1 must show:
-
-- Each lead's ListAgents lists the other under its team name (`team-build`, `team-fix`).
-- Each lead receives the other's `From <team>: HELLO`, and no "held" or `crossSessionInbound` notice appears.
-- A lead resumed with `claude --resume <team>` keeps its name without `/rename`, and its peer receives its new `HELLO`.
-- A background worker spawned by a lead runs its first command, `git reset --hard <tip>`, with no permission prompt.
-
-If a message never arrives, run the receiving lead once with `--debug-file` and read the lines that contain `uds-messaging` or `Cross-session messaging`:
-
-- **Gate off:** the messaging gate is off for this account or CLI version. This needs a design decision from the owner. Do not put the agent-teams flag back as a stopgap.
-- **Message held:** the two leads are probably in different permission modes. Claude Code holds cross-session messages while the modes differ, which is why rule 11 and agent-loop.md (Teams, Launch) require both leads to use the same mode.
-
-Until OP1 passes, a lead that cannot see its peer in ListAgents works in one-lead mode (agent-loop.md, Teams) and never sends to a guessed name. Record an OP1 result as a dated update after this section, not by rewriting it: the CLI version, `result: pass` or `fail`, what each item above showed, and the debug lines for anything that failed. A failure also gets an issue labelled `team-build`.
-
-## Foreground `.claude/` edit prompts (OP3)
-
-OWNER-PROBES OP3 checks the premise of rule 11's "`.claude/**` edits run in the foreground": a foreground subagent's permission prompt for a `.claude/` path reaches the owner in the lead's window and names the file, and the subagent waits for the answer and reports a refusal without trying another route. It was to be watched during PR #234's shim, guard and settings tasks, and no OP3 report was recorded, so the premise is unconfirmed. What PR #234 did show is that in auto mode the classifier refuses an agent's Write of `.claude/settings.json`, a `git rm` of hook files and the commit that carries them (#244), so those changes are owner steps (rule 11, Config). Record an OP3 result the same way as OP1's.
+The interactive owner probes OP1 (cross-session messaging) and OP3 (foreground `.claude/` edit prompts) are in [the two-team owner-probes lesson](2026-10-11-jl-two-team-owner-probes.md).
