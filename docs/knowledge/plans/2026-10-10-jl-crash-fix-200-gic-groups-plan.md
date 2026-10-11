@@ -311,12 +311,12 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
   - boot checks 1–7 on up to 3 `just run` boots, plus boot check 3 against T0's table;
   - `llvm-objdump -h`.
   - Results into this plan.
-- [x] **T6. Docs:** Done 2026-10-11: docs only, no boot (no kernel code changed); `docs-check` shows only the two findings this branch already had (Decisions Made, T6). Outstanding: the lead's `.claude/CLAUDE.md` sub-item (the "Timer IRQs on CPUs 1-3" fact and `shared/src/gic.rs` in Workspace Layout); until it lands, `docs-check` keeps the `[layout]` finding and the last criterion is not met. T7 confirms it.
+- [x] **T6. Docs:** Done 2026-10-11: docs only, no boot (no kernel code changed); `docs-check` shows only the two findings this branch already had (Decisions Made, T6). The lead's `.claude/CLAUDE.md` sub-item landed after T7: the "Timer IRQs on CPUs 1-3" fact became "Timer PPI setup (step 200)", and Workspace Layout lists `gic` among the shared modules. `docs-check` then shows only this plan's working-plan finding.
   - the stale-docs table above, except the T3/T4 rows and #240;
   - the ADR's dated notes, with no rulings invented: Q1–Q3 are recorded only once the owner has answered;
   - `.claude/CLAUDE.md`, by the lead, through the permission prompt;
   - `cargo run -q -p aios-tools -- docs-check`, with no new drift except this plan's working-plan finding.
-- [ ] **T7. `/audit-loop`** (doc, code and security/bug review) until a clean round. The review covers in particular:
+- [x] **T7. `/audit-loop`** (doc, code and security/bug review) until a clean round. Done 2026-10-11 in 4 rounds (5 fixes, then 1, then two clean rounds; e2c7f7e, 8531b1b). The fixes were comments and docs only. One agent ran all three audits, because workflow agents cannot spawn sub-agents, so the lead adds an independent round before T8. The review covers in particular:
   - virtual against physical addresses (GICR is reached physically through TTBR0 before the kmap install);
   - the bounded polls;
   - the `DS`-dependent readback (group flag `Unchecked` under `DS` = 0, and the priority rules of row 5);
