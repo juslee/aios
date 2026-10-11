@@ -1958,7 +1958,7 @@ Idx Name           Size     VMA              LMA              Type
 
 1. Is `CNTP_CTL_EL0.ENABLE` set? (bit 0 = 1)
 2. Is `CNTP_CTL_EL0.IMASK` clear? (bit 1 = 0 means interrupts are not masked at the timer level)
-3. Is the GIC PPI enabled? Check that `gic.enable_irq(30)` was called (INTID 30 is the EL1 physical timer).
+3. Is the timer PPI set up on that CPU's redistributor? Each CPU's `[smp]` line reports it: `ppi=30` (the DTB's non-secure physical timer on QEMU virt), `ppi_grp1=1` (or `-` under `GICD_CTLR.DS` = 0), `ppi_en=1` and `ppi_ok=1`; on a failure a `cpu N timer PPI … setup failed` error names the failed flags ([observability.md §6.5](../kernel/observability.md), "SMP lines"). Enabled is not enough: the PPI must also be in Group 1, the only group the kernel enables, or it never fires (#200; [hal.md §4.1](../kernel/hal.md)).
 4. Is `PSTATE.I` clear? The CPU-level interrupt mask must be cleared: `msr DAIFClr, #0x2`.
 5. Is the GIC CPU interface priority mask set correctly? `ICC_PMR_EL1` must be higher than the interrupt priority.
 

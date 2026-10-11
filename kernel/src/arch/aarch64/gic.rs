@@ -164,7 +164,9 @@ unsafe fn setup_timer_ppi(rd_base: usize, cfg: PpiConfig, ds: bool) -> PpiStatus
     let sgi_base = rd_base.wrapping_add(GICR_SGI_BASE_OFFSET);
     let mask = cfg.enable_mask();
 
-    // SAFETY: rd_base is this CPU's mapped RD_base (contract above).
+    // SAFETY: rd_base is this CPU's own RD_base, mapped as device memory
+    // (this function's contract, kept by both callers). A wrong rd_base would
+    // fault (synchronous abort) or wake another CPU's redistributor.
     let wake_ok = unsafe { wake_redistributor(rd_base) };
 
     // SAFETY: every address below is a GICR register in the RD_base or
@@ -307,9 +309,13 @@ pub fn init_gicv3(gicd_base: usize, gicr_base: usize) -> InterruptController {
 /// access or reachable panic path (the unreachable dev-profile panics are
 /// [`setup_timer_ppi`]'s); it returns the setup status for the caller to report
 /// once the UART is mapped. `Err` means the published INTID is not a valid
-/// timer PPI configuration, and the redistributor was left untouched; the
-/// boot CPU validates the same INTID and panics before `CPU_ON` if it is
-/// invalid.
+/// timer PPI configuration, and the redistributor was left untouched. The
+/// boot CPU publishes only an INTID below 32 that validates (it panics
+/// before `CPU_ON` on any other below 32), so `Err` arises only when the DTB
+/// gave a timer INTID of 32 or above: [`InterruptController::enable_irq`]
+/// takes that as an SPI and publishes nothing, this CPU reads 1023 and
+/// returns `IntidNotPpi(1023)`, and `kernel_main` panics after SMP bringup
+/// when it finds no boot CPU timer PPI status.
 pub fn init_gicv3_secondary(gicr_base: usize, core_id: usize) -> Result<PpiStatus, GicError> {
     // Each redistributor is RD_base + SGI_base, 0x20000 apart, in CPU order
     // (core_id is the DTB CPU index). Wrapping arithmetic: no overflow
@@ -322,13 +328,17 @@ pub fn init_gicv3_secondary(gicr_base: usize, core_id: usize) -> Result<PpiStatu
         // SAFETY: rd_base is this core's redistributor (DTB GICR base plus
         // its CPU index times the frame stride), mapped as device memory by
         // the boot identity TTBR0 that this core still runs on. IRQs are
-        // masked (PSTATE.I set since _secondary_entry; enter_scheduler
-        // unmasks). A wrong frame would configure another CPU's PPI.
+        // masked: PSCI CPU_ON enters _secondary_entry with DAIF masked, and
+        // nothing unmasks before enter_scheduler. A wrong frame would
+        // configure another CPU's PPI.
         Ok(cfg) => Ok(unsafe { setup_timer_ppi(rd_base, cfg, ds) }),
         Err(e) => Err(e),
     };
 
-    // SAFETY: EL1, IRQs masked until enter_scheduler unmasks them.
+    // SAFETY: secondary_main runs at EL1 with IRQs masked (PSCI CPU_ON entry
+    // state) until enter_scheduler unmasks them, so enabling Group 1 here
+    // cannot deliver an IRQ early. Unmasked, a pending timer PPI would be
+    // taken before this core's kmap TTBR1 install and scheduler state exist.
     unsafe { init_cpu_interface() };
 
     status
@@ -342,12 +352,14 @@ impl InterruptController {
     /// kernel enables (`init_generic_timer`). Publishes the INTID for
     /// [`init_gicv3_secondary`] and [`irq_handler_el1`], runs the per-CPU
     /// [`setup_timer_ppi`] on the boot CPU's redistributor and keeps its
-    /// status ([`Self::timer_ppi_status`]). Panics if the INTID is not a
-    /// valid timer PPI configuration (a broken DTB), before any secondary
-    /// starts. CPUs 1-3 set up their own redistributor in
-    /// [`init_gicv3_secondary`].
+    /// status ([`Self::timer_ppi_status`]). Panics, before any secondary
+    /// starts, if an INTID below 32 is not a valid timer PPI configuration
+    /// (0-15, which the DTB parser cannot produce). CPUs 1-3 set up their
+    /// own redistributor in [`init_gicv3_secondary`].
     ///
-    /// For SPIs (INTID 32+): writes to `GICD_ISENABLER<n>`.
+    /// For SPIs (INTID 32+): writes to `GICD_ISENABLER<n>`. A timer INTID of
+    /// 32 or above (a broken DTB) lands here too: nothing is published, and
+    /// the failure surfaces after SMP bringup (see [`init_gicv3_secondary`]).
     pub fn enable_irq(&self, irq: u32) {
         if irq < 32 {
             let cfg = match PpiConfig::new(irq, TIMER_PPI_PRIORITY) {
@@ -359,8 +371,10 @@ impl InterruptController {
             // SAFETY: gicr_base is the boot CPU's own redistributor (frame 0
             // of the DTB GICR region), mapped as device memory by the
             // identity map that init_mmu installed. This runs during boot on
-            // the boot CPU with IRQs masked (the scheduler unmasks later). A
-            // wrong base would fault with a synchronous abort.
+            // the boot CPU with IRQs masked: firmware hands over with
+            // PSTATE.I set (ExitBootServices), and nothing unmasks before
+            // kernel_main's DAIFClr just ahead of enter_scheduler. A wrong
+            // base would fault with a synchronous abort.
             let status = unsafe { setup_timer_ppi(self.gicr_base, cfg, ds) };
             self.timer_ppi_status.set(Some(status));
         } else {
