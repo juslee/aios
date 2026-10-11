@@ -2,8 +2,8 @@
 //! of the PANIC-LOCK path. Built only with the `tripwire-selftest` feature,
 //! which is off by default and in neither soak arm.
 //!
-//! One kernel thread, pinned to CPU 0 (the only CPU that takes timer IRQs
-//! until #200 is fixed), yields for [`SETTLE_TICKS`], then takes
+//! One kernel thread, pinned to CPU 0 (the hold must be re-entered by the
+//! same CPU's tick), yields for [`SETTLE_TICKS`], then takes
 //! `THREAD_TABLE.lock()` with IRQs on and busy-waits for [`HOLD_TICKS`]
 //! ticks while holding it. The first timer IRQ on CPU 0 that blocks on
 //! THREAD_TABLE finds the lock word stamped with its own interrupted stream
@@ -58,8 +58,9 @@ pub fn init() {
     // there for good, so a Normal thread pinned to CPU 0 would never run.
     thread.sched.class = SchedulerClass::Interactive;
     thread.sched.effective_class = SchedulerClass::Interactive;
-    // CPU 0 only: CPUs 1-3 take no timer IRQs (#200), so a hold there would
-    // never be re-entered.
+    // CPU 0 only: the hold must be re-entered by the same CPU's tick, since a
+    // blocking lock() from another CPU's tick only counts contention, and the
+    // settle and hold are timed in TICK_COUNT, which only CPU 0 advances.
     thread.sched.affinity = CpuSet::single(0);
     thread.context.sp = stack_virt_top as u64;
 

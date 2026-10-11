@@ -146,7 +146,7 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 5a: TTBR0 identity map.** Build a TTBR0 identity map with 3 × 1GB block descriptors: 0–1GB (device memory, MAIR Attr0), 1–2GB (RAM, MAIR Attr3 WB), 2–3GB (RAM, MAIR Attr3 WB). This must run before GIC/timer init because QEMU edk2 firmware may not preserve device-memory MMIO mappings in TTBR0 post-ExitBootServices. TLBI uses `VMALLE1` + `DSB NSH` (non-broadcast; broadcast hangs with parked cores under NC memory). Advance phase: `MmuEnabled`.
 
-**Step 5b: GICv3 + Timer.** Initialize the GICv3 distributor (GICD at `0x0800_0000`) and redistributor (GICR at `0x080A_0000`). Configure the CPU interface via ICC system registers. Then initialize the ARM Generic Timer: read `CNTFRQ_EL0` (62.5 MHz on QEMU), configure 1 kHz tick (62500 counts/tick), wire timer PPI (INTID 30) through GIC. Advance phases: `InterruptsReady`, `TimerReady`.
+**Step 5b: GICv3 + Timer.** Initialize the GICv3 distributor (GICD at `0x0800_0000`) and redistributor (GICR at `0x080A_0000`). Configure the CPU interface via ICC system registers. Then initialize the ARM Generic Timer: read `CNTFRQ_EL0` (62.5 MHz on QEMU), configure 1 kHz tick (62500 counts/tick), wire timer PPI (INTID from the DTB, 30 on QEMU) through GIC with the per-CPU timer PPI setup on the boot CPU's redistributor (hal.md §4.1). Advance phases: `InterruptsReady`, `TimerReady`.
 
 **Step 6: Buddy allocator + Slab heap.** Initialize physical memory from the UEFI memory map. Walk the memory descriptors, exclude kernel image, BootInfo, and MMIO regions. Partition into 4 pools: kernel (128 MB), user (1792 MB), model (0), DMA (64 MB). Initialize buddy allocator (orders 0–10, bitmap coalescing, poison fill on free). Advance phase: `PageAllocatorReady`.
 
@@ -232,9 +232,13 @@ Secondary core (_secondary_entry in boot.S → secondary_main in smp.rs):
   3. Load MAIR/TCR/TTBR0/TTBR1, enable MMU (boot.S — safe: MMU was off)
   4. Load per-core SP from SECONDARY_STACKS[core_id] (boot.S)
   5. Set TPIDR_EL1 = MPIDR_EL1 Aff0, branch to secondary_main(core_id) (Rust)
-  6. Init GIC redistributor + CPU interface for this core
+  6. Init GIC redistributor + timer PPI + CPU interface for this core:
+     wake, put the timer PPI in Group 1, priority, level check, enable,
+     readback (hal.md §4.1); GICR at its physical address through the
+     boot identity TTBR0, and no UART output (the UART is mapped in step 7)
   7. Install full kmap TTBR1 (replaces boot.S minimal TTBR1)
-  8. Wait for PRINT_TURN == core_id, print, store core_id + 1
+  8. Wait for PRINT_TURN == core_id, print (the [smp] line reports the
+     timer PPI setup), store core_id + 1
   9. Init per-core timer (programs CNTP_TVAL_EL0 + CNTP_CTL_EL0)
   10. Enter scheduler (parks in wfe until SCHED_READY)
 ```

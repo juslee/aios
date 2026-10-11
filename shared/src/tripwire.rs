@@ -1654,10 +1654,10 @@ pub struct StrikeResult {
 /// If such a CPU's tick has not advanced enough and a confirmation is
 /// pending, the scan is a stall: nothing changes, and the first strikes are
 /// kept for the next scan. A stalled vCPU therefore never lets a thread in
-/// transit on it be confirmed. A CPU whose `tick` is still 0 takes no timer
-/// IRQs (CPUs 1-3 on a kernel whose secondaries leave the timer PPI in
-/// Group 0, #200) and does not gate; that it might be stalled is not
-/// detected (owner decision, 2026-09-28).
+/// transit on it be confirmed. A CPU whose `tick` is still 0 has never taken
+/// a timer IRQ (it has not unmasked IRQs yet, or its timer PPI setup failed,
+/// `ppi_ok=0` on its `[smp]` line) and does not gate; that it might be
+/// stalled is not detected (owner decision, 2026-09-28).
 ///
 /// Only CPU 0's scan uses an instance, so `Relaxed` load and store suffice.
 pub struct TwoStrike<const CPUS: usize> {
@@ -3294,7 +3294,8 @@ mod tests {
 
     #[test]
     fn two_strike_gate_skips_cpus_that_never_ticked() {
-        // CPUs 1-3 take no timer IRQs (#200): only CPU 0's tick advances.
+        // A CPU that never takes a timer IRQ keeps `tick` at 0: here only
+        // CPU 0's tick advances, and CPUs 1-3 have never ticked.
         let ts = TwoStrike::<4>::new();
         let mut m = Machine::new();
         m.ticks[0] = 1000;

@@ -141,7 +141,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 - [x] Implement `TimerSet` syscall: sets a one-shot or repeating timer that wakes `IpcSelect`; stub returns `ENOTSUP` until `IpcSelect` is wired in Step 10 (ipc.md §3.1)
 - [x] Metric instrumentation: increment `KernelMetrics.irq_timer` on every tick
 - [x] Enable timer interrupts on boot CPU: unmask `DAIF.I` after VBAR and GIC init
-- [x] Enable timer interrupts on secondary cores via `init_gicv3_secondary` (existing from Phase 1)
+- [x] Enable timer interrupts on secondary cores via `init_gicv3_secondary` (existing from Phase 1) *(Note, 2026-10-11: not true until crash-fix step 200. `init_gicv3_secondary` enabled PPI 30 but never wrote `GICR_IGROUPR0`, so the PPI stayed in Group 0, which the kernel never enables, and CPUs 1–3 took no timer IRQs (#200). Step 200 puts the timer PPI in Group 1 on every CPU's redistributor and reads it back ([hal.md §4.1](../kernel/hal.md)).)*
 
 **Key reference:** [scheduler.md §10](../kernel/scheduler.md) — Timer and Preemption; [observability.md §2.7](../kernel/observability.md) — UART Drain; [ipc.md §3.1](../kernel/ipc.md) — TimeGet, TimeSleep, TimerSet
 
