@@ -223,9 +223,12 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
 
     let core_id = core_id as usize;
 
-    // Initialize this core's GIC redistributor and CPU interface.
+    // Initialize this core's GIC redistributor, timer PPI and CPU interface.
+    // GICR_BASE is physical, reached through the boot identity TTBR0, and the
+    // UART is not mapped until the kmap install below, so the setup cannot
+    // report anything here: it returns its status instead.
     let gicr_base = GICR_BASE.load(Ordering::Relaxed);
-    crate::arch::aarch64::gic::init_gicv3_secondary(gicr_base, core_id);
+    let _ppi_status = crate::arch::aarch64::gic::init_gicv3_secondary(gicr_base, core_id);
 
     // Install the full kmap TTBR1 (with MMIO + direct map) on this core.
     // boot.S only installs a minimal TTBR1 covering the kernel image.
