@@ -259,13 +259,14 @@ The results go into a research note, `docs/knowledge/research/2026-10-1x-jl-cras
 
 Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 gates (`just check`, `just test`) passing before it. Tasks that change the kernel also boot it (`just run`).
 
-- [ ] **T0. Live GIC state on `main` (no commit; results go into this plan).**
+- [x] **T0. Live GIC state on `main` (results in this plan; committed as the plan only).** Done 2026-10-11 on f3b039b at load 16.8: table under "Issues Encountered", T0.
   - On a QEMU monitor boot of 353f619 (f3b039b since the merge of 2026-10-11; see "Decisions Made", Merge), record for each CPU: `GICR_WAKER`, `IGROUPR0`, `IGRPMODR0`, `ISENABLER0`, `IPRIORITYR7`, `ICFGR1` and `GICR_CTLR`, plus `GICD_CTLR` (`DS` bit 6, `ARE` bit 4, `EnableGrp1` bit 1, `EnableGrp0` bit 0).
-  - The boot uses `just run`'s QEMU command line (`justfile:41-53`) with a monitor socket added, because no recipe exposes a scriptable monitor. Run it from a checkout of 353f619 (the arm-A worktree, for example `.claude/worktrees/crash-200-base`); boot check 3 runs the same lines unchanged in this worktree. `D` is a new empty directory in the agent's scratchpad.
+  - The boot uses `just run`'s QEMU command line (`justfile:41-53`) with a monitor socket added, because no recipe exposes a scriptable monitor. Run it from a checkout of f3b039b (the arm-A worktree `.claude/worktrees/crash-200-base`); boot check 3 runs the same lines unchanged in this worktree. `D` is a new empty directory under this worktree's gitignored `target/dig/200/` (T0 used `target/dig/200/gic-mon-f3b039b`).
+  - macOS `nc -U -w 2` works (T0, 2026-10-11): every reply arrives, but the monitor's readline echoes each typed character with cursor escapes and every line ends in CR, so the pipe strips CR and keeps only the `xp` value lines and the version line. `mon.txt` then holds exactly 30 lines.
 
     ```sh
     just disk create-data-disk
-    D=<scratchpad>/gic-mon-353f619; mkdir -p "$D"
+    D=/Users/juslee/dev/aios/.claude/worktrees/crash-200/target/dig/200/gic-mon-<sha>; mkdir -p "$D"
     qemu-system-aarch64 -machine virt,gic-version=3 -cpu cortex-a72 -smp 4 -m 2G -nographic \
       -bios "${AIOS_EDK2_FW:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}" \
       -drive if=none,id=disk0,file=aios.img,format=raw -device virtio-blk-pci,drive=disk0 \
@@ -281,7 +282,8 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
           $((sgi + 0x100)) $((sgi + 0x41C)) $((sgi + 0xC04))
       done
       printf 'xp /1wx 0x8000000\ninfo version\n'
-    } | nc -U -w 2 "$D/mon.sock" > "$D/mon.txt"
+    } | nc -U -w 2 "$D/mon.sock" | tr -d '\r' \
+      | grep -aE '^[0-9a-f]{8}: 0x[0-9a-f]{8}$|^[0-9]+\.[0-9]+\.[0-9]+' > "$D/mon.txt"
     kill "$QPID"
     ```
 
@@ -447,7 +449,25 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 
 ## Issues Encountered
 
-(T0's register table goes here during implementation.)
+**T0. Live GIC state on `main` f3b039b (2026-10-11 07:17, load 16.8).** One monitor boot of the arm-A worktree `.claude/worktrees/crash-200-base` (f3b039b, built with `just disk create-data-disk`), read after the third `src=hb` line (`tick=3001,0,0,0` area; boot printed `4 CPUs online` and the four usual `[smp]` lines). Output: `target/dig/200/gic-mon-f3b039b/mon.txt` (gitignored).
+
+- QEMU 11.1.2 (Homebrew `qemu 11.1.2`, `/opt/homebrew/bin/qemu-system-aarch64`).
+- Firmware `/opt/homebrew/share/qemu/edk2-aarch64-code.fd` (the `just run` default, `AIOS_EDK2_FW` unset), sha256 `47765fe344818cbc464b1c14ae658fb4b854f5c2ceffa982411731eb4865594d`, banner `edk2-stable202408-prebuilt.qemu.org built at 16:28:50 on Sep 12 2024`.
+- CI (latest `ci.yml` soak job, run 38096772215 on `main` f3b039b, 2026-10-10): runner image `ubuntu-26.04` 20260927.149.1, QEMU 10.2.1 (Debian `1:10.2.1+ds-1ubuntu3.2`), edk2 package `qemu-efi-aarch64` 2025.11-3ubuntu7.3, firmware `/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`. CI boots no monitor, so its GIC state is not read; T3's `[smp]` fields in CI logs are the first reading.
+
+| CPU | `GICR_CTLR` | `GICR_WAKER` | `IGROUPR0` | `IGRPMODR0` | `ISENABLER0` | `IPRIORITYR7` (INTID 30 byte) | `ICFGR1` (bit 29) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0x00000002 | 0x00000000 | 0xffffffff | 0x00000000 | 0x40000000 | 0x80808080 (0x80) | 0x00000000 (0, level) |
+| 1 | 0x00000002 | 0x00000000 | 0x00000000 | 0x00000000 | 0x40000000 | 0x00000000 (0x00) | 0x00000000 (0, level) |
+| 2 | 0x00000002 | 0x00000000 | 0x00000000 | 0x00000000 | 0x40000000 | 0x00000000 (0x00) | 0x00000000 (0, level) |
+| 3 | 0x00000002 | 0x00000000 | 0x00000000 | 0x00000000 | 0x40000000 | 0x00000000 (0x00) | 0x00000000 (0, level) |
+
+- `GICD_CTLR` = 0x00000052: `DS` (bit 6) = 1, `ARE` (bit 4) = 1, `EnableGrp1` (bit 1) = 1, `EnableGrp0` (bit 0) = 0.
+- `GICR_CTLR` = 0x2 on every CPU: `RWP` (bit 3) = 0 and `EnableLPIs` (bit 0) = 0; bit 1 is `CES` (Clear Enable Supported) by IHI 0069 as remembered, not re-checked (T1 checks it if `shared::gic` names it).
+- `GICR_WAKER` = 0 on every CPU: `ProcessorSleep` = 0 and `ChildrenAsleep` = 0, so every redistributor is awake.
+- `ISENABLER0` bit 30 is already 1 on CPUs 1–3: the kernel's enable write lands, and only the group is wrong.
+- Against "Reported": all match. CPUs 1–3 `IGROUPR0` = 0 and CPU 0 = 0xffffffff; `DS` = 1; PPI 30 level on every CPU; `IGRPMODR0` = 0; CPUs 1–3 priority bytes 0 (QEMU reset). CPU 0's word 0x80808080 confirms the remembered edk2 default priority 0x80 (`ARM_GIC_DEFAULT_PRIORITY`) for INTIDs 28–31. No mismatch.
+- CI runs a newer edk2 (2025.11) than the local one (stable202408), so CI's CPU 0 byte is not read. Writing 0x80 on CPU 0 there changes nothing if that edk2 keeps the 0x80 default; if it does not, the readback still passes (it checks the byte as written) and only CPU 0's byte-identity in CI is unverified. Boot check 3 runs locally, where it is verified.
 
 **Plan review, round 1 (2026-10-10).** Four should-fix findings; each was checked against the code, the logs and the specs before the plan changed.
 
@@ -479,6 +499,8 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 - Owner, 2026-10-10 16:29: every recommendation in "Open questions" taken (Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A with B as fallback, Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A).
 - Merge (2026-10-11): the branch merged `main` f3b039b (#237 toolchain, #242 settings, #245 serde_json, #246 step 1a), a merge commit after the earlier d88002d. The new merge base f3b039b is arm A. Its `kernel/` and `shared/` sources are identical to 353f619's; only `rust-toolchain.toml` moved, to nightly-2026-10-10 (`rustc 1.101.0-nightly (32dba69d6 2026-10-09)` in this worktree). 353f619 pins nightly-2026-10-09, which 1a's preflight refuses next to this branch. T0 therefore reads the GIC state from a checkout of f3b039b instead of 353f619: GIC state is firmware state, and the kernel source is the same.
 - Merge, Q7 A (facts only, nothing decided): step 1b's pair, af59149 against e211d6d, pins nightly-2026-10-09 in both arms. Both contain 7167d40, so 1a's preflight accepts them as a pair on their own. Next to a current arm (f3b039b or this branch, nightly-2026-10-10) the channel check refuses them unless `--allow-mixed-toolchains`, which would make it a toolchain-change soak; that matters only for a three-arm run like Q7 C. 1a's lessons note §8 records the same check refusing af59149 against 1a's own branch.
+- T0, row 5: CPU 0's INTID-30 priority byte reads 0x80, which is non-zero, below `ICC_PMR_EL1` (0xFF) and has its low four bits 0. Row 5's rules hold, so Q13 B does not apply: **priority = 0x80 on every CPU**, CPU 0 included (a write of the value it already holds), and the priority flag is checked on every CPU. T1's `PpiConfig` tests and T2's setup use 0x80; CPU 0's registers stay byte-identical for boot check 3.
+- T0, monitor command: the plan's `nc -U -w 2` pipe works on macOS, but the monitor echoes typed characters with cursor escapes and ends lines in CR, so the T0 block now pipes the replies through `tr -d '\r'` and a `grep` that keeps the 29 `xp` value lines and the version line. Boot check 3 runs that block unchanged.
 
 (to be filled during implementation)
 
