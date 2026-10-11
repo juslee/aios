@@ -142,8 +142,8 @@ unsafe fn wake_redistributor(rd_base: usize) -> bool {
 
 /// Configure and check the timer PPI on the redistributor at `rd_base`:
 /// wake, disable and wait for `GICR_CTLR.RWP`, Group 1, priority, level
-/// check, enable, readback (plan rows 1-7; [`shared::gic`] holds the
-/// offsets and the rules).
+/// check, enable, readback (the sequence in hal.md §4.1; [`shared::gic`]
+/// holds the offsets and the rules).
 ///
 /// No formatting, UART access or reachable panic path, so CPUs 1-3 can run
 /// it before their kmap TTBR1 install. The dev-profile build keeps panic

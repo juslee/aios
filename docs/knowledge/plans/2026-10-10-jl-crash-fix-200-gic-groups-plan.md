@@ -525,6 +525,10 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 - `init_gicv3`'s SAFETY comment gave only the MMIO invariant, although the block now calls `wake_redistributor` and `init_cpu_interface`, whose contract needs IRQs masked. It now states that invariant, who keeps it and the consequence, as the `enable_irq` site does.
 - The CLAUDE.md fact (and hal.md item 3) said a Group 0 PPI is signalled as FIQ into the `b .` vectors. The kernel never enables Group 0 (no `GICD_CTLR.EnableGrp0`, no `ICC_IGRPEN0_EL1`), so such a PPI is never signalled: the CPU takes no tick and does not fault, as T3's fault injection showed. Both now say so.
 
+**Independent audit round 2 (2026-10-11).** One should-fix finding, a code comment; no behaviour change.
+
+- `setup_timer_ppi`'s doc comment in `gic.rs` cited "plan rows 1-7", the only pointer into this plan from code; the plan is deleted at T9, so the comment would dangle. It now cites the same sequence in hal.md §4.1, as the module doc does.
+
 ## Decisions Made
 
 - Owner, 2026-10-10 16:29: every recommendation in "Open questions" taken (Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A with B as fallback, Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A).
