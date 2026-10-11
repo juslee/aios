@@ -7,16 +7,12 @@
 //! resolves it from the process working directory, because the binary has no script
 //! directory. `just` runs recipes from the justfile's directory and the shim passes the
 //! caller's working directory through, so both tools check the same checkout in every
-//! supported invocation. The tests' check.py oracle (`run_check_py` in
-//! `tests/common/fixture.rs`) sets check.py's `__file__` to `<root>/check.py` for the
-//! same reason, so that check.py resolves each materialized repository as its root.
+//! supported invocation.
 //!
 //! One deliberate change since 33c6b3d: aios reads the project memory at
 //! `.claude/CLAUDE.md` (`repo::CLAUDE_MD`, #218), where check.py read the root
-//! `CLAUDE.md`. The oracle makes the same move: `CHECK_PY_MIGRATION` in
-//! `tests/common/fixture.rs` patches the materialized check.py's `CLAUDE.md` paths and
-//! its `BEFORE_CLAUDE_RE` (see the `pointer_doctor` module doc) exactly as #218 changed
-//! aios, and nothing else, so the differential still compares every check's logic.
+//! `CLAUDE.md`, and its `BEFORE_CLAUDE_RE` accepts that path (see the `pointer_doctor`
+//! module doc). Every check's logic is otherwise check.py's.
 //!
 //! Two more divergences need unusual directory names. check.py decodes
 //! `git rev-parse --show-toplevel` with `text=True` (L1578), whose universal-newline
@@ -37,8 +33,7 @@
 //! `git ls-files`, so links and paths that name those files can be reported as broken;
 //! it writes locale-encoded bytes (`§` as 0xA7); and it exits 2 with
 //! `UnicodeEncodeError` on an output character the locale cannot encode. The goldens
-//! and the differential test run check.py in UTF-8 mode (`-X utf8`, `ORACLE_FLAGS` in
-//! `tests/common/fixture.rs`).
+//! were recorded with check.py in UTF-8 mode (`-X utf8`).
 //!
 //! CLI parsing divergences (argparse vs clap; verified against check.py at 33c6b3d): a
 //! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),

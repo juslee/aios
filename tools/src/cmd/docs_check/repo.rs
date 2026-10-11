@@ -48,8 +48,7 @@ use crate::{paths, proc, pyre, pystr};
 
 /// Claude Code's project memory, which the CLAUDE.md checks read and report
 /// against. Claude Code loads `./.claude/CLAUDE.md` exactly like `./CLAUDE.md`;
-/// check.py read the root file, which moved here (the tests' check.py oracle is
-/// patched to read it here too: `CHECK_PY_MIGRATION` in `tests/common/fixture.rs`).
+/// check.py read the root file, which moved here (#218).
 pub const CLAUDE_MD: &str = ".claude/CLAUDE.md";
 
 /// Docs that describe the current state of the repository (check.py L52-58,
