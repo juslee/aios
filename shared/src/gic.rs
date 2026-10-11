@@ -26,7 +26,7 @@
 //! - §12.11.2 `GICR_CTLR` (RD_base + 0x0000): `RWP` is bit 3 and tracks writes
 //!   to `GICR_ICENABLER0`.
 //! - §12.11.42 `GICR_WAKER` (RD_base + 0x0014): bit 31 and bit 0 are
-//!   IMPLEMENTATION DEFINED, bits [30:3] RES0, `ChildrenAsleep` bit 2,
+//!   IMPLEMENTATION DEFINED, bits \[30:3\] RES0, `ChildrenAsleep` bit 2,
 //!   `ProcessorSleep` bit 1. "Changing ProcessorSleep from 1 to 0 when
 //!   ChildrenAsleep is not 1 results in UNPREDICTABLE behavior", which is why
 //!   [`waker_step`] waits in that state instead of clearing the bit. Under
@@ -45,8 +45,8 @@
 //!   so INTID i's byte is at SGI_base + 0x0400 + i). Under `DS` = 0 a field of
 //!   a Group 0 or Secure Group 1 interrupt is RAZ/WI to Non-secure accesses.
 //! - §4.8 and Table 4-9: a GIC with one Security state implements at least 4
-//!   priority bits ([7:4]); §4.8.7: one with two Security states implements at
-//!   least 5 ([7:3]), and a Non-secure access to a Non-secure Group 1
+//!   priority bits (\[7:4\]); §4.8.7: one with two Security states implements at
+//!   least 5 (\[7:3\]), and a Non-secure access to a Non-secure Group 1
 //!   interrupt's priority stores `(v >> 1) | 0x80` and reads back the stored
 //!   value shifted left by one. Unimplemented low-order bits are RAZ/WI. A
 //!   priority whose low four bits are 0 therefore reads back exactly as
@@ -66,7 +66,7 @@
 //! - §12.9.4 `GICD_CTLR`: bit 6 is `DS` in the view of a GIC with one Security
 //!   state or with `DS` = 1 (RAO/WI with one Security state; once set, only a
 //!   reset clears it). In the Non-secure view of a GIC with `DS` = 0, bits
-//!   [30:5] are RES0. See [`security_disabled`] for what that means for the
+//!   \[30:5\] are RES0. See [`security_disabled`] for what that means for the
 //!   read.
 
 /// Offset of a redistributor's SGI_base frame from its RD_base (IHI 0069H.b

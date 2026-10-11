@@ -469,6 +469,8 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 - Against "Reported": all match. CPUs 1–3 `IGROUPR0` = 0 and CPU 0 = 0xffffffff; `DS` = 1; PPI 30 level on every CPU; `IGRPMODR0` = 0; CPUs 1–3 priority bytes 0 (QEMU reset). CPU 0's word 0x80808080 confirms the remembered edk2 default priority 0x80 (`ARM_GIC_DEFAULT_PRIORITY`) for INTIDs 28–31. No mismatch.
 - CI runs a newer edk2 (2025.11) than the local one (stable202408), so CI's CPU 0 byte is not read. Writing 0x80 on CPU 0 there changes nothing if that edk2 keeps the 0x80 default; if it does not, the readback still passes (it checks the byte as written) and only CPU 0's byte-identity in CI is unverified. Boot check 3 runs locally, where it is verified.
 
+- T1 review, round 1 (2026-10-11): `shared/src/gic.rs`'s module doc wrote bit ranges as `[30:3]`, `[7:4]`, `[7:3]` and `[30:5]`, which rustdoc reads as intra-doc links: `cargo doc -p shared --no-deps` gave 4 unresolved-link warnings (0 on `main`). Fixed by escaping the brackets; the command now prints none. No gate runs `cargo doc`, so `just check` did not catch it.
+
 **Plan review, round 1 (2026-10-10).** Four should-fix findings; each was checked against the code, the logs and the specs before the plan changed.
 
 1. *`DS` = 0 makes the group readback a false failure, and CI is not a `DS` = 0 platform.* Confirmed: every QEMU command line in the repo omits `secure=on` (Facts checked), and QEMU's `DS` follows `secure=`, not the firmware. Fixed as proposed: CPU 0 reads `GICD_CTLR.DS` and stores it before `CPU_ON`; under `DS` = 0 the group flag is `Unchecked`; the risk, Reporting, Q5 and the host test changed with it. Two departures from the proposed fix:
