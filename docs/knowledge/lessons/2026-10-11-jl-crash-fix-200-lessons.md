@@ -38,7 +38,7 @@ Two spec claims the plan had written from memory were wrong. The primary text (I
 
 **What happened.** The kernel enables Group 1 only (`ICC_IGRPEN1_EL1`, `GICD_CTLR.EnableGrp1`). The step's first `.claude/CLAUDE.md` fact and hal.md said a Group 0 PPI would be signalled as FIQ into the `b .` vectors. The first independent audit round corrected that: with Group 0 disabled, the PPI is never signalled at all. T3's fault injection showed it. A local build that skipped the `IGROUPR0` write on CPU 2 booted CLEAN. CPU 2's `[smp]` line read `ppi_grp1=0 ppi_ok=0`, and `tick[2]` stayed 0 in all 45 heartbeat lines while the other three CPUs ticked.
 
-**Why it matters.** The fault leaves no class change, no exception and no hang, so a soak classifier cannot see it. #200 went unnoticed until step 1b added a per-CPU `tick` counter. A thread that was moved to a non-ticking CPU behind a thread that never yields simply never ran: #240's echo IPC pair, cap-denied, test thread A and the service echo pair printed nothing in the 32 pre-step boots the plan read (B1's 30 plus 2 from `pr239-20261010-115625-text`).
+**Why it matters.** The fault leaves no class change, no exception and no hang, so a soak classifier cannot see it. #200 went unnoticed until step 1b added a per-CPU `tick` counter. A thread that was moved to a non-ticking CPU behind a thread that never yields simply never ran: #240's echo IPC pair, cap-denied, test thread A and the service echo pair printed none of their self-test lines in the 32 pre-step boots read before the pair (B1's 30 plus 2 from `pr239-20261010-115625-text`).
 
 **How to apply.**
 
@@ -77,16 +77,16 @@ Per CPU, the list is `GICR_CTLR`, `GICR_WAKER`, `IGROUPR0`, `IGRPMODR0`, `ISENAB
 
 - The development boots ran at load1 8 to 23.5 on 10 CPUs.
 - In the step's own pair, the gpu arms averaged load1 23.8 and 26.4 (maximum about 59), and the text arms 14.5 and 14.6.
-- Step 1b's gpu pair ran first (Q7 A), and both of its runs broke the 25% "redo the pair" rule: their arm load means were 36% apart, then 26% apart. The redo, run with the host unchanged, broke the rule again. The runs read 1/10 against 0/10 and 1/10 against 2/10 CLEAN, 2/20 against 2/20 pooled. The owner accepted them as they were, with no third run, and closed the quiet-host window.
+- Step 1b's gpu pair ran first (Q7 A) and had two runs, the first and a redo, and both broke the 25% "redo the pair" rule. The first run's arm load1 means were 20.6 and 15.2 (36% apart). The redo ran at lower load but with the gap reversed: 11.1 and 14.0 (26% apart). The runs read 1/10 against 0/10 and 1/10 against 2/10 CLEAN, 2/20 against 2/20 pooled. The owner accepted them as they were, with no third run, and closed the quiet-host window.
 - Part of the load on this Mac came from the OS rather than from other sessions. Until 2026-10-10 the checkout lived in the iCloud-synced `~/Documents`, where `fileproviderd` and Spotlight indexing loaded the host during soaks ([1a lessons §8](2026-10-10-jl-crash-fix-1a-lessons.md) saw the same) and iCloud left " 2" duplicate files inside `.git`. The repository now lives at `/Users/juslee/dev/aios`, outside iCloud.
 
-**Why it matters.** Load inflates hangs and timings, so a pair whose arms ran under different load compares the host rather than the kernels. A redo under the same conditions only repeats the imbalance and spends another host-exclusive hour.
+**Why it matters.** Load inflates hangs and timings, so a pair whose arms ran under different load compares the host rather than the kernels. A redo that does not change the load source can again leave the arms unbalanced, as here, and spends another host-exclusive hour.
 
 **How to apply.**
 
 - Before a host-exclusive soak, read load1 and the top processes (other sessions' `cargo` and QEMU, `fileproviderd`, `mds_stores`), and coordinate with every other session ([1b lessons §5](2026-10-10-jl-crash-fix-1b-lessons.md)).
 - Keep the checkout and its `target/` out of iCloud-synced folders.
-- When the redo rule fires, find and remove the load source before re-running. If another run cannot change the decision (here, equal pooled CLEAN counts, 2/20 against 2/20), ask the owner to accept the run as it is, and record the ruling with the load figures.
+- When the redo rule fires, find and remove the load source before re-running: a redo that does not change it can again leave the arms unbalanced. If another run cannot change the decision (here, equal pooled CLEAN counts, 2/20 against 2/20), ask the owner to accept the run as it is, and record the ruling with the load figures.
 
 ## 5. A fix that exposes known defects needs attribution rules registered in advance, and still needs owner rulings
 
@@ -99,7 +99,7 @@ Per CPU, the list is `GICR_CTLR`, `GICR_WAKER`, `IGROUPR0`, `IGRPMODR0`, `ISENAB
 
 The pre-registered verdict was "not passed", and T8 stopped. The owner ruled the PANIC pre-existing exposure, the run-08 boot H1 only, and the `holder=` check met but not exercised.
 
-**Why it matters.** Without signatures registered in advance, every exposed defect would have been argued after the fact. Even with them, three outcomes fell outside rules written before the data existed. The regression guard alone could not decide the step: at 20 text boots per arm its power was 0.35, and the gpu guard could not fail at all.
+**Why it matters.** Without signatures registered in advance, every exposed defect would have been argued after the fact. Even with them, three outcomes fell outside rules written before the data existed. The regression guard alone could not decide the step: at 20 text boots per arm its power was 0.35, and at B1's gpu baseline (1 of 10 CLEAN) the gpu guard could not fail.
 
 **How to apply.**
 

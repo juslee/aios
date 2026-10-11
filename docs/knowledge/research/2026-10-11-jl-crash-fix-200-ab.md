@@ -9,7 +9,7 @@ status: final
 
 Task T8 of crash-fix step 200 (#200): the interleaved A/B pair of `main` against the step's branch, read against the gates pre-registered on 2026-10-11 (owner answers Q1 A, Q2 A, Q12 A, Q14 A) and the step's prediction table. The step makes every CPU put its timer PPI in Group 1, so CPUs 1–3 take timer IRQs for the first time. See the [crash-fix ADR](../decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) for the hypotheses (H1, H3, N2, N4, N5), [observability.md §6.5](../../kernel/observability.md) for every key, and [B1's note](2026-10-10-jl-crash-fix-1b-n2-baseline.md) for the pre-step signatures. The gates and the prediction table were pre-registered in the step's working plan, which has since been distilled into the ADR's "Step 200" entry and the [step-200 lessons note](../lessons/2026-10-11-jl-crash-fix-200-lessons.md). This note restates the parts it applies.
 
-**Verdict: the step passes, after the owner ruled on the boots item 5 sent to them.** Items 1–4 pass or are reported as the plan says. Item 5 left 2 arm-B boots unattributed (gpu runs 04 and 09, the bad-free PANIC), and the pre-registered rule (ADR "Step 200", Q2 A) sent them to the owner: an unattributed signature in arm B fails the step whatever the guard says, and goes to the owner. The same PANIC occurs in arm A at the same rate (gpu runs 04 and 06, 2 of 10 in each arm). On 2026-10-11 the owner ruled it pre-existing exposure ("Owner rulings", at the end).
+**Verdict: the step passes, after the owner ruled on the boots item 5 sent to them.** Items 1–4 pass or are reported as the ADR's Step 200 entry and the gate list below say. Item 5 left 2 arm-B boots unattributed (gpu runs 04 and 09, the bad-free PANIC), and the pre-registered rule (ADR "Step 200", Q2 A) sent them to the owner: an unattributed signature in arm B fails the step whatever the guard says, and goes to the owner. The same PANIC occurs in arm A at the same rate (gpu runs 04 and 06, 2 of 10 in each arm). On 2026-10-11 the owner ruled it pre-existing exposure ("Owner rulings", at the end).
 
 ## Conditions
 
@@ -33,7 +33,7 @@ Task T8 of crash-fix step 200 (#200): the interleaved A/B pair of `main` against
 - **Gate 1 IPC** (recorded, not gated): text A 7.93 us over 15 CLEAN boots, G1PASS 13 of 20; text B 9.15 us over 13, G1PASS 9 of 20. gpu A 11.00 us (1 boot), gpu B no CLEAN boot; G1PASS 0 of 10 in both.
 - The full per-arm tripwire table is each `summary.md`'s "Tripwire per arm"; the rows the prediction table names are below.
 
-## Mechanical fix check ("What gates" item 1)
+## Mechanical fix check (gate 1 of "Gate decisions" below)
 
 Rule: in arm B, every boot whose last complete tripwire line has `tick[0]` > 0 also has `tick[1..3]` > 0 in that line; in arm A, every boot with a complete line has `tick[1..3]` = 0.
 
@@ -69,7 +69,7 @@ Means are over each arm's boots unless marked CLEAN. "n/s" is boots with a non-z
 | `scanstall` | can be > 0 | B 2/33: run-01 27 (CPU 1 halted), run-10 6 (CPU 2 halted); 0 in CLEAN boots | yes |
 | `irqsw[0]` per tick | may fall | rose: A 50420/765856 = 0.0658, B 65940/743785 = 0.0887 (CLEAN 0.0699 → 0.0886) | no |
 | PCZERO, EXCEPTION | may rise, first reports on CPUs 1–3 | A 0 + 1, B 5 + 2 (PCZERO `new`, p = 0.0236); first reports CPU 1 ×1, CPU 2 ×3, CPU 0 ×3; all H1 | yes |
-| N5 | possible | 0 in both arms and modes: every CPU 0 EXCEPTION has ELR 0 or a kernel VA and FAR 0 or a small value | not seen |
+| N5 | possible | 0 in both arms and modes: every CPU 0 EXCEPTION has ELR 0 or a kernel VA, and no ELR or FAR lies in [0x4000_0000, 0x8000_0000) (arm A gpu run-01's FAR 0xffe0e0e0 is above the range) | not seen |
 | PANIC-LOCK on CPUs 1–3 | possible | text 0; gpu 1 (B run-07, CPU 2, `irq-exit`) | yes, once |
 | WEDGE-STUCK, WEDGE-ALIVE | either way | A 0 + 1 (run-04, N2), B 0 + 0 | down |
 | gpu classes | about the same | A 1 CLEAN, 7 EXCEPTION, 2 PANIC; B 0 CLEAN, 7 EXCEPTION, 2 PANIC, 1 PANIC-LOCK | yes |
@@ -101,11 +101,11 @@ Boots with at least one match (total lines in brackets). `Server: started` is co
 | `Echo client: EPIPE after service death` | 0 | 18 (18) | 0 | 0 |
 | `Timeout test: unexpected result -6` | 20 | 20 | 10 | 9 |
 
-- **Why they run (Q10).** The self-tests run in arm B because CPUs 1–2 now take a timer tick, not because of a second change: the branch's kernel changes are the per-CPU PPI setup and its report (`gic.rs`, `smp.rs`, `shared/src/gic.rs`; plan T1–T4), and no self-test, IPC or scheduler code changed. On `main` the balancer moves ipc-server (tid 8), thread A (tid 4) and cap-denied (tid 13) onto CPUs 1–2, where they starve behind test threads B and C, which never yield; arm A prints none of the lines above in any of its 30 boots, as in the 32 pre-step boots the plan read (B1's 30 and the 2 of `pr239-20261010-115625-text`).
+- **Why they run (Q10).** The self-tests run in arm B because CPUs 1–2 now take a timer tick, not because of a second change: the branch's kernel changes are the per-CPU PPI setup and its report (`gic.rs`, `smp.rs`, `shared/src/gic.rs`), and no self-test, IPC or scheduler code changed. On `main` the balancer moves ipc-server (tid 8), thread A (tid 4) and cap-denied (tid 13) onto CPUs 1–2, where they starve behind test threads B and C, which never yield; arm A prints none of the self-test lines above (every row except the `Timeout test` control) in any of its 30 boots, as in the 32 pre-step boots read before the pair (B1's 30 and the 2 of `pr239-20261010-115625-text`).
 - **gpu mode** says nothing about the self-tests: a first fatal report at t = 2–19 ends every arm-B gpu boot before they run; only run-09 printed thread A.
 - **Non-fatal anomalies** (Q14 A: reported in these counts only, no class change): text B run-05 (CLEAN) logs `Echo client: ipc_call failed with -1` at 13.68 s, then completes its `process_exit` checks; run-17 prints thread A's iterations 0–2 only (lines 222–233; tid 4 is migrated CPU 1 → CPU 0 at line 234 and CPU 0 → CPU 3 at line 302, and prints nothing more); run-19 prints `Caller: got … iter=0` (line 221) and no later iteration or failure, and the echo client prints `error -12 after service death (expected EPIPE)` (line 240). None of these is a first fatal report.
 
-## Attribution of every non-CLEAN arm-B boot ("What gates" item 5)
+## Attribution of every non-CLEAN arm-B boot (gate 5 of "Gate decisions" below)
 
 Signatures as pre-registered: **H1** PCZERO, or an EXCEPTION at a corrupt PC or register, with `elrmm` incrementing on the faulting CPU; **H3** PANIC-LOCK, `lock re-entry:` with `ctx=irq` or `irq-exit`; **N2** a WEDGE with `n2[rblk]`, `ubrbl[reply]` and `nowaker`; **N4** `n4`; **N5** an EXCEPTION on CPU 0 with EC 0x21 or 0x25 and ELR or FAR in [0x4000_0000, 0x8000_0000); **newly live self-test** the first fatal report lies in thread A, the echo IPC pair, cap-denied, the service echo pair or `process_exit`; **unattributed** anything else. The `elrmm` "before" value is the last `src=hb` line before the fault (an absent key is 0), the "after" value the faulting CPU's `src=exc` or `src=panic` line. Thread ids are slot numbers: 0–3 idle, 4–7 test threads A–D, 8/9 ipc-server/caller, 10 ipc-timeout, 13 cap-denied, 14/15 the service echo pair, 16 and above threads created later (in text mode the Interactive bench threads). No boot carries N2, N4 or N5's signature (`n2`, `ubrbl`, `nowaker`, `n4`, `nest` 0 in every line below; no ELR or FAR in the N5 range).
 
