@@ -70,3 +70,13 @@ Never fix pre-existing findings on this branch. For each confirmed one:
 
 1. Search for an existing issue: `gh issue list --search "<file> <summary>"`.
 2. If none exists, file one issue per defect, labelled `agent`, citing the branch, the round and the skeptic's evidence.
+
+## Why one round per run
+
+The committed `audit-loop.js` replaced `branch-audit-loop.v2.js`, an uncommitted engine. In one Workflow run, v2 ran up to 8 rounds, each with finders, three skeptics per finding and an in-run fixer, and stopped only after two clean rounds. On 2026-09-29 one v2 run spawned 753 agents.
+
+Keep the split:
+
+- `audit-loop.js` runs one round: lenses, then skeptics (three per must-fix finding, one otherwise), at most six agents at a time. It returns before any fix, so this skill sees each round's result before it starts the next round.
+- This skill owns everything across rounds: the ledger, the fixes, the round file and the stop rule.
+- Never add a round loop, a fix step or a run-until-clean loop to the workflow. Its per-agent retry (up to three tries for an agent that returns nothing) is not a round loop. Run only an audit workflow that is committed and reviewed like any other harness file.

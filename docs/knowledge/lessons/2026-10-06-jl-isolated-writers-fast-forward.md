@@ -9,7 +9,7 @@ status: final
 
 ## What happened
 
-The two-team harness plan (`docs/knowledge/plans/2026-10-06-jl-two-team-harness.md`, decision D3) first placed writers like this: spawn the writer with `isolation: "worktree"`, and have it call `EnterWorktree({path: <W>})` to pin itself to the branch worktree `W`. Before any task relied on that, T2 checked it headless with `claude -p` in a scratch repository, on 2026-10-09 with Claude Code 2.1.292.
+The two-team harness (PR #234; its writer-placement decision, called D3 below) first placed writers like this: spawn the writer with `isolation: "worktree"`, and have it call `EnterWorktree({path: <W>})` to pin itself to the branch worktree `W`. Before any task relied on that, T2 checked it headless with `claude -p` in a scratch repository, on 2026-10-09 with Claude Code 2.1.292.
 
 - **H3 failed.** An isolated subagent's `EnterWorktree` into the branch worktree was refused: "would not give this agent write access there ... its writes are limited to that folder". The isolated agent can write only its own temporary worktree, `.claude/worktrees/agent-<id>` on branch `worktree-agent-<id>`.
 - **Run A2a.** A non-isolated subagent's `EnterWorktree` was refused too: "only available to sessions whose working directory is inside a worktree". The probe agent then went on and committed on `main` in the repository root. That is the unsafe default when an agent runs without isolation.
@@ -114,3 +114,10 @@ A Workflow `agent()` with `isolation: "worktree"` does not get the `agent-<id>` 
 - an agent's `cwd` persists across Bash calls (after `cd X`, the next payload's `cwd` is X).
 
 Before T7b, guard rule 4 knew only `agent-<id>`, so every isolated workflow agent was denied its first `git reset --hard`. Rule 4 now accepts both shapes (strict names, git's admin directory carrying the same name) and owns a worktree by payload `cwd`. The owner dropped a state-file binding store after two attack rounds, since a file agents can reach cannot be defended by command-text analysis; the guard stops accidents by cooperative agents, and the lead's range check before every fast-forward is the backstop. The target-resolution gaps that remain (a stopped rebase in the own worktree, `mkdir d && cd d && git commit`) are tracked in #241.
+
+### An editor holding a temporary worktree open (T4)
+
+On 2026-10-10, step 7's `git worktree remove .claude/worktrees/agent-<id>` failed with "Directory not empty". VS Code's rust-analyzer had opened the temporary worktree as a cargo workspace and was writing `target/flycheck0` into it while git deleted the tree. Git unregisters a worktree even when deleting its directory fails, so the directory stayed on disk but left `git worktree list`, and a second `git worktree remove` can no longer name it. The writer's commits were already in `W`, so the lead deleted the directory.
+
+- **Keep the editor out.** Add `.claude/worktrees` to `rust-analyzer.files.exclude` in the owner's VS Code settings (the repository tracks no `.vscode/`).
+- **Recover an orphan.** Close the folder in the editor first. Then check that its commits reached `W`: `git -C <W> merge-base --is-ancestor worktree-agent-<id> HEAD` must exit 0. Only then delete the directory and run `git -C <W> branch -d worktree-agent-<id>`. If the check fails, keep the directory and the branch: they hold commits `W` lacks.

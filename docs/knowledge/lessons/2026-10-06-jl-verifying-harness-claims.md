@@ -36,6 +36,11 @@ The facts live outside the repository: in the Claude Code config directory, in t
 
 - Plain `rg` skips hidden directories, so a stale-reference sweep misses `.claude/` and `.github/` unless it runs with `--hidden` (and excludes `.claude/worktrees/**` and `.git/**`).
 - Commit-pinned citations in ADRs (`docs/knowledge/decisions/`) and checked-off tasks in completed phase docs are history, not stale paths; only forward-looking rows ("Docs to update" tables for unimplemented steps) are worth flagging. The crash-fix ADR pins every `path:line` at e98e1ad and the capability-lifetime ADR at 746fe1f. A row that names `.claude/CLAUDE.md` but keeps old line numbers needs an `at <commit>` qualifier.
+- Line numbers in drafted patch notes go stale once `main` moves or an earlier task on the same branch edits the file. In the two-team harness PR (#234), the notes for `brief.sh`, for `/merge-and-cleanup` (written against f12dbc7) and for the closing doc sweep all had wrong line numbers. Their text anchors still matched, so every edit was placed by text. Apply a drafted edit where its quoted text is, and treat its line number only as a hint. If the quoted text no longer matches, stop and re-draft that edit. Do not fall back to the line number.
+
+**Session identity.**
+
+- Do not key harness state (the handoff file, the QEMU lock's `--team`, the guard's decisions) on a session's display name. On 2026-10-06 a relaunch did not keep the leads' names (they came back as aios-83 and aios-39), and `claude -n <name>` did not set `CLAUDE_CODE_SESSION_NAME`, so neither the guard nor a skill could read the name. The harness keys on a launch-line variable instead (`AIOS_TEAM`, `AIOS_SESSION`); the reasons are in [the two-team harness ADR](../decisions/2026-10-10-jl-two-team-harness.md). Before keying anything on a display name in a later Claude Code version, check the installed binary as described under *Settings schema questions* above.
 
 ## How to avoid next time
 

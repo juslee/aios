@@ -39,3 +39,10 @@
 - Host tools (`tools/`, package `aios-tools`, binary `aios`) are a std crate built for the host: the `no_std`/`no_main` rules and the `no_std` dependency rule do not apply there. Its dependencies are the approved set clap, anyhow, serde, serde_json, regex and signal-hook (R4) (`time` is added by the first PR that uses it), and it forbids `unsafe`.
 - License: MIT or Apache-2.0 preferred (BSD-2-Clause compatible). **No GPL in kernel/ or shared/**
 - `Cargo.lock`: committed (binary crate, reproducible builds)
+
+## No Legacy
+
+- Never keep legacy (owner rule, 2026-10-05). This applies to code, config, docs and harness files. Carry over only what is current and in use: before you copy or keep something, check that something current still references it.
+- Nothing retired keeps a stub, a disabled flag, a shim or compatibility alias, a dead reference (obsolete settings or model keys, retired plugins, skills or hooks) or a compatibility note. Do not keep a stopgap duplicate "until X merges".
+- When a change supersedes something, delete the old thing in the same change, not in a later cleanup.
+- Do not carry over old-session leftovers (transcripts, checkpoints, prompt history) just because they exist.

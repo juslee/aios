@@ -1,6 +1,6 @@
 # Teams and Agents
 
-Hard rules for agent work. They apply in every session: team mode (two attended leads) and solo mode. The protocol, launch lines and message vocabulary are in `docs/project/agent-loop.md`, section "Teams". Model routing and its hooks are in `docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`.
+Hard rules for agent work. They apply in every session: team mode (two attended leads) and solo mode. The protocol, launch lines and message vocabulary are in `docs/project/agent-loop.md`, section "Teams". Model routing and its hooks are in `docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`, and the reasons behind session identity, the retired agent memory and the QEMU wrapper's guard in `docs/knowledge/decisions/2026-10-10-jl-two-team-harness.md`.
 
 ## Sessions
 
@@ -61,7 +61,7 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
   - Must-fix findings go to a fresh kernel-dev spawn whose first command is `git reset --hard <head of the reviewed range>`, so the fix commit (`<message> (Fable review fixes)`) lands on top of the reviewed commits. The next round reviews `<tip>..<new head>` and checks that each earlier finding is fixed or answered.
   - At most three review rounds per range. After the third, the lead decides each open finding, or asks the owner, and records the ruling in the plan.
   - Only an approved range (no open must-fix finding, or a recorded ruling) is fast-forwarded. The superseded temporary worktrees are removed after the fast-forward; their branches are ancestors of the merged head, so `branch -d` deletes them.
-  - worker and doc-writer ranges get no Fable review (owner decision O4).
+  - worker and doc-writer ranges get no Fable review (owner decision, 2026-10-06).
 - **Simplify.** Once per PR, after the last task and before `/audit-loop`, the lead spawns simplifier over the PR's whole diff (merge-base with `origin/main` to head) and runs Placement on its range. simplifier keeps behaviour, never boots QEMU, and reports `KERNEL-BYTES: yes` when `kernel/`, `shared/` or `uefi-stub/` changed: the lead then has the verifier run a gate boot on the range before the fast-forward. Its range gets no Fable review (the audit follows).
 - **Audit.** `/audit-loop` runs before `gh pr ready`, on the simplified head. At most one audit per team runs at a time, and no new round starts during the other team's quiet window.
 
@@ -72,7 +72,7 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
   - The main thread of the owner's or a solo session may call the wrapper itself, with `--team solo`.
   - Guard rule 1 denies any other QEMU-starting command, and every one while the lock directory exists. `run` refuses with exit 76 when a QEMU is already running without the lock, and defers with exit 77 when the host load is above the mode's limit.
   - The guard analyses the command after `run`'s `--` like a command typed on its own, so rules 1-4 and the push and merge rules apply to it; only the QEMU start it wraps is the wrapper's job.
-  - The settings allow only the wrapper's `status` and `clear-stale`. A `run` call goes through the permission prompt: the owner answers it in an attended session, and a background or `-p` run is refused it, which the caller reports instead of retrying.
+  - The settings allow only the wrapper's `status` and `clear-stale`. A `run` call goes through the permission prompt: the owner answers it in an attended session, and an agent or session running in the background or with `-p` is refused it, which the caller reports instead of retrying. A lead therefore spawns a verifier that boots with `run_in_background: false`.
   - One wrapper run covers a whole A/B or quiet window, so no other boot fits between its arms.
 - **Quiet mode** (rate soaks, the B1 baseline, A/B runs) follows the quiet-window protocol in agent-loop.md: `QUIET-REQ`, the peer's `QUIET-ACK`, the owner pausing other host load, then the lease, then `QUIET-END`. While it is held, the other team starts no builds, audit rounds or boots. Long windows need the owner's sign-off first.
 - **Stale locks.** `qemu-lock.sh clear-stale` removes a lock only when its wrapper is gone and no QEMU runs; any lead may run it. A live holder past its eta gets a `LOCK-STALE` message to its lead; only that lead or the owner decides.
@@ -83,6 +83,12 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
 - `RUSTUP_AUTO_INSTALL=0` is set for every Claude Code session (`.claude/settings.json`), so a missing pinned toolchain fails instead of installing itself under another session's build.
 - No agent installs, updates or removes a toolchain or component; guard rule 2 denies it. An agent that finds the pinned toolchain missing or half-installed stops and reports to its lead.
 - `rust-toolchain.toml`, `Cargo.lock` and QEMU change only through Renovate PRs, merged outside A/B windows. After such a merge, the session that ran `/merge-and-cleanup` installs the pinned toolchain once in the main checkout, then sends `MAIN-MOVED` with `toolchain=<channel> installed`.
+
+## Config
+
+- **No agent edits a user config directory.** That covers `~/.claude`, the directory `$CLAUDE_CONFIG_DIR` names (this repo's untracked `.envrc` sets it for sessions started here), and any other. Other config directories on the same Mac are live configs for other accounts. An edit there changes every session under that directory and sits on no branch, so no PR or audit reviews it. No hook blocks it, so this rule does.
+- **A user-settings change is an owner step.** Write the exact change (file, key, value and reason) into the plan, the PR description or the handoff file, and the owner applies it. When a project file will do, use it instead: `.claude/settings.json` with the owner's approval of that exact change (Spawning agents), or `.claude/settings.local.json` for allow-listing (Ownership).
+- **The same applies to settings and hook changes that the classifier refuses.** In auto mode, the classifier refuses three things as self-modification: an agent's Write of `.claude/settings.json`, a `git rm` of hook files, and the commit that carries them (#244). Plan these as owner-run steps, and never route around the refusal.
 
 ## Guard
 

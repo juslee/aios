@@ -9,7 +9,7 @@ status: final
 
 ## What happened
 
-The model-routing ADR (`docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`) requires a real-run check of each Claude Code mechanism before the harness relies on it. T2 of the two-team harness plan ran those checks headless with `claude -p` in a scratch repository, on 2026-10-09 with Claude Code 2.1.292. The results for the routing wiring:
+The model-routing ADR (`docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md`) requires a real-run check of each Claude Code mechanism before the harness relies on it. T2 of the two-team harness PR (#234) ran those checks headless with `claude -p` in a scratch repository, on 2026-10-09 with Claude Code 2.1.292. The results for the routing wiring:
 
 | # | Check | Result |
 | --- | --- | --- |
@@ -35,11 +35,11 @@ Probe 2's hooks returned ok true, so it showed only that the full id runs, not t
 
 ## What we learned
 
-- **No Fable gate can be a `SubagentStop` hook** on 2.1.292, and none is built on a frontmatter `Stop` hook either: it maps to the same event and is expected to fail the same way (not probed; frontmatter hooks do not run in `-p`). The kernel-dev step review is lead-run instead: before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only on the range, and must-fix findings go to a fresh kernel-dev (plan D8, owner 2026-10-09 22:04).
+- **No Fable gate can be a `SubagentStop` hook** on 2.1.292, and none is built on a frontmatter `Stop` hook either: it maps to the same event and is expected to fail the same way (not probed; frontmatter hooks do not run in `-p`). The kernel-dev step review is lead-run instead: before fast-forwarding a kernel-dev range, the lead spawns code-reviewer (Fable) read-only on the range, and must-fix findings go to a fresh kernel-dev (owner decision, 2026-10-09 22:04; rule 11, Reviews).
 - **Every `type: agent` hook names the full model id `claude-fable-5-1`**, never the alias. Agent frontmatter keeps `model: fable`, and T16 E8 checks that it runs on Fable.
-- **A `PreToolUse` agent hook on `claude-fable-5-1` that returns ok false denies the tool call** (probe 3, shown for Bash), so the ExitPlanMode plan gate (D9) stays a hook. ExitPlanMode itself is still unchecked: `-p` never reaches it, so OWNER-PROBES OP2 checks the gate.
+- **A `PreToolUse` agent hook on `claude-fable-5-1` that returns ok false denies the tool call** (probe 3, shown for Bash), so the ExitPlanMode plan gate stays a hook. ExitPlanMode itself is still unchecked: `-p` never reaches it, so OWNER-PROBES OP2 checks the gate.
 - **`SubagentStop` and the `route-outcome` join work for background agents too,** so `route-outcome` needs no change (H4, H5).
-- **The scratch project's `effortLevel: "high"` (the aios settings gain it in T8) reaches the lead and frontmatter `effort` reaches each agent,** once `CLAUDE_CODE_EFFORT_LEVEL` is gone (H6).
+- **The scratch project's `effortLevel: "high"` (the aios `.claude/settings.json` has it too) reaches the lead and frontmatter `effort` reaches each agent,** once `CLAUDE_CODE_EFFORT_LEVEL` is gone (H6).
 
 ## How to avoid next time
 
@@ -102,7 +102,7 @@ Probe 2's hooks returned ok true, so it showed only that the full id runs, not t
   | H5 | `jq -r 'select(.kind=="launched") \| [.subagent_type, .status, .agent_id] \| @tsv' "$S/hookstate/route-outcome.jsonl"`; `jq -r 'select(.kind=="stopped") \| [.agent_type, .agent_id] \| @tsv' "$S/hookstate/route-outcome.jsonl"`; `grep -c '"kind":"launched"' "$S/hookstate/route-outcome.jsonl"` | both agents' `agent_id` values identical in `launched` and `stopped`, for `completed` and `async_launched`; the count is 2 (compact JSON, which `brief.sh`'s count relies on) | file an issue against `route-outcome` |
   | H6 | `jq -r 'select(.hook_event_name=="PreToolUse") \| [(.agent_type // "main"), (.effort.level // "absent")] \| @tsv' "$L" \| sort -u` | `main high`, `probe-writer low`, `probe-kdev medium` | `main xhigh`: the owner's user-level `effortLevel` applied, so remove it; `absent` everywhere: record it |
   | H7 | `grep -c 'not_found_error.*model: fable' "$S7/h7.debug"`; `grep -c 'dispatching to firstParty model=claude-fable-5-1' "$S7/h7.debug"`; `grep -c 'Agent hook condition was met' "$S7/h7.debug"` | 1 or more each | the alias starting to work changes nothing (the full id still works); a 404 on the full id means finding the current Fable id and changing every agent hook |
-  | P3 | `grep -c 'Hook denied tool use' "$S3/d.log"`; `grep -c 'dispatching to firstParty model=claude-fable-5-1' "$S3/d.log"`; `test -e "$S3/r/ran.txt" && echo ran \|\| echo not-run` | 1 or more each; `not-run` | the plan gate (D9) cannot block: it is a design change for the owner before T8 relies on it |
+  | P3 | `grep -c 'Hook denied tool use' "$S3/d.log"`; `grep -c 'dispatching to firstParty model=claude-fable-5-1' "$S3/d.log"`; `test -e "$S3/r/ran.txt" && echo ran \|\| echo not-run` | 1 or more each; `not-run` | the plan gate cannot block: it is a design change for the owner before the harness relies on it |
   | H8 | `jq -c 'select(.tool_name=="ExitPlanMode") \| {keys: (.tool_input \| keys), head: ((.tool_input.plan // "") \| .[0:13]), planFilePath: .tool_input.planFilePath}' "$L"` | keys include `plan` and `planFilePath`, `head` is `# Plan: probe`; no record means `-p` still does not reach ExitPlanMode | no record: check the plan gate interactively (OWNER-PROBES OP2) |
 
   The `SubagentStop` block is not re-checked: no design relies on it. If a later CLI does re-invoke a subagent after such a block, a hook-based step gate becomes possible again, which is a design change for the owner. Teardown: `rm -rf "$S" "$S7" "$S3"`.
@@ -133,3 +133,74 @@ Non-obvious findings:
 - **The ExitPlanMode Fable gate works interactively (E6).** `-p` still never reaches it, so only an owner-run session shows it. A block is retried by the session: it fixed the plan and the second pass approved.
 - **A lead's own Writes are fenced by no hook, by design.** path-guard covers the worker only; the lead's `kernel/` or `docs/` writes are not denied (E1's control, E7's lead write), which rule 11 states.
 - **The shim fallback also fences a worker on a stale binary (E7).** With no `--agent-type` support, "path-guard could not run" denied the worker's `kernel/` Write and nothing else.
+
+### Re-running the T16 checks
+
+agent-loop's "Re-check after each Claude Code update" re-runs T16 as well as T2. The full procedure is `probe/HEADLESS.md.v5`, section "T16", in the same design folder as T2's; the run E prompt is `probe/run-e.v5.txt` there. That prompt is 14 steps: a worker's write and its fast-forward, a main-thread `kernel/` write, guard rule 3 and 4 probes, a repeated failing command, and a kernel-dev step with the lead's Fable review of its range. HEADLESS ran it from the harness PR's branch worktree; once the harness is on `main`, run it from the main checkout:
+
+```sh
+MAIN="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+D="$(git rev-parse --path-format=absolute --git-common-dir)/aios-agent/teams-design-v3"
+W=$MAIN   # the checkout whose harness is under test
+claude --version
+(cd "$W" && just tools)
+git -C "$MAIN" worktree add .claude/worktrees/harness-e2e -b claude/harness-e2e-scratch "$(git -C "$W" rev-parse HEAD)"
+W2=$MAIN/.claude/worktrees/harness-e2e; S=$(mktemp -d)
+git -C "$MAIN" worktree list --porcelain >"$S/worktrees-before.txt"
+E2E="env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT AIOS_TOOLS_BIN=$W/target/tools/installed/aios AIOS_HOOK_STATE_DIR=$S/hooks"
+TOOLS_E="Bash,Read,Write,Edit,Grep,Glob,LSP,Agent,EnterWorktree,ToolSearch"
+```
+
+Run E (the harness end to end):
+
+```sh
+cd "$W" && $E2E claude -p --model opus --output-format json --allowedTools "$TOOLS_E" --add-dir "$W2" --debug-file "$S/run-e.debug" \
+  -- "$(sed -e "s#@W2@#$W2#g" "$D/probe/run-e.v5.txt")" >"$S/run-e.json"
+```
+
+Run G (the shim fallback) needs `OLD`, an `aios` binary whose `path-guard` has no `--agent-type`. `main`'s binary has the flag once the harness merges, so build `OLD` from a commit before the harness PR, such as `ac6d26e` (its pinned toolchain must already be installed: `RUSTUP_AUTO_INSTALL=0`):
+
+```sh
+O=$(mktemp -d)/old; git -C "$MAIN" worktree add --detach "$O" ac6d26e
+(cd "$O" && just tools); OLD=$O/target/tools/installed/aios
+TIPG=$(git -C "$W2" rev-parse HEAD)
+cd "$W" && env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT AIOS_TOOLS_BIN="$OLD" \
+  AIOS_HOOK_STATE_DIR=$S/hooks-g claude -p --model opus --output-format json --allowedTools "$TOOLS_E" --add-dir "$W2" -- \
+  "Agent tool: subagent_type worker, isolation worktree, run_in_background false, prompt: 'W is $W2, branch claude/harness-e2e-scratch, tip $TIPG. Do your preflight, then Write kernel/e2e-g.txt containing probe and report the result verbatim, with your BRANCH line. Commit nothing.' Then Write $W2/docs/e2e-g-main.md yourself and report the result. Then run git worktree list --porcelain and report it." >"$S/run-g.json"
+```
+
+The `--` before each prompt is needed because `--add-dir` takes several values. Step 14 of `run-e.v5.txt` ends with `sleep 30`, which `-p` refuses; on 2.1.292 E4's records were complete anyway. If a `stopped` record is missing, suspect `-p` teardown killing the async `route-outcome` hook first (the model-routing ADR, Known limits): change the last step to wait until the `stopped` count in `route-outcome.jsonl` reaches the `launched` count, and run E again.
+
+`T` is run E's transcript, `T=$(ls -t "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$(jq -r .session_id "$S/run-e.json")".jsonl)`, and `TG` run G's, the same way from `run-g.json`.
+
+| # | Command | Pass | If it fails |
+| --- | --- | --- | --- |
+| E1 | `test ! -e "$W2/kernel/e2e-probe.txt" && test -e "$W2/docs/e2e-probe.md" && test -e "$W2/kernel/e2e-main.txt" && echo ok`; `grep -c 'which this agent may not edit' "$T"`; `git -C "$W2" log --format=%s -3` | `ok`; 1 or more; `e2e probe` (or `e2e probe (Fable review fixes)`) above `e2e worker` | `path-guard`'s `settings.json` registration, or the team skill's Placement steps (guard rule 4 too, if Claude Code renamed its `agent-<id>` temporary worktrees: rule 4 then denies the worker's reset) |
+| E2 | `grep -c 'becomes a teammate\|spawn it with isolation\|do not pass model' "$T"` | 3 or more | guard rule 3 (`git-push-guard.py`) |
+| E3 | `ls "$S/hooks/repeat-error/"`; `grep -c 'has failed 2 times' "$T"` | a state file; 1 or more | the `repeat-error` hook |
+| E4 | `wc -l <"$S/hooks/route-shadow.jsonl"`; `jq -r 'select(.kind=="launched" or .kind=="stopped") \| [.kind, .agent_id] \| @tsv' "$S/hooks/route-outcome.jsonl"` | one shadow record per Agent call; every `launched` id has an equal `stopped` id; the denied spawns have shadow records only | `route-shadow` or `route-outcome` |
+| E5 | `jq -r 'select(.kind=="launched") \| .subagent_type' "$S/hooks/route-outcome.jsonl" \| sort \| uniq -c`; `git -C "$W2" log -1 --format=%s`; `git -C "$MAIN" worktree list --porcelain \| grep -c 'refs/heads/worktree-agent-'`; `git -C "$MAIN" branch --list 'worktree-agent-*'`; `grep -c 'Processing agent hook' "$S/run-e.debug"` | code-reviewer launched after kernel-dev; last commit `e2e probe` (or `e2e probe (Fable review fixes)`); no temporary worktrees or branches beyond `worktrees-before.txt`; `0` agent hooks | the lead's range review and clean-up (team skill, rule 11) |
+| E6 | OWNER-PROBES OP2 (interactive; `-p` never reaches ExitPlanMode) | `result: pass` | the ExitPlanMode plan gate |
+| E7 | `grep -c 'path-guard could not run' "$TG"`; `test -e "$W2/docs/e2e-g-main.md" && echo ok`; for each temporary worktree in run G's report, `test ! -e <it>/kernel/e2e-g.txt && echo denied` | 1 or more; `ok`; `denied` | the `.claude/hooks/aios` shim fallback |
+| E8 | `grep -o 'dispatching to firstParty model=[^ ]*' "$S/run-e.debug" \| sort \| uniq -c`; `grep -c 'not_found_error' "$S/run-e.debug"` | a `model=claude-fable-…` line; `0` | code-reviewer's frontmatter names `claude-fable-5-1` instead of `fable`; record it in the ADR |
+| E9 | `grep -c 'agents never call EnterWorktree' "$T"`; `grep -c 'agents reset only their own temporary worktree' "$T"`; `grep -c 'exists only for an isolated agent' "$T"` | 1 or more each | guard rule 4 (`git-push-guard.py`) |
+
+Teardown: for every temporary worktree not in `worktrees-before.txt`, run `git -C "$MAIN" worktree remove --force <path>` and `git -C "$MAIN" branch -D <worktree-agent-…>`; the guard puts both to the owner. Then run `git -C "$MAIN" worktree remove --force "$W2"`, `git -C "$MAIN" branch -D claude/harness-e2e-scratch`, `git -C "$MAIN" worktree remove --force "$O"` and `rm -rf "$S"`. Record the CLI version the checks ran on.
+
+## Open check: two live leads (OP1)
+
+The harness removed `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` from the project env, because aios uses no Claude Code teammates (rule 11). The two leads still message each other across sessions. That should keep working, because cross-session messaging has its own gate. The evidence comes from reading the 2.1.285 and 2.1.289 binaries, not from a run. They carry a separate gate message, `[uds-messaging] Skipped: cross-session messaging gate off`, and they have held messages and the `crossSessionInbound` setting, none of which depends on agent teams. A headless `-p` run cannot check this, because it needs two live sessions. The first real check is OWNER-PROBES OP1 (`OWNER-PROBES.md.v5` in the design folder named above). It runs when both leads restart from the main checkout after the harness merges (a post-merge owner step in PR #234's hand-off).
+
+With the project flag gone, OP1 must show:
+
+- Each lead's ListAgents lists the other under its team name (`team-build`, `team-fix`).
+- Each lead receives the other's `From <team>: HELLO`, and no "held" or `crossSessionInbound` notice appears.
+- A lead resumed with `claude --resume <team>` keeps its name without `/rename`, and its peer receives its new `HELLO`.
+- A background worker spawned by a lead runs its first command, `git reset --hard <tip>`, with no permission prompt.
+
+If a message never arrives, run the receiving lead once with `--debug-file` and read the lines that contain `uds-messaging` or `Cross-session messaging`:
+
+- **Gate off:** the messaging gate is off for this account or CLI version. This needs a design decision from the owner. Do not put the agent-teams flag back as a stopgap.
+- **Message held:** the two leads are probably in different permission modes. Claude Code holds cross-session messages while the modes differ, which is why rule 11 and agent-loop.md (Teams, Launch) require both leads to use the same mode.
+
+Until OP1 passes, a lead that cannot see its peer in ListAgents works in one-lead mode (agent-loop.md, Teams) and never sends to a guessed name. After OP1 runs, team-build replaces this section with its report in a small docs PR. The report gives the CLI version, `result: pass` or `fail`, what each item above showed, and the debug lines for anything that failed. A failure also gets an issue labelled `team-build`.

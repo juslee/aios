@@ -100,13 +100,13 @@ Later (not enabled): GitHub auto-merge behind required status checks on a `main`
 
 ## Stop
 
-Press Esc to interrupt the current turn; close the terminal to end the session. Solo sessions run no agent work in the background (no `/loop`, no scheduled routines, no launchd job). In team mode, writers, reviewers and the verifier run as background subagents inside the two attended lead sessions: Esc and `/exit` in a lead stop them, and closing its terminal ends them. A verifier's QEMU run stops with its lock wrapper, which releases the lock; a wrapper killed with SIGKILL leaves a lock that `qemu-lock.sh clear-stale` removes. The other background process is the `just tools` build of the `aios` binary, which the SessionStart hook starts when the binary is missing or stale. It can outlive Esc, ends on its own and logs to `target/tools/build.log`. A stop file and a label-based kill switch come with the loops.
+Press Esc to interrupt the current turn; close the terminal to end the session. Solo sessions run no agent work in the background (no `/loop`, no scheduled routines, no launchd job). In team mode, writers, reviewers and the verifier run as subagents inside the two attended lead sessions, in the background except for `.claude/**` edits and verifier boots, which run in the foreground so their prompts reach you: Esc and `/exit` in a lead stop them, and closing its terminal ends them. A verifier's QEMU run stops with its lock wrapper, which releases the lock; a wrapper killed with SIGKILL leaves a lock that `qemu-lock.sh clear-stale` removes. The other background process is the `just tools` build of the `aios` binary, which the SessionStart hook starts when the binary is missing or stale. It can outlive Esc, ends on its own and logs to `target/tools/build.log`. A stop file and a label-based kill switch come with the loops.
 
 -----
 
 ## Teams
 
-Two attended lead sessions split the work by domain. Each owns its branches end to end: plan, steps, simplify, audit, soak, ship pass, PR, and the hand-off to you. Hard rules are in `.claude/rules/11-teams.md`.
+Two attended lead sessions split the work by domain. Each owns its branches end to end: plan, steps, simplify, audit, soak, ship pass, PR, and the hand-off to you. Hard rules are in `.claude/rules/11-teams.md`; the design reasons are in `docs/knowledge/decisions/2026-10-10-jl-two-team-harness.md`.
 
 - **team-build**: the harness (`.claude/`), `tools/`, `scripts/`, CI, docs drift, and new features.
 - **team-fix**: the boot-crash fix steps, nearby kernel bugs, and the capability-lifetime work.
@@ -145,7 +145,7 @@ Then type `/justin:team build` in `team-build` and `/justin:team fix` in `team-f
 | Role | Spawned as | Runs in |
 | --- | --- | --- |
 | kernel-dev, worker, doc-writer, simplifier (writers) | background subagent, `isolation: "worktree"`; first command `git reset --hard <tip>` | its own temporary worktree `.claude/worktrees/agent-<id>`, branch `worktree-agent-<id>` (a workflow `agent()`: `wf_<run>-<n>`, branch `worktree-wf_<run>-<n>`), reset to the branch tip; the lead fast-forwards the branch worktree to its commits |
-| verifier (the only agent that boots) | background subagent, `isolation: "worktree"`; first command `git reset --hard <sha>` | its own temporary worktree at the sha it boots; run directories go to `<W>/target/soak/` |
+| verifier (the only agent that boots) | foreground subagent when it boots (`run_in_background: false`, so its `qemu-lock.sh run` prompt reaches you), background otherwise; `isolation: "worktree"`; first command `git reset --hard <sha>` | its own temporary worktree at the sha it boots; run directories go to `<W>/target/soak/` |
 | code-reviewer, doc-auditor, skeptic (readers) | subagent with no isolation, or a Workflow agent inside `/audit-loop` | the main checkout, using `git -C` |
 
 ### Placement
@@ -179,7 +179,7 @@ When the peer lead is not running, the single lead works its own queue. A quiet 
 ### Host QEMU lock
 
 - Every QEMU start on this Mac goes through `scripts/agent/qemu-lock.sh run`. Among agents only the verifier calls it, with `--team team-build` or `--team team-fix`; leads route boots to their verifier. Your own and other solo sessions may call it on their main thread with `--team solo`. The guard denies any other QEMU-starting command, and every one while the lock is held.
-- **Approval.** The settings allow only `qemu-lock.sh status` and `clear-stale`. Every `run` call, your own and the verifier's, prompts you in an attended session and is refused in a background or `-p` run; the verifier reports a refusal instead of retrying. The guard analyses the command after `run`'s `--` as if it were typed on its own, so a push, merge, pattern kill, toolchain change or placement change wrapped in `run` gets the same decision as unwrapped, or a stricter one: the call's text mentions QEMU, so a command string from a shell expansion asks.
+- **Approval.** The settings allow only `qemu-lock.sh status` and `clear-stale`. Every `run` call, your own and the verifier's, prompts you in an attended session and is refused when the agent or the session runs in the background or with `-p`, so a lead spawns a verifier that boots in the foreground; the verifier reports a refusal instead of retrying. The guard analyses the command after `run`'s `--` as if it were typed on its own, so a push, merge, pattern kill, toolchain change or placement change wrapped in `run` gets the same decision as unwrapped, or a stricter one: the call's text mentions QEMU, so a command string from a shell expansion asks.
 - Booting from your own terminal outside Claude Code: use the wrapper too. If you forget, the next `run` sees the foreign QEMU and exits 76 without booting.
 - The lock is a directory, `<git-common-dir>/aios-agent/qemu.lock`, taken with an atomic `mkdir`. Its `owner` file records team, worktree, branch, sha, mode, label, start, eta and the wrapper's pid. The wrapper releases it on exit, interrupt or termination.
 - **Load gate.** After taking the lock the wrapper defers (exit 77) when the 1-minute load average is above 30 (`boot`) or 3.0 (`quiet`, after up to 5 minutes' settling). A deferred boot is retried later, never read as a crash: under a load near 240, boots wedge or time out whatever the code.
@@ -220,7 +220,7 @@ Both teams share one account.
 
 ### Re-check after each Claude Code update
 
-Re-run the harness PR's headless checks (its plan's T2 and T16, distilled into `docs/knowledge/lessons/2026-10-06-jl-isolated-writers-fast-forward.md` and `2026-10-06-jl-model-routing-wiring-checks.md`, which keep the commands) with the new CLI, and record the version they were checked on.
+Re-run the harness PR's headless checks (T2 and T16 of PR #234, recorded in `docs/knowledge/lessons/2026-10-06-jl-isolated-writers-fast-forward.md` and `2026-10-06-jl-model-routing-wiring-checks.md`, which keep the commands) with the new CLI, and record the version they were checked on.
 
 ## Model routing
 

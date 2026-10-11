@@ -64,9 +64,9 @@ bash scripts/agent/qemu-lock.sh run --team <team> --mode boot --label <branch>-<
   just soak --no-build runs=<N> secs=<S> [mode=gpu] report_only=1 out=<W>/target/soak/<label>
 ```
 
-The lock's owner file records your temporary worktree and branch, so the label carries the branch name for anyone reading `qemu-lock.sh status`.
+The lock's owner file records your temporary worktree and branch, so the label carries the branch name for anyone reading `qemu-lock.sh status`. Type every option value as a literal, or double-quote an expansion in it (`--label "$BR-gate"`). An unquoted expansion in an option value (`--label $BR`, `--eta-min $N`) makes the guard ask, because it could split into several words or into `--` and move where the wrapped command starts.
 
-- **The `run` call needs the owner's approval.** The settings allow only `qemu-lock.sh status` and `clear-stale`. A `run` call prompts the owner in an attended session and is refused in a background or `-p` run. If it is refused, stop and report the refusal (the command and the message) instead of retrying it or rewording it to get past the prompt.
+- **The `run` call needs the owner's approval.** The settings allow only `qemu-lock.sh status` and `clear-stale`. A `run` call prompts the owner in an attended session, and is refused when the agent or the session runs in the background or with `-p`. If it is refused, stop and report the refusal (the command and the message) instead of retrying it or rewording it to get past the prompt.
 - The guard reads the command after `--` as if you had typed it on its own, or more strictly: every rule applies to it (pushes, merges, kills, toolchain, placement). Only the QEMU start it wraps is the wrapper's job.
 
 - The wrapper takes the lock atomically, writes the owner file (team, worktree, branch, sha, mode, label, start, eta, its own pid), runs the command, and releases the lock on exit, interrupt or termination. Its exit codes before the command runs:
