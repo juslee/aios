@@ -131,6 +131,20 @@ pub struct HookInput {
     /// SubagentStop only: true while the subagent continues after a block.
     #[serde(default, deserialize_with = "lenient_bool")]
     pub stop_hook_active: Option<bool>,
+    /// Which identity keys the payload carries, whatever their value: `agent_id` and
+    /// `agent_type` read leniently (a wrong-typed value is `None`), so a guard that
+    /// must fail closed cannot tell "absent" from "present but unreadable" by them.
+    /// Set by `parse_input`; `Default` leaves both false.
+    #[serde(skip)]
+    pub identity_keys: IdentityKeys,
+}
+
+/// Whether the payload has an `agent_id` / `agent_type` key at all (any value, a
+/// `null` included).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IdentityKeys {
+    pub agent_id: bool,
+    pub agent_type: bool,
 }
 
 impl HookInput {
@@ -170,7 +184,14 @@ pub fn parse_input(raw: &[u8]) -> Result<HookInput> {
     if !value.is_object() {
         bail!("hook input is not a JSON object");
     }
-    serde_json::from_value(value).context("hook input has unexpected field types")
+    let identity_keys = IdentityKeys {
+        agent_id: value.get("agent_id").is_some(),
+        agent_type: value.get("agent_type").is_some(),
+    };
+    let mut input: HookInput =
+        serde_json::from_value(value).context("hook input has unexpected field types")?;
+    input.identity_keys = identity_keys;
+    Ok(input)
 }
 
 /// `PreToolUse` output that denies the call; `reason` is shown to Claude.

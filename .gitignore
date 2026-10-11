@@ -29,12 +29,12 @@ core.*
 # Obsidian local config (each dev's personal theme/plugins/workspace)
 docs/.obsidian/
 
-# Session handoff (remember plugin; its fallback path in a worktree is <worktree>/.remember/)
+# Session handoffs: .remember/handoff-<key>.md (team-build, team-fix, solo-<name>) in the main checkout, written by /justin:pause
 .remember/
 
-# Claude Code worktrees and agent memory
+# Claude Code worktrees
 .claude/worktrees/**/*
-.claude/agent-memory/**/*
+.claude/settings.local.json
 
 # Python bytecode from the Claude Code hook tests
 __pycache__/
