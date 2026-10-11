@@ -76,7 +76,7 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
   - The allow does not check who calls it: neither the guard nor the wrapper compares `--team` with `AIOS_TEAM`. A solo or owner main thread always writes `--team solo` and answers its prompt, and a verifier writes the team its lead names.
   - One wrapper run covers a whole A/B or quiet window, so no other boot fits between its arms.
 - **Quiet mode** (rate soaks, the B1 baseline, A/B runs) follows the quiet-window protocol in agent-loop.md: `QUIET-REQ`, the peer's `QUIET-ACK`, the owner pausing other host load, then the lease, then `QUIET-END`. While it is held, the other team starts no builds, audit rounds or boots. Long windows need the owner's sign-off first.
-- **Stale locks.** `qemu-lock.sh clear-stale` removes a lock only when its wrapper is gone and no QEMU runs; any lead may run it. A live holder past its eta gets a `LOCK-STALE` message to its lead; only that lead or the owner decides.
+- **Stale locks.** `qemu-lock.sh clear-stale` removes a lock only when its wrapper is gone and no QEMU runs; any lead or verifier may run it. A live holder past its eta gets a `LOCK-STALE` message to its lead; only that lead or the owner decides.
 - **Never pattern-kill QEMU** (`pkill`, `killall`; guard rule 2). Stop a run with a TERM to the lock owner's `pid`.
 
 ## Toolchain

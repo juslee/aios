@@ -76,9 +76,11 @@ aios/
 ├── .claude/
 │   ├── CLAUDE.md         # Project memory for Claude Code: technical facts, workspace layout, agent and skill tables
 │   ├── agents/           # Claude agent definitions
-│   ├── hooks/            # Session hooks: push guard, setup, pre-compact save, aios tools shim
+│   ├── hooks/            # Session hooks: push guard (rule 11's QEMU, spawn and placement rules), setup,
+│   │                     # aios tools shim (repeat-error, path-guard, route-shadow, route-outcome)
 │   ├── rules/            # Project rules and conventions (auto-loaded)
-│   └── skills/           # Reusable skill scripts
+│   ├── skills/           # Reusable skill scripts
+│   └── workflows/        # Workflow scripts (audit-loop.js: one /audit-loop round)
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
 ├── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)

@@ -2,7 +2,7 @@
 
 **Audience:** the owner, returning after a break
 **Current stage:** Stage 0 (no autonomy: Claude works only inside a session you are attending)
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-11
 
 -----
 
@@ -194,7 +194,7 @@ When the peer lead is not running, the single lead works its own queue. A quiet 
 - **Stopping a run:** a TERM to the owner file's `pid` stops every process but QEMU first, so `aios soak` ends its own boot (exit 143) instead of recording a QEMU killed under it, then whatever is left after at most 15 s.
 - **Stale lock:** `qemu-lock.sh status` shows `state=dead` when the wrapper is gone (a SIGKILL or a closed session skips its traps). Any lead or verifier runs `qemu-lock.sh clear-stale`, which removes the lock only when no QEMU runs and logs it. A live holder past its eta (`overdue=1`) gets `LOCK-STALE`; its lead or you decide.
 - Nobody pattern-kills QEMU.
-- R4b (a flock lease in `aios soak` and the `just run*` recipes) later replaces the wrapper and changes guard rule 1, rule 11, `verifier.md` and this section.
+- R4b (#254: a flock lease in `aios soak` and the `just run*` recipes) later replaces the wrapper and changes guard rule 1, rule 11, `verifier.md` and this section.
 
 ### Toolchain
 

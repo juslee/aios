@@ -94,9 +94,10 @@ subagent, AIOS_TEAM from the lead's launch line):
      through setsid, screen (and screen -X stuff), tmux new-session/
      new-window/split-window/send-keys/... and env -S. The wrapper is
      trusted only as scripts/agent/qemu-lock.sh of the main checkout, the
-     project or the agent's own temporary worktree (realpath); any other
-     qemu-lock.sh, and any script called `run --team ...` (a renamed
-     copy), gets the wrapper's caller rules and has its body read. The
+     project or the agent's own temporary worktree (realpath), typed by a
+     path named qemu-lock.sh that is not itself a symlink; any other
+     qemu-lock.sh, a symlink to it, and any script called `run --team ...`
+     (a renamed copy), gets the wrapper's caller rules and has its body read. The
      command after a `run`'s `--` (found the way the wrapper reads its
      options) is analysed like one typed on its own, so rules 1-4 and the
      push, merge and gh rules apply to it; only a QEMU start in it, the
@@ -1597,9 +1598,10 @@ class Analyzer:
     def check_qemu_script(self, path, argv, flags, cmd, state, depth, shebang,
                           via=frozenset()):
         """A script that starts QEMU: the soak scripts, and the lock wrapper
-        (only its `run`). The wrapper is recognised by what it is, not by its
-        name: only scripts/agent/qemu-lock.sh of the main checkout, the
-        project, or the agent's own temporary worktree is trusted, and its
+        (only its `run`). The wrapper is recognised by where it is and how it
+        is typed: only scripts/agent/qemu-lock.sh of the main checkout, the
+        project, or the agent's own temporary worktree, called by a path
+        named qemu-lock.sh that is not itself a symlink, is trusted, and its
         body is not read. Any other qemu-lock.sh, and any script called the
         wrapper's way (`run --team ...`, a renamed copy), gets the wrapper's
         caller rules and has its body read like any other script. For every
@@ -1684,8 +1686,14 @@ class Analyzer:
         temporary worktree (a copy of the repository); for a main thread also
         the working tree of `cwd` when it is a linked worktree sharing the
         main checkout's git common dir (rule 04's .claude/worktrees/phase-N).
-        A symlink counts as what it points to."""
-        target = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
+        The path as typed must be named qemu-lock.sh and must not itself be
+        a symlink (a symlinked directory on the way is fine): the wrapper's
+        liveness check matches the name it was invoked by, so a run through
+        another name would hold a lock that status reads as dead."""
+        typed = os.path.join(cwd, os.path.expanduser(path))
+        if os.path.basename(typed) != "qemu-lock.sh" or os.path.islink(typed):
+            return None
+        target = os.path.realpath(typed)
         roots = []
         payload_cwd = self.ctx.get("cwd")
         if payload_cwd:

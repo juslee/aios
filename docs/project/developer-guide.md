@@ -1594,16 +1594,7 @@ just run
 
 ### 5.2 Quality Gates
 
-Every milestone must pass these gates before it can be considered complete:
-
-| Gate | Command | Passes when |
-|---|---|---|
-| **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
-| **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 712+ host-side tests pass |
-| **QEMU** | `just run` | UART output matches phase acceptance criteria |
-| **CI** | Push to GitHub | All CI jobs pass |
-| **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
+Every milestone must pass the gates in [rule 02](../../.claude/rules/02-quality-gates.md), which holds the one gate table: Compile, Check, Test, Tools (when `tools/` changed), QEMU (a one-boot soak through the host QEMU lock, rule 11), CI, Objdump and EL, each with its command and pass condition. Rule 02 also defines the audit loop that runs before a PR is marked ready.
 
 **Common failures and fixes:**
 

@@ -1236,6 +1236,31 @@ class TeamRuleAttacks(TeamCase):
         self.check_hook("deny", "every QEMU start", "tmpx/qemu-lock.sh run --team solo -- true")
         self.check_hook("none", None, self.WRAPPER)
 
+    def test_i3_a_symlink_to_the_genuine_wrapper_is_not_trusted(self):
+        # The wrapper's liveness check keys on the name it was invoked by, so a
+        # run through a differently named symlink holds a lock that every
+        # other status reads as dead. Only the typed path scripts/agent/
+        # qemu-lock.sh, not itself a symlink, is trusted; any other spelling
+        # has its body read.
+        body = "#!/bin/sh\nqemu-system-aarch64 -M virt\n"
+        genuine = self.write("scripts/agent/qemu-lock.sh", body)
+        genuine_temp = self.write("scripts/agent/qemu-lock.sh", body, root=self.temp)
+        for root, target in [(self.repo, genuine), (self.temp, genuine_temp)]:
+            os.makedirs(os.path.join(root, "tmpx"), exist_ok=True)
+            for name in ["boot.sh", "qemu-lock.sh"]:
+                os.symlink(target, os.path.join(root, "tmpx", name))
+        for name in ["boot.sh", "qemu-lock.sh"]:
+            command = "tmpx/%s run --team solo --mode boot -- true" % name
+            self.check("deny", "every QEMU start", command)
+            self.check("deny", "every QEMU start", "bash " + command)
+            self.check("deny", "every QEMU start", command.replace("solo", "team-fix"),
+                       cwd=self.temp, agent_id="x", agent_type="verifier")
+        self.check_hook("deny", "every QEMU start", "tmpx/boot.sh run --team solo -- true")
+        # The genuine wrapper, typed as itself, is still trusted.
+        self.check("none", None, self.WRAPPER)
+        self.check("none", None, self.WRAPPER, cwd=self.temp, agent_id="x", agent_type="verifier")
+        self.check_hook("none", None, self.WRAPPER)
+
     # -- item 4: rule 3 and frontmatter parsing ------------------------------
 
     def spawn_level(self, agent_type, isolation=None):

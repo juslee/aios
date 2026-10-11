@@ -1,5 +1,5 @@
 #!/bin/sh
-# scripts/agent/qemu-lock.sh - the host QEMU lock (rule 11) until R4b's lease.
+# scripts/agent/qemu-lock.sh - the host QEMU lock (rule 11) until R4b's lease (#254).
 #
 # One QEMU workload runs on this host at a time. The lock is a directory,
 # <git-common-dir>/aios-agent/qemu.lock, shared by every worktree. mkdir is
@@ -30,8 +30,9 @@
 #       "cleared"; exit 0. Otherwise print why not and exit 1. The lock moves
 #       to a private name first and is checked again there, so two concurrent
 #       calls, or a `run` that takes the lock meanwhile, never lose a live
-#       holder's lock. Any lead may run it. A live holder past its eta is never cleared here: report
-#       LOCK-STALE to the holder's lead (rule 11).
+#       holder's lock. Any lead or verifier may run it. A live holder past
+#       its eta is never cleared here: report LOCK-STALE to the holder's lead
+#       (rule 11).
 #   qemu-lock.sh run --team T --mode boot|quiet --label L --eta-min N
 #                    [--max-load X] [--settle-min M] -- CMD...
 #       T is team-build, team-fix or solo. Take the lock, run CMD, and release
@@ -67,7 +68,7 @@
 # AIOS_QEMU_LOCK_GRACE the 15-second stop grace (seconds), and
 # AIOS_QEMU_LOCK_KILL the command that sends SIGKILL (default kill).
 #
-# R4b replaces this script with a flock lease inside `aios soak` and the
+# R4b (#254) replaces this script with a flock lease inside `aios soak` and the
 # `just run*` recipes, and changes guard rule 1 to read the lease.
 
 set -u

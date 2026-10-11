@@ -32,7 +32,7 @@ Classify `git -C <W> diff --name-only <base>..HEAD`, ignoring `*.md` files:
 
 - **kernel**: any path under `kernel/`, `shared/` or `uefi-stub/`, or `rust-toolchain.toml`, `Cargo.toml` or `Cargo.lock`.
 - **tools**: any path under `tools/`, `scripts/`, `.github/` or `.claude/`, or `justfile` or `.gitattributes`.
-- **both**: kernel and tools paths both present; run both lens sets.
+- **both**: kernel and tools paths both present; the workflow runs the kernel lens set, whose rules prompt is a superset of the tools one (its bugs prompt is the same).
 - **docs**: no path left after ignoring `*.md`.
 - A non-`.md` path that matches none of the lists above counts as **tools**.
 
