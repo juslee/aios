@@ -3314,7 +3314,7 @@ def decide(command, cwd, ctx=None):
         Analyzer(verdict, ctx).analyze_text(command, cwd, 0)
     except (ParseError, RecursionError) as exc:
         if (MENTIONS_GIT.search(command) or MENTIONS_TEAM.search(command)
-                or re.search(r"\b(kill|soak|cargo|tmux|screen|setsid)\b", command)):
+                or re.search(r"\b(kill|soak|cargo|tmux|screen|setsid|g?sed)\b|\.claude", command)):
             verdict.ask(f"git-push-guard could not parse the command ({exc})")
     return verdict
 

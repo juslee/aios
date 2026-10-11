@@ -105,11 +105,19 @@ const VERDICT = {
 
 const RANK = { 'must-fix': 3, 'should-fix': 2, nit: 1 }
 
-// Lenses sometimes return absolute paths under the worktree; the ledger and dedup use repo-relative ones.
+// Lenses sometimes return absolute paths under the worktree, or under the main
+// checkout they run in; the ledger and dedup use repo-relative ones. A worktree
+// at <main>/.claude/worktrees/<name> gives the main checkout's path.
+const WT_SEGMENT = '/.claude/worktrees/'
+const MAIN = W.includes(WT_SEGMENT) ? W.slice(0, W.lastIndexOf(WT_SEGMENT)) : ''
 function relFile(f) {
   const file = String(f.file || '')
-  const prefix = W.endsWith('/') ? W : W + '/'
-  return file.startsWith(prefix) ? file.slice(prefix.length) : file
+  for (const root of [W, MAIN]) {
+    if (!root) continue
+    const prefix = root.endsWith('/') ? root : root + '/'
+    if (file.startsWith(prefix)) return file.slice(prefix.length)
+  }
+  return file
 }
 
 // Same file, same line, same normalised summary: one finding. Two distinct issues on one line stay apart.

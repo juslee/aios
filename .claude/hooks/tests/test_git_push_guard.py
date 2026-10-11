@@ -2144,6 +2144,30 @@ class ProtectedSed(TeamCase):
         self.check("deny", None, "sed -n 1p .claude/hooks/x; git push origin main")
         self.check("ask", self.ASK, "sed -i '' s/a/b/ .claude/hooks/x; git status")
 
+    @staticmethod
+    def too_deep(command, form):
+        """`command` under MAX_DEPTH + 1 levels of `$( )` or `sh -c`, one
+        more than the parser takes, so decide() reaches its fallback."""
+        for _ in range(guard.MAX_DEPTH + 1):
+            if form == "subst":
+                command = "echo $(" + command + ")"
+            else:
+                command = "sh -c '" + command.replace("'", "'\\''") + "'"
+        return command
+
+    def test_unparseable_sed_or_claude_path_asks(self):
+        # The parse-failure fallback asks when the text names sed or gsed or
+        # contains .claude, as it does for git, QEMU and the like.
+        for _, kw in self.callers():
+            for form in ["subst", "shc"]:
+                for command in ["sed -i '' s/a/b/ .claude/hooks/x",
+                                "gsed -i s/a/b/ .claude/settings.json",
+                                "sed -i '' s/a/b/ \"$F\"",
+                                "tee .claude/hooks/x < /dev/null"]:
+                    self.check("ask", "could not parse", self.too_deep(command, form), **kw)
+                for command in ["ls docs", "echo based used"]:
+                    self.check("none", None, self.too_deep(command, form), **kw)
+
     # -- attack fixes -------------------------------------------------------
 
     def test_redirect_into_protected_path_through_an_expansion_asks(self):
