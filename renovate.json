@@ -2,5 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "Hold CI's setup-python at CPython 3.14: the docs-check parity oracle (tools/tests/docs_check_parity.rs, fixture::ORACLE_UNIDATA_VERSION) needs an interpreter on Unicode 16.0.0, the version aios's \\d and \\s classes match, and CPython 3.15 is on Unicode 17.0.0. Lift this together with the oracle's Unicode version.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["python"],
+      "allowedVersions": "<3.15"
+    }
   ]
 }
