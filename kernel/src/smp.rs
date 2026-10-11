@@ -198,7 +198,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
 /// and enable flags (`1` pass, `0` fail, `-` not checked: the group under
 /// `GICD_CTLR.DS` = 0, both when the setup did not run), and `ppi_ok` is 1
 /// when no flag failed. When `ppi_ok` is 0, a `kerror!` names the failed
-/// flags; the CPU carries on without a timer IRQ (crash-fix step 200, Q5 A).
+/// flags and the CPU carries on (crash-fix step 200, Q5 A): a failed `group1`
+/// or `enabled` flag leaves it without a timer IRQ, while a failed `wake`,
+/// `rwp`, `priority` or `level` flag can leave the PPI firing.
 ///
 /// A direct UART line, not `kinfo!`, whose messages carry at most 96 bytes
 /// (a head entry and one continuation) and reach the UART only at the next
