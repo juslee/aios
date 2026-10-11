@@ -256,7 +256,12 @@ pub fn init_gicv3(gicd_base: usize, gicr_base: usize) -> InterruptController {
     // SAFETY: GIC MMIO addresses are provided by the DTB and reached through
     // the boot identity map's device block (init_mmu ran before this). All
     // register accesses are to well-defined GICv3 registers; a wrong base
-    // would fault with a synchronous abort on the boot CPU.
+    // would fault with a synchronous abort on the boot CPU. IRQs are masked
+    // at PSTATE on the boot CPU throughout (firmware hands over with PSTATE.I
+    // set after ExitBootServices, and nothing unmasks before kernel_main's
+    // DAIFClr just ahead of enter_scheduler), as wake_redistributor and
+    // init_cpu_interface require; unmasked, enabling Group 1 here could
+    // deliver an IRQ before the vector table, timer and scheduler state exist.
     unsafe {
         // --- Distributor init ---
         // Enable ARE (affinity routing) and Group 1 NS interrupts

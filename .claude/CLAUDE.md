@@ -55,8 +55,10 @@ Timer PPI setup (step 200):   every CPU configures the timer PPI on its own redi
                               (gic::setup_timer_ppi, logic in shared::gic): wake, disable + RWP,
                               GICR_IGROUPR0 = all Group 1, priority 0x80, level check, enable, readback.
                               Never rely on firmware: edk2 sets Group 1 on CPU 0 only, and a Group 0
-                              PPI is signalled as FIQ, whose vectors are `b .`. INTID comes from the
-                              DTB (published before CPU_ON); [smp] lines report ppi_grp1/ppi_en/ppi_ok.
+                              PPI is never signalled (the kernel enables Group 1 only: GICD_CTLR.EnableGrp1,
+                              ICC_IGRPEN1_EL1), so that CPU takes no tick (ppi_grp1=0, tick 0); it does
+                              not fault. INTID comes from the DTB (published before CPU_ON); [smp] lines
+                              report ppi_grp1/ppi_en/ppi_ok.
                               All 4 CPUs now run the tick work and IRQ-path switches.
 
 # Boot invariants

@@ -519,6 +519,12 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
    - In gpu boots tid 8 later moves between CPUs 0, 1 and 3, and the compositor EXCEPTION censors most of them, so the gpu prediction is weaker; the row says so.
    - Coordination: per the owner's relayed instruction, the lead tells team-build that #240 is handled by this step when it is time, so team-build stops its own #240 work and restarts it after this step completes. Recorded under "Dependencies & Risks"; the message is the lead's to send, and this revision did not send it.
 
+**Independent audit round 1 (2026-10-11).** Three should-fix findings, all docs or comments; no behaviour change.
+
+- hal.md §4.1 item 6 put the group and priority readbacks after the enable write; the code reads each register back right after its own write (rows 3, 5 and 7). Items 3, 4 and 6 now say so.
+- `init_gicv3`'s SAFETY comment gave only the MMIO invariant, although the block now calls `wake_redistributor` and `init_cpu_interface`, whose contract needs IRQs masked. It now states that invariant, who keeps it and the consequence, as the `enable_irq` site does.
+- The CLAUDE.md fact (and hal.md item 3) said a Group 0 PPI is signalled as FIQ into the `b .` vectors. The kernel never enables Group 0 (no `GICD_CTLR.EnableGrp0`, no `ICC_IGRPEN0_EL1`), so such a PPI is never signalled: the CPU takes no tick and does not fault, as T3's fault injection showed. Both now say so.
+
 ## Decisions Made
 
 - Owner, 2026-10-10 16:29: every recommendation in "Open questions" taken (Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A with B as fallback, Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A).
