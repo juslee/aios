@@ -529,6 +529,10 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 
 - `setup_timer_ppi`'s doc comment in `gic.rs` cited "plan rows 1-7", the only pointer into this plan from code; the plan is deleted at T9, so the comment would dangle. It now cites the same sequence in hal.md §4.1, as the module doc does.
 
+**Independent audit round 3 (2026-10-11).** One should-fix finding, docs only; no behaviour change.
+
+- observability.md §6.5's sample `[tripwire]` line showed `tick=12001,0,0,0`, the pre-step-200 shape (CPUs 1-3 with no timer IRQs) that the section's own Counters paragraph now calls a failed setup and the Q1 A gate rejects. It now shows a non-zero column on every CPU (`tick=12001,11890,11875,11902`, the values in `shared/src/tripwire.rs`'s module doc).
+
 ## Decisions Made
 
 - Owner, 2026-10-10 16:29: every recommendation in "Open questions" taken (Q1 A, Q2 A, Q3 A, Q4 B, Q5 A, Q6 A with B as fallback, Q7 A, Q8 A, Q9 A, Q10 A, Q11 A, Q12 A, Q13 B, Q14 A).

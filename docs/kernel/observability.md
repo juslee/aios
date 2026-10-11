@@ -852,7 +852,7 @@ This allows Inspector to query both security provenance and operational metrics 
 The boot-crash fix ([ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md), step 1b) adds detect-only counters, which the kernel prints to the UART as one-line `[tripwire]` records. The format and the key catalogue are in `shared/src/tripwire.rs`, where host tests pin them; `Key::ALL` is the print order. The kernel runtime (the counter table, the UART printer and the print schedule) is `kernel/src/observability/tripwire.rs`.
 
 ```text
-[tripwire] v=1 src=hb cpu=0 t=12001 ncpu=4 tick=12001,0,0,0 twc=655500 twn=13 twmax=210312 n=9
+[tripwire] v=1 src=hb cpu=0 t=12001 ncpu=4 tick=12001,11890,11875,11902 twc=655500 twn=13 twmax=210312 n=9
 ```
 
 **Format (schema `v=1`).**
