@@ -7,6 +7,7 @@ pub mod cache;
 pub mod cap;
 pub mod collections;
 pub mod compositor;
+pub mod gic;
 pub mod gpu;
 pub mod input;
 pub mod ipc;

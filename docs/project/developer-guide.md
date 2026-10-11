@@ -1600,7 +1600,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 684+ host-side tests pass |
+| **Test** | `just test` | All 708+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1652,7 +1652,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 684 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
+Currently 708 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1745,7 +1745,7 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (684 tests):**
+**Current test distribution (708 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
@@ -1760,6 +1760,7 @@ mod tests {
 | `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
 | `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
+| `gic` | 24 | GICv3 timer PPI setup: register offsets, `PpiConfig` INTID and priority rules (non-zero, below the 0xF0 mask floor, low nibble clear), the per-flag readback check under `DS` = 1 and `DS` = 0, the `GICR_WAKER` wake steps, `GICD_CTLR.DS` |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `collections` | 23 | FixedQueue (including `iter`/`contains`), RingBuffer edge cases |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
