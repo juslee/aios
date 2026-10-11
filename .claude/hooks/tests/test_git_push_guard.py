@@ -2260,6 +2260,85 @@ class ProtectedSed(TeamCase):
             self.check_hook("ask", self.ASK, "sed 'w .claude/hooks/y' -e p .claude/hooks/x", **kw)
             self.check_hook("none", None, "cd .claude/hooks && echo x | sed s/x/y/", **kw)
 
+    # -- parity fixes (adversarial corpus) ----------------------------------
+
+    def test_quoted_expansion_in_option_position_asks(self):
+        # Before the first operand (BSD) or anywhere before `--` (GNU) both
+        # seds read a quoted "$OPT" = -i.bak as an option: OPT=-i.bak;
+        # sed -n -e 1p "$OPT" f rewrites f.
+        for _, kw in self.callers():
+            for command in [
+                    'sed -n 1p "$OPT" .claude/hooks/x',
+                    'sed -n -e 1p "$OPT" .claude/hooks/x',
+                    'sed -n 1p .claude/hooks/x "$(echo -i)"',
+                    'sed -n 1p "${ARGS[@]}" .claude/hooks/x',
+                    'sed -n 1p .claude/hooks/x "$@"',
+                    'sed -n 1p "$F" .claude/settings.json',
+                    'sed -n -e 1p "$@" .claude/hooks/x',
+                    'sed -ne 1p "$OPT" .claude/settings.json',
+                    'sed -ne1p "$OPT" .claude/hooks/x',
+                    'sed --quiet --expression=1p "$OPT" .claude/hooks/x',
+                    'sed -n -e \'$p\' "${FLAGS}" .claude/hooks/x',
+                    'sed -E -n -e 1p "$OPT" .claude/hooks/x',
+                    'sed -n -e 1p "$(cat opts)" .claude/hooks/x',
+                    'sed -e 1p -n "$OPT" .claude/hooks/x',
+                    'sed -n -e 1p -e 2p "$OPT" .claude/hooks/x .claude/hooks/y',
+                    'sed -n -e 1p "${ARGS[@]}" .claude/settings.json',
+                    'sed -n -e 1p "$INPLACE" .claude/settings.json',
+                    'sed -n -e 1p "`echo -i.bak`" .claude/hooks/x',
+                    'sed -n 1p "$OPT"x .claude/hooks/x',
+                    'sed -n 1p "$((N))" .claude/hooks/x']:
+                self.check("ask", "may be an option", command, **kw)
+            # A literal first character, or a path after the expansion, makes
+            # the word an operand; after `--` every word is one.
+            for command in [
+                    'sed -n 1p "$CLAUDE_PROJECT_DIR/.claude/hooks/x"',
+                    'sed -n 1p "$(git rev-parse --show-toplevel)/.claude/settings.json"',
+                    'sed -n 1p "${ROOT}/.claude/hooks/x" "$HOME/notes.txt"',
+                    'sed -n 1p "`pwd`/.claude/hooks/x"',
+                    'sed -n 1p ".claude/hooks/$F"',
+                    'sed -n 1p "./$F" .claude/settings.json',
+                    'sed -n -e 1p -- "$OPT" .claude/hooks/x',
+                    'sed -n 1p "$OPT" docs/x.md',
+                    'cd .claude/hooks && sed -n 1p "./$F"']:
+                self.check("none", None, command, **kw)
+
+    def test_protected_path_inside_a_substitution_is_a_hit(self):
+        # The old settings asks matched the subcommand's whole text, so a
+        # path inside a here-string's "$(...)" or a <(...) operand counts.
+        for _, kw in self.callers():
+            for command in [
+                    'sed \'s/a/b/\' <<< "$(cat .claude/hooks/x)"',
+                    "sed 's/a/b/' <(cat .claude/hooks/x)",
+                    'sed -n \'s/a/b/p\' <<< "$(< .claude/hooks/x)"',
+                    'sed \'s/a/b/\' <<< "$(cat .claude/settings.json)" > /tmp/y',
+                    "sed 's/a/b/' <<< $(cat .claude/hooks/x)",
+                    'sed \'s/a/b/\' <<<"$(cat .claude/hooks/x)"',
+                    "sed -i '' s/a/b/ <(cat .claude/hooks/x)",
+                    "sed -n 's/a/b/w /tmp/z' <(cat .claude/hooks/x)",
+                    "sed -E 's/x/y/' <(cat .claude/hooks/x) <(cat .claude/settings.json)",
+                    "sed 's/a/b/' < <(cat .claude/hooks/x)",
+                    "sed 's/a/b/' <<< \"`cat .claude/hooks/x`\""]:
+                self.check("ask", self.ASK, command, **kw)
+            for command in [
+                    'sed -n 1p <<< "$(cat .claude/hooks/x)"',
+                    "sed -n '$p' <(cat .claude/settings.json)",
+                    "sed -n 1p < <(cat .claude/hooks/x)",
+                    "cat .claude/hooks/x | sed 's/a/b/'",
+                    "sed 's/a/b/' <<< \"$(cat docs/x.md)\""]:
+                self.check("none", None, command, **kw)
+
+    def test_parity_fixes_through_the_hook(self):
+        for root, kw in self.callers():
+            kw = dict(kw)
+            kw.setdefault("cwd", root)
+            self.check_hook("ask", "may be an option", 'sed -n -e 1p "$OPT" .claude/hooks/x', **kw)
+            self.check_hook("ask", self.ASK, 'sed -n 1p .claude/settings.json "$@"', **kw)
+            self.check_hook("ask", self.ASK, 'sed \'s/a/b/\' <<< "$(cat .claude/hooks/x)"', **kw)
+            self.check_hook("ask", self.ASK, "sed s/a/b/ <(cat .claude/settings.json)", **kw)
+            self.check_hook("none", None, 'sed -n 1p "$CLAUDE_PROJECT_DIR/.claude/hooks/x"', **kw)
+            self.check_hook("none", None, "sed -n 1p <(cat .claude/settings.json)", **kw)
+
 
 if __name__ == "__main__":
     unittest.main()

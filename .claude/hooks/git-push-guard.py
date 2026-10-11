@@ -48,10 +48,12 @@ Decisions (the strictest one wins):
         sed: a sed (or gsed) that a command or a wrapper chain runs (the
           command after the wrappers' own options and operands, not a later
           `sed` argument of grep or echo) and that may touch .claude/settings*
-          or .claude/hooks/*: a word of the command or a redirection target
-          (as written, expansions included) names them; a file operand or
-          target resolved against the cwd does, or is a glob that may match
-          them (.claude/*, .claude/h*/x, .claude/**/*.py); operands from
+          or .claude/hooks/*: the command's text (with the bodies of its
+          substitutions, as in <<< "$(cat F)" or <(cat F)), a word of it or
+          a redirection target (as written, expansions included) names
+          them; a file operand or target resolved against the cwd does, or
+          is a glob that may match them (.claude/*, .claude/h*/x,
+          .claude/**/*.py); operands from
           xargs/find/parallel, an unresolved expansion or `{}` while the text
           or an enclosing one (around a sh -c string) mentions .claude or
           the cwd is a .claude directory or inside .claude/hooks; or, in
@@ -64,10 +66,13 @@ Decisions (the strictest one wins):
           literal (no expansion) and made only of the commands p P = q Q l
           n N d D g G h H x { } with an optional ! and address or range
           (line number, $, first~step, /regex/ that GNU and BSD sed end in
-          the same place); no unresolved unquoted argument; no output
-          redirection into those paths. So w, W, r, R, e, s, y, a, i, c,
-          labels, branches and comments ask. The settings keep their awk and
-          cp asks on those paths.
+          the same place); no unresolved unquoted argument; when the text
+          names them, no quoted expansion before `--` that may be an option
+          (one that starts the word and is not a path's first component, as
+          "$OPT" is and "$DIR/x" is not); no output redirection into those
+          paths. So w, W, r, R, e, s, y, a, i, c, labels, branches and
+          comments ask. The settings keep their awk and cp asks on those
+          paths.
   none  everything else; the permission rules and auto mode decide.
 
 Team rules (rule 11; agent_id and agent_type come from the payload of a
@@ -321,6 +326,10 @@ SED_GNU_LONG = ("--binary", "--debug", "--expression", "--file", "--follow-symli
                 "--version", "--zero-terminated")
 # Names in .claude a glob may reach: the hooks directory and settings files.
 SED_GLOB_NAMES = ("hooks", "settings", "settings.json", "settings.local.json")
+# An expansion at the start of a word as the parser keeps it: $(...) and
+# `...` (their bodies are parsed apart), ${...}, $NAME, $1, $@ and the others.
+SED_LEADING_EXPANSION = re.compile(
+    r"\$\(\.\.\.\)|`\.\.\.`|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
 # How a wrapper finds the command it runs (run_positions): its short options
 # that take a value, its long options that take one, and how many operands
 # come before the command. A wrapper not listed may run any later word.
@@ -1358,11 +1367,14 @@ class Analyzer:
         the wrappers that run it) that may touch .claude/settings* or
         .claude/hooks/* (the settings ask only awk and cp there): asks
         unless every script is read-only (sed_problem) and no output
-        redirection names those paths. It may touch them when a word of the
-        command (with its wrappers, here-strings and redirection targets,
-        these as written, expansions included), as written or resolved
-        against the cwd, names them; when a glob operand or target may match
-        them (sed_glob_protected); when its operands are unknown (supplied by
+        redirection names those paths. It may touch them when the command's
+        source text (substitution bodies included) or a word of the command
+        (with its wrappers, here-strings and redirection targets, these as
+        written, expansions included), as written or resolved against the
+        cwd, names them (`named` when the text or a word does as written,
+        which also makes a quoted expansion that may be an option ask);
+        when a glob operand or target may match them
+        (sed_glob_protected); when its operands are unknown (supplied by
         xargs, find or parallel, an unresolved expansion, or `{}`) and the
         command text or an enclosing one (the command around a `sh -c`
         string) mentions .claude, or the cwd is a .claude directory or
@@ -1388,8 +1400,12 @@ class Analyzer:
         # names the path as plainly as a literal does.
         outs = [w for w in files(cmd.out_files) if protected(w)]
         ins = files(cmd.stdin_files)
-        hit = (bool(outs)
-               or any(SED_PROTECTED.search(w) for w in words + cmd.heredocs + ins)
+        # The command's own text names a protected path (what the old
+        # settings asks matched): its source, with the bodies of its
+        # substitutions (a here-string's "$(cat ...)", an operand's
+        # <(cat ...)), and its words with the variables the guard knows.
+        named = any(SED_PROTECTED.search(w) for w in [cmd.src] + words + cmd.heredocs + ins)
+        hit = (bool(outs) or named
                or any(protected(w) for w in sed_files(args, flags, cwd) + ins
                       if not unresolved(w)))
         texts = [t for t, script in self.texts if not script]
@@ -1404,7 +1420,7 @@ class Analyzer:
             hit = sed_may_open(args, flags)
         if not hit:
             return
-        problem = sed_problem(args, flags)
+        problem = sed_problem(args, flags, named)
         if not problem and outs:
             problem = f"its output is redirected into {outs[0]}"
         if problem:
@@ -2815,12 +2831,15 @@ def sed_script_opens(script):
             return True
 
 
-def sed_problem(args, flags):
+def sed_problem(args, flags, named=False):
     """None when every script sed runs is read-only and no option edits
     files; otherwise what may write. `flags` is the words' expansion state.
     GNU sed reads options anywhere before `--`; BSD sed stops at the first
     operand and reads later option words as files (and that operand as the
-    script), so an option after an operand asks."""
+    script), so an option after an operand asks. When the command names a
+    protected path (`named`), a quoted expansion before `--` that may start
+    with `-` (sed_may_be_option) asks too: both seds read "$OPT" = -i.bak
+    there as an option."""
     scripts = []
     operands = []
     i = 0
@@ -2830,6 +2849,8 @@ def sed_problem(args, flags):
         i += 1
         if e == BARE_EXPANSION and unresolved(a):
             return f"{a} comes from a shell expansion and may split into options"
+        if named and e and not options_done and sed_may_be_option(a):
+            return f"{a} comes from a shell expansion and may be an option"
         if options_done or a == "-" or not a.startswith("-"):
             operands.append((a, e))
             continue
@@ -2875,6 +2896,18 @@ def sed_problem(args, flags):
         if problem:
             return problem
     return None
+
+
+def sed_may_be_option(word):
+    """True when a word with an expansion may start with `-`: it starts with
+    the expansion, and the expansion is not a path's first component ("$DIR/x",
+    "$(git rev-parse --show-toplevel)/x"). A literal first character other
+    than `-` makes it an operand; a word that starts with `-` is read as an
+    option already."""
+    if not word.startswith(("$", "`")):
+        return False
+    m = SED_LEADING_EXPANSION.match(word)
+    return not (m and word[m.end():].startswith("/"))
 
 
 def sed_script_problem(script):
