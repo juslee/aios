@@ -87,7 +87,9 @@ subagent, AIOS_TEAM from the lead's launch line):
      --list, --show, --dry-run, --evaluate and the other print-only
      options; just --command is read as a command); aios soak; cargo run/r
      with `soak` as the first program argument after `--`;
-     scripts/soak-matrix.sh; and the lock wrapper's `run`. `soak
+     scripts/soak-matrix.sh and scripts/soak-qemu.sh (deleted here by
+     #246 and R4, still present in older checkouts used as soak arms);
+     and the lock wrapper's `run`. `soak
      --classify` starts nothing; command -v/-V and type run nothing. Also
      through setsid, screen (and screen -X stuff), tmux new-session/
      new-window/split-window/send-keys/... and env -S. The wrapper is
@@ -390,6 +392,8 @@ JUST_NO_RUN_SHORTS = "nlsehV"
 # qemu-system-* options that print and exit before any machine starts, as the
 # first argument.
 QEMU_INFO_ARGS = {"--version", "-version", "-h", "--help", "-help"}
+# QEMU-starting scripts deleted here (#246, R4) but still present in older
+# checkouts used as soak arms.
 QEMU_SCRIPTS = {"soak-matrix.sh", "soak-qemu.sh"}
 WRAPPER_PATH = os.path.join("scripts", "agent", "qemu-lock.sh")
 # qemu-lock.sh run's options, each taking the next word as its value.
