@@ -3,7 +3,7 @@
 //! All operations use Inner Shareable (IS) variants for SMP correctness
 //! and include the required DSB ISH + ISB barriers.
 //!
-//! Per memory.md §3.4.
+//! Per memory/virtual.md §3.4.
 
 use super::asid::Asid;
 

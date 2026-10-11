@@ -98,16 +98,17 @@ pub struct SignalCollector {
 }
 
 pub struct ContextModel {
-    /// When AIRS is available: LLM-based inference
+    /// When AIRS is available: small classifier model (not an LLM)
     /// When AIRS is unavailable: rule-based heuristic
     mode: ContextModelMode,
 }
 
 pub enum ContextModelMode {
-    /// LLM classifies signals into context state
-    LlmBased {
+    /// Small classifier maps a fixed-length signal feature vector to a
+    /// context state (context-engine/inference.md §4.1)
+    Classifier {
         model: ModelHandle,
-        prompt_template: String,
+        feature_extractor: FeatureExtractor,
     },
     /// Simple rules: time of day + active space + media state
     RuleBased {
@@ -116,7 +117,9 @@ pub enum ContextModelMode {
 }
 ```
 
-**How context inference works (LLM mode):**
+**How context inference works (classifier mode):**
+
+The classifier is a small model, not a full LLM and not generative. It runs in under 1 ms on CPU; see [context-engine/inference.md §4.1](../context-engine/inference.md).
 
 ```text
 Signals: {
@@ -128,10 +131,9 @@ Signals: {
     media: "none"
 }
 
-LLM prompt: "Given these signals, classify the user's context:
-  work_engagement (0.0-1.0), suggested AI tier, notification threshold"
+Feature vector: signals encoded as a fixed-length vector
 
-LLM output: {
+Classifier output: {
     work_engagement: 0.9,
     ai_engagement: Available,
     notification_threshold: NextBreak
@@ -157,6 +159,7 @@ Triages incoming notifications. Determines urgency based on context, source, and
 pub struct AttentionManager {
     incoming: PriorityQueue<AttentionItem>,
     rules: Vec<AttentionRule>,
+    rule_triage: RuleBasedTriage,   // attention.md §15.2
     context: ContextState,
     digest: Vec<AttentionItem>,     // batched for periodic summary
 }
@@ -168,8 +171,10 @@ impl AttentionManager {
             return urgency;
         }
 
-        // 2. Context-based adjustment
-        let base_urgency = item.declared_urgency;
+        // 2. Context-based adjustment. Agents declare no urgency
+        //    (attention.md §4.3): the base is the Attention Manager's own
+        //    rule-based assessment (attention.md §15.2).
+        let base_urgency = self.rule_triage.assess(&item).urgency;
         let adjusted = match self.context.work_engagement {
             // Deep work: only Interrupt-level notifications get through
             e if e > 0.8 => base_urgency.raise_threshold(Urgency::Interrupt),
@@ -202,7 +207,7 @@ Security Layer 1. Compares an agent's observed actions against its declared inte
 **Key concepts:**
 
 - **Algorithmic pre-check** handles ~80% of verifications without LLM inference using machine-checkable StructuredIntent specifications (IntentPurpose enum, TemporalSpec formulas, DataFlowSpec, ResourceBounds)
-- **LLM semantic verification** via AIRS security path (<10ms SLA) for ambiguous cases requiring semantic understanding
+- **LLM semantic verification** via AIRS security path (<10ms single-round SLA on NPU hardware; each path's deadline is in [pipeline.md §10.2](../intent-verifier/pipeline.md)) for ambiguous cases requiring semantic understanding
 - **Multi-round adversarial self-testing** for high-risk actions (destructive writes, large data transfers)
 - **IPC taint labels** (DIFC) track data provenance across agent boundaries, preventing cross-agent exfiltration even when individual actions are capability-permitted
 - **Graceful degradation** — configurable fallback policies (Skip/ReadOnly/BlockAll) per trust level when AIRS is unavailable; Layers 2–8 remain active
@@ -581,7 +586,7 @@ pub struct SecurityAnalysis {
     analyzed_at: Timestamp,
     model: ModelId,
 
-    // === New fields (Phase 42) ===
+    // === New fields (Phase 46, AIRS Capability Intelligence) ===
     /// Capabilities the code uses but the manifest does not declare
     capabilities_missing: Vec<CapabilitySuggestion>,
     /// Suggested capability profiles matching this agent's needs

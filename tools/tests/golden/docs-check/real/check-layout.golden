@@ -1,0 +1,7 @@
+exit 0
+docs-check: 3 findings across 1 checks - 0 new, 3 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  layout                 3     0
+
+No new drift since baseline.

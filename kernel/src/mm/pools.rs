@@ -11,7 +11,7 @@
 //! that contiguous space into pools. Each pool's buddy allocator handles
 //! exclusions (kernel image, memory map buffer, bitmap pages) internally.
 //!
-//! Per memory.md §2.4.
+//! Per memory/physical.md §2.4.
 
 use shared::{Pool, PoolConfig};
 

@@ -546,7 +546,7 @@ fn verification_mode(verifier: &dyn IntentVerifier) -> &str {
 | --- | --- | --- |
 | Structured pre-check (cache hit) | < 1 us | No |
 | Structured pre-check (full evaluation) | < 100 us | No |
-| LLM semantic verification | 10-50 ms | Yes |
+| LLM semantic verification | < 10 ms (NPU), 50-100 ms (CPU-only) | Yes |
 | Taint label propagation (per IPC message) | < 1 us | No |
 | Data flow graph query | < 10 us | No |
 

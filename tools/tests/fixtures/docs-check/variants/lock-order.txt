@@ -1,0 +1,3 @@
+@@@ append kernel/src/main.rs
+
+pub static GAMMA_LOCK: spin::Mutex<u8> = spin::Mutex::new(0);

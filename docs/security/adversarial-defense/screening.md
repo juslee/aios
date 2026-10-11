@@ -25,9 +25,10 @@ security breach.
 
 ### §5.1 Architecture
 
-The pipeline runs synchronously on the IPC delivery path. All stages complete before a
-message is delivered to the destination agent. The total latency budget for the synchronous
-path is 2ms (§5.5).
+The pipeline runs on the IPC delivery path. The synchronous stages (rate check, structural
+analysis, pattern matching and Tier 1 ML) complete before a message is delivered to the
+destination agent; their total latency budget is 2ms (§5.5). Tier 2 ML (Stage 5) runs
+asynchronously after provisional delivery and screens only data flowing into the agent.
 
 ```mermaid
 flowchart LR
@@ -39,9 +40,9 @@ flowchart LR
     D -->|no match| E["Tier 1 ML\n(kernel, frozen)"]
     D -->|match| R
     E -->|safe| F["Deliver\nto agent"]
-    E -->|suspicious| G["Tier 2 ML\n(AIRS, async)"]
-    G -->|safe| F
-    G -->|injection| R
+    E -->|"suspicious\n(provisional)"| F
+    F -.->|"async: Tier 1 suspicious\nor External source"| G["Tier 2 ML\n(AIRS, async)"]
+    G -->|"injection\n(containment event)"| R
     R --> X2["Sanitize / Block\n/ Flag / LogOnly"]
 ```
 
@@ -67,10 +68,11 @@ kernel-internal compute budget.
 
 **Stage 5 — Tier 2 ML classification.** Invoked asynchronously when Tier 1 returns
 `Suspicious` or when the message originates from an External trust-level source. AIRS
-provides semantic injection analysis with context awareness (§5.3). For non-destructive
-inbound data (reads, tool outputs), Tier 2 can complete after provisional delivery to the
-agent. For agent-initiated writes and network-bound sends, the OutputValidator (§6) handles
-gating independently — Stage 5 applies only to data flowing into the agent.
+provides semantic injection analysis with context awareness (§5.3). All inbound data is
+delivered provisionally, and Tier 2 completes after delivery; if it returns `Injection`, the
+response subsystem issues a containment event. For agent-initiated writes and network-bound
+sends, the OutputValidator (§6) handles gating independently — Stage 5 applies only to data
+flowing into the agent.
 
 **Stage 6 — Response.** The response policy (§5.4) selects a `ScreeningResponse` based on
 the highest severity signal from any stage and the agent's declared policy.
@@ -210,10 +212,10 @@ Tier 2 is invoked in two conditions:
 1. Tier 1 returns `Suspicious` (confidence above `threshold` but below `injection_threshold`)
 2. The message originates from a source at External trust level
 
-Tier 2 is asynchronous for non-destructive reads (the message is delivered provisionally;
-if Tier 2 returns `Injection`, the response subsystem issues a containment event). For
-writes and network-bound outputs, delivery is held until Tier 2 completes, subject to the
-10ms latency budget.
+Tier 2 is asynchronous and screens only data flowing into the agent (§5.1, Stage 5): the
+message is delivered provisionally, and if Tier 2 returns `Injection`, the response
+subsystem issues a containment event. Tier 2 never holds a message. Agent-initiated writes
+and network-bound outputs are gated by the OutputValidator (§6), not by Tier 2.
 
 If AIRS is unavailable (early boot, model not loaded, AIRS service degraded), Tier 2 is
 skipped. The system falls back to Tier 1 + pattern matching alone. This degraded mode is

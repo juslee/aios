@@ -26,7 +26,7 @@ Rust's ownership model eliminates the three most common vulnerability classes fo
 - Raw pointer manipulation (page table walks, physical-to-virtual conversions)
 - FFI boundaries (if any external code is linked)
 
-Every `unsafe` block in AIOS follows the documentation standard defined in `CLAUDE.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary audit surface and the highest-priority fuzz targets.
+Every `unsafe` block in AIOS follows the documentation standard defined in `.claude/rules/06-unsafe-documentation.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary audit surface and the highest-priority fuzz targets.
 
 **Rust kernel fuzzing is still essential.** Research confirms that Rust kernel code is not immune to bugs — Check Point Research (2025) found vulnerabilities in Windows kernel Rust components through targeted fuzzing. The `unsafe` blocks required for hardware interaction, plus logic errors in safe code (integer overflow, infinite loops, deadlocks), make fuzzing indispensable even in a Rust kernel.
 
@@ -36,8 +36,8 @@ Every syscall validates all parameters at the kernel entry point before any kern
 
 1. **Syscall number**: reject if not in `[0, SYSCALL_COUNT)` (currently 31 syscalls, defined in `shared/src/syscall.rs`)
 2. **Capability handles**: bounds-check against process capability table; verify generation counter matches (prevents use-after-revoke)
-3. **Pointer arguments**: must fall within user address range (below `USER_VA_LIMIT = 0x0000_8000_0000_0000`); must be aligned to the expected type; must be backed by a mapped, readable (or writable) page
-4. **Length arguments**: reject `0` and values exceeding per-syscall maximums; reject `length > buffer_mapping_size`
+3. **Pointer arguments**: must fall within the user address range `[USER_VA_MIN, USER_VA_LIMIT)` = `[0x1000, 0x0000_8000_0000_0000)`, so null and page 0 are rejected even at length 0, and the range must not overflow (implemented: `validate_user_va`, [ipc.md](../../kernel/ipc.md) §8.1). Target design: must also be aligned to the expected type where the ABI requires it (`IpcSelect` entries accept any alignment) and backed by a mapped, readable (or writable) page; today's range check does not prove the pages are mapped (ipc.md §8.1)
+4. **Length arguments**: reject values exceeding per-syscall maximums and any buffer range that overflows; a zero-length buffer at a valid user address is accepted, a zero `MemoryMap` or `SharedMemoryCreate` size rounds up to one page, and a count that needs entries (such as `IpcSelect`'s `entry_count`) rejects `0` ([ipc.md](../../kernel/ipc.md) §8.1 for buffers, §4.7 for the `MemoryMap` and `SharedMemoryCreate` sizes, §3.1 for `IpcSelect`). Target design: also reject `length > buffer_mapping_size`
 5. **Enum/flag arguments**: reject values outside the valid set; no "reserved for future use" bits accepted
 
 No syscall implementation trusts any user-supplied value without validation. This is enforced by code review (see [security.md](model.md) §8.1 agent audit tool) and by syscall fuzzing ([adoption-roadmap.md](adoption-roadmap.md) §4.2).

@@ -18,3 +18,7 @@ default = ["kernel-metrics", "storage-tests"]
 kernel-metrics = []
 kernel-tracing = []
 storage-tests = []
+# Crash-fix step 1b, task T-self: a thread holds THREAD_TABLE with IRQs on so
+# the next CPU 0 tick panics with `lock re-entry:` (kernel/src/sync/selftest.rs).
+# Off by default and in neither soak arm: the boot it runs in always panics.
+tripwire-selftest = []

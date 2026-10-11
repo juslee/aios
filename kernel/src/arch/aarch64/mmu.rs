@@ -2,7 +2,7 @@
 //!
 //! Builds kernel page tables and swaps TTBR0 to our identity map.
 //! Phase 1 uses edk2's existing MAIR/TCR configuration with 1 GB block
-//! descriptors. Per memory.md §3.
+//! descriptors. Per memory/virtual.md §3.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +17,7 @@ static BOOT_TCR: AtomicU64 = AtomicU64::new(0);
 #[no_mangle]
 static BOOT_SCTLR: AtomicU64 = AtomicU64::new(0);
 
-// Kernel virtual address space layout (memory.md §3.1)
+// Kernel virtual address space layout (memory/virtual.md §3.1)
 #[allow(dead_code)]
 pub const KERNEL_BASE: usize = 0xFFFF_0000_0000_0000;
 pub const DIRECT_MAP_BASE: usize = 0xFFFF_0001_0000_0000;
@@ -203,8 +203,13 @@ pub unsafe fn init_mmu() {
     BOOT_SCTLR.store(sctlr, Ordering::Relaxed);
 }
 
-/// Physical address of the L0 page table (for TTBR0_EL1 on secondary cores).
-#[allow(dead_code)]
+/// `TTBR0_EL1`/`TTBR1_EL1` translation table base address field, BADDR
+/// bits [47:1] (4 KiB granule, 48-bit output). It leaves out the ASID in
+/// bits [63:48] and CnP in bit 0.
+pub const TTBR_BADDR_MASK: u64 = 0x0000_FFFF_FFFF_FFFE;
+
+/// Physical address of the L0 page table: the identity map that boot.S
+/// `_secondary_entry` installs in TTBR0_EL1 on secondary cores.
 pub fn ttbr0_l0_addr() -> u64 {
     virt_to_phys(TTBR0_L0.entries.get() as u64)
 }

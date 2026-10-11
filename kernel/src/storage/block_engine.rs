@@ -3,7 +3,7 @@
 //! Provides crash-safe write path: WAL append → data write → WAL commit.
 //! Data blocks are content-addressed by SHA-256 hash with CRC-32C integrity.
 //!
-//! Per spaces.md §4.1 (superblock), §4.4 (WAL), §3.0 (content addressing).
+//! Per spaces/block-engine.md §4.1 (superblock), §4.4 (WAL); spaces/data-structures.md §3.0.
 
 use alloc::vec::Vec;
 use sha2::{Digest, Sha256};

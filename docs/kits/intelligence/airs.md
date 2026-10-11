@@ -295,22 +295,23 @@ for result in results {
 
 **AIRS Kit + Context Kit -- activity classification:**
 
+The Context Engine behind the Context Kit feeds its fixed-length signal feature vector to
+the AIRS classifier model (`TaskProfile::Classifier`;
+[context-engine/inference.md](../../intelligence/context-engine/inference.md) §4.1). The
+classifier is not generative. Agents read the Context Kit's `ContextState`
+([context.md](./context.md)); they do not call `infer` for it.
+
 ```rust
-use aios_airs::{AirsKit, InferenceRequest, TaskProfile};
-use aios_context::{ContextKit, ContextSignal};
+use aios_context::{ActivityType, ContextConsumer, ContextError};
 
-// Context Kit collects signals and uses AIRS for classification
-let signals = ContextKit::current_signals()?;
-let feature_vector = signals.to_feature_vector();
-
-let result = AirsKit::engine()?.infer(InferenceRequest {
-    prompt: format!("Classify activity: {:?}", feature_vector),
-    profile: TaskProfile::Classifier,
-    max_tokens: 16,
-    ..Default::default()
-})?;
-
-// Result: "deep_work" / "browsing" / "communication" / "media" / "idle"
+fn schedule_work(context: &dyn ContextConsumer) -> Result<(), ContextError> {
+    match context.current_state()?.activity {
+        ActivityType::DeepWork | ActivityType::Meeting => { /* defer non-urgent work */ }
+        ActivityType::Idle => { /* run background indexing */ }
+        _ => {}
+    }
+    Ok(())
+}
 ```
 
 **AIRS Kit + Capability Kit -- scoped inference access:**
@@ -387,7 +388,7 @@ pub enum AirsError {
     /// The AIRS service is not running (early boot or disabled).
     ServiceUnavailable,
 
-    /// Internal inference error (GGML runtime failure).
+    /// Internal inference error (candle runtime failure).
     InternalError(String),
 }
 ```
@@ -409,12 +410,16 @@ dependent Kits degrade to their non-AI fallbacks.
 
 **Hardware scaling:**
 
-| Platform | Compute Path | Typical Throughput | Notes |
-| --- | --- | --- | --- |
-| QEMU virt | CPU (emulated NEON) | ~2 tok/s | Testing only; Q2_K models |
-| Raspberry Pi 4 | CPU (Cortex-A72 NEON) | ~5-8 tok/s | Q4_K_M 1-3B models |
-| Raspberry Pi 5 | CPU (Cortex-A76 NEON) | ~10-15 tok/s | Q4_K_M 3-7B models |
-| Apple Silicon | CPU + GPU + ANE | ~30-80 tok/s | Q5_K_M 7-13B models |
+| Platform | Compute Path |
+| --- | --- |
+| QEMU virt (testing only) | CPU (emulated NEON) |
+| Raspberry Pi 4 | CPU (Cortex-A72 NEON) |
+| Raspberry Pi 5 | CPU (Cortex-A76 NEON) |
+| Apple Silicon | CPU + GPU + ANE |
+
+Models and throughput per platform are in the AIRS performance targets
+([inference.md §3.8.2](../../intelligence/airs/inference.md)): pre-benchmark estimates, measured
+in Phase 11 (AIRS Inference Engine).
 
 **Feature availability:**
 

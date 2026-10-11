@@ -8,7 +8,7 @@
 
 **Related**:
 
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [developer-guide.md](./developer-guide.md) -- Human-readable kernel developer guide
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules
 
@@ -21,11 +21,11 @@ Before writing code for any phase step, read these documents in order:
 ### Mandatory (every task)
 
 1. **Phase doc** (`docs/phases/NN-phase-name.md`) -- Read the specific step you are implementing. Note the acceptance criteria -- this is your done condition.
-2. **CLAUDE.md** -- Read these sections:
-   - Code Conventions (Rust, Assembly, Architecture-Specific)
-   - Unsafe Documentation Standard (three-line SAFETY format)
-   - Key Technical Facts (addresses, offsets, constants)
-   - File Placement (where to put new files)
+2. **`.claude/rules/` and `.claude/CLAUDE.md`** -- Read:
+   - Code conventions (Rust, Assembly, Architecture-Specific): `.claude/rules/01-code-conventions.md`
+   - Unsafe documentation standard (three-line SAFETY format): `.claude/rules/06-unsafe-documentation.md`
+   - Key Technical Facts (addresses, offsets, constants): `.claude/CLAUDE.md`
+   - File placement (where to put new files): `.claude/rules/05-file-placement.md`
 3. **Developer guide §2** ([developer-guide.md §2](./developer-guide.md#2-aios-kernel-patterns)) -- The four unsafe patterns (MMIO, page tables, SPSC rings, system registers) and three error handling patterns.
 4. **Developer guide §4** ([developer-guide.md §4](./developer-guide.md#4-common-pitfalls)) -- All seven pitfalls. These represent real bugs discovered during Phases 1-3.
 5. **Deadlock prevention** ([deadlock-prevention.md](../kernel/deadlock-prevention.md)) -- Lock ordering rules. Violating lock order causes deadlocks that are extremely difficult to debug.
@@ -65,9 +65,9 @@ When implementing kernel code, use these established patterns:
 | Write ARM system register | `asm!("msr REG, {}",  in(reg) val)` + ISB if needed | `arch/aarch64/timer.rs:51-58` |
 | New static shared across cores | `AtomicT` with appropriate ordering | `smp.rs:34` (PRINT_TURN) |
 | Write-once boot-time static | `UnsafeCell` + `unsafe impl Sync` | `arch/aarch64/mmu.rs:32-39` |
-| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:101` (LOG_RINGS) |
+| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:205` (LOG_RINGS) |
 | New module in kernel | `pub mod name;` in parent + file with `//!` doc comment | `arch/aarch64/mod.rs` |
-| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:16` |
+| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:18` |
 | Error from syscall handler | Return `Err(IpcError::Variant as i64)` | `ipc/mod.rs` (channel_create) |
 | Unrecoverable error | `kerror!(Subsys, "msg"); halt()` OR `panic!("msg")` | `main.rs:53-64` |
 | Feature-gated code | `#[cfg(feature = "feature-name")] { ... }` | `observability/trace.rs:6` |
@@ -80,16 +80,16 @@ When implementing kernel code, use these established patterns:
 
 | Task | Pattern | Reference File |
 |---|---|---|
-| Lock ordering enforcement | Acquire in order per CLAUDE.md: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
+| Lock ordering enforcement | Acquire in the order of the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
-| Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:58-108` |
+| Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
 | Service registration | `service_register(name, pid, channel)` → name uniqueness check | `service/mod.rs:48-83` |
 | Lock-free audit logging | `audit_log(pid, event)` -- AtomicUsize ring head, Mutex ring body | `service/mod.rs:153-171` |
 | VirtIO-blk I/O | `read_sector(sector, buf)` / `write_sector(sector, buf)` polled | `drivers/virtio_blk.rs:112-132` |
 | Crash-safe block write | WAL append → data write → WAL commit | `storage/block_engine.rs:1-6` (module doc) |
 | Direct-map phys→virt | Add `DIRECT_MAP_BASE + phys` after TTBR1 enabled | `mm/slab.rs` (`convert_to_direct_map`) |
-| Cascade revocation | Drop PROCESS_TABLE lock *before* walking CHANNEL_TABLE | `cap/mod.rs:197-236` |
+| Cascade revocation | Drop PROCESS_TABLE lock *before* walking CHANNEL_TABLE | `cap/mod.rs:193-212` |
 
 -----
 
@@ -108,7 +108,7 @@ RIGHT: Read from architecture doc
 const GICD_CTLR: usize = 0x000;
 ```
 
-If you don't know a register offset, address, or constant -- read the architecture doc or `CLAUDE.md` Key Technical Facts. Never guess.
+If you don't know a register offset, address, or constant -- read the architecture doc or `.claude/CLAUDE.md` Key Technical Facts. Never guess.
 
 ### Never use spin::Mutex on Non-Cacheable memory
 
@@ -123,7 +123,7 @@ AIOS convention: no TODO comments in code. If a feature is incomplete, either:
 
 ### Never create files in wrong directories
 
-Follow CLAUDE.md File Placement rules exactly:
+Follow the file placement rules in `.claude/rules/05-file-placement.md` exactly:
 
 - aarch64-specific code → `kernel/src/arch/aarch64/`
 - Memory management → `kernel/src/mm/`
@@ -158,12 +158,7 @@ W^X policy: pages are writable OR executable, never both. See developer-guide.md
 
 ### Never acquire locks out of order
 
-The full lock ordering is defined in CLAUDE.md Key Technical Facts. The canonical order is:
-
-```text
-PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE
-  > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
-```
+The canonical lock ordering is the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts. Read it there rather than from a copy: it grows with each milestone that adds a lock.
 
 Violating this causes deadlocks under contention. When you need two locks, always acquire the earlier one first. See [deadlock-prevention.md](../kernel/deadlock-prevention.md).
 
@@ -239,16 +234,16 @@ Before marking any step complete, verify ALL of these:
 - [ ] All MMIO access uses volatile read/write
 - [ ] ISB after all MSR writes to instruction-affecting registers
 - [ ] Correct TLB invalidation strategy (local-only during boot, broadcast after all cores online)
-- [ ] Addresses and offsets match CLAUDE.md Key Technical Facts
-- [ ] Lock acquisition follows CLAUDE.md lock ordering
+- [ ] Addresses and offsets match `.claude/CLAUDE.md` Key Technical Facts
+- [ ] Lock acquisition follows the `.claude/CLAUDE.md` lock ordering
 - [ ] Capability checks precede all privileged operations (IPC, shmem, channel create)
 - [ ] No allocation in interrupt context (timer tick, GIC IRQ handler)
 - [ ] PhysAddr/VirtAddr types used correctly (no raw usize for addresses crossing domains)
 
 ### Phase acceptance
 
-- [ ] Step's acceptance criteria met (run the exact command from the phase doc)
-- [ ] If QEMU output expected, it matches the documented strings
+- [ ] The step's acceptance commands that need no QEMU pass (build, `just check`, `just test`), with output quoted in your report.
+- [ ] Boots: name the boots the verifier must run (mode, count, the UART lines that pass). Never start QEMU yourself; only the verifier boots (rule 11).
 
 -----
 
@@ -256,10 +251,10 @@ Before marking any step complete, verify ALL of these:
 
 After completing a step:
 
-1. Stage only the files you created or modified
-2. Commit with format: `Phase N MK: Step X -- <description>`
-3. Push immediately -- do not batch steps
-4. Report completion to team-lead with summary of files created/modified
+1. Stage only the files you created or modified.
+2. Commit on your temporary branch with the message your lead gives (format `Phase N MK: Step X — <description>`, rule 03).
+3. The lead fast-forwards the branch worktree to your commits and pushes (rule 11). A solo session working directly in its own branch worktree pushes with `git push -u origin claude/<branch>`.
+4. Report to your lead in your agent definition's report format (the `RESULT:`, `BRANCH:` and `W:` lines first).
 
 -----
 
@@ -358,24 +353,24 @@ pub fn ipc_recv(
 pub fn ipc_reply(
     channel: ChannelId,
     reply_buf: &[u8],
-) -> i64                                 // channel.rs:355
+) -> i64                                 // channel.rs:349
 
 // Non-blocking send (fire and forget).
 pub fn ipc_send(
     channel: ChannelId,
     send_buf: &[u8],
-) -> i64                                 // channel.rs:421
+) -> i64                                 // channel.rs:415
 
 // Create a new IPC channel. Requires ChannelCreate capability.
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs:149
+) -> Result<ChannelId, i64>              // ipc/mod.rs:182
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
     entries: &[SelectEntry],
     timeout_ticks: u64,
-) -> Result<(usize, u64), i64>          // select.rs:44
+) -> Result<(usize, u64), i64>          // select.rs:52
 ```
 
 **Gotchas**:
@@ -390,7 +385,7 @@ pub fn ipc_select(
 
 - **Timeout registration before blocking** (channel.rs:118-126): Timeouts are registered in the TIMEOUT_QUEUE *before* the thread blocks. If direct switch fails and falls through to the scheduler, the timeout is still active. On timeout expiry, the timeout queue wakes the thread with an error code.
 
-- **ipc_reply() needs no capability** (channel.rs:355): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
+- **ipc_reply() needs no capability** (channel.rs:349): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
 
 **Lock ordering**:
 
@@ -423,36 +418,38 @@ RIGHT: Use a buffer with lifetime that spans the entire blocking period
 // Check ChannelCreate capability. Returns authorizing token ID.
 pub fn check_channel_create(
     pid: ProcessId,
-) -> Result<CapabilityTokenId, i64>      // cap/mod.rs:58
+) -> Result<CapabilityTokenId, i64>      // cap/mod.rs:70
 
 // Check ChannelAccess(channel_id) capability. Fail-closed.
 pub fn check_channel_access(
     pid: ProcessId,
     channel: ChannelId,
-) -> Result<(), i64>                     // cap/mod.rs:85
+) -> Result<(), i64>                     // cap/mod.rs:94
 
 // Grant a capability token to a process.
+// EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot.
 pub fn grant_to_process(
     pid: ProcessId,
     cap: Capability,
     delegatable: bool,
-) -> Result<CapabilityHandle, i64>       // cap/mod.rs:169
+) -> Result<CapabilityHandle, i64>       // cap/mod.rs:164
 
 // Revoke a token (and all children) from a process.
 // Cascades: destroys channels created under the revoked capability.
+// EINVAL for pid >= MAX_PROCESSES, before anything is revoked.
 pub fn revoke_in_process(
     pid: ProcessId,
     token_id: CapabilityTokenId,
-)                                        // cap/mod.rs:197
+) -> Result<(), i64>                     // cap/mod.rs:193
 ```
 
 **Gotchas**:
 
-- **Token expiry** (cap/mod.rs:59, 86): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
+- **Token expiry** (cap/mod.rs:71, 99): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
 
-- **Cascade revocation lock ordering** (cap/mod.rs:214-236): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
+- **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
 
-- **Process exit implicit revocation** (cap/mod.rs:61-68): All cap checks validate the process exists in PROCESS_TABLE. When a process exits (slot becomes `None`), all its capabilities are implicitly void. No explicit revocation needed.
+- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints Dead on every channel with an endpoint owned by the process (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
 
 - **CapabilityTable is per-process, max 256** (shared/src/cap.rs): Each process has `[Option<CapabilityToken>; 256]`. Handle allocation is O(n) scan for `None` slot. Don't assume constant-time allocation.
 
@@ -684,36 +681,7 @@ Both WAL and MemTable have no internal locks. They are accessed exclusively thro
 
 ## 7. Team & Agent Workflow
 
-AIOS uses an autonomous agent team for development. Understanding the workflow helps agents collaborate correctly.
-
-### Agent roles
-
-| Agent | Role | Spawned by |
-|---|---|---|
-| **team-lead** | Orchestrates phases, manages tasks, commits, creates PRs | User or `/build-team` |
-| **kernel-dev** | Implements Rust/asm code per phase doc steps | team-lead |
-| **doc-writer** | Generates phase docs from architecture docs | team-lead |
-| **code-reviewer** | Runs quality gates, reviews code conventions | team-lead |
-| **verifier** | Boots QEMU, validates acceptance criteria | team-lead |
-| **doc-auditor** | Validates docs on every change, loops until clean | Hook (auto) or team-lead |
-
-### How kernel-dev receives work
-
-1. team-lead reads the phase doc and creates a TodoWrite task list
-2. team-lead spawns kernel-dev with a specific step number and context
-3. kernel-dev reads the phase doc step, relevant architecture docs, and this guide
-4. kernel-dev implements the step, runs acceptance criteria
-5. kernel-dev reports completion back to team-lead
-
-### Post-implementation audit loop (mandatory)
-
-Before any PR is created, three audits must pass with zero issues:
-
-1. **Doc audit** -- Cross-reference errors, terminology, technical accuracy in all modified docs
-2. **Code review** -- Convention compliance, unsafe documentation, W^X, naming, dead code
-3. **Security/bug review** -- Logic errors, address confusion (virt vs phys), PTE bit correctness, race conditions
-
-Fix all genuine issues, commit, and re-run all three audits. Repeat until a full round returns 0 issues across all three categories.
+Who does what is in `.claude/CLAUDE.md` (Team & Agent Architecture) and `.claude/rules/11-teams.md`. The two-lead protocol is in `docs/project/agent-loop.md` (Teams). In short: a lead (a session, never a spawned agent) gives you one task for a branch, with its worktree and tip. In your own temporary worktree you reset to that tip, do the task, run the gates, commit, and report in the format `.claude/agents/kernel-dev.md` gives. Before fast-forwarding the branch to your range, the lead has code-reviewer (Fable) review it; must-fix findings come back to a fresh kernel-dev. The lead pushes. A simplifier pass runs once per PR, then the audit, before the PR is marked ready (rule 02).
 
 ### Post-PR review workflow
 

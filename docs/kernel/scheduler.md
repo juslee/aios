@@ -967,7 +967,7 @@ pub enum InferencePriority {
     /// Weight multiplier: 4x
     Interactive = 3,
 
-    /// System service needs a result (intent verifier, context engine)
+    /// System service needs a result (intent verifier, behavioral monitor)
     /// Weight multiplier: 2x
     System = 2,
 

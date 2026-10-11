@@ -17,7 +17,7 @@
 //! `SURFACE_TABLE`. Each is **below** the IPC tables (CHANNEL_TABLE,
 //! SHARED_REGION_TABLE) and is never held across an IPC call — callers
 //! snapshot the affected fields under the lock then drop it before
-//! `ipc_send`/`ipc_reply`. See `CLAUDE.md` for the full chain.
+//! `ipc_send`/`ipc_reply`. See `.claude/CLAUDE.md` for the full chain.
 //!
 //! See [shared::compositor] for the pure data types ([`HitZone`],
 //! [`ResizeEdge`], [`WindowDecoration`]) and the geometric `hit_zone()`

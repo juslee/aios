@@ -76,8 +76,8 @@ Timer              TICK_INTERVAL: AtomicU64                   arch/aarch64/timer
 Memory pools       FRAME_ALLOC: Mutex<Option<FrameAllocator>> mm/frame.rs
 Slab allocator     SLAB: Mutex<SlabAllocator>                mm/slab.rs
 ASID               ASID_ALLOC: Mutex<AsidAllocator>           mm/uspace.rs
-Scheduler          RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES]  sched/mod.rs
-                   THREAD_TABLE: Mutex<[Option<Thread>; 64]> task/mod.rs
+Scheduler          RUN_QUEUES: [IrqSpinLock<RunQueue>; MAX_CORES] sched/mod.rs
+                   THREAD_TABLE: IrqSpinLock<[Option<Thread>; MAX_THREADS]> task/mod.rs
 IPC channels       CHANNEL_TABLE: Mutex<[Option<Channel>]>   ipc/mod.rs
 Capabilities       (per-process CapabilityTable)             cap/mod.rs
 Processes          PROCESS_TABLE: Mutex<[Option<ProcessControl>]> task/process.rs
@@ -106,7 +106,7 @@ mov  x19, x0                // save BootInfo pointer (callee-saved)
 
 **boot.S Step 3: Park secondary cores.** Read `MPIDR_EL1[7:0]` to get the core ID. If non-zero, branch to a `wfe` parking loop. Only core 0 (the boot CPU) continues.
 
-**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top` (128 KiB stack at end of BSS, defined in linker.ld).
+**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top`, the end of the 128 KiB boot stack. linker.ld places the stack in its own `.stack (NOLOAD)` output section right after `.bss`, so it lies inside the RW PT_LOAD segment: the UEFI stub allocates it with `.data`/`.bss`, and `BootInfo.kernel_size` covers it. Step 5 does not zero it (it lies past `__bss_end`); the stub zero-fills the whole segment.
 
 **boot.S Step 5: Zero BSS.** Loop from `__bss_start` to `__bss_end`, writing zero in 8-byte strides.
 
@@ -114,7 +114,7 @@ mov  x19, x0                // save BootInfo pointer (callee-saved)
 
 **boot.S Step 7: Configure TCR_EL1.** Set T1SZ=16 (48-bit kernel VA), TG1=4KiB granule, IRGN1/ORGN1=WB WA, SH1=Inner Shareable. Preserve existing TTBR0 configuration (bits[15:0]) from edk2.
 
-**boot.S Step 8: Install TTBR1 and branch to virtual kernel_main.** Write L0 physical address to `TTBR1_EL1`. Execute `TLBI VMALLE1` + `DSB NSH` (non-broadcast — broadcast hangs with parked cores under NC memory). Compute virtual kernel_main address by adding `VIRT_PHYS_OFFSET` (`0xFFFE_FFFF_C000_0000`). Convert SP to virtual. Branch to virtual `kernel_main` with `x0 = x19` (BootInfo physical address).
+**boot.S Step 8: Install TTBR1 and branch to virtual kernel_main.** Write L0 physical address to `TTBR1_EL1`. Execute `TLBI VMALLE1` + `DSB NSH` (non-broadcast — broadcast hangs with parked cores under NC memory). Compute virtual kernel_main address by adding `VIRT_PHYS_OFFSET` (`0xFFFE_FFFF_C000_0000`). Convert SP to virtual. Set `TPIDR_EL1` to `MPIDR_EL1` Aff0, the CPU id that crash-fix step 1b's IRQ-class lock stamps with (written once per CPU, before any Rust code, and never saved or restored on a switch). Branch to virtual `kernel_main` with `x0 = x19` (BootInfo physical address).
 
 #### Phase B: kernel_main (Rust)
 
@@ -146,7 +146,7 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 5a: TTBR0 identity map.** Build a TTBR0 identity map with 3 × 1GB block descriptors: 0–1GB (device memory, MAIR Attr0), 1–2GB (RAM, MAIR Attr3 WB), 2–3GB (RAM, MAIR Attr3 WB). This must run before GIC/timer init because QEMU edk2 firmware may not preserve device-memory MMIO mappings in TTBR0 post-ExitBootServices. TLBI uses `VMALLE1` + `DSB NSH` (non-broadcast; broadcast hangs with parked cores under NC memory). Advance phase: `MmuEnabled`.
 
-**Step 5b: GICv3 + Timer.** Initialize the GICv3 distributor (GICD at `0x0800_0000`) and redistributor (GICR at `0x080A_0000`). Configure the CPU interface via ICC system registers. Then initialize the ARM Generic Timer: read `CNTFRQ_EL0` (62.5 MHz on QEMU), configure 1 kHz tick (62500 counts/tick), wire timer PPI (INTID 30) through GIC. Advance phases: `InterruptsReady`, `TimerReady`.
+**Step 5b: GICv3 + Timer.** Initialize the GICv3 distributor (GICD at `0x0800_0000`) and redistributor (GICR at `0x080A_0000`). Configure the CPU interface via ICC system registers. Then initialize the ARM Generic Timer: read `CNTFRQ_EL0` (62.5 MHz on QEMU), configure 1 kHz tick (62500 counts/tick), wire timer PPI (INTID from the DTB, 30 on QEMU) through GIC with the per-CPU timer PPI setup on the boot CPU's redistributor (hal.md §4.1). Advance phases: `InterruptsReady`, `TimerReady`.
 
 **Step 6: Buddy allocator + Slab heap.** Initialize physical memory from the UEFI memory map. Walk the memory descriptors, exclude kernel image, BootInfo, and MMIO regions. Partition into 4 pools: kernel (128 MB), user (1792 MB), model (0), DMA (64 MB). Initialize buddy allocator (orders 0–10, bitmap coalescing, poison fill on free). Advance phase: `PageAllocatorReady`.
 
@@ -201,7 +201,7 @@ The PL011 UART is the first and last resort for debugging. It's initialized befo
 1. **Pre-init (boot.S → Step 3):** The UART works because edk2 left PL011 configured. The `kinfo!()` macro writes directly to the UART data register at the hardcoded base `0x0900_0000`. No baud rate programming, no lock.
 2. **Full init (Step 4):** `init_pl011()` disables the UART, programs IBRD=13/FBRD=1 (115200 baud at 24 MHz APB clock), sets LCR_H for 8N1 with FIFOs, re-enables TX+RX+UART via CR. Updates the global `UART_BASE_ADDR: AtomicUsize`.
 
-The kernel's structured logging macros (`kinfo!`, `kwarn!`, `kerror!` from `observability/mod.rs`) format into a 48-byte `LogEntry` message field and write to UART character-by-character via `UartWriter` (implements `core::fmt::Write`). No heap allocation — all formatting happens on the stack. Output is unprotected by locks in early boot (see `uart.rs` header comment: `spin::Mutex` hangs on NC memory); brief interleaving during SMP bringup is accepted.
+The kernel's structured logging macros (`kinfo!`, `kwarn!`, `kerror!` from `observability/mod.rs`) format each line into a 160-byte stack buffer and write it to the UART character-by-character via `UartWriter` (implements `core::fmt::Write`) while the boot phase is before `LogRingsReady`; after that they format into a 96-byte stack buffer (`LogMessageBuf`) and go to the per-core rings as one `LogEntry` (48-byte message), or a head entry and a continuation for a longer line ([observability.md](../observability.md) §2.4). No heap allocation — all formatting happens on the stack. Output is unprotected by locks in early boot (see `uart.rs` header comment: `spin::Mutex` hangs on NC memory); brief interleaving during SMP bringup is accepted.
 
 After Step 6b (full TTBR1), the UART base is switched from the TTBR0 identity-mapped physical address to the TTBR1 MMIO virtual address (`MMIO_BASE + UART_PHYS`) via `uart::update_base()`. This must happen before TTBR0 is repurposed for user address spaces.
 
@@ -231,10 +231,14 @@ Secondary core (_secondary_entry in boot.S → secondary_main in smp.rs):
   2. Install Rust exception vectors at VBAR_EL1 (boot.S)
   3. Load MAIR/TCR/TTBR0/TTBR1, enable MMU (boot.S — safe: MMU was off)
   4. Load per-core SP from SECONDARY_STACKS[core_id] (boot.S)
-  5. Branch to secondary_main(core_id) (Rust)
-  6. Init GIC redistributor + CPU interface for this core
+  5. Set TPIDR_EL1 = MPIDR_EL1 Aff0, branch to secondary_main(core_id) (Rust)
+  6. Init GIC redistributor + timer PPI + CPU interface for this core:
+     wake, put the timer PPI in Group 1, priority, level check, enable,
+     readback (hal.md §4.1); GICR at its physical address through the
+     boot identity TTBR0, and no UART output (the UART is mapped in step 7)
   7. Install full kmap TTBR1 (replaces boot.S minimal TTBR1)
-  8. Wait for PRINT_TURN == core_id, print, store core_id + 1
+  8. Wait for PRINT_TURN == core_id, print (the [smp] line reports the
+     timer PPI setup), store core_id + 1
   9. Init per-core timer (programs CNTP_TVAL_EL0 + CNTP_CTL_EL0)
   10. Enter scheduler (parks in wfe until SCHED_READY)
 ```

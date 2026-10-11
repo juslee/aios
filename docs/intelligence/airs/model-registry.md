@@ -81,7 +81,9 @@ pub enum TaskType {
     MetadataGeneration,
     /// Prompt injection detection
     AdversarialDetection,
-    /// Context inference (work/leisure)
+    /// Context inference (work/leisure). Routed to the Context Engine's own
+    /// ~2 MB context classifier (context-engine/inference.md §4.1), not to
+    /// the general-purpose model
     ContextInference,
     /// Attention urgency assessment
     AttentionTriage,
@@ -92,8 +94,9 @@ pub enum TaskType {
 
 **Default model strategy:**
 
-- Ship one general-purpose model (7-8B, Q4_K_M, ~4.5 GB) for all tasks
+- Ship one general-purpose model (7-8B, Q4_K_M, ~4.5 GB) for all tasks except embeddings and context inference
 - Ship one small embedding model (~100 MB) for Space Indexer
+- Ship the Context Engine's context classifier (~2 MB, not an LLM; [context-engine/inference.md](../context-engine/inference.md) §4.1) for context inference
 - Users can download larger/specialized models from the model registry
 - System intelligently routes tasks to the best available model
 
@@ -105,7 +108,7 @@ Different hardware tiers require different model quantization levels. AIRS selec
 RAM Tier            Model Pool   Quantization   Model Size    Quality       Notes
 ─────────────────   ──────────   ────────────   ──────────    ────────      ─────
 < 2 GB Degraded        0 MB      N/A            N/A          Cloud-only    No local inference
-2-4 GB Minimal         1 GB      Q4_K_M         1B params    Minimal       Simple completions
+2-4 GB Minimal         0 MB      N/A            N/A          None          No model pool below 4 GiB
 4-8 GB Constrained     2 GB      Q4_K_M         3B params    Basic         Limited reasoning
 8-16 GB Recommended    4 GB      Q4_K_M         8B params    Good          Target experience
 ≥ 16 GB Comfortable    8 GB      Q5_K_M         8B params    High          Best local quality
@@ -161,17 +164,17 @@ impl QuantizationSelector {
 
 ### 4.4 LRU Model Eviction
 
-Multiple models can't fit in RAM simultaneously on low-memory devices. The registry manages loading/unloading:
+The model pool is 8 GB at most (§4.3), so it cannot hold the primary model and a full-size (7B) vision model such as LLaVA 1.5 7B at once on any device, even one of 16 GB or more. A smaller (~3B, ~2 GB) vision model fits beside the ~5.5 GB primary model only by giving up most of the quarter of the pool that §4.3 and §4.6 reserve for KV caches (5.5 + 2 + 0.1 GB for the embedding model leaves ~0.4 GB of an 8 GB pool). The registry manages loading/unloading:
 
 ```text
-RAM Budget: 4 GB available for models
+RAM Budget: 8 GB available for models (16 GB device)
 
 Loaded models:
-  llama-3.1-8b-q4_k_m   (4.5 GB)  ← active (conversation bar)
+  llama-3.1-8b-q5_k_m   (~5.5 GB) ← active (conversation bar; the ≥ 16 GB tier's Q5_K_M, §4.3)
 
-User opens a vision task → needs vision model (3 GB)
+User opens a vision task → needs llava-1.5-7b-q4 (4.5 GB; 5.5 + 4.5 GB > 8 GB)
   1. llama model is idle → evict from RAM (weights still on disk)
-  2. Load vision model → 3 GB
+  2. Load vision model → 4.5 GB
   3. When conversation bar is used again → evict vision, reload llama
   4. Model weights are memory-mapped — loading is fast (no parsing, just mmap)
 ```
@@ -219,18 +222,21 @@ Task: "Generate embedding for this document"
 Ideal model: embedding-model (loaded as companion)
   → Route to companion. No switch needed.
 
-Task: "Classify this image"
-Ideal model: vision-model (not loaded)
+Task: "Classify this image" (user request)
+Ideal model: llava-1.5-7b vision model (not loaded)
 Primary model: llama-8b (loaded, no vision capability)
   → Cannot route to primary. Must switch.
   → Check: any queued vision tasks? Batch them.
-  → Evict least-recently-used non-primary model.
+  → Evict the primary model: no model pool holds it beside a 7B vision
+    model (§4.4). This is an InteractiveTaskNeeds eviction, so it waits
+    until the primary model has no active sessions.
   → Load vision model, process all queued vision tasks.
-  → Keep vision model loaded for specialist_ttl (5 min).
-  → If no more vision tasks: evict, reclaim memory.
+  → Keep vision model loaded for specialist_ttl (5 min), or until the
+    primary model is needed again.
+  → Then evict the vision model and reload the primary model.
 ```
 
-**4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. Example: user opens a photo space → AIRS begins loading the vision model in a background thread while the user browses thumbnails.
+**4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. A pre-load is background work, so it is a `BackgroundTaskNeeds` eviction: it may evict only what `can_evict` allows for that reason (another loaded model, such as a specialist), never the primary model or the companion. Example: user opens a photo space → AIRS predicts a vision request, but the LLaVA 1.5 7B vision model does not fit beside the primary model (§4.4), so AIRS does not pre-load it. That load waits for the user's request, which is an `InteractiveTaskNeeds` eviction (point 3).
 
 **SD card reality:** On a Pi with an SD card, even mmap-based loading is slow because every page fault requires an SD card read (~100 μs per 4 KB page, vs ~5 μs for NVMe). A 4 GB model requires ~1 million page faults to fully warm up. AIOS mitigates this with sequential pre-faulting — after the mmap, a background thread reads the model file sequentially (which aligns with SD card's best-case sequential read performance of ~90 MB/s) to populate all pages before inference begins. First-token latency is ~45 seconds on SD vs ~3 seconds on NVMe for a 4 GB model.
 
@@ -248,12 +254,14 @@ Available RAM        Model Pool Alloc    Default Model Selection
                                           that require inference are disabled.
                                           Rule-based fallbacks active.
 
-2 GB – 3.9 GB        1 GB                1B parameter model, Q4_K_M quantization.
-                                          ~600 MB on disk, ~900 MB in RAM.
-                                          Sufficient for: context inference,
-                                          intent verification, metadata generation.
-                                          Insufficient for: extended conversation,
-                                          complex summarization.
+2 GB – 3.9 GB        0 MB                No local model: there is no model
+                                          pool below 4 GiB. Intelligence
+                                          services that require inference are
+                                          disabled. Rule-based fallbacks active.
+                                          The boot selector returns the same
+                                          `CloudOnly` decision as below 2 GB;
+                                          whether this tier gets cloud
+                                          inference is not yet designed.
 
 4 GB – 7.9 GB        2 GB                3B parameter model, Q4_K_M quantization.
                                           ~1.7 GB on disk, ~2 GB in RAM.
@@ -268,8 +276,10 @@ Available RAM        Model Pool Alloc    Default Model Selection
 
 ≥ 16 GB              8 GB                8B parameter model, Q5_K_M or Q6_K.
                                           Higher quantization = better quality.
-                                          Room for specialist models alongside
-                                          the primary model.
+                                          Room for small specialist models
+                                          alongside the primary model. A 7B
+                                          vision model (~4.5 GB) still swaps
+                                          with the primary model (§4.4).
 ```
 
 ```rust
@@ -314,9 +324,9 @@ impl BootModelSelector {
     }
 
     fn compute_model_pool(&self) -> usize {
+        // Same tiers as PoolConfig::from_total_ram (shared/src/memory.rs)
         match self.available_ram {
-            r if r < 2 * GB => 0,
-            r if r < 4 * GB => 1 * GB,
+            r if r < 4 * GB => 0,
             r if r < 8 * GB => 2 * GB,
             r if r < 16 * GB => 4 * GB,
             _ => 8 * GB,

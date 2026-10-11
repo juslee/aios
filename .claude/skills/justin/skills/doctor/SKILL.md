@@ -12,7 +12,7 @@ description: >
 
 Report docs and harness drift. This skill edits nothing. Runbook for the human side, including the docs policy: `docs/project/agent-loop.md`.
 
-1. Run the full drift report (exit status 1 only means new drift exists, 2 means the checker itself failed; read the output either way):
+1. Run the full drift report (exit status 0 means no new drift and 1 means new drift exists; any other status means the checker itself failed: 2 for a usage, git or internal error, 3 from the `.claude/hooks/aios` shim when it cannot build or find the binary, 101 for a panic; read the output either way):
 
    ```bash
    just docs-check --all
@@ -21,15 +21,15 @@ Report docs and harness drift. This skill edits nothing. Runbook for the human s
 2. Run the harness checks on their own so their findings are not lost in the docs noise:
 
    ```bash
-   python3 scripts/docs/check.py --all --check pointer-doctor,harness-tables
+   just docs-check --all --check pointer-doctor,harness-tables
    ```
 
 3. Report:
    - One line per check with findings: total and new (the `new` column).
-   - Every harness finding (stale CLAUDE.md pointers, sections that moved to `.claude/rules/`, unknown tools in agent frontmatter, skills or agents missing from the CLAUDE.md tables), each with file and line.
+   - Every harness finding (stale CLAUDE.md pointers, sections that moved to `.claude/rules/`, unknown tools in agent frontmatter, skills or agents missing from the `.claude/CLAUDE.md` tables), each with file and line.
    - Findings marked `~` carry an `[accepted: ...]` reason in the baseline: they are confirmed false positives. List them separately and never propose "fixing" them.
    - Baselined entries that no longer occur or occur on fewer lines (the prune list): they are removed with `just docs-check --update-baseline` in a PR.
-   - Who fixes what, per the docs policy in the runbook: status docs and CLAUDE.md fact tables in the same PR as the change; skills, agents, rules and CLAUDE.md policy prose in a harness or retro PR the human merges; architecture docs only with owner approval.
+   - Who fixes what, per the docs policy in the runbook: status docs and `.claude/CLAUDE.md` fact tables in the same PR as the change; skills, agents, rules and `.claude/CLAUDE.md` policy prose in a harness or retro PR the human merges; architecture docs only with owner approval.
 
 4. Do not edit anything. Offer to open a branch that fixes a named subset, or a GitHub issue that records the backlog.
 

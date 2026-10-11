@@ -4,7 +4,7 @@
 //! through the buddy/frame allocator. Provides typed wrappers on top
 //! of the existing `#[global_allocator]` infrastructure.
 //!
-//! Per memory.md §4.2.
+//! Per memory/physical.md §4.2.
 
 use core::alloc::Layout;
 

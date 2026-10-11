@@ -52,7 +52,7 @@ pub struct BenchmarkMetrics {
 
 - True positive rate: >95% (correctly identifies intent violations)
 - False positive rate: <2% (legitimate actions rarely blocked)
-- P99 latency: <10ms for LLM verification path, <0.1ms for algorithmic path
+- P99 latency: LLM verification path <10ms on NPU hardware and <100ms CPU-only ([pipeline.md §10.1](./pipeline.md)); <0.1ms for algorithmic path
 - Pre-check hit rate: >80% (actions resolved without LLM inference)
 
 The benchmark suite runs in three modes: algorithmic-only (measures pre-check coverage), LLM-only (measures semantic accuracy), and combined (measures the full pipeline including caching).

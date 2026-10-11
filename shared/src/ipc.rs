@@ -20,6 +20,32 @@ pub const MAX_MESSAGE_SIZE: usize = 256;
 /// Default IPC timeout in ticks (5 seconds at 1 kHz).
 pub const DEFAULT_TIMEOUT_TICKS: u64 = 5_000;
 
+/// The deadline tick of a wait for `timeout_ticks` ticks that starts at tick
+/// `now`, in the form the timeout queue and the notification deadlines store.
+///
+/// `u64::MAX` means no deadline: the wait is unbounded and the result is
+/// `None`. Any other value gives `now + timeout_ticks`, so a timeout taken
+/// straight from a syscall register cannot overflow (#217) and never gives a
+/// deadline before `now`. A sum that reaches or passes `u64::MAX` is also
+/// `None`: `check_timeouts` can never reach tick `u64::MAX` (2^64 ms is about
+/// 585 million years), so such a deadline bounds nothing, and calling it
+/// "no deadline" keeps the tripwire scans, which treat a `u64::MAX` entry as
+/// no waker, consistent with the wait's `timed` flag.
+///
+/// `0` gives `Some(now)`, a deadline the next timer tick passes. A caller for
+/// which 0 means something else decides that before calling: `ipc_call`
+/// treats 0 as no deadline, `ipc_recv` as a poll, and `sleep_ticks` returns
+/// at once.
+pub const fn deadline_after(now: u64, timeout_ticks: u64) -> Option<u64> {
+    if timeout_ticks == u64::MAX {
+        return None;
+    }
+    match now.checked_add(timeout_ticks) {
+        Some(deadline) if deadline != u64::MAX => Some(deadline),
+        _ => None,
+    }
+}
+
 /// Maximum priority inheritance depth (ipc.md §9.2).
 ///
 /// Bounds transitive inheritance chains to prevent runaway elevation.
@@ -47,6 +73,24 @@ pub const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelId(pub u32);
 
+impl ChannelId {
+    /// Slot index of this channel in the `MAX_CHANNELS`-entry channel table.
+    ///
+    /// Returns `None` when the id is `>= MAX_CHANNELS`. No channel can exist at
+    /// such an id. Always index the table through this method, never through
+    /// `self.0 as usize`: ids can come from untrusted callers, and a raw index
+    /// past the end of the table panics the kernel.
+    #[inline]
+    pub const fn index(self) -> Option<usize> {
+        let idx = self.0 as usize;
+        if idx < MAX_CHANNELS {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+}
+
 /// Unique shared memory region identifier (index into SHARED_REGION_TABLE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedMemoryId(pub u32);
@@ -72,9 +116,95 @@ pub enum SelectKind {
 }
 
 /// A single entry in the IpcSelect wait set.
+///
+/// This is the kernel's decoded form. It wraps a Rust enum and has no fixed
+/// layout, so it never crosses the syscall boundary: EL0 passes
+/// [`RawSelectEntry`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectEntry {
     pub kind: SelectKind,
+}
+
+/// `RawSelectEntry::kind` for a channel entry: `id` is a `ChannelId` and
+/// `mask` is ignored.
+pub const SELECT_KIND_CHANNEL: u32 = 0;
+
+/// `RawSelectEntry::kind` for a notification entry: `id` is a
+/// `NotificationId` and `mask` selects the bits to wait for.
+pub const SELECT_KIND_NOTIFICATION: u32 = 1;
+
+/// One IpcSelect entry as EL0 lays it out in the array that x0 points to
+/// (ipc.md §3.1, `IpcSelect`).
+///
+/// The wire format is this `repr(C)` struct: 16 bytes, `kind` at offset 0,
+/// `id` at 4 and `mask` at 8, in the machine's native byte order (little
+/// endian on AArch64), with no padding. The kernel copies the whole array into
+/// a kernel buffer as bytes, so the user array needs no particular alignment,
+/// then reads each entry with [`RawSelectEntry::from_bytes`] and decodes it
+/// with `SelectEntry::try_from`, which rejects an unknown `kind` with EINVAL.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawSelectEntry {
+    /// `SELECT_KIND_CHANNEL` or `SELECT_KIND_NOTIFICATION`.
+    pub kind: u32,
+    /// Channel or notification id.
+    pub id: u32,
+    /// Notification bit mask; ignored for a channel entry.
+    pub mask: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<RawSelectEntry>() == RawSelectEntry::SIZE);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, kind) == 0);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, id) == 4);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, mask) == 8);
+
+impl RawSelectEntry {
+    /// Size of one entry on the wire, in bytes.
+    pub const SIZE: usize = 16;
+
+    /// Read an entry from its 16 wire bytes (native byte order, the layout
+    /// documented on the type).
+    pub const fn from_bytes(b: &[u8; Self::SIZE]) -> Self {
+        Self {
+            kind: u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
+            id: u32::from_ne_bytes([b[4], b[5], b[6], b[7]]),
+            mask: u64::from_ne_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
+        }
+    }
+}
+
+impl From<SelectEntry> for RawSelectEntry {
+    /// Encode an entry in the wire format (the EL0 side of the ABI).
+    fn from(entry: SelectEntry) -> Self {
+        match entry.kind {
+            SelectKind::Channel(ch) => Self {
+                kind: SELECT_KIND_CHANNEL,
+                id: ch.0,
+                mask: 0,
+            },
+            SelectKind::Notification(n, mask) => Self {
+                kind: SELECT_KIND_NOTIFICATION,
+                id: n.0,
+                mask,
+            },
+        }
+    }
+}
+
+impl TryFrom<RawSelectEntry> for SelectEntry {
+    type Error = i64;
+
+    /// Decode a wire entry. Returns `Err(EINVAL)` for a `kind` other than
+    /// `SELECT_KIND_CHANNEL` or `SELECT_KIND_NOTIFICATION`. Ids are not
+    /// range-checked here; `ipc_select` does that.
+    fn try_from(raw: RawSelectEntry) -> Result<Self, i64> {
+        let kind = match raw.kind {
+            SELECT_KIND_CHANNEL => SelectKind::Channel(ChannelId(raw.id)),
+            SELECT_KIND_NOTIFICATION => SelectKind::Notification(NotificationId(raw.id), raw.mask),
+            _ => return Err(crate::syscall::IpcError::Einval as i64),
+        };
+        Ok(SelectEntry { kind })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,24 +305,43 @@ impl RawMessage {
 // User VA validation
 // ---------------------------------------------------------------------------
 
-/// Upper bound of the user virtual address space (exclusive).
+/// Exclusive upper bound of the addresses `validate_user_va` accepts (2^47).
 ///
-/// AArch64 convention: addresses below 0x0000_8000_0000_0000 belong to user
-/// space (TTBR0), addresses at or above belong to kernel space (TTBR1).
+/// The bound keeps a user range out of the TTBR1 half; it is not the TTBR0
+/// boundary. With the T0SZ=20 that `boot.S` keeps from edk2, TTBR0
+/// translates only `[0, 2^44)`, so an address from 2^44 up to this bound is
+/// in neither half and takes a translation fault. Addresses from this bound
+/// up to the TTBR1 base 0xFFFF_0000_0000_0000 (T1SZ=16) are in neither half
+/// either. See `kernel/src/syscall/user.rs`.
 pub const USER_VA_LIMIT: usize = 0x0000_8000_0000_0000;
 
-/// Validate that a (ptr, len) range lies entirely within user VA space.
+/// Lowest address a user buffer may start at (inclusive).
+///
+/// Page 0 is never mapped in a user address space, so a pointer into it,
+/// null included, is always a caller error. Rejecting it here also keeps a
+/// null pointer away from `core::ptr::copy_nonoverlapping` and
+/// `core::slice::from_raw_parts`, which require a non-null pointer.
+pub const USER_VA_MIN: usize = 0x1000;
+
+/// Validate that a (ptr, len) range lies entirely within
+/// `[USER_VA_MIN, USER_VA_LIMIT)`.
 ///
 /// Returns false if:
+/// - `ptr` is in page 0 (`ptr < USER_VA_MIN`), null included, at any `len`
 /// - `ptr + len` overflows
-/// - `ptr` is in kernel space (>= USER_VA_LIMIT)
-/// - `ptr + len` extends into kernel space (> USER_VA_LIMIT)
+/// - `ptr >= USER_VA_LIMIT` (at or above 2^47)
+/// - `ptr + len > USER_VA_LIMIT`
+///
+/// Passing does not mean the range is mapped or translatable by TTBR0; see
+/// `USER_VA_LIMIT`.
+///
+/// A zero-length range at a user address outside page 0 is valid.
 pub fn validate_user_va(ptr: usize, len: usize) -> bool {
     let end = match ptr.checked_add(len) {
         Some(e) => e,
         None => return false,
     };
-    ptr < USER_VA_LIMIT && end <= USER_VA_LIMIT
+    (USER_VA_MIN..USER_VA_LIMIT).contains(&ptr) && end <= USER_VA_LIMIT
 }
 
 #[cfg(test)]
@@ -219,6 +368,77 @@ mod tests {
     #[test]
     fn default_timeout_is_5_seconds() {
         assert_eq!(DEFAULT_TIMEOUT_TICKS, 5_000);
+    }
+
+    // --- deadline_after tests (#217) ---
+
+    #[test]
+    fn deadline_after_max_is_unbounded() {
+        assert_eq!(deadline_after(0, u64::MAX), None);
+        assert_eq!(deadline_after(12_345, u64::MAX), None);
+        assert_eq!(deadline_after(u64::MAX, u64::MAX), None);
+    }
+
+    #[test]
+    fn deadline_after_zero_is_now() {
+        assert_eq!(deadline_after(0, 0), Some(0));
+        assert_eq!(deadline_after(12_345, 0), Some(12_345));
+        // At tick u64::MAX even a 0 timeout gives a deadline that can never fire.
+        assert_eq!(deadline_after(u64::MAX, 0), None);
+    }
+
+    #[test]
+    fn deadline_after_adds_when_it_fits() {
+        assert_eq!(deadline_after(0, 100), Some(100));
+        assert_eq!(deadline_after(12_345, DEFAULT_TIMEOUT_TICKS), Some(17_345));
+        assert_eq!(deadline_after(1, u64::MAX - 2), Some(u64::MAX - 1));
+    }
+
+    #[test]
+    fn deadline_after_max_minus_one_is_unbounded_once_it_overflows() {
+        // The issue's failing input: a timeout of u64::MAX - 1 once the tick
+        // count is above 1.
+        assert_eq!(deadline_after(0, u64::MAX - 1), Some(u64::MAX - 1));
+        assert_eq!(deadline_after(1, u64::MAX - 1), None);
+        assert_eq!(deadline_after(12_345, u64::MAX - 1), None);
+    }
+
+    #[test]
+    fn deadline_after_now_near_max_is_unbounded_at_max() {
+        assert_eq!(deadline_after(u64::MAX - 10, 5), Some(u64::MAX - 5));
+        assert_eq!(deadline_after(u64::MAX - 1, 1), None);
+        assert_eq!(deadline_after(u64::MAX - 1, 2), None);
+        assert_eq!(deadline_after(u64::MAX, 1), None);
+    }
+
+    #[test]
+    fn deadline_after_is_never_before_now_nor_late() {
+        let nows = [
+            0,
+            1,
+            2,
+            12_345,
+            u64::MAX / 2,
+            u64::MAX - 2,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+        let timeouts = [0, 1, 100, u64::MAX / 2, u64::MAX - 2, u64::MAX - 1];
+        for &now in &nows {
+            for &t in &timeouts {
+                match deadline_after(now, t) {
+                    Some(d) => {
+                        assert!(d >= now, "deadline {d} before now {now} (timeout {t})");
+                        assert!(d - now == t, "deadline {d} is not {t} after {now}");
+                        assert!(d != u64::MAX, "deadline {d} can never fire");
+                    }
+                    None => assert!(
+                        now.checked_add(t).is_none_or(|s| s == u64::MAX),
+                        "no deadline for {now} + {t}, which fits below u64::MAX"
+                    ),
+                }
+            }
+        }
     }
 
     #[test]
@@ -338,6 +558,45 @@ mod tests {
         assert_eq!(ch.0 as usize, MAX_CHANNELS - 1);
     }
 
+    #[test]
+    fn channel_id_index_zero() {
+        assert_eq!(ChannelId(0).index(), Some(0));
+    }
+
+    #[test]
+    fn channel_id_index_last_valid() {
+        assert_eq!(
+            ChannelId((MAX_CHANNELS - 1) as u32).index(),
+            Some(MAX_CHANNELS - 1)
+        );
+    }
+
+    #[test]
+    fn channel_id_index_max_channels_is_out_of_range() {
+        assert_eq!(ChannelId(MAX_CHANNELS as u32).index(), None);
+    }
+
+    #[test]
+    fn channel_id_index_u32_max_is_out_of_range() {
+        assert_eq!(ChannelId(u32::MAX).index(), None);
+    }
+
+    #[test]
+    fn channel_id_index_in_range_ids_fit_the_table() {
+        // Every id that index() accepts must be a valid position in a
+        // MAX_CHANNELS-entry table, i.e. safe to index with.
+        let table = [(); MAX_CHANNELS];
+        for raw in 0..=(MAX_CHANNELS as u32) {
+            match ChannelId(raw).index() {
+                Some(idx) => {
+                    assert_eq!(idx, raw as usize);
+                    assert!(table.get(idx).is_some());
+                }
+                None => assert_eq!(raw as usize, MAX_CHANNELS),
+            }
+        }
+    }
+
     // --- EndpointState tests ---
 
     #[test]
@@ -396,15 +655,32 @@ mod tests {
     #[test]
     fn user_va_valid_range() {
         assert!(validate_user_va(0x400000, 4096));
-        assert!(validate_user_va(0, 256));
+        assert!(validate_user_va(USER_VA_MIN, 256));
         assert!(validate_user_va(USER_VA_LIMIT - 1, 1));
     }
 
     #[test]
     fn user_va_zero_len() {
-        assert!(validate_user_va(0, 0));
-        assert!(validate_user_va(0x1000, 0));
+        assert!(validate_user_va(USER_VA_MIN, 0));
+        assert!(validate_user_va(0x40_0000, 0));
         assert!(validate_user_va(USER_VA_LIMIT - 1, 0));
+    }
+
+    #[test]
+    fn user_va_null_is_rejected_at_any_len() {
+        assert!(!validate_user_va(0, 0));
+        assert!(!validate_user_va(0, 1));
+        assert!(!validate_user_va(0, 256));
+        assert!(!validate_user_va(0, USER_VA_LIMIT));
+    }
+
+    #[test]
+    fn user_va_page_zero_is_rejected() {
+        assert!(!validate_user_va(1, 0));
+        assert!(!validate_user_va(USER_VA_MIN - 1, 1));
+        assert!(!validate_user_va(USER_VA_MIN - 1, 2));
+        // The first byte of page 1 is the lowest valid start.
+        assert!(validate_user_va(USER_VA_MIN, 1));
     }
 
     #[test]
@@ -430,12 +706,24 @@ mod tests {
         assert!(!validate_user_va(usize::MAX, 1));
         assert!(!validate_user_va(usize::MAX - 10, 100));
         assert!(!validate_user_va(1, usize::MAX));
+        // A valid start whose end wraps: only the overflow check rejects
+        // these. A wrapped end (0xFFF, 0x3F_EFFF) would pass the limit test.
+        assert!(!validate_user_va(USER_VA_MIN, usize::MAX));
+        assert!(!validate_user_va(0x40_0000, usize::MAX - 0x1000));
     }
 
     #[test]
     fn user_va_large_valid() {
-        assert!(validate_user_va(0, USER_VA_LIMIT));
-        assert!(validate_user_va(0, USER_VA_LIMIT - 1));
+        // The whole user range above page 0 is one valid buffer.
+        assert!(validate_user_va(USER_VA_MIN, USER_VA_LIMIT - USER_VA_MIN));
+        assert!(validate_user_va(
+            USER_VA_MIN,
+            USER_VA_LIMIT - USER_VA_MIN - 1
+        ));
+        assert!(!validate_user_va(
+            USER_VA_MIN,
+            USER_VA_LIMIT - USER_VA_MIN + 1
+        ));
     }
 
     // --- SelectKind / SelectEntry tests ---
@@ -474,6 +762,88 @@ mod tests {
         };
         let e2 = e;
         assert_eq!(e, e2);
+    }
+
+    // --- RawSelectEntry (IpcSelect wire format) tests ---
+
+    /// Wire bytes built field by field at the documented offsets.
+    fn wire(kind: u32, id: u32, mask: u64) -> [u8; RawSelectEntry::SIZE] {
+        let mut b = [0u8; RawSelectEntry::SIZE];
+        b[0..4].copy_from_slice(&kind.to_ne_bytes());
+        b[4..8].copy_from_slice(&id.to_ne_bytes());
+        b[8..16].copy_from_slice(&mask.to_ne_bytes());
+        b
+    }
+
+    #[test]
+    fn raw_select_entry_is_16_bytes() {
+        assert_eq!(core::mem::size_of::<RawSelectEntry>(), 16);
+        assert_eq!(RawSelectEntry::SIZE, 16);
+    }
+
+    #[test]
+    fn raw_select_entry_from_bytes_reads_documented_offsets() {
+        let raw = RawSelectEntry::from_bytes(&wire(1, 0x0102_0304, 0x1122_3344_5566_7788));
+        assert_eq!(
+            raw,
+            RawSelectEntry {
+                kind: 1,
+                id: 0x0102_0304,
+                mask: 0x1122_3344_5566_7788,
+            }
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_decodes_channel() {
+        let raw = RawSelectEntry::from_bytes(&wire(SELECT_KIND_CHANNEL, 5, 0xFF));
+        // A channel entry ignores its mask.
+        assert_eq!(
+            SelectEntry::try_from(raw),
+            Ok(SelectEntry {
+                kind: SelectKind::Channel(ChannelId(5)),
+            })
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_decodes_notification() {
+        let raw = RawSelectEntry::from_bytes(&wire(SELECT_KIND_NOTIFICATION, 3, 0b1010));
+        assert_eq!(
+            SelectEntry::try_from(raw),
+            Ok(SelectEntry {
+                kind: SelectKind::Notification(NotificationId(3), 0b1010),
+            })
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_unknown_kind_is_einval() {
+        let einval = Err(crate::syscall::IpcError::Einval as i64);
+        for kind in [2, 0x100, u32::MAX] {
+            let raw = RawSelectEntry::from_bytes(&wire(kind, 0, 0));
+            assert_eq!(SelectEntry::try_from(raw), einval, "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn raw_select_entry_round_trip() {
+        let entries = [
+            SelectEntry {
+                kind: SelectKind::Channel(ChannelId(127)),
+            },
+            SelectEntry {
+                kind: SelectKind::Notification(NotificationId(63), u64::MAX),
+            },
+        ];
+        for e in entries {
+            let raw = RawSelectEntry::from(e);
+            let bytes = wire(raw.kind, raw.id, raw.mask);
+            assert_eq!(
+                SelectEntry::try_from(RawSelectEntry::from_bytes(&bytes)),
+                Ok(e)
+            );
+        }
     }
 
     #[test]

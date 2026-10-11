@@ -3,7 +3,7 @@
 //! Each WAL entry is 64 bytes (`#[repr(C)]`), stored 8 per sector.
 //! The WAL occupies a contiguous region on disk starting at WAL_START_SECTOR.
 //!
-//! Per spaces.md §4.4: committed entries are replayed on recovery;
+//! Per spaces/block-engine.md §4.4: committed entries are replayed on recovery;
 //! uncommitted entries with valid data blocks are salvaged.
 
 use shared::storage::{

@@ -81,7 +81,7 @@ For example output and developer UX, see [model.md](model.md) §8.1 and [agents.
 
 The Rust compiler is AIOS's most powerful static analyzer. Ownership and borrowing eliminate buffer overflow (~35% of kernel CVEs), use-after-free (~20%), and uninitialized memory (~10%) at compile time. For the full breakdown, see [strategies.md](fuzzing/strategies.md) §3.1.
 
-What remains are `unsafe` blocks, which AIOS requires for MMIO register access, inline assembly, raw pointer manipulation (page table walks), and system register access. Every `unsafe` block follows the documentation standard defined in `CLAUDE.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary target for all tools below.
+What remains are `unsafe` blocks, which AIOS requires for MMIO register access, inline assembly, raw pointer manipulation (page table walks), and system register access. Every `unsafe` block follows the documentation standard defined in `.claude/rules/06-unsafe-documentation.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary target for all tools below.
 
 The kernel targets enabling `#![forbid(unsafe_op_in_unsafe_fn)]` to require explicit `unsafe` blocks even inside `unsafe fn` signatures, ensuring no unsafe operation is invisible. This prevents the common anti-pattern where an `unsafe fn` contains dozens of lines of safe code with a single unsafe operation buried in the middle.
 
@@ -172,7 +172,7 @@ Five tools form a layered defense against dependency-related risks:
 
 **`cargo-deny`** enforces broader policies via a committed `deny.toml`:
 
-- **Licenses:** Only approved open-source licenses (e.g., MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Zlib, Unicode-*) — no GPL in `kernel/` or `shared/` (per `CLAUDE.md` crate rules). See `deny.toml` for the full allowlist.
+- **Licenses:** Only approved open-source licenses (e.g., MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Zlib, Unicode-*) — no GPL in `kernel/` or `shared/` (per the Crate & Dependency Rules in `.claude/rules/01-code-conventions.md`). See `deny.toml` for the full allowlist.
 - **Bans:** specific crates blacklisted if known-problematic.
 - **Duplicates:** warn on duplicate transitive dependencies.
 - **Advisories:** same RustSec database as cargo-audit; CI denies vulnerabilities at all severities (thresholds adjustable if policy changes).

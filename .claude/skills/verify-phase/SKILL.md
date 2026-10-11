@@ -8,7 +8,7 @@ argument-hint: "[phase-number]"
 
 # Verify Phase $ARGUMENTS
 
-Run all Quality Gates from CLAUDE.md. Stop at the first FAIL and report — do not continue to subsequent gates.
+Run all Quality Gates from `.claude/rules/02-quality-gates.md`. Stop at the first FAIL and report — do not continue to subsequent gates.
 
 ## Step 1: Find and read the phase doc
 
@@ -24,6 +24,8 @@ Read the phase doc fully. Extract the acceptance criteria for each milestone —
 ## Step 2: Run quality gates in order
 
 Run each gate sequentially. For each gate, report PASS or FAIL with the command output.
+
+Gates 1–3 run in the worktree. A lead in the main checkout gets them from the writer's latest gate report at the head sha, or spawns a writer with "run the gates and report".
 
 ### Gate 1: Compile
 
@@ -51,25 +53,25 @@ just test 2>&1
 
 ### Gate 4: QEMU boot
 
-```bash
-just run 2>&1
-```
+A team lead spawns the verifier (rule 11: `isolation: "worktree"`; the worktree path, the sha to boot (its tip) and the lead's team in the prompt) in mode `boot`: one text boot, plus one gpu boot when the phase needs the display, with the phase's UART lines as acceptance. Its run directories land in `<W>/target/soak/`; remove its temporary worktree afterwards (`/justin:team`, Placement).
 
-**PASS condition:** Compare UART output against the phase doc's acceptance criteria. For each milestone, check that the expected strings appear in the output. Use Grep on the captured output to verify each expected line.
+A solo session spawns no verifier: the settings allow `run` only for `team-build` and `team-fix`, and a background verifier could not answer the prompt of a `--team solo` call. Its main thread runs the same boots itself, from `W`'s root, as `verifier.md` (Running) spells them but with `--team solo`, and the owner answers the prompt (rule 11, QEMU and the host). It then runs Gates 5 and 6 there too.
 
-**Timeout:** QEMU runs should complete within 30 seconds. If `just run` hangs, kill it and report FAIL.
+**PASS condition:** the verifier (or the solo main thread) reports `PASS`, with every expected UART line of the phase doc's acceptance criteria matched. `DEFERRED` means the host was loaded: re-run later.
 
 ### Gate 5: Objdump (section addresses)
 
+The verifier runs the sysroot `llvm-objdump -h` command from rule 02 in the same spawn (in a solo session, the main thread, from `W`'s root):
+
 ```bash
-cargo objdump -- -h 2>&1
+"$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-objdump -h target/aarch64-unknown-none/debug/kernel
 ```
 
-**PASS condition:** `.text` section starts at the expected kernel VMA. Check against CLAUDE.md Key Technical Facts.
+**PASS condition:** `.text.boot` is at VMA `0xffff000000080000` and LMA `0x40080000` (Key Technical Facts in `.claude/CLAUDE.md`).
 
 ### Gate 6: EL verification
 
-**PASS condition:** QEMU boot output (from Gate 4) contains `EL: 1` or equivalent EL1 confirmation, and `core: 0` or `CPU 0` in early boot messages.
+**PASS condition:** the EL and core lines in the boot log in the verifier's run directory (from Gate 4) contain `EL: 1` or equivalent EL1 confirmation, and `core: 0` or `CPU 0` in early boot messages.
 
 ## Step 3: Per-milestone acceptance
 

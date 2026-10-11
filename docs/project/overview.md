@@ -77,7 +77,7 @@ flowchart TD
         subgraph AIRS["AI Runtime Service — hot-swappable privileged service"]
             direction LR
             InfEngine["`Inference Engine
-*GGML, NEON SIMD*`"]
+*candle, NEON SIMD*`"]
             ModelReg["`Model Registry
 *GGUF, LRU*`"]
             AgentLife["`Agent Lifecycle
@@ -613,7 +613,7 @@ This is where AIOS becomes what no other OS is.
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 10 | Agent Framework | 5 weeks | Capability-gated agents with sandbox and SDK |
-| 11 | AIRS Inference Engine | 4 weeks | Local LLM inference with GGML, streaming responses |
+| 11 | AIRS Inference Engine | 4 weeks | Local LLM inference with candle, streaming responses |
 | 12 | AIRS Intelligence Services | 4 weeks | Space Indexer, Behavioral Monitor, 9 intelligence services |
 | 13 | Space Indexer & Search | 4 weeks | HNSW + BM25 + score fusion semantic search |
 | 14 | Context Engine | 4 weeks | Context signals, inference, consumer integration |
@@ -766,7 +766,7 @@ docs/
 │
 ├── intelligence/
 │   ├── airs.md                              AI Runtime Service hub (7 sub-docs)
-│   │   ├── inference.md                 GGML runtime, compute scheduler, KV cache
+│   │   ├── inference.md                 candle runtime, compute scheduler, KV cache
 │   │   ├── model-registry.md            Model storage, profiles, quantization, eviction
 │   │   ├── intelligence-services.md     9 services (Space Indexer, Intent Verifier, etc.)
 │   │   ├── lifecycle-and-data.md        Agent lifecycle, data model, tech choices

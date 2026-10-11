@@ -104,7 +104,7 @@ The Preference Service includes a keyword-based NLU pipeline described in [resol
 | Parameters | 10–20M (INT8 quantized) |
 | Input | User utterance + current preference context |
 | Output | Ranked (preference_id, value, confidence) tuples |
-| Latency | 8–15ms on Cortex-A72 (NEON SIMD via GGML Runtime) |
+| Latency | 8–15ms on Cortex-A72 (NEON SIMD via candle runtime) |
 | Fallback | Tier 1 keyword pipeline when AIRS offline |
 
 **Ambiguity examples that require Tier 2:**

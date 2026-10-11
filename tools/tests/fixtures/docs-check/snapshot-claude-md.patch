@@ -1,0 +1,110 @@
+diff --git a/CLAUDE.md b/.claude/CLAUDE.md
+similarity index 98%
+rename from CLAUDE.md
+rename to .claude/CLAUDE.md
+index 97e009a..24da3fb 100644
+--- a/CLAUDE.md
++++ b/.claude/CLAUDE.md
+@@ -223,7 +223,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
+ | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
+ | `/merge-and-cleanup [PR]` | User only, after PR approval | Squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
+
+-**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
++**Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
+
+ **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 46a6b19..901fbd9 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -6,7 +6,7 @@ Every change lives inside a phase. Read the phase doc (`docs/phases/NN-*.md`) fo
+
+ ## Code Conventions
+
+-All conventions are defined in [CLAUDE.md](CLAUDE.md). Key points:
++All conventions are defined in [CLAUDE.md](.claude/CLAUDE.md). Key points:
+
+ - `#![no_std]` in kernel/ and shared/
+ - Every `unsafe` block requires a `// SAFETY:` comment documenting the invariant, who maintains it, and what happens if violated
+diff --git a/README.md b/README.md
+index 37ed872..189bf10 100644
+--- a/README.md
++++ b/README.md
+@@ -136,6 +136,6 @@ No GPL dependencies. All third-party crates must be BSD, MIT, Apache-2.0, or ISC
+
+ ## Contributing
+
+-This project follows conventions documented in [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
++This project follows conventions documented in [CLAUDE.md](.claude/CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+
+ Development runs through Claude Code sessions; [docs/project/agent-loop.md](docs/project/agent-loop.md) describes the `/justin:start` session skills, pausing and resuming, and the merge policy.
+diff --git a/docs/project/ai-agent-context.md b/docs/project/ai-agent-context.md
+index 200f4bf..c15965f 100644
+--- a/docs/project/ai-agent-context.md
++++ b/docs/project/ai-agent-context.md
+@@ -8,7 +8,7 @@
+
+ **Related**:
+
+-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
++- [CLAUDE.md](../../.claude/CLAUDE.md) -- Code conventions, quality gates, technical facts
+ - [developer-guide.md](./developer-guide.md) -- Human-readable kernel developer guide
+ - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules
+
+diff --git a/docs/project/developer-guide.md b/docs/project/developer-guide.md
+index e2fa1d7..da8bbe6 100644
+--- a/docs/project/developer-guide.md
++++ b/docs/project/developer-guide.md
+@@ -6,7 +6,7 @@
+
+ **Related documents**:
+ - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
+-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
++- [CLAUDE.md](../../.claude/CLAUDE.md) -- Code conventions, quality gates, technical facts
+ - [hal.md](../kernel/hal.md) -- Hardware Abstraction Layer and platform porting (SS7)
+ - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
+ - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
+@@ -2242,7 +2242,7 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
+ | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
+ | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
+ | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
+-| **Code conventions** | [CLAUDE.md](../../CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
++| **Code conventions** | [CLAUDE.md](../../.claude/CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
+
+ ---
+
+@@ -2268,7 +2268,7 @@ This is purely optional — all docs are plain markdown readable in any editor o
+
+ AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+
+-The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
++The authoritative reference for agent/skill configuration is [CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
+
+ ### Agents
+
+@@ -2387,7 +2387,7 @@ OUTER LOOP:
+
+ **Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
+
+-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
++The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../.claude/CLAUDE.md) § Phase Implementation Workflow.
+
+ ### Knowledge Hive Integration
+
+diff --git a/scripts/docs/baseline.json b/scripts/docs/baseline.json
+index 42ef6e1..9217ade 100644
+--- a/scripts/docs/baseline.json
++++ b/scripts/docs/baseline.json
+@@ -260,9 +260,9 @@
+       "count": 2
+     },
+     {
+-      "key": "lock-order|CLAUDE.md|unknown:VIRTIO_INPUT",
++      "key": "lock-order|.claude/CLAUDE.md|unknown:VIRTIO_INPUT",
+       "check": "lock-order",
+-      "file": "CLAUDE.md",
++      "file": ".claude/CLAUDE.md",
+       "target": "unknown:VIRTIO_INPUT",
+       "message": "lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src"
+     },
