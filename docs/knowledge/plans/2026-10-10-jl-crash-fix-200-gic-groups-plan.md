@@ -305,7 +305,7 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
   - observability.md "SMP lines";
   - a fault-injection check: a temporary local build that skips the `IGROUPR0` write on CPU 2 prints `ppi_grp1=0 ppi_ok=0` and the error line on CPU 2 only, and `tick[2]` stays 0. The build is not committed, and the result is recorded in this plan.
   - Check: boot check 2.
-- [ ] **T4. Code comments made stale:** `shared/src/tripwire.rs` (`TwoStrike` doc and test comment) and `kernel/src/sync/selftest.rs`.
+- [x] **T4. Code comments made stale:** `shared/src/tripwire.rs` (`TwoStrike` doc and test comment) and `kernel/src/sync/selftest.rs`. Done 2026-10-11: comments only, the test unchanged; no boot (no kernel code changed) (Decisions Made, T4).
   - Check: `just check`, `just test`.
 - [ ] **T5. Development boots and the register check:**
   - boot checks 1–7 on up to 3 `just run` boots, plus boot check 3 against T0's table;
@@ -527,6 +527,7 @@ Each task is one commit, `Crash fix step 200: <description>`, with the rule 02 g
 - T3, `print_cpu_line(cpu, ppi: Result<PpiStatus, GicError>)` prints the four fields and, when `ppi_ok=0`, the `kerror!`, so CPU 0 and CPUs 1–3 report through one function. The `Err` case (the published INTID is not a valid PPI, setup not run; unreachable, because CPU 0 panics on the same INTID before `CPU_ON`) prints `ppi_grp1=- ppi_en=- ppi_ok=0` and `… setup failed: not run, <error>`. That widens the plan's `ppi_en=0|1` to `-` for this one case, the smallest honest reading: neither register was read. Documented in observability.md "SMP lines" and the `print_cpu_line` doc.
 - T3, CPU 0 passes `ic.timer_ppi_status()` with an `expect`: it is `None` only if `init_timer` never enabled the timer PPI, a kernel bug, and the panic fires on CPU 0 at thread level before the scheduler starts. No new `GicError` variant for "not set up" (it is not a configuration error).
 - T3, the field values and the failed-flag names are pure logic in `shared::gic` with host tests (4 new, 28 in all; Miri passes on them): `Flag::field` (`1`/`0`/`-`), `PpiStatus::flags` and `PpiStatus::failed_flags`, a `Display` that names the `Fail` flags in check order and never an `Unchecked` one. The kernel adds `gic::timer_ppi_intid()` (a thread-level getter of the published INTID) for the `ppi=` field. Nothing on the IRQ path changed. Developer guide §5.4 counts 708 to 712.
+- T4, comments only. `TwoStrike`'s doc now names the general never-ticked case (a CPU that has not unmasked IRQs yet, or whose timer PPI setup failed, `ppi_ok=0`), with the 2026-09-28 owner decision kept; the test comment in `two_strike_gate_skips_cpus_that_never_ticked` describes its own machine (only CPU 0 ticks) instead of citing #200, and the test is unchanged. `selftest.rs` gives two reasons for the CPU 0 pin, both still true after the fix: the re-entry panic needs a tick on the holder's own CPU (a blocking `lock()` from another CPU's tick only counts contention), and `SETTLE_TICKS`/`HOLD_TICKS` are timed in `TICK_COUNT`, which only CPU 0 advances (`timer.rs`, `if cpu == 0`). A grep of `kernel/src` and `shared/src` for other "no timer IRQ" / "only CPU 0 ticks" comments found none outside `gic.rs` (T2's).
 
 ## Lessons Learned
 
