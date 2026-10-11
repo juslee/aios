@@ -2119,6 +2119,147 @@ class ProtectedSed(TeamCase):
         self.check("deny", None, "sed -n 1p .claude/hooks/x; git push origin main")
         self.check("ask", self.ASK, "sed -i '' s/a/b/ .claude/hooks/x; git status")
 
+    # -- attack fixes -------------------------------------------------------
+
+    def test_redirect_into_protected_path_through_an_expansion_asks(self):
+        # A redirection target is checked as written, before dropping the
+        # ones the guard cannot resolve.
+        for _, kw in self.callers():
+            for command in [
+                    "sed 's/a/b/' template.json > \"$CLAUDE_PROJECT_DIR/.claude/settings.local.json\"",
+                    "sed -n p a.txt > \"$(pwd)/.claude/settings.json\"",
+                    "sed -n p a.txt > \"$ROOT/.claude/hooks/git-push-guard.py\"",
+                    "sed -n p a.txt > `pwd`/.claude/settings.json",
+                    "sed -n p a.txt >> \"$(git rev-parse --show-toplevel)/.claude/hooks/x\""]:
+                self.check("ask", self.ASK, command, **kw)
+            for command in ["sed -n p a.txt > \"$OUT/notes.txt\"",
+                            "sed -n p a.txt > \"$(pwd)/docs/x.md\"",
+                            "sed -n 1p .claude/hooks/x 2>&1 > \"$LOG\""]:
+                self.check("none", None, command, **kw)
+
+    def test_glob_operand_that_may_match_protected_files_asks(self):
+        for _, kw in self.callers():
+            for command in [
+                    "sed -i '' 's/HOME_REPO/HOME_REPOSITORY/g' .claude/**/*.py",
+                    "sed -i '' 's/a/b/' .claude/*.json",
+                    "sed -i '' 's/a/b/' .claude/*",
+                    "sed -i '' 's/a/b/' .claude/*/git-push-guard.py",
+                    "sed -i '' 's/a/b/' .claude/hook?/git-push-guard.py",
+                    "sed -i '' 's/a/b/' .claude/[h]ooks/git-push-guard.py",
+                    "sed -i '' s/a/b/ .claude/*/*.py",
+                    "sed -i '' s/a/b/ .claude/h*/x",
+                    "sed -i '' s/a/b/ .claude/se*",
+                    "sed -i '' s/a/b/ .claude/**/*",
+                    "sed -i '' s/a/b/ .claude/hook?/x",
+                    "sed -i '' s/a/b/ .claude/[h]ooks/x",
+                    "sed -i '' s/a/b/ ./.cl*/hooks/x",
+                    "cd .claude/hooks && sed -i '' s/a/b/ *.py",
+                    "cd .claude && sed -i '' s/a/b/ *"]:
+                self.check("ask", self.ASK, command, **kw)
+            for command in ["sed -n 1p .claude/*/*.py",
+                            "sed -n 1p .claude/**/*.py",
+                            "sed -i '' s/a/b/ .claude/agents/*.md",
+                            "sed -i '' s/a/b/ .claude/*.md",
+                            "sed -i '' s/a/b/ docs/**/*.md",
+                            "sed -i '' s/a/b/ kernel/src/*.rs"]:
+                self.check("none", None, command, **kw)
+
+    def test_sed_in_a_nested_shell_sees_the_outer_command(self):
+        # The nested sed's operands come from the outer command ($1, {}).
+        for _, kw in self.callers():
+            for command in [
+                    "find .claude/hooks -name '*.py' -exec sh -c 'sed -i \"\" \"s/old/new/\" \"$1\"' _ {} \\;",
+                    "git ls-files .claude/hooks | xargs -I{} sh -c \"sed -i '' 's/a/b/' {}\"",
+                    "bash -c 'sed -i s/a/b/ \"$1\"' _ .claude/hooks/git-push-guard.py",
+                    "bash -c 'sed -i s/a/b/ \"$@\"' _ .claude/settings.json"]:
+                self.check("ask", self.ASK, command, **kw)
+            for command in [
+                    "find docs -name '*.md' -exec sh -c 'sed -i \"\" s/a/b/ \"$1\"' _ {} \\;",
+                    "bash -c 'sed -n 1p \"$1\"' _ .claude/hooks/x",
+                    "git ls-files .claude/hooks | xargs -I{} sh -c 'sed -n 1p {}'"]:
+                self.check("none", None, command, **kw)
+
+    def test_sed_as_an_argument_under_a_wrapper_is_not_run(self):
+        # Only the command a wrapper chain runs is sed; the word `sed` given
+        # to grep, rg or echo is data.
+        for _, kw in self.callers():
+            for command in ["timeout 60 grep -rn sed .claude/hooks",
+                            "env LC_ALL=C grep -n sed .claude/hooks/git-push-guard.py",
+                            "nice grep -c sed .claude/settings.json",
+                            "sudo grep sed .claude/hooks/x",
+                            "stdbuf -oL grep sed .claude/hooks/x",
+                            "nohup rg sed .claude/hooks > log",
+                            "git ls-files .claude/hooks | xargs grep -n sed",
+                            "find .claude/hooks -name '*.py' | xargs grep -ln gsed",
+                            "xargs -n1 echo sed < .claude/list",
+                            "sudo -u root grep sed .claude/hooks/x",
+                            "timeout -s KILL 5 grep sed .claude/hooks/x",
+                            "find .claude/hooks -name sed -print"]:
+                self.check("none", None, command, **kw)
+            for command in ["nice -n 5 sed -i '' s/a/b/ .claude/hooks/x",
+                            "sudo -u root sed -i '' s/a/b/ .claude/hooks/x",
+                            "sudo -E sed -i '' s/a/b/ .claude/hooks/x",
+                            "stdbuf -oL sed -i '' s/a/b/ .claude/hooks/x",
+                            "env LC_ALL=C sed -i '' s/a/b/ .claude/hooks/x",
+                            "env -u LANG sed -i '' s/a/b/ .claude/hooks/x",
+                            "timeout -s KILL 5 sed -i '' s/a/b/ .claude/hooks/x",
+                            "timeout 5 nice sed -i '' s/a/b/ .claude/hooks/x",
+                            "nohup sed -i '' s/a/b/ .claude/hooks/x > log",
+                            "xargs -I{} sed -i '' s/a/b/ {} <<< .claude/hooks/x",
+                            "xargs -I {} sed -i '' s/a/b/ {} <<< .claude/hooks/x",
+                            "xargs -n 1 sed -i '' s/a/b/ < .claude/list",
+                            "find .claude -name '*.py' -exec timeout 5 sed -i '' s/a/b/ {} +",
+                            "screen -dm sed -i '' s/a/b/ .claude/hooks/x"]:
+                self.check("ask", self.ASK, command, **kw)
+
+    def test_option_after_an_operand_asks(self):
+        # BSD sed stops reading options at the first operand (the script) and
+        # reads the later -n/-e words as files; GNU sed permutes them.
+        for _, kw in self.callers():
+            for command in ["sed 's/a/b/w .claude/settings.json' -n -e 1p .claude/hooks/x",
+                            "sed 'w .claude/hooks/y' -e p .claude/hooks/x",
+                            "sed 1p -n .claude/hooks/x",
+                            "sed -n 1p .claude/hooks/x --posix"]:
+                self.check("ask", self.ASK, command, **kw)
+            self.check("none", None, "sed -n 1p -- .claude/hooks/x -n", **kw)
+
+    def test_protected_cwd_asks_only_when_the_target_is_unknown(self):
+        home_claude = os.path.join(self.tmp.name, "home", ".claude")
+        for _, kw in self.callers():
+            for command in ["cd .claude/hooks && echo x | sed s/x/y/",
+                            "cd .claude/hooks && sed -i '' s/a/b/ /tmp/x",
+                            "cd .claude/hooks && sed -i '' s/a/b/ ../agents/worker.md",
+                            "cd .claude && sed -i '' s/a/b/ agents/worker.md",
+                            "cd %s && sed -i '' s/a/b/ /tmp/x" % home_claude,
+                            "cd .claude && sed --version",
+                            "cd .claude && sed -i '' 's/foo/bar/' rules/x.md",
+                            "cd .claude/hooks && sed -i.bak 's/a/b/g' ../rules/x.md"]:
+                self.check("none", None, command, **kw)
+            for command in ["cd .claude && sed 's/a/b/w settings.json' /tmp/x",
+                            "cd .claude && sed -n '1w settings.json' /tmp/x",
+                            "cd .claude/hooks && sed -n '1r x' /tmp/y",
+                            "cd .claude/hooks && sed '1e date' /tmp/y",
+                            "cd .claude/hooks && sed 's/a/b/e' /tmp/y",
+                            "cd .claude && sed -f s.sed /tmp/x",
+                            "cd .claude/hooks && sed -n \"$S\" /tmp/x",
+                            "cd .claude/hooks && sed -i '' s/a/b/ \"$F\"",
+                            "cd .claude/hooks && ls | xargs sed -i '' s/a/b/",
+                            "cd .claude && sed -i 'w settings.json' /tmp/x"]:
+                self.check("ask", self.ASK, command, **kw)
+
+    def test_attack_fixes_through_the_hook(self):
+        for root, kw in self.callers():
+            kw = dict(kw)
+            kw.setdefault("cwd", root)
+            self.check_hook("ask", self.ASK, "sed -n p a.txt > \"$(pwd)/.claude/settings.json\"",
+                            **kw)
+            self.check_hook("ask", self.ASK, "sed -i '' s/a/b/ .claude/*/*.py", **kw)
+            self.check_hook("ask", self.ASK, "find .claude/hooks -name '*.py' -exec sh -c "
+                            "'sed -i \"\" \"s/old/new/\" \"$1\"' _ {} \\;", **kw)
+            self.check_hook("none", None, "timeout 60 grep -rn sed .claude/hooks", **kw)
+            self.check_hook("ask", self.ASK, "sed 'w .claude/hooks/y' -e p .claude/hooks/x", **kw)
+            self.check_hook("none", None, "cd .claude/hooks && echo x | sed s/x/y/", **kw)
+
 
 if __name__ == "__main__":
     unittest.main()

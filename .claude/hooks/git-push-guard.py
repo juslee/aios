@@ -45,21 +45,29 @@ Decisions (the strictest one wins):
           interpreter reading its program from a pipe; an awk program that
           runs shell commands; gh run download into .git/, .claude/,
           .github/, .cargo/ or outside the repository
-        sed: a sed (or gsed, through any wrapper the guard follows) that may
-          touch .claude/settings* or .claude/hooks/* (a word of the command
-          or a redirection target names them, as written or resolved against
-          the cwd; the cwd is a .claude directory or inside .claude/hooks;
-          or operands from xargs/find/parallel or an unresolved expansion
-          while the text mentions .claude), unless it is a strict read:
-          options only -n -E -r -s -u -z, -e/--expression and their long
-          forms, --posix, --debug, --sandbox (no -i, -I, --in-place, -f,
-          -l, -a, anything else); every script literal (no expansion) and
-          made only of the commands p P = q Q l n N d D g G h H x { } with
-          an optional ! and address or range (line number, $, first~step,
-          /regex/ that GNU and BSD sed end in the same place); no unresolved
-          unquoted argument; no output redirection into those paths. So w,
-          W, r, R, e, s, y, a, i, c, labels, branches and comments ask.
-          The settings keep their awk and cp asks on those paths.
+        sed: a sed (or gsed) that a command or a wrapper chain runs (the
+          command after the wrappers' own options and operands, not a later
+          `sed` argument of grep or echo) and that may touch .claude/settings*
+          or .claude/hooks/*: a word of the command or a redirection target
+          (as written, expansions included) names them; a file operand or
+          target resolved against the cwd does, or is a glob that may match
+          them (.claude/*, .claude/h*/x, .claude/**/*.py); operands from
+          xargs/find/parallel, an unresolved expansion or `{}` while the text
+          or an enclosing one (around a sh -c string) mentions .claude or
+          the cwd is a .claude directory or inside .claude/hooks; or, in
+          such a cwd, a script that may open a file itself (w, W, r, R, e,
+          s///w or s///e, -f, an expansion). It asks unless it is a strict
+          read: options only -n -E -r -s -u -z, -e/--expression and their
+          long forms, --posix, --debug, --sandbox (no -i, -I, --in-place,
+          -f, -l, -a, anything else), none after the first operand (BSD sed
+          reads them as files and that operand as the script); every script
+          literal (no expansion) and made only of the commands p P = q Q l
+          n N d D g G h H x { } with an optional ! and address or range
+          (line number, $, first~step, /regex/ that GNU and BSD sed end in
+          the same place); no unresolved unquoted argument; no output
+          redirection into those paths. So w, W, r, R, e, s, y, a, i, c,
+          labels, branches and comments ask. The settings keep their awk and
+          cp asks on those paths.
   none  everything else; the permission rules and auto mode decide.
 
 Team rules (rule 11; agent_id and agent_type come from the payload of a
@@ -306,6 +314,40 @@ SED_LONG_OPTS = {"--quiet", "--silent", "--regexp-extended", "--separate", "--un
                  "--help", "--version"}
 # Script commands that only print, move between lines or use the hold space.
 SED_READ_COMMANDS = set("pP=qQlnNdDgGhHx")
+# GNU sed's long options (a unique prefix selects one).
+SED_GNU_LONG = ("--binary", "--debug", "--expression", "--file", "--follow-symlinks",
+                "--help", "--in-place", "--line-length", "--null-data", "--posix", "--quiet",
+                "--regexp-extended", "--sandbox", "--separate", "--silent", "--unbuffered",
+                "--version", "--zero-terminated")
+# Names in .claude a glob may reach: the hooks directory and settings files.
+SED_GLOB_NAMES = ("hooks", "settings", "settings.json", "settings.local.json")
+# How a wrapper finds the command it runs (run_positions): its short options
+# that take a value, its long options that take one, and how many operands
+# come before the command. A wrapper not listed may run any later word.
+WRAPPER_OPTIONS = {
+    "env": ("uCPS", ("--unset", "--chdir", "--split-string"), 0),
+    "command": ("", (), 0),
+    "builtin": ("", (), 0),
+    "exec": ("a", (), 0),
+    "nohup": ("", (), 0),
+    "nice": ("n", ("--adjustment",), 0),
+    "timeout": ("sk", ("--signal", "--kill-after"), 1),
+    "gtimeout": ("sk", ("--signal", "--kill-after"), 1),
+    "time": ("fo", ("--format", "--output"), 0),
+    "stdbuf": ("ioe", ("--input", "--output", "--error"), 0),
+    "sudo": ("ugCDhprtUTR", ("--user", "--group", "--close-from", "--chdir", "--host",
+                             "--prompt", "--role", "--type", "--other-user",
+                             "--command-timeout", "--chroot"), 0),
+    "doas": ("uC", (), 0),
+    "caffeinate": ("wt", (), 0),
+    "setsid": ("", (), 0),
+    "unbuffer": ("", (), 0),
+    "chronic": ("", (), 0),
+    "flock": ("wEc", ("--timeout", "--wait", "--conflict-exit-code", "--command"), 1),
+    "xargs": ("aEdIJLnPRSs", ("--arg-file", "--delimiter", "--max-args", "--max-procs",
+                              "--max-chars", "--process-slot-var"), 0),
+    "arch": ("ed", (), 0),
+}
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 # Directories whose contents run as code or configure the harness.
 PROTECTED_DIRS = (".git", ".claude", ".github", ".cargo")
@@ -1133,6 +1175,10 @@ class Analyzer:
         # True while the command after a qemu-lock.sh `run`'s `--` is
         # analysed: rule 1 decided its QEMU start on the wrapper call.
         self.wrapped = False
+        # (text, script) of every analyze_text call in progress, outermost
+        # first: a nested `sh -c` string's sed gets its operands ($1, {})
+        # from the enclosing command.
+        self.texts = []
 
     def env_names(self):
         names = set(self.global_env)
@@ -1155,8 +1201,12 @@ class Analyzer:
         if depth > MAX_DEPTH:
             raise ParseError("nesting too deep")
         state = {"cwd": cwd, "vars": {}, "text": text, "script": script, "pid_vars": set()}
-        for cmd in parse_commands(text, depth):
-            self.analyze_command(cmd, state, depth)
+        self.texts.append((text, script))
+        try:
+            for cmd in parse_commands(text, depth):
+                self.analyze_command(cmd, state, depth)
+        finally:
+            self.texts.pop()
 
     def analyze_command(self, cmd, state, depth):
         known = dict(state["vars"])
@@ -1226,6 +1276,8 @@ class Analyzer:
             return
         if head == "command" and command_lookup(words[idx + 1:]):
             return  # command -v / -V only prints what a name resolves to
+        runs = (run_positions(words, idx)
+                if any(basename(w) in SED_NAMES for w in words[idx:]) else ())
         for k in range(idx, len(words)):
             name = basename(words[k])
             if k > idx and head == "env" and ASSIGNMENT.match(words[k]):
@@ -1248,7 +1300,7 @@ class Analyzer:
                     return
                 if self.check_team_command(words, flags, k, cmd, state, depth, via):
                     return
-                if name in SED_NAMES and (head != "find" or words[k - 1] in FIND_EXEC):
+                if name in SED_NAMES and k in runs:
                     self.check_sed(words, flags, k, cmd, state, via)
             if name == "git":
                 wrapper = head if k > idx else None
@@ -1307,11 +1359,15 @@ class Analyzer:
         .claude/hooks/* (the settings ask only awk and cp there): asks
         unless every script is read-only (sed_problem) and no output
         redirection names those paths. It may touch them when a word of the
-        command (with its wrappers, here-strings and redirection targets),
-        as written or resolved against the cwd, names them; when the cwd is
-        a .claude directory or inside .claude/hooks; or when its operands
-        are unknown (supplied by xargs, find or parallel, or an unresolved
-        expansion) and the command text mentions .claude."""
+        command (with its wrappers, here-strings and redirection targets,
+        these as written, expansions included), as written or resolved
+        against the cwd, names them; when a glob operand or target may match
+        them (sed_glob_protected); when its operands are unknown (supplied by
+        xargs, find or parallel, an unresolved expansion, or `{}`) and the
+        command text or an enclosing one (the command around a `sh -c`
+        string) mentions .claude, or the cwd is a .claude directory or
+        inside .claude/hooks; or, in such a cwd, when the script may open a
+        file of its own (sed_may_open)."""
         cwd = state["cwd"]
         args, flags = words[k + 1:], flags[k + 1:]
         if "find" in via:
@@ -1325,16 +1381,27 @@ class Analyzer:
         def files(targets):
             # A digit or `-` is a descriptor (2>&1, >&-), not a file.
             return [w for w in (expand_vars(w, known) for w in targets)
-                    if not (unresolved(w) or w.isdigit() or w == "-")]
-        outs = [w for w in files(cmd.out_files) if sed_protected(w, cwd)]
-        hit = (bool(outs) or sed_protected_cwd(cwd)
-               or any(SED_PROTECTED.search(w) for w in words + cmd.heredocs)
-               or any(sed_protected(w, cwd) for w in args + files(cmd.stdin_files)
+                    if not (w.isdigit() or w == "-")]
+        def protected(w):
+            return sed_protected(w, cwd) or sed_glob_protected(w, cwd)
+        # Targets keep their unresolved expansions: "$ROOT/.claude/settings.json"
+        # names the path as plainly as a literal does.
+        outs = [w for w in files(cmd.out_files) if protected(w)]
+        ins = files(cmd.stdin_files)
+        hit = (bool(outs)
+               or any(SED_PROTECTED.search(w) for w in words + cmd.heredocs + ins)
+               or any(protected(w) for w in sed_files(args, flags, cwd) + ins
                       if not unresolved(w)))
-        text = cmd.src if state["script"] else state["text"]
-        if not hit and re.search(r"\.claude", text, re.I):
+        texts = [t for t, script in self.texts if not script]
+        if state["script"]:
+            texts.append(cmd.src)
+        mentions = any(re.search(r"\.claude", t, re.I) for t in texts)
+        protected_cwd = sed_protected_cwd(cwd)
+        if not hit and (mentions or protected_cwd):
             hit = bool(set(via) & ARG_WRAPPERS) or any(
-                e and unresolved(w) for w, e in zip(args, flags))
+                (e and unresolved(w)) or "{}" in w for w, e in zip(args, flags))
+        if not hit and protected_cwd:
+            hit = sed_may_open(args, flags)
         if not hit:
             return
         problem = sed_problem(args, flags)
@@ -2525,17 +2592,235 @@ def sed_protected(word, cwd):
         os.path.join(cwd, os.path.expanduser(word)))))
 
 
+def sed_glob_protected(word, cwd):
+    """True when a glob word (* ? or [) may match .claude/settings* or a path
+    under .claude/hooks, resolved against cwd: a component that may be
+    .claude (it starts with a literal `.`, as a shell glob does not match a
+    leading dot) followed by one that may match hooks or a settings file."""
+    if not re.search(r"[*?[]", word):
+        return False
+    import fnmatch
+    parts = os.path.normpath(os.path.join(cwd, os.path.expanduser(word))).lower().split("/")
+    return any(c.startswith(".") and fnmatch.fnmatchcase(".claude", c)
+               and any(fnmatch.fnmatchcase(name, nxt) for name in SED_GLOB_NAMES)
+               for c, nxt in zip(parts, parts[1:]))
+
+
 def sed_protected_cwd(cwd):
     """True when cwd is a .claude directory or inside .claude/hooks: a
-    relative path there can name a protected file without saying so."""
+    relative path from an expansion or a script's own w/r/e there can name a
+    protected file without saying so."""
     path = os.path.normpath(cwd)
     return bool(SED_PROTECTED.search(path + "/")) or basename(path).lower() == ".claude"
+
+
+def run_positions(words, idx):
+    """The indexes in words where the command words[idx] runs may start:
+    idx, and when words[idx] is a wrapper, the command it runs after its
+    options, their values and its operands (WRAPPER_OPTIONS), recursively;
+    for find, the command after each -exec/-execdir/-ok/-okdir. A wrapper
+    whose options the guard does not model may run any later word."""
+    out = set()
+    starts = [idx]
+    while starts:
+        k = starts.pop()
+        while k < len(words):
+            out.add(k)
+            name = basename(words[k])
+            if name == "find":
+                starts.extend(j + 1 for j in range(k + 1, len(words)) if words[j] in FIND_EXEC)
+                break
+            if name not in WRAPPERS:
+                break
+            spec = WRAPPER_OPTIONS.get(name)
+            if spec is None:
+                out.update(range(k + 1, len(words)))
+                break
+            k = wrapper_command_start(words, k + 1, name, spec)
+    return out
+
+
+def wrapper_command_start(words, k, name, spec):
+    """The index of the command a wrapper (`name`, options from words[k])
+    runs. A long option takes a value when it is (a prefix of) one in the
+    spec; a short one when its letter ends a cluster."""
+    shorts, longs, operands = spec
+    while k < len(words):
+        w = words[k]
+        if w == "--":
+            k += 1
+            break
+        if name in ("env", "sudo") and ASSIGNMENT.match(w):
+            k += 1
+            continue
+        if not w.startswith("-") or w == "-":
+            break
+        k += 1
+        if w.startswith("--"):
+            if "=" not in w and any(o.startswith(w) for o in longs):
+                k += 1
+            continue
+        for pos, ch in enumerate(w[1:]):
+            if ch in shorts:
+                if pos == len(w) - 2:
+                    k += 1
+                break
+    while name == "env" and k < len(words) and ASSIGNMENT.match(words[k]):
+        k += 1
+    return k + operands
+
+
+def sed_read(args, flags, gnu):
+    """sed's scripts and file operands under GNU rules (options anywhere
+    before `--`, long options, -e -f -l take a value, -i an attached suffix
+    only) or BSD rules (options stop at the first operand, -e -f -i -I take
+    a value): (scripts, files). scripts is [(text, expansion state, index in
+    args of an operand script or None)], or None when one is unknown (-f, a
+    word that may split); files are indexes in args. A sed that rejects its
+    options reads nothing."""
+    scripts, operands = [], []
+    takes = "efl" if gnu else "efiI"
+    i, done = 0, False
+    while i < len(args):
+        a, e = args[i], flags[i]
+        i += 1
+        if e == BARE_EXPANSION and unresolved(a):
+            return None, operands + list(range(i, len(args)))
+        if done or a == "-" or not a.startswith("-"):
+            operands.append(i - 1)
+            done = done or not gnu
+            continue
+        if a == "--":
+            done = True
+            continue
+        if a.startswith("--"):
+            name, eq, value = a.partition("=")
+            full = [o for o in SED_GNU_LONG if o == name] or [
+                o for o in SED_GNU_LONG if o.startswith(name)]
+            if not gnu or len(full) != 1:
+                return [], []
+            if full[0] in ("--expression", "--file", "--line-length"):
+                if not eq:
+                    if i >= len(args):
+                        return [], []
+                    value, e = args[i], flags[i]
+                    i += 1
+                if full[0] == "--file":
+                    return None, operands + list(range(i, len(args)))
+                if full[0] == "--expression":
+                    scripts.append((value, e, None))
+            continue
+        cluster = a[1:]
+        for pos, ch in enumerate(cluster):
+            if ch not in takes:
+                continue
+            value = cluster[pos + 1:]
+            if not value:
+                if i >= len(args):
+                    return [], []
+                value, e = args[i], flags[i]
+                i += 1
+            if ch == "f":
+                return None, operands + list(range(i, len(args)))
+            if ch == "e":
+                scripts.append((value, e, None))
+            break
+    if not scripts and operands:
+        j = operands[0]
+        return [(args[j], flags[j], j)], operands[1:]
+    return scripts, operands
+
+
+def sed_files(args, flags, cwd):
+    """The words GNU or BSD sed may read as file operands. A word that one
+    reading takes as the script and the other as a file (`sed -i '' s/a/b/
+    f`: BSD's -i takes '', GNU's does not) counts only when it exists
+    against cwd, as sed edits no file that is not there."""
+    readings = [sed_read(args, flags, gnu) for gnu in (True, False)]
+    script_at = {j for scripts, _ in readings for _, _, j in scripts or () if j is not None}
+    out = []
+    for _, files in readings:
+        out += [args[j] for j in files if j not in script_at or os.path.lexists(
+            os.path.join(cwd, os.path.expanduser(args[j])))]
+    return out
+
+
+def sed_may_open(args, flags):
+    """True when, under the GNU or the BSD reading of its options, sed may
+    open a file or run a command of its script's choosing: a script the
+    guard cannot see (-f, an expansion) or one with w, W, r, R, e or an s
+    command with the w or e flag (sed_script_opens)."""
+    for gnu in (True, False):
+        scripts = sed_read(args, flags, gnu)[0]
+        if scripts is None or any(e or sed_script_opens(t) for t, e, _ in scripts):
+            return True
+    return False
+
+
+def sed_script_opens(script):
+    """True when a literal sed script may open a file or run a command: w,
+    W, r, R, e, an s command with a w or e flag, or anything this reader
+    cannot follow (an address form or command it does not know, a label or
+    branch followed by `;`, which GNU ends there and BSD does not)."""
+    i, n = 0, len(script)
+    while True:
+        while i < n and script[i] in " \t\n;":
+            i += 1
+        if i >= n:
+            return False
+        i, problem = sed_address(script, i, False)
+        if not problem and i < n and script[i] == ",":
+            i, problem = sed_address(script, i + 1, True)
+        if problem:
+            return True
+        while i < n and script[i] in " \t!":
+            i += 1
+        if i >= n:
+            return False
+        c = script[i]
+        i += 1
+        if c in "\n;{}":
+            continue
+        if c in "#:btTv":
+            end = script.find("\n", i)
+            end = n if end < 0 else end
+            if c != "#" and ";" in script[i:end]:
+                return True
+            i = end
+            continue
+        if c in "aic":
+            while i < n and script[i] != "\n":
+                i += 2 if script[i] == "\\" else 1
+            continue
+        if c in "sy":
+            if i >= n or script[i] in "\\\n":
+                return True
+            for part in range(2):
+                i, problem = sed_delimited(script, i, script[i], brackets=c == "s" and not part)
+                if problem:
+                    return True
+                i -= 1  # the closing delimiter opens the next part
+            i += 1
+            if c == "s":
+                while i < n and script[i] in "gpiImM0123456789":
+                    i += 1
+        elif c in "lLqQ":
+            while i < n and script[i] in " \t0123456789":
+                i += 1
+        elif c not in SED_READ_COMMANDS and c not in "Fz":
+            return True
+        while i < n and script[i] in " \t":
+            i += 1
+        if i < n and script[i] not in "\n;}":
+            return True
 
 
 def sed_problem(args, flags):
     """None when every script sed runs is read-only and no option edits
     files; otherwise what may write. `flags` is the words' expansion state.
-    Options are read anywhere before `--`, as GNU sed permutes them."""
+    GNU sed reads options anywhere before `--`; BSD sed stops at the first
+    operand and reads later option words as files (and that operand as the
+    script), so an option after an operand asks."""
     scripts = []
     operands = []
     i = 0
@@ -2551,6 +2836,9 @@ def sed_problem(args, flags):
         if a == "--":
             options_done = True
             continue
+        if operands:
+            return (f"option {a} after the operand {operands[0][0]!r} (BSD sed reads it as "
+                    "a file and the first operand as the script)")
         if a.startswith("--"):
             name, eq, value = a.partition("=")
             if name == "--expression":
@@ -2653,25 +2941,31 @@ def sed_address(script, i, required):
 
 
 def sed_regex(script, i):
-    """/regex/ at script[i]: (index after the closing /, problem). GNU sed
-    ends it at the first unescaped /; BSD sed skips a / inside a bracket
-    expression, so a bracket that BSD reads as still open at that point
-    makes the two disagree on where the commands start."""
+    """/regex/ at script[i]: (index after the closing /, problem)."""
+    return sed_delimited(script, i, "/")
+
+
+def sed_delimited(script, i, delim, brackets=True):
+    """The text that script[i] (`delim`) opens and the next unescaped delim
+    closes: (index after the closing delim, problem). GNU sed ends a regex
+    at the first unescaped delimiter; BSD sed skips one inside a bracket
+    expression, so with `brackets` a bracket that BSD reads as still open at
+    that point makes the two disagree on where the commands start."""
     n = len(script)
     j = i + 1
-    while j < n and script[j] != "/":
+    while j < n and script[j] != delim:
         if script[j] == "\n":
-            return j, "a newline inside a /regex/"
+            return j, f"a newline inside a {delim}regex{delim}"
         j += 2 if script[j] == "\\" else 1
     if j >= n:
-        return j, "a /regex/ without its closing /"
+        return j, f"a {delim}regex{delim} without its closing {delim}"
     body = script[i + 1:j]
     if "\n" in body:
-        return j, "a newline inside a /regex/"
+        return j, f"a newline inside a {delim}regex{delim}"
     k = 0
-    while k < len(body):
+    while brackets and k < len(body):
         if body[k] == "\\":
-            k += 2 if body[k + 1:k + 2] in ("[", "/", "\\", "n") else 1
+            k += 2 if body[k + 1:k + 2] in ("[", delim, "\\", "n") else 1
         elif body[k] == "[":
             k = bsd_bracket_end(body, k)
             if k is None:
