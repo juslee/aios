@@ -547,8 +547,8 @@ hook)
     # Never a foreground build: these run on every Bash call, edit and Agent
     # call. A stale or dirty binary is treated as missing, the counterpart of
     # guard's ask (owner decision 2026-10-09,
-    # docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md, Part 2,
-    # Shim): stale also covers a binary that fails its provenance stamp.
+    # docs/knowledge/decisions/2026-10-06-jl-model-routing-hooks.md,
+    # Amendment 2026-10-10, Shim): stale also covers a binary that fails its provenance stamp.
     if ! runnable "$bin"; then
         build_bg
         hook_fallback "the aios binary is not built"
