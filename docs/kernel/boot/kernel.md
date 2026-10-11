@@ -234,7 +234,8 @@ Secondary core (_secondary_entry in boot.S → secondary_main in smp.rs):
   5. Set TPIDR_EL1 = MPIDR_EL1 Aff0, branch to secondary_main(core_id) (Rust)
   6. Init GIC redistributor + timer PPI + CPU interface for this core:
      wake, put the timer PPI in Group 1, priority, level check, enable,
-     readback (hal.md §4.1); GICR is physical here, so no UART output
+     readback (hal.md §4.1); GICR at its physical address through the
+     boot identity TTBR0, and no UART output (the UART is mapped in step 7)
   7. Install full kmap TTBR1 (replaces boot.S minimal TTBR1)
   8. Wait for PRINT_TURN == core_id, print (the [smp] line reports the
      timer PPI setup), store core_id + 1
