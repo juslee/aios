@@ -7,7 +7,7 @@ status: final
 
 # Research: Crash-fix step 1b, A/B pair (af59149 vs e211d6d)
 
-Step 1b (#238, e211d6d) added the detect-only tripwires and the `IrqSpinLock` re-entry detector. Its acceptance is an interleaved A/B against `main` at its merge base (af59149), which had to wait for step 1a's interleave mode (`just soak --arm`, #246). This note gives that pair's results. Arm A is af59149 and arm B is e211d6d. See the [crash-fix ADR](../decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) for the hypotheses (H1, H3, N2), step 1b's acceptance and the errata that restate its decision rules. See [B1's single-arm baseline](2026-10-10-jl-crash-fix-1b-n2-baseline.md) for the counters on the step-1b branch and [observability.md §6.5](../../kernel/observability.md) for every tripwire key. Step 200's pair, which ran in the same session, is in its own note, docs/knowledge/research/2026-10-11-jl-crash-fix-200-ab.md (on step 200's branch).
+Step 1b (#238, e211d6d) added the detect-only tripwires and the `IrqSpinLock` re-entry detector. Its acceptance is an interleaved A/B against `main` at its merge base (af59149), which had to wait for step 1a's interleave mode (`just soak --arm`, #246). This note gives that pair's results. Arm A is af59149 and arm B is e211d6d. See the [crash-fix ADR](../decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) for the hypotheses (H1, H3, N2), step 1b's acceptance and the errata that restate its decision rules. See [B1's single-arm baseline](2026-10-10-jl-crash-fix-1b-n2-baseline.md) for the counters on the step-1b branch and [observability.md §6.5](../../kernel/observability.md) for every tripwire key. Step 200's pair, which ran in the same session, is in [its own note](2026-10-11-jl-crash-fix-200-ab.md).
 
 ## Conditions
 
