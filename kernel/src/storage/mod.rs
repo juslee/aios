@@ -249,7 +249,11 @@ fn test_version_store() {
                 return;
             }
         };
-    crate::kinfo!(Storage, "VersionStore: created object {:?}", obj_id);
+    crate::kinfo!(
+        Storage,
+        "VersionStore: created object {:?}",
+        IdHex(&obj_id.0)
+    );
 
     // Update 3 times.
     let updates = [
@@ -381,7 +385,7 @@ fn test_spaces() {
     };
     match space::space_create(b"test-space", SecurityZone::Personal, quota) {
         Ok(id) => {
-            crate::kinfo!(Storage, "SpaceTest: created user space {:?}", id);
+            crate::kinfo!(Storage, "SpaceTest: created user space {:?}", IdHex(&id.0));
 
             // Get it back.
             match space::space_get(&id) {
@@ -498,7 +502,7 @@ fn test_object_store() {
                 crate::kinfo!(
                     Storage,
                     "ObjStore: created id={:?} hash={:?}",
-                    result.0,
+                    IdHex(&result.0 .0),
                     HashPrefix(&result.1)
                 );
                 result
@@ -863,5 +867,19 @@ impl<'a> core::fmt::Debug for HashPrefix<'a> {
             write!(f, "{:02x}", b)?;
         }
         write!(f, "...")
+    }
+}
+
+/// Helper to display a 128-bit object or space id as 32 hex digits. The
+/// derived Debug prints 16 decimal array elements (up to 90 bytes), which
+/// pushes a log line past the two entries a message can take.
+struct IdHex<'a>(&'a [u8; 16]);
+
+impl core::fmt::Debug for IdHex<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for &b in self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
     }
 }

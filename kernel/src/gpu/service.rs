@@ -589,7 +589,7 @@ pub fn init_gpu_service() {
 
     // Create IPC channel for the GPU Service.
     let gpu_server_tid = ThreadId(0x900); // Debug label for the GPU Service thread.
-    let ch = ipc::channel_create_unchecked(gpu_server_tid);
+    let ch = ipc::channel_create_unchecked(ProcessId(9));
 
     // Grant ChannelAccess for the GPU Service channel.
     let _ = cap::grant_to_process(ProcessId(9), shared::Capability::ChannelAccess(ch), false);

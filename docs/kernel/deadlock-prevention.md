@@ -72,32 +72,32 @@ let mut rq_second = match RUN_QUEUES[second].try_lock() { /* ... */ };
 
 ### 3.3 Global Subsystem Lock Hierarchy
 
-Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. The tables below place the process, thread, scheduler, service, IPC, storage, ASID and bench locks (§3.4 covers the memory allocators); the compositor, GPU, input and observability (`BOOT_LOG`) locks are not listed here yet (`just docs-check-all` lists them as undocumented). Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests/mod.rs`) are excluded: each is written once in `ipc::tests::init()` before the scheduler starts, then only read by the test threads, and never held while another lock is taken. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
+Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. The tables below place the process, thread, scheduler, service, IPC, storage, ASID, bench and observability (`BOOT_LOG`) locks (§3.4 covers the memory allocators); the compositor, GPU and input locks are not listed here yet (`just docs-check-all` lists them as undocumented). Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests/mod.rs`) are excluded: each is written once in `ipc::tests::init()` before the scheduler starts, then only read by the test threads, and never held while another lock is taken. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
 
 **Primary hierarchy** (locks must be acquired in increasing position order; never acquire a lower-numbered lock while holding a higher-numbered one):
 
 | Pos | Lock | Location | Type | Notes |
 |---|---|---|---|---|
 | 1 | `PROCESS_TABLE` | `task/process.rs` | `Mutex<[Option<ProcessControl>; 32]>` | Top of hierarchy |
-| 2 | `THREAD_TABLE` | `task/mod.rs` | `Mutex<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
+| 2 | `THREAD_TABLE` | `task/mod.rs` | `IrqSpinLock<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
 | 3 | `SERVICE_MANAGER` | `service/mod.rs` | `Mutex<ServiceManager>` | Released before `AUDIT_RING` |
 | 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[Option<SharedMemoryRegion>; 64]>` | Released before `PROCESS_TABLE` re-acquire |
-| 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `Mutex<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
+| 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `IrqSpinLock<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
 | 6 | `CHANNEL_TABLE` | `ipc/mod.rs` | `Mutex<[Option<Channel>; 128]>` | After `THREAD_TABLE` |
-| 7 | `SELECT_WAITERS` | `ipc/select.rs` | `Mutex<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
-| 8 | `TIMEOUT_QUEUE` | `ipc/timeout.rs` | `Mutex<[Option<TimeoutEntry>; 64]>` | Collect expired, wake outside lock |
+| 7 | `SELECT_WAITERS` | `ipc/select.rs` | `IrqSpinLock<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
+| 8 | `TIMEOUT_QUEUE` | `ipc/timeout.rs` | `IrqSpinLock<[Option<TimeoutEntry>; 64]>` | Collect expired, wake outside lock |
 | 9 | `REPLY_SLOTS` | `ipc/timeout.rs` | `Mutex<[Option<ReplySlot>; 64]>` | Per-thread reply buffer |
-| 10 | `WAKEUP_ERRORS` | `ipc/timeout.rs` | `Mutex<[i64; 64]>` | Leaf lock, short hold |
+| 10 | `WAKEUP_ERRORS` | `ipc/timeout.rs` | `IrqSpinLock<[i64; 64]>` | Leaf lock, short hold |
 | 11 | `BLOCK_ENGINE` | `storage/block_engine.rs` | `Mutex<Option<BlockEngine>>` | Calls VirtIO internally |
 | 12 | `VIRTIO_BLK` | `drivers/virtio_blk.rs` | `Mutex<Option<VirtioBlk>>` | Bottom of storage stack |
 | 13 | `AUDIT_RING` | `service/mod.rs` | `Mutex<[AuditEntry; 256]>` | Leaf lock, acquired after `SERVICE_MANAGER` release |
 
 **Code evidence** for the ordering:
 
-- `shmem.rs:9` — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
-- `shmem.rs:158-159` — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
-- `shmem.rs:438` — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
-- `process.rs:147` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
+- `shmem.rs:10` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
+- `shmem.rs:192-193` (`shared_memory_create`) — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
+- `shmem.rs:488` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
+- `process.rs:159-160` (`process_exit`) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
 - `timeout.rs:88` — *"avoid lock ordering issues (TIMEOUT_QUEUE → THREAD_TABLE)."*
@@ -134,7 +134,13 @@ graph TD
 | `ECHO_CHANNEL` | `service/mod.rs` | Test infrastructure, leaf |
 | `SAMPLE_BUF` | `bench.rs` | Benchmark data collection, leaf |
 | `ASID_ALLOC` | `mm/uspace.rs` | ASID allocation, leaf |
+| `PRIVATE_ALLOC_TABLE` | `ipc/shmem.rs` | MemoryMap allocation records, leaf: blocks are allocated before and freed after the hold |
 | `RUN_QUEUES[N]` | `sched/mod.rs` | Per-CPU, ascending CPU ID order (§3.2) |
+| `BOOT_LOG` | `observability/mod.rs` | Boot log ring, leaf; IRQ-class (below) |
+
+**IRQ-class locks (crash-fix step 1b).** The timer IRQ path shares 9 lock statics with thread code: `THREAD_TABLE`, `CURRENT_THREAD[N]`, `RUN_QUEUES[N]`, `WAKEUP_ERRORS`, `TIMEOUT_QUEUE`, `NOTIFY_DEADLINES`, `NOTIFICATION_TABLE`, `SELECT_WAITERS` and `BOOT_LOG`. They are `IrqSpinLock` (`kernel/src/sync/irq_spin_lock.rs`), not `spin::Mutex`. It is a detect-only type: it excludes exactly as `spin::Mutex` does and keeps every position and rule above. Its lock word is the holder's owner stamp (CPU and per-CPU switch generation, `shared::lock`). A `lock()` whose word holds its own stream's stamp can never succeed; for example, a timer IRQ that takes `THREAD_TABLE` while the thread it interrupted holds it with IRQs on. Such a `lock()` panics with a `lock re-entry:` message (one line, printed after the `PANIC: panicked at` location line) instead of spinning forever. Other contention is counted in the tripwire's per-lock `lk*` keys. [observability.md](./observability.md) §6.5 has the message format, how to decode a lock word, and the keys. The type reports this same-CPU deadlock; it does not prevent it. A thread that holds one of these locks with IRQs on can still meet its own CPU's timer IRQ. Masking IRQs around such holds is a later crash-fix step.
+
+**IRQ-context exception for `CHANNEL_TABLE` (crash-fix step 1b).** The IRQ path takes only IRQ-class locks, with one exception. The heartbeat scans that CPU 0's timer tick runs take `CHANNEL_TABLE`, a `spin::Mutex`, but only with `try_lock`, alone, and release it before the next table. A try-lock never waits, so it cannot deadlock: when the table is busy, the scan is skipped and counted (`skipb`). Heartbeat scans take the IRQ-class locks with `try_lock_quiet` only.
 
 ### 3.4 Memory Allocator Locks
 
@@ -160,7 +166,7 @@ A recurring pattern in the AIOS kernel avoids lock ordering violations when an o
 
 Examples in the codebase:
 
-- **`process_exit`** (`task/process.rs`): Snapshots thread IDs and channel IDs under `THREAD_TABLE`, releases the lock, then wakes blocked threads and destroys channels (which acquire `CHANNEL_TABLE`, `WAKEUP_ERRORS`, and scheduler locks).
+- **`process_exit`** (`task/process.rs`): Marks its threads Dead under `THREAD_TABLE` and releases it, then marks Dead the channels with an endpoint owned by the process and collects their blocked threads under `CHANNEL_TABLE`, releases it, and only then wakes those threads with EPIPE (which acquires `WAKEUP_ERRORS` and scheduler locks).
 
 - **`check_timeouts`** (`ipc/timeout.rs`): Collects expired entries under `TIMEOUT_QUEUE`, releases the lock, then wakes threads (which acquire `THREAD_TABLE` and scheduler locks).
 

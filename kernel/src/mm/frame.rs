@@ -43,9 +43,14 @@ impl FrameAllocator {
     ///
     /// Determines the owning pool from the address range and frees to that pool.
     ///
+    /// `#[track_caller]`: the `[mm] BUG: free_pages(` assertion names the
+    /// caller's location (through [`free_dma_pages`], that function's
+    /// caller), not this file.
+    ///
     /// # Safety
     /// `phys_addr` must have been returned by a prior `alloc_pages` call with
     /// the same `order`.
+    #[track_caller]
     pub unsafe fn free_pages(&mut self, phys_addr: usize, order: usize) {
         let pool = self.pools.pool_for_addr(phys_addr);
         debug_assert!(
@@ -158,23 +163,17 @@ pub unsafe fn free_page(phys_addr: usize) {
 /// underlying `FrameAllocator::free_pages`. Callers must only pass
 /// addresses returned by `alloc_dma_pages`.
 ///
+/// `#[track_caller]`, like `FrameAllocator::free_pages`: a bad address's
+/// `[mm] BUG: free_pages(` assertion names this function's caller.
+///
 /// # Safety
 /// `phys_addr` must have been returned by `alloc_dma_pages` with the same `order`.
 /// Double-free causes undefined behavior (buddy bitmap corruption).
+#[track_caller]
 pub unsafe fn free_dma_pages(phys_addr: usize, order: usize) {
     if let Some(fa) = FRAME_ALLOC.lock().as_mut() {
         fa.free_pages(phys_addr, order);
     }
-}
-
-/// Allocate a single page from the user pool (for shared memory / user heaps).
-pub fn alloc_user_page() -> Option<usize> {
-    let mut guard = FRAME_ALLOC.lock();
-    let fa = guard.as_mut()?;
-    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
-    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
-    // If the map were not active, buddy allocator metadata writes would fault.
-    unsafe { fa.alloc_page(Pool::User) }
 }
 
 /// Allocate `2^order` contiguous pages from the user pool.
@@ -185,16 +184,6 @@ pub fn alloc_user_pages(order: usize) -> Option<usize> {
     // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
     // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_pages(Pool::User, order) }
-}
-
-/// Free a single page back to its owning pool.
-///
-/// # Safety
-/// `phys_addr` must have been returned by `alloc_user_page`.
-pub unsafe fn free_user_page(phys_addr: usize) {
-    if let Some(fa) = FRAME_ALLOC.lock().as_mut() {
-        fa.free_pages(phys_addr, 0);
-    }
 }
 
 /// Free `2^order` contiguous pages back to their owning pool.

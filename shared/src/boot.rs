@@ -9,8 +9,10 @@ use crate::PhysAddr;
 ///
 /// All fields use fixed-layout primitives for a stable C ABI across toolchain
 /// updates. Fields that may be absent use `u64` with 0 meaning "not present".
-/// Phase 1 populates all available fields and leaves optional ones as 0 when
-/// unavailable; Phase 0 sets only `magic` and zeroes the rest.
+/// The UEFI stub fills `magic`, the kernel extent and the memory map, plus the
+/// framebuffer, `device_tree`, `acpi_rsdp` and `rng_seed` fields where the
+/// firmware provides them. `runtime_services`, `initramfs_*` and `cmdline_*`
+/// stay 0 until those features exist (docs/kernel/boot/firmware.md §2.2).
 #[repr(C)]
 pub struct BootInfo {
     /// Magic number for validation: 0x41494F53_424F4F54 ("AIOSBOOT")

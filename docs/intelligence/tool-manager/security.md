@@ -16,7 +16,9 @@ The Tool Manager's capability enforcement builds on the kernel capability system
 ```rust
 /// Checked by the kernel IPC subsystem, not by the Tool Manager.
 /// The Tool Manager simply sends an IPC message to the provider;
-/// if the caller lacks ChannelAccess, the kernel rejects the send.
+/// if the caller lacks ChannelAccess, the kernel rejects the send with
+/// EPERM, which the IPC Kit decodes as
+/// IpcKitError::CapabilityDenied { required: ChannelAccess(target_channel) }.
 pub fn ipc_send(
     caller_pid: ProcessId,
     target_channel: ChannelId,
@@ -25,7 +27,7 @@ pub fn ipc_send(
     // Kernel checks caller's capability table for ChannelAccess(target_channel)
     let cap_table = get_process_caps(caller_pid)?;
     if !cap_table.has_capability(Capability::ChannelAccess(target_channel)) {
-        return Err(IpcError::CapabilityDenied);
+        return Err(IpcError::Eperm); // missing capability (kernel/ipc.md §3.2)
     }
     // ... proceed with IPC
 }

@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --secs must be a positive integer

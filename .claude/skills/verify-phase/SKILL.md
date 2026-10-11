@@ -8,7 +8,7 @@ argument-hint: "[phase-number]"
 
 # Verify Phase $ARGUMENTS
 
-Run all Quality Gates from CLAUDE.md. Stop at the first FAIL and report — do not continue to subsequent gates.
+Run all Quality Gates from `.claude/rules/02-quality-gates.md`. Stop at the first FAIL and report — do not continue to subsequent gates.
 
 ## Step 1: Find and read the phase doc
 
@@ -65,7 +65,7 @@ just run 2>&1
 cargo objdump -- -h 2>&1
 ```
 
-**PASS condition:** `.text` section starts at the expected kernel VMA. Check against CLAUDE.md Key Technical Facts.
+**PASS condition:** `.text` section starts at the expected kernel VMA. Check against the Key Technical Facts in `.claude/CLAUDE.md`.
 
 ### Gate 6: EL verification
 

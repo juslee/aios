@@ -137,11 +137,11 @@ pub fn init_system_spaces() {
 pub fn register_service() {
     use crate::ipc;
     use crate::task::process::ProcessId;
-    use crate::task::ThreadId;
 
-    // Create a channel for the space-storage service (kernel-internal, no cap check).
-    let space_tid = ThreadId(0x800);
-    let ch = ipc::channel_create_unchecked(space_tid);
+    // Create a channel for the space-storage service (kernel-internal, no
+    // cap check), owned by the kernel process (PID 0), which it is
+    // registered under.
+    let ch = ipc::channel_create_unchecked(ProcessId(0));
 
     // Register with kernel process (PID 0).
     if let Err(e) = crate::service::service_register(b"space-storage", ProcessId(0), ch) {

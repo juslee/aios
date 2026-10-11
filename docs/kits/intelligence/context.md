@@ -236,11 +236,12 @@ fn should_deliver_notification(
     let state = context.current_state().unwrap_or_default();
 
     // During deep work with low interruptibility, only urgent items
-    // break through. During idle, everything is delivered.
+    // break through. During idle, everything except Silent items (log
+    // only, never shown) is delivered; Digest items still go to the digest.
     match state.interruptibility {
-        i if i < 0.2 => item.urgency == Urgency::Critical,
-        i if i < 0.5 => item.urgency >= Urgency::High,
-        _ => true,
+        i if i < 0.2 => item.urgency == Urgency::Interrupt,
+        i if i < 0.5 => matches!(item.urgency, Urgency::Interrupt | Urgency::NextBreak),
+        _ => item.urgency != Urgency::Silent,
     }
 }
 ```

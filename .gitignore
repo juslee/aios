@@ -38,3 +38,6 @@ docs/.obsidian/
 
 # Python bytecode from the Claude Code hook tests
 __pycache__/
+
+# Per-developer direnv settings (such as CLAUDE_CONFIG_DIR); never committed
+.envrc

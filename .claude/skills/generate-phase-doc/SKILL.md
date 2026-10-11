@@ -8,15 +8,15 @@ argument-hint: "[phase-number]"
 
 # Generate Phase Doc for Phase $ARGUMENTS
 
-Follow the Phase Doc Generation Workflow from CLAUDE.md:
+Follow the Phase Doc Generation Workflow in `.claude/CLAUDE.md`:
 
 ## Step 1: Research
 
 1. Read `docs/project/development-plan.md` §8 — find phase $ARGUMENTS name, duration, and deliverable
-2. Identify relevant architecture docs using the Architecture Document Map in CLAUDE.md
+2. Identify relevant architecture docs using `docs/project/doc-map.md`
 3. Read those architecture docs fully — these are the source of truth for what this phase implements
 4. Search the knowledge hive for relevant decisions and discussions that may affect phase planning:
-    - Use Obsidian MCP search_notes with subsystem keywords
+    - Grep `docs/knowledge/` (lessons, decisions) for subsystem keywords
     - Review `docs/knowledge/decisions/` for prior architectural choices
     - Review `docs/knowledge/discussions/` for in-progress design explorations that may have graduated to architecture docs
     - Factor findings into milestone structure
@@ -206,4 +206,4 @@ EOF
 ```
 
 3. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
-4. Hand off and stop: report the PR URL and `gh pr checks <number>`, and ask the user to run `/merge-and-cleanup` (user-invocable only; it squash merges, deletes the branches, removes the worktree and fast-forwards main). Never merge or push to `main` yourself.
+4. Hand off and stop: report the PR URL and `gh pr checks <number>`, and ask the user to run `/merge-and-cleanup` (user-invocable only; it preserves soak results and agent memory, squash merges, deletes the branches, removes the worktree and fast-forwards main). Never merge or push to `main` yourself.

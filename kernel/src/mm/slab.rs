@@ -276,7 +276,7 @@ impl SlabCache {
         if leading != RED_ZONE_PATTERN || trailing != RED_ZONE_PATTERN {
             crate::kerror!(
                 Mm,
-                "RED ZONE CORRUPTION: cache={} ptr={:#x} leading={:#x} trailing={:#x}",
+                "RED ZONE: cache={} ptr={:#x} lead={:#x} trail={:#x}",
                 self.object_size,
                 user_ptr as usize,
                 leading,

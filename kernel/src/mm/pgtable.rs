@@ -197,10 +197,19 @@ impl VmFlags {
         self.0
     }
 
-    /// Reconstruct flags from raw bits. Masks to valid flag bits only.
-    pub const fn from_bits(bits: u32) -> Self {
-        // Valid bits: READ(0x1) | WRITE(0x2) | EXECUTE(0x4) | USER(0x8)
-        Self(bits & 0b0000_1111)
+    /// Checked conversion from a caller's memory flags argument: a syscall
+    /// register (MemoryMap, SharedMemoryCreate, SharedMemoryMap) or the IPC
+    /// Kit's `flags: u64`.
+    ///
+    /// Returns `Err(EINVAL)` if any bit outside
+    /// `shared::syscall::MEMORY_FLAGS_MASK` (READ | WRITE | EXECUTE) is set:
+    /// bits 32-63, undefined bits, and USER, which the kernel adds itself to
+    /// every user mapping. W^X is checked by the operation, not here.
+    pub const fn from_caller_bits(reg: u64) -> Result<Self, i64> {
+        match shared::syscall::flags_arg(reg) {
+            Ok(bits) => Ok(Self(bits)),
+            Err(e) => Err(e),
+        }
     }
 
     pub const fn contains(&self, other: Self) -> bool {
@@ -211,6 +220,16 @@ impl VmFlags {
         Self(self.0 | other.0)
     }
 }
+
+// The caller-settable mask in `shared` must name exactly READ, WRITE and
+// EXECUTE, with the bit values used here.
+const _: () = assert!(
+    shared::syscall::MEMORY_FLAGS_MASK
+        == VmFlags::READ
+            .union(VmFlags::WRITE)
+            .union(VmFlags::EXECUTE)
+            .bits() as u64
+);
 
 impl core::ops::BitOr for VmFlags {
     type Output = Self;

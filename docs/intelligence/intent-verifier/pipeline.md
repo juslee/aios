@@ -106,7 +106,7 @@ The separation is enforced at multiple levels:
 - **IPC channels.** The kernel maintains two distinct IPC channels to AIRS: one for security observations (`AirsInternalPath::Security`) and one for resource hints (`AirsInternalPath::Resource`). The security channel has a higher scheduler priority for the receiving thread within AIRS.
 - **Thread pools.** Within AIRS, security verification runs on dedicated threads that are never shared with resource optimization tasks. A prefetch storm does not starve intent verification of CPU time.
 - **Shared state prohibition.** The security path and resource path share no mutable state. A resource decision (e.g., "prefetch this space object") never influences an intent verification verdict, and vice versa. The only shared state is read-only: the model registry and the agent manifest store.
-- **SLA enforcement.** The security path has a hard <10ms SLA for synchronous verification responses. If the security path cannot meet this SLA (e.g., model loading delay, extreme queue depth), it returns the fallback policy result rather than blocking indefinitely. The kernel monitors this SLA via `AirsDirectiveMonitor` and logs violations.
+- **SLA enforcement.** The security path has a hard SLA for synchronous verification responses: the deadline of the verification path the action takes (§10.2), which is 10ms for single-round verification on NPU hardware. If the security path cannot meet this SLA (e.g., model loading delay, extreme queue depth), it returns the fallback policy result rather than blocking indefinitely. The kernel monitors this SLA via `AirsDirectiveMonitor` and logs violations.
 
 ### §2.4 Crash Containment
 
@@ -453,7 +453,7 @@ The Intent Verifier is on the critical path for synchronous verification. Its pe
 | **Total (LLM path)** | **<10ms** | **Pre-check ambiguous, cache miss** | **~7% of actions** |
 | **Total (adversarial path)** | **<30ms** | **High-risk action, multi-round** | **<1% of actions** |
 
-These latency targets assume a verification-optimized model (small, fast, purpose-built) running on the local inference engine. The <10ms target for LLM verification is achievable with a quantized model (Q4_K_M or Q8_0) on hardware with a Neural Processing Unit. On CPU-only hardware, the LLM path may increase to 50-100ms, in which case more actions should be routed to asynchronous verification to avoid blocking agent syscalls.
+These latency targets assume a verification-optimized model (small, fast, purpose-built) running on the local inference engine. The <10ms target for LLM verification is achievable with a quantized model (Q4_K_M or Q8_0) on hardware with a Neural Processing Unit. On CPU-only hardware, the LLM path may increase to 50-100ms, in which case more actions should be routed to asynchronous verification to avoid blocking agent syscalls. The kernel holds each path to its own deadline (§10.2), so neither the multi-round path nor the CPU-only LLM path has to meet the 10ms single-round deadline.
 
 The latency budget accounts for IPC round-trip overhead between the kernel and AIRS. The kernel-to-AIRS security IPC channel uses direct switch optimization (see [ipc.md](../../kernel/ipc.md) §9.3) to minimize scheduling delay. The IPC round-trip overhead is <0.05ms under normal load.
 
@@ -478,8 +478,10 @@ The verification pipeline is designed to sustain high throughput without degradi
 
 **Kernel-side timeout** prevents indefinite blocking:
 
-- The kernel sets a 10ms deadline for synchronous verification responses.
-- If AIRS does not respond within 10ms, the kernel applies the agent's fallback policy.
+- Each verification path has its own deadline for synchronous responses, so no path is held to one it cannot meet. On NPU hardware: 10ms for single-round verification (pre-check, cache and single-round LLM) and 30ms for multi-round adversarial verification (§4.6). On CPU-only hardware: 100ms and 300ms, the top of the 50-100ms CPU-only LLM range (§10.1) and three rounds of it.
+- The kernel picks the deadline when it forwards the observation. The multi-round criteria (§4.6: object count, payload size, capability trust level, target zone) are checkable in the kernel. The hardware tier comes from the kernel's own ComputeRegistry, never from AIRS: the NPU deadlines apply when `query_devices(Some(ComputeClass::Npu))` returns a device, and the CPU-only deadlines apply otherwise ([registry.md](../../kernel/compute/registry.md) §5.3). If AIRS runs its verification model on the CPU while an NPU is present, it misses the NPU deadline and the fallback policy applies.
+- The Intent Verifier core ships in Phase 20a (Intent Verification), before the ComputeRegistry. Until Phase 23 (Kernel Compute Abstraction) delivers the registry, the kernel has no device list to query and applies the CPU-only deadlines (100ms and 300ms). The NPU deadlines also need an NPU driver, which arrives no earlier than Phase 24 (GPU Compute & Accelerator Drivers).
+- If AIRS does not respond within the deadline, the kernel applies the agent's fallback policy.
 - The timeout is enforced by the kernel's timer subsystem, not by AIRS. A hung AIRS thread cannot hold a kernel-side syscall indefinitely.
 - Timeout events are logged and contribute to the `AirsDirectiveMonitor` health assessment.
 

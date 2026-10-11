@@ -19,6 +19,8 @@ The GPU Service calls `VIRTIO_GPU.lock()` which is a `spin::Mutex`. This is safe
 
 `ThreadId(0x900)` passed to `Thread::new_kernel()` is a **debug label**, not the runtime identity. The actual ThreadId used by the scheduler and IPC is the THREAD_TABLE index returned by `allocate_thread()`. The echo service and GPU Service both use high debug labels (0x700, 0x900) but run at whatever index the allocator provides. This distinction matters for `channel_create_unchecked(owner_tid)` — the `owner_tid` should be the debug label for identification, but IPC access control uses capabilities (ChannelAccess), not ownership.
 
+**Update (2026-09-29, #191):** `channel_create_unchecked` and `channel_set_peer` now take the owning `ProcessId`, not a thread id. `process_exit` finds an exiting process's channels by the pids recorded on their endpoints, and a debug-label tid such as 0x700 is not a thread-table slot, so it could not be mapped to a process and the channel was never marked Dead. Pass the process that owns the endpoint.
+
 ## Double-buffer DMA budget
 
 Two 1280x800x4 framebuffers need 2×4MB = 8MB from Pool::Dma (64MB). Plus the M19 test frame temporarily (~4MB before release). Total peak: ~12MB of 64MB (18.75%). Releasing the test frame before allocating double buffers would reduce peak to ~8MB, but the simpler "allocate then release" approach works fine within budget.

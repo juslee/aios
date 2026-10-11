@@ -1,0 +1,2 @@
+@@@ append .claude/agents/worker.md
+Check the Build Matrix in CLAUDE.md before editing.

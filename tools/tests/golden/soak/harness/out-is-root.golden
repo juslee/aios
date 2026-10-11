@@ -1,0 +1,6 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --out must not be the repository root (default: target/soak/<timestamp>-<mode>)
+--- out: (none)
+--- still running: -

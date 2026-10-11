@@ -33,7 +33,6 @@ pub const USER_TEXT_BASE: usize = 0x0000_0000_0040_0000;
 pub const USER_DATA_BASE: usize = 0x0000_0000_0100_0000;
 
 /// User heap base address.
-#[allow(dead_code)]
 pub const USER_HEAP_BASE: usize = 0x0000_0000_1000_0000;
 
 /// Top of the user stack (grows downward).
@@ -41,7 +40,6 @@ pub const USER_HEAP_BASE: usize = 0x0000_0000_1000_0000;
 pub const USER_STACK_TOP: usize = 0x0000_7FFF_FFFF_F000;
 
 /// Base of the user stack region.
-#[allow(dead_code)]
 pub const USER_STACK_BASE: usize = 0x0000_7FFF_FFC0_0000;
 
 // ── Global ASID allocator ────────────────────────────────────────────

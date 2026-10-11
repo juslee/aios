@@ -1,0 +1,114 @@
+exit 0
+--- stdout
+cases/clean-text.txt  CLEAN        tick=2000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
+cases/tripwire-panic-lock-with-events.txt  PANIC-LOCK   tick=0      stall=74s   [EL1,BOOT]  lb_last=no  PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    first fatal: PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894
+    last INFO:   -
+                 -
+                 [   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler
+cases/tripwire-clean-g1-then-hb.txt  CLEAN        tick=3000   stall=1s    [EL1,BOOT,G1PASS,G1DONE]
+cases/tripwire-other-schema-last-wedge-alive.txt  WEDGE-ALIVE  tick=2000   stall=1s    [-]  lb_last=-  heartbeat alive but the Gate 1 bench never completed
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+cases/clean-text-log-only.txt  CLEAN        tick=1000   stall=-     [EL1,BOOT,G1PASS,G1DONE]  log-only: no harness timing, a late heartbeat stall is undetectable
+
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `-` (-) |
+| Boots | 5 x 75s, stall limit 15s, data disk - |
+| QEMU | - |
+| Firmware | `-` |
+| Host | - |
+| Load average | start -; end -; per-boot 1-min mean 1.12, max 1.50 |
+| Logs | `<DIR>/cases` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC-LOCK | 1 | 20% |
+| PANIC | 0 | 0% |
+| EXCEPTION | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 1 | 20% |
+| INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
+| CLEAN | 3 | 60% |
+| **Total** | 5 | |
+
+CLEAN rate: 60% (95% Wilson interval 23%-88%)
+Gate 1 IPC round trip, mean over CLEAN boots: 6.33 us (n=3; each boot's avg= is whole us, truncated)
+
+soak: per-boot table in <DIR>/out-a/summary.md, machine-readable rows in <DIR>/out-a/summary.tsv
+--- stderr
+--- file out-a/summary.md
+## AIOS QEMU boot soak (text mode)
+
+| Setting | Value |
+|---|---|
+| Commit | `-` (-) |
+| Boots | 5 x 75s, stall limit 15s, data disk - |
+| QEMU | - |
+| Firmware | `-` |
+| Host | - |
+| Load average | start -; end -; per-boot 1-min mean 1.12, max 1.50 |
+| Logs | `<DIR>/cases` |
+
+| Class | Count | Share |
+|---|---:|---:|
+| PCZERO | 0 | 0% |
+| PANIC-LOCK | 1 | 20% |
+| PANIC | 0 | 0% |
+| EXCEPTION | 0 | 0% |
+| WEDGE-STUCK | 0 | 0% |
+| WEDGE-ALIVE | 1 | 20% |
+| INCONCLUSIVE | 0 | 0% |
+| DEGRADED | 0 | 0% |
+| CLEAN | 3 | 60% |
+| **Total** | 5 | |
+
+CLEAN rate: 60% (95% Wilson interval 23%-88%)
+Gate 1 IPC round trip, mean over CLEAN boots: 6.33 us (n=3; each boot's avg= is whole us, truncated)
+
+### Tripwire counters by class
+
+From each boot's last complete `[tripwire]` line (the `tw_*` columns of `summary.tsv`). A cell is "boots with a non-zero value / sum over those boots", or "/ max" for a gauge (marked max). A per-CPU key's row without an index sums its CPUs. Values that are 0 in every boot are left out.
+
+| Counter | PANIC-LOCK | WEDGE-ALIVE | CLEAN |
+|---|---:|---:|---:|
+| Boots | 1 | 1 | 3 |
+| Boots with a `v=1` line | 1 | 0 | 1 |
+| `tick` | 1/544 | 0/0 | 1/2000 |
+| `tick[CPU 0]` | 1/544 | 0/0 | 1/2000 |
+| `irqsw` | 1/6 | 0/0 | 1/3182 |
+| `irqsw[CPU 0]` | 1/6 | 0/0 | 1/3182 |
+| `elrmm` | 0/0 | 0/0 | 1/1 |
+| `elrmm[CPU 0]` | 0/0 | 0/0 | 1/1 |
+| `ctbusy` | 0/0 | 0/0 | 1/1 |
+| `lkself[THREAD_TABLE]` | 1/1 | 0/0 | 0/0 |
+| `starved[Normal]` | 0/0 | 0/0 | 1/9 |
+| `scanhold1` (max) | 0/0 | 0/0 | 1/26750 |
+| `badchan[cap]` | 1/2 | 0/0 | 0/0 |
+| `badchan[select]` | 1/2 | 0/0 | 0/0 |
+| `badchan[slot]` | 1/1 | 0/0 | 0/0 |
+| `twc` | 1/12 | 0/0 | 1/18 |
+| `twn` | 1/2 | 0/0 | 1/2 |
+| `twmax` (max) | 1/142375 | 0/0 | 1/189187 |
+
+| Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
+|---:|---|---:|---:|---|---|---|---|
+| 01 | CLEAN | 2000 | 1s | EL1,BOOT,G1PASS,G1DONE | - | - | - |
+| 02 | PANIC-LOCK | 0 | 74s | EL1,BOOT | no | panic | PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894 |
+| 03 | CLEAN | 3000 | 1s | EL1,BOOT,G1PASS,G1DONE | - | hb | - |
+| 04 | WEDGE-ALIVE | 2000 | 1s | - | - | v=2 | heartbeat alive but the Gate 1 bench never completed |
+| 05 | CLEAN | 1000 | - | EL1,BOOT,G1PASS,G1DONE | - | - | log-only: no harness timing, a late heartbeat stall is undetectable |
+--- file out-a/summary.tsv
+run	mode	class	last_tick	hb_count	stall_s	elapsed_s	qemu_rc	load1	kernel_s	hb_first_s	bench_s	g1done_s	hb_max_gap_s	markers	lb_last	detail	first_fatal	last_info_1	last_info_2	last_info_3	log	ipc_avg_us	ipc_iters	reentry_lock	reentry_ctx	reentry_holder_irqs	ev_ph	ev_self	ev_self_irq	ev_stuck	tw_v	tw_src	tw_cpu	tw_t	tw_ncpu	tw_tick	tw_irqsw	tw_irqsw0	tw_nest	tw_elrmm	tw_spsrmm	tw_n4	tw_insched	tw_rsthold	tw_tpidrbad	tw_xdir	tw_xrep	tw_xnever	tw_n1	tw_pcnull	tw_pcphys	tw_pcother	tw_spbad	tw_latereply	tw_misrep	tw_ctbusy	tw_badtid	tw_n2	tw_ubrun	tw_ubrbl	tw_ubdead	tw_ubnone	tw_ubmove	tw_lkph	tw_lkpho	tw_lkphrun	tw_lkoxp	tw_lkself	tw_lktry	tw_lktph	tw_lkstk	tw_scana	tw_skipa	tw_skipaself	tw_scanb	tw_skipb	tw_scanstall	tw_hbdefer	tw_orphan	tw_nowaker	tw_wakefl	tw_starved	tw_dupcur	tw_dupq	tw_qbad	tw_orphan_now	tw_nowaker_now	tw_wakefl_now	tw_scanhold1	tw_scanhold2	tw_lb	tw_enqfull	tw_badchan	tw_twc	tw_twn	tw_twmax	g1_elrmm	g1_line	tw_line
+01	text	CLEAN	2000	3	1	75	124	1.50	1	1	2	2	2	EL1,BOOT,G1PASS,G1DONE	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	[   6.100000] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark	[   7.000000] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1	cases/clean-text.txt	6	10000	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-
+02	text	PANIC-LOCK	0	1	74	75	124	1.00	1	1	7	-1	-1	EL1,BOOT	no	after heartbeat tick 0	PANIC: panicked at kernel/src/sched/scheduler.rs:196:38: / lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894	-	-	[   0.2] [0] INFO  Boot  Boot sequence complete, entering scheduler	cases/tripwire-panic-lock-with-events.txt	-	-	THREAD_TABLE	irq-exit	on	1	1	1	1	1	panic	0	544	4	544,0,0,0	6,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	1,0,0,0,0,0,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	2,2,1	12	2	142375	-	-	[tripwire] v=1 src=panic cpu=0 t=544 ncpu=4 tick=544,0,0,0 irqsw=6,0,0,0 lkself=1,0,0,0,0,0,0,0,0 badchan=2,2,1 twc=12 twn=2 twmax=142375 n=12
+03	text	CLEAN	3000	4	1	75	124	1.25	1	1	2	3	2	EL1,BOOT,G1PASS,G1DONE	-	-	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	cases/tripwire-clean-g1-then-hb.txt	7	10000	-	-	-	0	0	0	0	1	hb	0	2000	4	2000,0,0,0	3182,0,0,0	0	0	1,0,0,0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	1	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0,9,0,0	0	0	0	0	0	0	26750	0	0	0	0	18	2	189187	1,0,0,0	[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 irqsw=2711,0,0,0 elrmm=1,0,0,0 ctbusy=1 starved=0,9,0,0 scanhold1=25625 twc=9 twn=1 twmax=183437 n=14	[tripwire] v=1 src=hb cpu=0 t=2000 ncpu=4 tick=2000,0,0,0 irqsw=3182,0,0,0 elrmm=1,0,0,0 ctbusy=1 starved=0,9,0,0 scanhold1=26750 twc=18 twn=2 twmax=189187 n=14
+04	text	WEDGE-ALIVE	2000	3	1	75	124	0.75	1	1	2	-1	-1	-	-	heartbeat alive but the Gate 1 bench never completed	-	-	-	-	cases/tripwire-other-schema-last-wedge-alive.txt	-	-	-	-	-	0	0	0	0	2	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	[tripwire] v=2 src=hb cpu=0 t=2000 ncpu=4 newkey=1,2 nowaker=1 n=7
+05	-	CLEAN	1000	2	-	-	-	-	-	-	-	-	-	EL1,BOOT,G1PASS,G1DONE	-	log-only: no harness timing, a late heartbeat stall is undetectable	-	-	-	[   0.200000] [0] INFO  Boot  Boot sequence complete	cases/clean-text-log-only.txt	6	10000	-	-	-	0	0	0	0	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-	-

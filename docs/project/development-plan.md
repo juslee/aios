@@ -246,6 +246,8 @@ Major decisions that must be made during development:
 
 **Benchmark methodology:** 10,000 IPC iterations and 1,000 context switch iterations on QEMU virt (cortex-a72, 4 cores, 2 GiB RAM). Timer resolution: 16 ns (62.5 MHz CNTFRQ_EL0). IRQs masked during measurement to prevent timer preemption skew. Server and client co-located on CPU 0 for direct switch path. Production latencies with unmasked IRQs will be slightly higher.
 
+> **Note (crash-fix step 1b):** the paragraph above records how the Phase 3 figures were taken. From crash-fix step 1b on, the bench runs with IRQs on: step 1b removed its `DAIFSet` masking ([crash-fix ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) F6). The masking only ever covered the first call, because the first IPC call's direct switch unmasks IRQs on return (`try_direct_switch`, `kernel/src/ipc/direct.rs`), so the 4 μs above was measured with IRQs mostly on. The crash-fix series re-measures Gate 1 at every step (the ADR's "Gate 1").
+
 ### Gate 2: AI Viability (after Phase 12)
 
 **Decision:** Can we run useful LLM inference on target hardware?

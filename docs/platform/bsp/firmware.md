@@ -30,12 +30,12 @@ flowchart TD
     FW["Platform firmware (edk2)"] --> POST["POST: DRAM init, PCI enumeration"]
     POST --> ESP_LOAD["Load BOOTAA64.EFI from ESP"]
     ESP_LOAD --> STUB["UEFI stub (uefi-stub/src/main.rs)<br/>runs in Boot Services, EL1"]
-    STUB --> MEM["GetMemoryMap() — enumerate RAM"]
-    STUB --> GOP["Locate GOP — acquire framebuffer"]
-    STUB --> CFG["LocateConfigTable() — find DTB or ACPI RSDP"]
-    STUB --> RNG["EFI_RNG_PROTOCOL — get 32-byte seed"]
-    STUB --> ELF["Load kernel ELF from ESP<br/>(uefi-stub/src/elf.rs)"]
-    ELF --> EBS["ExitBootServices() — point of no return"]
+    STUB --> ELF["Load kernel ELF from ESP, sync I/D caches over its text<br/>(uefi-stub/src/elf.rs, uefi-stub/src/cache.rs)"]
+    ELF --> BI["Allocate and zero the BootInfo page"]
+    BI --> GOP["Locate GOP — acquire framebuffer"]
+    GOP --> CFG["Scan UEFI config tables — find DTB and ACPI RSDP"]
+    CFG --> RNG["EFI_RNG_PROTOCOL — get 32-byte seed"]
+    RNG --> EBS["uefi::boot::exit_boot_services: GetMemoryMap() for the final map and its key,<br/>then ExitBootServices() — point of no return<br/>map recorded in BootInfo"]
     EBS --> JUMP["Jump to kernel entry point<br/>x0 = BootInfo pointer (physical)"]
 ```
 
@@ -46,6 +46,7 @@ flowchart TD
 | Exception Level | EL1 (QEMU delivers directly; real hardware may enter at EL2 if UEFI ran at EL2) |
 | MMU | ON — edk2 leaves MMU enabled after ExitBootServices |
 | Kernel image mapping | edk2's identity map in TTBR0, with permissions set by UEFI memory type. The stub allocates the executable PT_LOAD segment as `EfiLoaderCode` (RW+X) and the others as `EfiLoaderData`, which strict-NX edk2 builds (upstream ArmVirt default since edk2-stable202211, Ubuntu 26.04's `QEMU_EFI.fd`) map execute-never |
+| Kernel text in the caches | Cleaned to the Point of Unification, I-cache invalidated. Right after copying the PF_X segment, the stub runs `DC CVAU` on every data cache line of it (skipped when `CTR_EL0.IDC` = 1), `DSB ISH`, `IC IALLUIS` (skipped when `CTR_EL0.DIC` = 1), then `DSB ISH; ISB`: the Arm ARM's clean, `DSB`, invalidate, `DSB`, `ISB` sequence. It is based on Linux's arm64 EFI stub (`efi_cache_sync_image`), which issues no `DSB` before `IC IALLUIS`, never skips it, and in its default build (Cortex-A53 clean-cache errata workaround on) cleans with `DC CIVAC`, which reaches the Point of Coherency. The AIOS stub cleans nothing to the Point of Coherency, so it does not cover code or data that a core reads with its MMU off, such as a secondary core running `_secondary_entry`. QEMU TCG does not model caches, so a missing step never shows there |
 | SCTLR_EL1 | `0x30d0198d` |
 | TCR_EL1 | T0SZ=20 (44-bit VA for TTBR0), T1SZ not yet set |
 | MAIR_EL1 | `0xffbb4400` — Attr0=Device-nGnRnE, Attr1=NC Normal, Attr2=WT Normal, Attr3=WB Normal |
@@ -240,11 +241,13 @@ pub struct BootInfo {
 | `framebuffer` | GOP `FrameBufferBase` | VideoCore mailbox tag `0x00040001` | DCP framebuffer from FDT |
 | `device_tree` | UEFI config table (DTB GUID) | `x0` register at kernel entry | `x0` register at kernel entry |
 | `acpi_rsdp` | UEFI config table (ACPI GUID) | `0` (no ACPI on Pi) | `0` (no ACPI on Apple SoC) |
-| `runtime_services` | UEFI Runtime Services table | `0` | `0` |
+| `runtime_services` | `0` (not set by the stub yet) | `0` | `0` |
 | `rng_seed` | `EFI_RNG_PROTOCOL` | DTB `/chosen/rng-seed` | FDT `/chosen/rng-seed` |
 | `kernel_phys_base` | ELF load address (from `elf.rs`) | Passed by shim from `Image` header | Passed by shim from `Image` header |
-| `cmdline_addr` | UEFI load options string | DTB `/chosen/bootargs` | FDT `/chosen/bootargs` |
+| `cmdline_addr` | `0` (not set by the stub yet) | DTB `/chosen/bootargs` | FDT `/chosen/bootargs` |
 | `fb_width/height/stride` | GOP `ModeInfo` fields | VideoCore mailbox query | DCP display info from FDT |
+
+The UEFI stub currently leaves `runtime_services`, `initramfs_*` and `cmdline_*` at 0 (see [../../kernel/boot/firmware.md](../../kernel/boot/firmware.md) §2.2).
 
 **UEFI path — native construction:** `uefi-stub/src/main.rs` calls UEFI protocols directly during Boot Services, assembles `BootInfo` into a UEFI-allocated page, calls `ExitBootServices()`, then jumps to the kernel entry point with the physical `BootInfo` address in `x0`.
 
@@ -304,6 +307,8 @@ All three paths converge at `kernel_main` with a valid `BootInfo` pointer in `x0
 - `shared/src/boot.rs` — `BootInfo` struct definition, `MemoryDescriptor`, `MemoryType`, `PixelFormat`
 - `uefi-stub/src/main.rs` — UEFI path: BootInfo assembly, GOP framebuffer, ExitBootServices, kernel jump
 - `uefi-stub/src/elf.rs` — Minimal ELF64 loader for the UEFI path
+- `uefi-stub/src/cache.rs` — I/D cache sync (`DC CVAU`, `IC IALLUIS`) over the loaded kernel text
+- `shared/src/cache.rs` — `CacheType`: `CTR_EL0` decode and per-line address walk (host-tested)
 - `kernel/src/arch/aarch64/mmu.rs` — TTBR0 identity map; edk2 MMU state handling; MAIR/TCR reuse rationale
 - `docs/kernel/boot/firmware.md §2` — UEFI boot flow detail, BootInfo field descriptions, EL model
 - `docs/platform/bsp/model.md §2` — BSP struct anatomy, `Platform` trait, porting checklist

@@ -10,7 +10,7 @@ Part of: [airs.md](../airs.md) — AI Runtime Service
 
 The inference engine runs local LLM inference. No cloud dependency. All inference happens on-device. It manages the complete lifecycle from session creation through token generation to completion, coordinating compute resources, memory, and streaming output across heterogeneous hardware.
 
-The engine is the scarce resource at the center of AIRS — seven intelligence services (Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager) all share one model in RAM on memory-constrained hardware. The inference engine's scheduler, metering, and session management determine who gets inference capacity and when.
+The engine is the scarce resource at the center of AIRS — six intelligence services (Space Indexer, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager) all share one model in RAM on memory-constrained hardware. The Context Engine's context classifier is not one of them: it is a small classifier, not the LLM ([context-engine/inference.md](../context-engine/inference.md) §4.1). Only its optional Tier 3 narration ([context-engine/learning.md](../context-engine/learning.md) §13.6) uses the shared model. The inference engine's scheduler, metering, and session management determine who gets inference capacity and when.
 
 ### 3.1 Inference Runtime (candle default)
 
@@ -72,7 +72,7 @@ pub enum InferencePriority {
     /// User is waiting for a response (conversation bar).
     /// Preempts all other priorities. Target: <500ms time-to-first-token.
     Interactive,
-    /// System service needs inference (intent verification, context engine).
+    /// System service needs inference (intent verification, behavioral monitoring).
     /// Second priority. May preempt background work.
     System,
     /// Background task (Space indexing, metadata generation).
@@ -284,7 +284,7 @@ pub struct ComputeScheduler {
     /// Reference to the kernel's centralized compute device registry.
     /// AIRS queries this for device capabilities, utilization, and
     /// thermal state — it does not maintain a separate device list.
-    /// See compute/classification.md §3 for ComputeDevice trait.
+    /// Queries return ComputeDeviceEntry values (compute/registry.md §5).
     registry: ComputeRegistryHandle,
 
     /// Priority queue of pending inference requests.
@@ -369,7 +369,7 @@ pub struct ScoreComponents {
     /// 0.0 = unsupported (disqualified), 1.0 = native support.
     pub format_support: f32,
     /// Available capacity (0.0 = fully loaded = worst, 1.0 = idle = best).
-    /// Computed as `1.0 - device.utilization()`.
+    /// Computed as `1.0 - device.utilization`.
     pub availability: f32,
     /// Thermal headroom (0.0 = critical = worst, 1.0 = cool = best).
     pub thermal: f32,
@@ -385,20 +385,24 @@ pub struct ScoreComponents {
 }
 
 impl ComputeScheduler {
-    /// Score a device for a given inference request.
+    /// Score a device for a given inference request. `device` is one of the
+    /// entries a ComputeRegistry query returns (compute/registry.md §5.3).
+    /// `model` is the requested model's `ModelEntry` (model-registry.md §4.1),
+    /// which the caller looks up before scoring; it is the default model's
+    /// entry when `request.model` is None.
     fn score_device(
         &self,
-        device: &ComputeCapabilityDescriptor,
+        device: &ComputeDeviceEntry,
         request: &InferenceRequest,
+        model: &ModelEntry,
     ) -> DeviceScore {
-        let format_support = if device.quant_formats.contains(request.quant_format) {
-            1.0
-        } else {
-            0.0  // Hard disqualification
+        let format_support = match Self::quant_format_bit(model.quantization) {
+            Some(bit) if device.capabilities.quant_formats.contains(bit) => 1.0,
+            _ => 0.0,  // Hard disqualification
         };
 
-        let availability = 1.0 - device.utilization();
-        let thermal = device.thermal_headroom();
+        let availability = 1.0 - device.utilization;
+        let thermal = Self::thermal_headroom(device.thermal_state);
         let memory_fit = self.compute_memory_fit(device, request);
         let throughput = self.estimate_throughput(device, request);
         let latency = self.estimate_latency(device, request);
@@ -413,7 +417,7 @@ impl ComputeScheduler {
         };
 
         let total = format_support.min(memory_fit) * (  // Hard gates
-            weights[1] * utilization +
+            weights[1] * availability +
             weights[2] * thermal +
             weights[4] * throughput +
             weights[5] * latency
@@ -422,9 +426,39 @@ impl ComputeScheduler {
         DeviceScore {
             total,
             components: ScoreComponents {
-                format_support, utilization, thermal,
+                format_support, availability, thermal,
                 memory_fit, throughput, latency,
             },
+        }
+    }
+
+    /// The kernel `QuantFormatSet` bit (compute/classification.md §4.2) for a
+    /// model's `QuantFormat`. A format with no bit returns None, so no device
+    /// supports it and `format_support` is 0.0.
+    fn quant_format_bit(format: QuantFormat) -> Option<QuantFormatSet> {
+        match format {
+            QuantFormat::Q4_0 => Some(QuantFormatSet::Q4_0),
+            QuantFormat::Q3_K_S => Some(QuantFormatSet::Q3_K_S),
+            QuantFormat::Q4_K_S => Some(QuantFormatSet::Q4_K_S),
+            QuantFormat::Q4_K_M => Some(QuantFormatSet::Q4_K_M),
+            QuantFormat::Q5_K_M => Some(QuantFormatSet::Q5_K_M),
+            QuantFormat::Q6_K => Some(QuantFormatSet::Q6_K),
+            QuantFormat::Q8_0 => Some(QuantFormatSet::Q8_0),
+            QuantFormat::F16 => Some(QuantFormatSet::F16),
+            QuantFormat::F32 => Some(QuantFormatSet::F32),
+            _ => None,
+        }
+    }
+
+    /// Thermal headroom for scoring (1.0 = cool, 0.0 = critical), from the
+    /// kernel thermal state in the device's registry entry
+    /// (`ComputeDeviceEntry::thermal_state`).
+    fn thermal_headroom(state: ThermalState) -> f32 {
+        match state {
+            ThermalState::Normal => 1.0,
+            ThermalState::Warm => 0.5,
+            ThermalState::Throttled { .. } => 0.25,
+            ThermalState::Critical => 0.0,
         }
     }
 }
@@ -648,19 +682,18 @@ When multiple sessions use the same system prompt (common for AIRS intelligence 
 ```text
 Session A (Intent Verifier):  [shared system prompt KV | session-specific KV]
 Session B (Behavioral Mon):   [shared system prompt KV | session-specific KV]
-Session C (Context Engine):   [shared system prompt KV | session-specific KV]
                                        ↑
                               One copy in memory (COW)
 ```
 
 The shared prefix is identified by hashing the system prompt tokens. When a new session starts with a known prefix, the engine points its KV cache to the shared blocks (read-only) and only allocates new blocks for session-specific tokens. This is coordinated with the kernel's SharedPrefix mechanism ([memory/ai.md](../../kernel/memory/ai.md) §6.3).
 
-**Memory savings example (8 GB device, 8B Q4 model):**
+**Memory savings example (8 GB device, 8B Q4 model, Q8 KV cache at 64 KB per token as in [memory/ai.md](../../kernel/memory/ai.md) §6.3):**
 
 ```text
-Without prefix sharing:  7 intelligence services × 2048 system prompt tokens × 1 MB = 7 MB
-With prefix sharing:     1 shared prefix × 2048 tokens × 1 MB + 7 × session-specific = 1 MB + variable
-Savings:                 ~6 MB (significant when KV budget is 500 MB–1 GB)
+Without prefix sharing:  6 intelligence services × 2048 system prompt tokens × 64 KB = 768 MB
+With prefix sharing:     1 shared prefix × 2048 tokens × 64 KB + 6 × session-specific = 128 MB + variable
+Savings:                 ~640 MB (unshared, the system prompts alone would overflow a 500 MB KV budget and fill most of a 1 GB one)
 ```
 
 #### 3.3.5 Context Window Management
@@ -1473,7 +1506,7 @@ pub struct InferenceMetrics {
 
 #### 3.8.2 Performance Targets by Hardware Tier
 
-These targets assume single-session inference with a 7B parameter model:
+These are pre-benchmark estimates for single-session inference with the model named in each row (3B to 70B). They are derived from published GGML (llama.cpp) figures for comparable hardware, not measured with candle, which may run 5-15% slower on ARM (§3.9.1). Phase 11 (AIRS Inference Engine) measures them with the benchmark suite (§3.8.3) and replaces these estimates. This is the only table of per-platform AIRS text-model throughput estimates: other docs that give figures for current hardware refer to it, and the accelerator figures in [scaling.md](./scaling.md) §11.4 are projections. Gate 2 in [development-plan.md](../../project/development-plan.md) §5 sets a go/no-go criterion (a 7B model at > 5 tok/s on Pi 4 (4 GB)) above these estimates; the Phase 11 measurements decide it.
 
 ```text
 Hardware Tier        Model     Quant     TTFT      tok/s     Context    Memory
@@ -1486,10 +1519,14 @@ Apple M2 (32 GB)     13B      Q4_K_M    ~300ms    ~20-30    32K        16 GB
 Apple M3+ (64 GB)    70B      Q4_K_M    ~500ms    ~15-25    128K       32 GB
 ```
 
+Decode rate is bounded by the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md): bandwidth ÷ model size. The published figures in the Pi 5 and Apple rows are above that bound for the bandwidths in [compute/classification.md](../../kernel/compute/classification.md) §4.3: ~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s for the Pi 5 row, and at ~100 GB/s about 18 tok/s for 8B Q5_K_M (~5.5 GB), 13 tok/s for 13B Q4_K_M (~7.6 GB) and 2-3 tok/s for 70B Q4_K_M (~40 GB). These rows are unverified, so Phase 11 checks them against the roofline first.
+
+The Apple M2 (32 GB) and Apple M3+ (64 GB) rows are projected tiers, like the 32 GB and 64 GB rows in [scaling.md](./scaling.md) §11.1: their Memory column assumes a model pool larger than today's 8 GB cap ([model-registry.md](./model-registry.md) §4.3), so no device runs these models today. Even the projected 32 GB pool of the Apple M3+ (64 GB) row does not hold its 70B Q4_K_M model (~40 GB): that row needs a pool of about 40 GB or more, or a smaller quantization.
+
 **Target invariants:**
 
 - Interactive TTFT < 500ms on target hardware (Pi 5+)
-- System inference (intent verification) < 200ms for 50-token response
+- System inference (intent verification) < 10ms single-round on NPU hardware, 50-100ms CPU-only, with a verification-optimized model ([intent-verifier/pipeline.md](../intent-verifier/pipeline.md) §10.1)
 - Background inference uses ≤ 15% of compute when interactive sessions are active
 - KV cache efficiency > 90% (PagedAttention minimizes fragmentation)
 

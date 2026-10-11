@@ -234,18 +234,20 @@ No memory page is ever both writable and executable simultaneously. This is the 
 **Kernel enforcement:**
 - Page table entries (PTEs) have separate `AP` (access permission) and `XN` (execute never) bits
 - The kernel's `MemoryMap` syscall enforces: if `flags` contains `Write`, `Execute` is forbidden. If `flags` contains `Execute`, `Write` is forbidden.
-- Attempting to mmap with both `Write` and `Execute` returns `EPERM`
+- Attempting to map with both `Write` and `Execute` (`MemoryMap`, `SharedMemoryCreate`, `SharedMemoryMap`) returns `EINVAL`: the request is invalid for every caller. `EPERM` is reserved for a missing capability or right, apart from the exceptions the errno policy lists ([ipc.md §3.2](../../kernel/ipc.md), errno policy)
 
 **JIT workflow (for JavaScript in browser tab agents):**
 
 ```text
 1. JIT compiler generates code into a WRITABLE, non-executable buffer
-2. JIT calls MemoryMap to remap the buffer as EXECUTABLE, non-writable
+2. JIT calls MemProtect to change the buffer to EXECUTABLE, non-writable
    (kernel flushes instruction cache, sets PTE flags)
 3. Code runs from the executable mapping
-4. To modify JIT code: remap as writable, modify, remap as executable
+4. To modify JIT code: MemProtect to writable, modify, MemProtect to executable
 5. At no point is the same page both writable and executable
 ```
+
+`MemProtect` is target design (the `mprotect` translation in [syscall-translation.md](../../platform/linux-compat/syscall-translation.md)); no such syscall exists yet. `MemoryMap` cannot do this step: it takes no address and always allocates new memory ([ipc.md §4.7](../../kernel/ipc.md)).
 
 ### 5.6 KASLR (Kernel Address Space Layout Randomization)
 

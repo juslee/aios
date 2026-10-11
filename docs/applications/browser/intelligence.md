@@ -326,7 +326,7 @@ Chrome ai.summarizer.create()
   → Chrome internal API
     → Browser Kit AirsInferenceBridge trait
       → IPC to AIRS service
-        → GGML inference
+        → candle inference
       → Result back to Chrome
     → Chrome resolves Promise
 ```

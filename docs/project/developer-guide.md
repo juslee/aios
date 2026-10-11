@@ -6,7 +6,7 @@
 
 **Related documents**:
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [hal.md](../kernel/hal.md) -- Hardware Abstraction Layer and platform porting (SS7)
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
 - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
@@ -236,6 +236,9 @@ impl LogRing {
         entries: UnsafeCell::new([LogEntry::ZERO; LOG_RING_SIZE]),
         head: AtomicU32::new(0),
         tail: AtomicU32::new(0),
+        dropped: AtomicU32::new(0),
+        drop_pos: AtomicU32::new(0),
+        dropped_reported: AtomicU32::new(0),
     };
 }
 
@@ -279,7 +282,7 @@ Understanding what AIOS does *not* use helps set expectations:
 - **`std::` anything** -- No filesystem, no networking, no threads library, no `println!`. The kernel provides these services; it cannot depend on them. (This restriction applies to *kernel code only*; application developers will have full `std` access via AIOS runtimes in later phases.)
 - **`async`/`await`** -- The kernel scheduler is cooperative/preemptive at the thread level, not at the Rust async task level. There is no executor.
 - **Dynamic dispatch (mostly)** -- Outside the `Platform` trait, AIOS uses monomorphization (generics) rather than trait objects. This avoids vtable indirection on hot paths.
-- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `MsgBuf` with a 48-byte stack buffer).
+- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `LogMessageBuf` with a 96-byte stack buffer).
 - **`#[derive(Debug)]` on kernel structs** -- Debug formatting pulls in formatting machinery that increases binary size. Kernel structs implement display manually where needed.
 
 ### Recommended Reading
@@ -396,52 +399,61 @@ const PTE_UXN: u64 = 1 << 54;        // Unprivileged execute-never
 
 ### 2.3 Unsafe Pattern: Lock-free SPSC Rings
 
-Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking:
+Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking. Abridged from `kernel/src/observability/mod.rs`, which has the full `// SAFETY:` comments:
 
 ```rust
 pub struct LogRing {
     entries: UnsafeCell<[LogEntry; LOG_RING_SIZE]>,
     head: AtomicU32,
     tail: AtomicU32,
+    dropped: AtomicU32,          // producer only
+    drop_pos: AtomicU32,         // producer only: `head` at the latest drop
+    dropped_reported: AtomicU32, // consumer only
 }
 
 impl LogRing {
-    fn push(&self, entry: LogEntry) {
+    /// Push a head entry and, for a message longer than one entry, its
+    /// continuation. `log_impl` calls this inside `with_irqs_masked`.
+    fn push(&self, entry: LogEntry, continuation: Option<LogEntry>) {
+        let count = if continuation.is_some() { 2 } else { 1 };
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = head.wrapping_add(1);
+        let next_head = head.wrapping_add(count);
 
-        // If the ring is full, advance tail to discard the oldest entry.
-        let tail = self.tail.load(Ordering::Relaxed);
+        // Acquire pairs with the Release store of `tail` in `pop`.
+        let tail = self.tail.load(Ordering::Acquire);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+            // Full: drop the message, record where, and count it; never
+            // overwrite. The Release store publishes `drop_pos` with the count.
+            self.drop_pos.store(head, Ordering::Relaxed);
+            let dropped = self.dropped.load(Ordering::Relaxed);
+            self.dropped.store(dropped.wrapping_add(1), Ordering::Release);
+            return;
         }
 
-        let idx = (head & LOG_RING_MASK) as usize;
-
-        // SAFETY: Single producer (owning core). UnsafeCell provides interior
-        // mutability. No concurrent writes to this index because head is only
-        // advanced by the owning core.
-        unsafe {
-            let slot = (*self.entries.get()).as_mut_ptr().add(idx);
-            core::ptr::write(slot, entry);
+        // write_slot is the unsafe slot write (SAFETY comment in the source).
+        self.write_slot(head, entry);
+        if let Some(continuation) = continuation {
+            self.write_slot(head.wrapping_add(1), continuation);
         }
 
+        // One Release store publishes the head entry and its continuation.
         self.head.store(next_head, Ordering::Release);
     }
 }
 
-// SAFETY: LogRing is accessed per-core (producer) and by drain (consumer).
-// The SPSC protocol ensures no data races.
+// SAFETY (abridged): each field has one writer. The producer (`log_impl` on
+// the owning core, IRQs masked) writes `head`, `dropped`, `drop_pos` and the
+// free slots; the consumer (`drain_logs`) writes `tail` and `dropped_reported`.
 unsafe impl Sync for LogRing {}
 ```
 
 **Key design decisions:**
 
-- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array. The producer (logging code on the owning core) never races with other producers -- there is exactly one writer per ring.
+- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array, and there is exactly one writer per ring. That holds because `log_impl` reads the core ID and pushes inside `with_irqs_masked`: an IRQ-context log call on the same core (such as the load balancer's, crash-fix ADR N6) would otherwise be a second producer, and a thread could migrate between reading its core ID and pushing.
 
-- **Overwrite-on-full**: When the ring fills, the oldest entry is discarded (tail advanced). This prevents logging from blocking kernel execution. Losing old log entries is acceptable; blocking the scheduler is not.
+- **Drop-on-full**: When the ring has no room for a message (one entry, or two for a head and its continuation), the message is dropped and counted, and its position (`head` at the drop) is kept. `drain_logs` prints the count when its read position reaches that point, so the report sits between the entries logged before the drop and those logged after it. Dropping instead of overwriting keeps the producer off `tail` and off slots a single drain may be reading, and logging still never blocks kernel execution. Two overlapping `drain_logs` calls break this: one can store `tail` past a slot the other is still reading, and a push can then tear the entry the slower drain reads.
 
-- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`. This guarantees the entry data written before the head advance is visible to the consumer when it reads the new head value.
+- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`, so the entries written before the head advance are visible to the consumer when it reads the new head value. `tail.store(Release)` in `pop` pairs with `tail.load(Acquire)` in `push`, so the producer reuses a slot only after the consumer has finished reading it (with one drain at a time; see Drop-on-full). `dropped.store(Release)` in `push` pairs with `dropped.load(Acquire)` in `pop`, so the drain sees a `drop_pos` at least as new as the count it reports.
 
 - **No lock needed**: The SPSC invariant (one producer, one consumer) eliminates the need for a mutex. Contrast this with `MessageRing` in `ipc/mod.rs`, which uses `spin::Mutex` because multiple threads may send to the same channel.
 
@@ -606,13 +618,17 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
 
 The error code is returned to userspace in register `x0` via the `TrapFrame`. Error values are defined in `shared/src/syscall.rs` as `IpcError` enum variants with numeric discriminants.
 
-**Pattern 2: Unrecoverable panic** -- UART output then halt
+**Pattern 2: Unrecoverable panic** -- mask IRQs, UART output, then halt
 
 ```rust
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // 1. mrs DAIF + msr DAIFSet, #0x2: mask IRQs for good, remember irq_was.
+    // 2. PANICKING[cpu]: a second panic on this CPU halts at once.
     let mut w = crate::arch::aarch64::uart::UartWriter;
     let _ = writeln!(&mut w, "PANIC: {}", info);
+    observability::tripwire::print_panic_report(irq_was_on); // [panic] + [tripwire] src=panic
+    observability::drain_logs_after_panic(); // CPU 0 only: empty the log rings
     halt()
 }
 
@@ -625,6 +641,8 @@ fn halt() -> ! {
 ```
 
 Why `wfe` and not `loop {}`? `wfe` (Wait For Event) puts the core in a low-power state. A bare `loop {}` burns full CPU cycles doing nothing. On real hardware, this matters for power consumption and thermal management.
+
+The handler masks IRQs before it prints, so the timer tick cannot preempt the report or run the scheduler on top of the broken state; it takes no lock and calls no `klog!`. After the unchanged `PANIC: ` lines (the soak harness keys on them and captures the message on the next line) it prints a `[panic] cpu=N tid=T|? ctx=<label> irq_was=on|off t=<secs.micros>` line, with `irq_elr=0x…` (the PC the IRQ interrupted) when it panicked in IRQ context, then a full `[tripwire] v=1 src=panic` line. On CPU 0 it then drains the log rings in a bounded loop, unless CPU 0 was already inside a drain. A synchronous exception's report likewise adds `  regs:` (SP, SPSR, TTBR0, VBAR) and `  ctx:` (CPU, thread, IRQ context, in-scheduler) lines and a `src=exc` tripwire line after its unchanged head and Abort lines. `free_pages`, `free_dma_pages` and the compositor's `release_buffer` are `#[track_caller]`, so a bad free's `[mm] BUG: free_pages(` assertion names the caller, not `frame.rs`.
 
 **Pattern 3: Boot validation** -- structured log then explicit halt
 
@@ -747,7 +765,7 @@ macro_rules! kinfo {
 Key design decisions:
 
 - The `const _LEVEL` binding makes the level comparison a compile-time constant. When `MIN_LOG_LEVEL` is `Info` and the call is `kdebug!(...)`, the entire macro expands to nothing -- zero runtime cost.
-- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 48-byte stack buffer inside `log_impl()`.
+- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 96-byte stack buffer (`LogMessageBuf`) inside `log_impl()`, which fills the 48-byte message of one `LogEntry`, or a head entry and a continuation for a longer message (observability.md §2.4).
 - `#[macro_export]` places the macro at the crate root, so it is invoked as `crate::kinfo!()` from within the kernel crate.
 
 **Feature-gated trace macro** (from `observability/trace.rs`):
@@ -1009,10 +1027,10 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | Range | Interpretation | Examples |
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
-| 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~783), `bench.rs` (~549) |
-| > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
+| 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
 
@@ -1024,17 +1042,21 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
-  channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
-  timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
+  mod.rs          (607)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  channel.rs      (577)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel, timeout arming
+  timeout.rs      (227)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs       (364)  # Direct switch fast path, priority inheritance, reply switch
+  scan.rs         (114)  # Read-only waker-table accessors for the tripwire's heartbeat scan B
   tests/
-    mod.rs        (702)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (163)  # IpcSelect capability self-test
-  notify.rs       (376)  # Notification objects (signal/wait)
-  select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (651)  # Shared memory regions
+    mod.rs        (772)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
+    select_cap.rs (186)  # IpcSelect capability self-test
+    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
+    timeout_args.rs (72) # IpcCall/IpcRecv timeouts near u64::MAX through syscall_dispatch, on the PI pair (#217) self-test
+  notify.rs       (413)  # Notification objects (signal/wait)
+  select.rs       (364)  # IPC select (multi-wait)
+  shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1052,6 +1074,7 @@ sched/
 
 ```rust
 // From kernel/src/arch/aarch64/mod.rs
+pub mod daif;
 pub mod exceptions;
 pub mod gic;
 pub mod mmu;
@@ -1119,7 +1142,7 @@ Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment an
 
 ```text
 kernel/src/storage/
-  mod.rs            (~866) # init(), run_self_tests() (11 test categories), re-exports
+  mod.rs            (~885) # init(), run_self_tests() (11 test categories), re-exports
   block_engine.rs   (~740) # BlockEngine, Superblock, LZ4 compression, encryption integration
   wal.rs            (~199) # Wal struct, circular buffer, append/commit (WalEntry in shared crate)
   lsm.rs              (~4) # Re-export: MemTable/ObjectIndex/SpaceTable in shared/src/storage.rs
@@ -1535,9 +1558,10 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just run-display` | Same as `run` but with a graphical window (for framebuffer testing) |
 | `just run-direct` | Phase 0 mode: direct `-kernel` boot, no UEFI (quick debugging) |
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
-| `just soak` | Boot N times in a row and classify each boot (PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN); see §5.6 |
-| `just test` | Run host-side unit tests (shared crate) |
-| `just clippy` | Run clippy on kernel and stub targets with `-D warnings` |
+| `just soak` | Boot N times in a row (or interleave 2–4 checkouts with `--arm`) and classify each boot (PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN); see §5.6 |
+| `just test` | Run host-side unit tests (shared crate only; excludes the tools crate, which is tested separately with `cargo test -p aios-tools`, CI's Tools (host) job) |
+| `just tools` | Build the host tools binary (`cargo build --release -p aios-tools --target-dir target/tools`), then install it at `target/tools/installed/aios` by atomic rename, with the provenance stamp `installed/aios.stamp` beside it; `.claude/hooks/aios` runs it (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
+| `just clippy` | Run clippy on kernel and stub targets with `-D warnings`, plus host clippy on the tools crate |
 | `just fmt` | Format code with `cargo fmt` |
 | `just fmt-check` | Check formatting without modifying files (CI mode) |
 | `just check` | **CI gate**: `fmt-check` + `clippy` + `build` + `build-stub` |
@@ -1576,7 +1600,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 559+ host-side tests pass |
+| **Test** | `just test` | All 712+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1618,17 +1642,17 @@ Match the string patterns (literal text), not exact hex addresses (which may var
 
 ### 5.4 Host-Side Tests
 
-The kernel crate is `no_std` and cannot run host tests directly. All testable logic lives in the `shared` crate, which compiles for both the kernel target and the host:
+The kernel crate is `no_std` and cannot run host tests directly. All testable logic lives in the `shared` crate, which compiles for both the kernel target and the host. The host-only tools crate is tested separately with `cargo test -p aios-tools` (CI's Tools (host) job, which needs full git history):
 
 ```bash
 # Run all shared crate tests
 just test
 
 # Equivalent manual command:
-cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
+cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 559 tests across: `boot`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 712 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1721,28 +1745,32 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (559 tests):**
+**Current test distribution (712 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
+| `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
-| `ipc` | 53 | Channel IDs and `ChannelId::index`, message validation, select entries, service names, user VA checks |
+| `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
+| `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `kits` | 40 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips, memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
+| `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
+| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
+| `gic` | 28 | GICv3 timer PPI setup: register offsets, `PpiConfig` INTID and priority rules (non-zero, below the 0xF0 mask floor, low nibble clear), the per-flag readback check under `DS` = 1 and `DS` = 0, the `GICR_WAKER` wake steps, `GICD_CTLR.DS`, the `[smp]` field values and failed-flag names |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
+| `collections` | 23 | FixedQueue (including `iter`/`contains`), RingBuffer edge cases |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 21 | Syscall numbering, IpcError codes, `id_arg` register decoding |
-| `collections` | 18 | FixedQueue, RingBuffer edge cases |
-| `observability` | 18 | Log level ordering, subsystem tags |
+| `lock` | 19 | Owner-stamp codec, the re-entry `classify` table, `read_stamp` and waiter-side models (exhaustive CPU switches), `StampedLock` CAS/release and the consistent holder snapshot, a threaded test (Miri-sized) |
+| `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
 ### 5.6 Boot Soak Testing (`just soak`)
 
-A single `just run` cannot tell you whether a change affects intermittent boot failures: a crash that hits 7 boots in 10 will still miss some boots. `just soak` (backed by `scripts/soak-qemu.sh`) builds the ESP once, boots it N times in a row with the same QEMU arguments as `just run` (text mode) or `just run-gpu` plus `-display none` (gpu mode), and classifies every boot. Use it to measure a failure rate before you change anything, and again after.
+A single `just run` cannot tell you whether a change affects intermittent boot failures: a crash that hits 7 boots in 10 will still miss some boots. `just soak` (backed by `aios soak` in the `tools/` crate) builds the ESP once, boots it N times in a row with the same QEMU arguments as `just run` (text mode) or `just run-gpu` plus `-display none` (gpu mode), and classifies every boot. Use it to measure a failure rate before you change anything, and again after.
 
 ```bash
 just soak                                  # 10 text-mode boots x 75 s
@@ -1750,56 +1778,64 @@ just soak runs=20 secs=75                  # baseline-sized sample
 just soak mode=gpu runs=10                 # VirtIO-GPU + input devices
 just soak runs=5 secs=90 report_only=1     # exit 0 even if boots fail (used by CI)
 just soak --no-build --reuse-data          # boot the existing image on data.img
-scripts/soak-qemu.sh --help                # all options
+just soak --arm ../aios-base --arm .       # interleave two checkouts (below)
+just soak --help                           # all options
 ```
 
-Each boot runs under `timeout` (or `gtimeout`, from Homebrew coreutils on macOS) in its own process group, so only that boot's QEMU is ever killed. The harness picks the first one that accepts `--kill-after`, passes through the exit status of a command that finishes in time, and exits 124 when it stops the command (checked by running it, not by its version string), so GNU coreutils and uutils (the default on Ubuntu 26.04) both work. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
+Each boot's QEMU runs in its own process group under the harness, which sends the group SIGTERM when `secs` run out and SIGKILL 10 s later if it is still running. QEMU's exit status is recorded as `timeout(1)` reported it: 124 when the time limit stopped it, 137 when SIGKILL was needed. No external `timeout` is needed. A soak exits 0 when every boot is `CLEAN` (or with `report_only=1`), 1 when some boot is not, and 2 on a usage or setup error (a setup error exits 2 even with `report_only=1`); interleave mode (below) has its own statuses. Ctrl-C (SIGINT), SIGTERM, SIGHUP and Ctrl-\ (SIGQUIT) stop the running QEMU and remove the scratch directory before the harness exits with 130, 143, 129 or 131. SIGKILL cannot be caught: a harness killed by it leaves that boot's QEMU running until you kill it by hand, so stop a soak with one of the other four. The harness catches these four even when it started with them ignored, unlike the script, which inherited an ignored signal: `nohup aios soak`, or a soak run as a background job of a non-interactive shell, still stops on SIGHUP, SIGINT or SIGQUIT, so run a long soak under `setsid`, `tmux` or `screen`. Ctrl-Z (SIGTSTP) suspends QEMU along with the harness, and on resume the boot's time limit and the timings in its footer are moved back by the time spent stopped, so a stopped stretch never hides a stall. SIGSTOP cannot be caught either, and SIGTTIN or SIGTTOU (a background soak touching the terminal) is not: each stops only the harness, and QEMU runs on past its time limit until the harness is continued. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
 
-Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root.
+Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root. Results in a PR worktree are ignored files that git deletes with the worktree; `/merge-and-cleanup` copies them to the main checkout as `target/soak/pr<number>-<run>` before merging.
+
+`just soak` first builds the checkout's own `aios` (`just tools`, into that checkout's `target/tools/`) and runs it, unlike the recipes that go through `.claude/hooks/aios` and run the main checkout's build. From a PR worktree, both the kernel and the harness that classifies it therefore come from the worktree, so in a single soak the commit in `summary.md` (with `-dirty` for uncommitted changes, `tools/` included) identifies both, as the script's did. With `--arm` (below), the top-level `summary.md`'s Harness row names the classifier (its commit, read when the soak starts, before any arm build, `-dirty` only when the invoking checkout holds uncommitted, untracked or ignored host-tools build inputs, the files `just tools` stamps `source dirty` for, so an arm's uncommitted kernel edits there do not mark it; a note follows when the `.claude/hooks/aios` shim's freshness test would call the binary stale, that is when its `installed/aios.stamp` does not name that commit (as with a direct `aios soak` after a pull without `just tools`), when a build input is newer than the binary (an edit made or reverted since the build), or when the stamp says `source dirty` and no cause of that remains, and when the binary has no stamp) and each `arm-X/summary.md` names only that arm's kernel commit. The recipe runs a hard link to `installed/aios` (and its stamp) made for the soak in `target/tools/.soak.XXXXXX/`, as the shim's guard does, so a `just tools` in that checkout during the soak cannot swap the binary the Harness row checks: the row's path is that link, removed when the soak ends. A failed tools build stops the soak; there is no fallback to an older binary.
 
 | File | Contents |
 |---|---|
 | `run-NN.log` | Raw serial output of boot NN, plus a trailing `[soak] meta` line with QEMU's exit status (`qemu_rc`), `elapsed` seconds, and the harness timing: seconds into the boot at which the kernel started (`kstart`), the first heartbeat (`hb_first`), the Gate 1 bench header (`bench_start`) and `=== Gate 1 Complete ===` (`g1done`) appeared, and the heartbeat last advanced (`hb_last_advance`); -1 means never. `hb_max_gap` is the longest wait between two heartbeat advances after the bench completed (-1 if it never did) |
-| `summary.tsv` | One row per boot: class, last heartbeat tick, stall, the timing above (`g1done_s`, `hb_max_gap_s`, ...), markers, first fatal line, last three kernel INFO lines, `lb_last` |
-| `summary.md` | Host/commit metadata, class counts, 95% Wilson interval for the CLEAN rate, per-boot table |
+| `summary.tsv` | One row per boot, with a header line; read it by column name. The first 22 columns predate crash-fix step 1a: class, last heartbeat tick, stall, the timing above (`g1done_s`, `hb_max_gap_s`, ...), markers, `lb_last`, detail, first fatal line, last three kernel INFO lines, log. Then the Gate 1 IPC line's `ipc_avg_us` and `ipc_iters`; a `PANIC-LOCK`'s `reentry_lock`, `reentry_ctx` and `reentry_holder_irqs`; the `[tripwire-ev]` lock event counts `ev_ph`, `ev_self`, `ev_self_irq` (`kind=self` with `ctx=irq` or `irq-exit`) and `ev_stuck`; from the last complete `[tripwire]` line ([observability.md §6.5](../kernel/observability.md)), `tw_v`, `tw_src`, `tw_cpu`, `tw_t`, `tw_ncpu` and one `tw_<key>` per key in `Key::ALL` order (the comma list as printed, `0` for a key the line leaves out); `g1_elrmm` from the last complete `src=g1` line; and last the two whole lines, `g1_line` and `tw_line`. `-` means unreadable or no such line; a line of another schema version fills only `tw_v` and `tw_line`. `tw_t` beside `last_tick` shows a stale line |
+| `summary.md` | Host/commit metadata, class counts, 95% Wilson interval for the CLEAN rate, the mean of `ipc_avg_us` over CLEAN boots, the tripwire counters by class (per class, "boots with a non-zero value / sum", or "/ max" for a gauge; a per-CPU key also gets a row summing its CPUs), per-boot table (with each boot's tripwire `src`) |
 | `build.log` | Output of `just disk` |
 
-**Classes.** Every boot gets exactly one class. The precedence is: UEFI stub never ran (`INCONCLUSIVE`) > `PCZERO` / `PANIC` / `EXCEPTION` > QEMU killed by a signal (`INCONCLUSIVE`) > `WEDGE` / cut short (`INCONCLUSIVE`) > `CLEAN`. So fatal reports take precedence over heartbeat state. If a log holds several fatal reports, the earliest decides the class, because later reports (for example a data abort after a panic) are usually fallout.
+**Classes.** Every boot gets exactly one class. The precedence is: UEFI stub never ran (`INCONCLUSIVE`) > `PCZERO` / `PANIC-LOCK` / `PANIC` / `EXCEPTION` > QEMU killed by a signal (`INCONCLUSIVE`) > `WEDGE-STUCK` / `WEDGE-ALIVE` / cut short (`INCONCLUSIVE`) > `DEGRADED` > `CLEAN`. So fatal reports take precedence over heartbeat state. If a log holds several fatal reports, the earliest decides the class, because later reports (for example a data abort after a panic) are usually fallout. `WEDGE-STUCK` and `WEDGE-ALIVE` split the former `WEDGE`, `PANIC-LOCK` splits off `PANIC`, and `DEGRADED` splits off `CLEAN` (crash-fix step 1a); soaks from before that report the old names, and a subclass folded to its base class gives exactly the old class.
 
 | Class | Rule |
 |---|---|
 | `PCZERO` | An exception report with `ELR=0x0000000000000000`: the CPU jumped to address 0. The exception and panic handlers write without a lock, so output from other CPUs can split a report; the ELR is looked for up to 3 lines below the `EXCEPTION[CPU n]:` prefix. An instruction abort with FAR=0 (`EC=0x20`/`0x21` with `FAR=0x0000000000000000`, or `Instruction Abort at 0x0000000000000000`) is the same evidence |
-| `PANIC` | A `PANIC:` line from the kernel panic handler (the message on the next non-empty line is captured too) |
+| `PANIC-LOCK` | A `PANIC` whose joined first fatal line contains `lock re-entry:`: crash-fix step 1b's lock detector. The panic handler prints `PANIC: panicked at <file>:<line>:<col>:` and the message on the next line, and the harness joins the two. The lock, `ctx=` and `holder_irqs=` are parsed from the message. A `lock re-entry:` panic after an earlier fatal report keeps that report's class |
+| `PANIC` | Any other `PANIC:` line from the kernel panic handler (the message on the next non-empty line is captured too) |
 | `EXCEPTION` | Any other exception report: `EXCEPTION[CPU n]:` (EL1), `DATA ABORT (EL0)`, `INST ABORT (EL0)`, `UNKNOWN EXCEPTION (EL0)`, or an edk2-format `Synchronous Exception at 0x...` report from the firmware or the UEFI stub. A report whose prefix was itself split by another CPU's output is still caught (detail: "report prefix split by other output"): by its register fields (`ESR=0x.. EC=0x..` or `EC=0x.. FAR=0x.. ELR=0x..` for EL1, `(EL0): FAR=0x` / `(EL0): EC=0x` for EL0), or by a `Data Abort at 0x` / `Instruction Abort at 0x` line with no EL1 report in the 4 lines above it |
-| `WEDGE` | No fatal report, the boot misses a `CLEAN` condition below, and it had more than `stall_secs` to meet it |
+| `WEDGE-STUCK` | No fatal report, the boot misses rule 1 or 2 below (the CPU 0 heartbeat never printed, stayed at `tick=0`, or stopped), and it had more than `stall_secs` to meet it |
+| `WEDGE-ALIVE` | No fatal report, the heartbeat kept running, but the boot misses rule 3 (the Gate 1 bench never completed) with more than `stall_secs` to meet it, or rule 4 (gpu markers missing) |
 | `INCONCLUSIVE` | Not a result about the kernel, so left out of the CLEAN rate. Either the UEFI stub never ran, QEMU was killed by a signal, or the boot was cut short (see below) |
+| `DEGRADED` | No fatal report and rules 1–4 below hold, but not rule 5: the Gate 1 IPC line reports a count other than 10000 iterations (fewer round trips, e.g. `(0 iters)`), is missing, or is cut before `(N iters)`. The console line and the per-boot table show `IPC <N> iters` or `IPC iteration count unreadable` ahead of the detail, and `summary.tsv` has the count in `ipc_iters`; the detail itself is `CLEAN`'s |
 | `CLEAN` | No fatal report and every condition below holds |
 
 **Not a boot result.** Two cases are `INCONCLUSIVE` whatever the heartbeat shows:
 
-- *The UEFI stub never ran*: the log has no `AIOS UEFI stub` line and no kernel output, whatever QEMU's exit status. QEMU failed to start, or the firmware never loaded the stub (for example an `AIOS_EDK2_FW` that enforces Secure Boot and rejects the unsigned stub, a stale or corrupt `aios.img`, or the firmware dropping to the UEFI shell). A firmware exception in that phase is included. On the first boot of a soak this is a setup error instead: the harness stops with exit status 2, even with `report_only=1`. A stub that ran but never started the kernel (for example a stub panic) stays a `WEDGE`, "kernel never started".
-- *QEMU was killed by a signal* before the time limit, with no fatal report before it: exit status above 128 other than the timeout's own (124, or 137 once `--kill-after` fires at the limit), or 137 before the limit (a SIGKILL from outside, such as the OOM killer). The silence that follows is not the kernel's doing. An early exit with a status of 128 or below (QEMU ending on its own) is still judged by the rules below, with a "qemu exited before the time limit" note.
+- *The UEFI stub never ran*: the log has no `AIOS UEFI stub` line and no kernel output, whatever QEMU's exit status. QEMU failed to start, or the firmware never loaded the stub (for example an `AIOS_EDK2_FW` that enforces Secure Boot and rejects the unsigned stub, a stale or corrupt `aios.img`, or the firmware dropping to the UEFI shell). A firmware exception in that phase is included. On the first boot of a soak this is a setup error instead: the harness stops with exit status 2, even with `report_only=1`. A stub that ran but never started the kernel (for example a stub panic) stays a `WEDGE-STUCK`, "kernel never started".
+- *QEMU was killed by a signal* before the time limit, with no fatal report before it: exit status above 128 other than the harness's own (124 when the time limit stopped it, or 137 once SIGKILL follows SIGTERM at the limit), or 137 before the limit (a SIGKILL from outside, such as the OOM killer). The silence that follows is not the kernel's doing. An early exit with a status of 128 or below (QEMU ending on its own) is still judged by the rules below, with a "qemu exited before the time limit" note.
 
 **Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock times at which the kernel started, the first heartbeat, the bench header and `=== Gate 1 Complete ===` appeared, and a new heartbeat last appeared. A boot is `CLEAN` only if all of these hold:
 
-1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs masked on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, that fits the IRQ-masked loop hanging on CPU 0 ("heartbeat stuck at tick 0 after the Gate 1 bench started"). A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
-2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the timeout's SIGTERM by about 1 s (up to 10 s if `--kill-after` has to SIGKILL it). A QEMU process that exits early counts as silent for the rest of the planned time.
-3. The log contains `=== Gate 1 Complete ===`. The bench can hang while the timer keeps running (seen under TCG in CI, with heartbeats reaching tick 79000), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". `G1PASS` is not required, because the IPC latency threshold can legitimately fail on a slow or loaded host.
+1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs on, on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, the usual cause is CPU 0's timer IRQ spinning forever, IRQs masked, on a lock that the thread it interrupted holds, such as `THREAD_TABLE` during the bench's IPC ("heartbeat stuck at tick 0 after the Gate 1 bench started"; [crash-fix ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) H3). From crash-fix step 1b that re-entry panics with `lock re-entry:` instead of spinning. A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
+2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the harness's SIGTERM by about 1 s (up to 10 s if SIGKILL is needed). A QEMU process that exits early counts as silent for the rest of the planned time.
+3. The log contains `=== Gate 1 Complete ===`. The bench can hang while the timer keeps running (seen under TCG in CI, with heartbeats reaching tick 79000), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". A completed bench must also have done all its round trips (rule 5).
 4. In gpu mode, the log contains `GpuReady`, `InputReady` and `display handoff complete` (all printed before the bench); otherwise "gpu markers missing".
+5. The first `[bench] IPC round-trip (same core): avg=N us, ... (N iters)` line reports `(10000 iters)`, the bench's `IPC_ITERATIONS` (`kernel/src/bench.rs`; a tools test keeps the two in step). A boot that meets rules 1–4 but not this one is `DEGRADED`: fewer round trips (`(0 iters)` is step 1b's Gate 1 FAIL), or an IPC line that is missing or cut before its count. `G1PASS` is not required, because the IPC latency threshold can legitimately fail on a slow or loaded host. The `avg=` figure (`ipc_avg_us`) is whole microseconds, truncated by the kernel's integer division, so a mean over boots has a resolution of 1 µs per boot.
 
-**Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The script warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
+**Wedge or cut short.** A boot that misses rule 1 or 2 is a `WEDGE-STUCK`, and one that misses rule 3 a `WEDGE-ALIVE`, only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE-ALIVE`, since they only matter once the bench has completed. The harness warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
-**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`) and the edk2 noise before the stub do not affect classification.
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
-**Re-classifying saved logs.** `scripts/soak-qemu.sh --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
+**Re-classifying saved logs.** `just soak --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE-STUCK` or `WEDGE-ALIVE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge. With `--out DIR` (`out=DIR`; new or empty, as for a soak), it also writes `summary.tsv` and `summary.md` for those logs through the soak's own report code: the boots are numbered in the order given, the `log` column holds each path as given, the timing columns come from each log's `[soak] meta` line (`-` without one), and the settings a set of logs cannot tell (commit, QEMU, firmware, host, load before and after) read `-`. Over the logs of a soak that finished, given in boot order by their bare `run-NN.log` names from the soak's directory (the `log` column copies the path as given, and a soak writes the bare name), it reproduces that soak's `summary.tsv` row for row when the soak's `runs` value had no leading zeros: a soak numbers its boots to the width of `runs` as typed (`runs=010` gives `001`…`010`), `--classify --out` to the width of the number of logs given (`01`…`10`).
 
 **Comparing before and after.** Boot failures are random, so treat every soak result as a sample:
 
-- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches.
-- Small samples have wide intervals. 6 CLEAN out of 20 gives a 95% interval of about 15–52%. Doubling that to 12/20 is *not* significant (two-sided Fisher exact test p ≈ 0.11), while 6/20 → 18/20 is (p ≈ 0.0002). Compare the Wilson intervals printed in `summary.md`, or run a Fisher exact test on the 2×2 CLEAN / not-CLEAN table, before claiming an improvement.
+- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches (`just soak --arm`, below, boots one of each per round, rotating the order).
+- Small samples have wide intervals. 6 CLEAN out of 20 gives a 95% interval of about 15–52%. Doubling that to 12/20 is *not* significant (two-sided Fisher exact test p ≈ 0.11), while 6/20 → 18/20 is (p ≈ 0.0002). Compare the Wilson intervals printed in `summary.md`, or run a Fisher exact test on the 2×2 CLEAN / not-CLEAN table (an interleaved soak's report computes it per pair), before claiming an improvement.
 - Zero failures is weak evidence. With no failures in n boots, the 95% upper bound on the failure rate is about 3/n (the rule of three): 20 clean boots only bound it below 15%, and you need about 60 to bound it below 5%.
-- Look at the class mix, not just the CLEAN count. A change that turns `PCZERO` boots into `WEDGE` boots has moved the bug, not fixed it.
-- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 24.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
+- Look at the class mix, not just the CLEAN count. A change that turns `PCZERO` boots into `WEDGE-STUCK` boots has moved the bug, not fixed it.
+- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 26.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch, whose `runs` input (1–60, default 5) sets the number of boots, so one commit can be soaked again or with a larger sample; the soak step's time limit is computed from it. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. Each dispatch soaks in a concurrency group of its own, so dispatches can overlap each other and a push soak on the same branch without cancelling either. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
+- To compare revisions, interleave them. `just soak --arm DIR --arm DIR [--arm DIR [--arm DIR]]` soaks 2–4 git checkouts (worktrees are fine, e.g. `git worktree add --detach ../aios-base <sha>`; outside the checkout, so no parent `.cargo/config.toml` leaks into the build: cargo merges every ancestor's config, `rustflags` included, and the harness warns about one above an arm's checkout and names it in `summary.md`'s Parent cargo config row) in one host session, labelled A–D in the order given (`arm=DIR` is the `key=value` form). Each arm is built once in its own checkout and its ESP snapshotted, then each round boots every arm once, the order rotated each round, so host drift hits every arm alike. The build first installs the arm's pinned toolchain: `rustup toolchain install` (rustup 1.28 or later), run in the checkout with no toolchain named, reads its `rust-toolchain.toml`, components and targets included, so the soak does not rely on rustup's auto-install and works with `RUSTUP_AUTO_INSTALL=0`; then `just disk`, with `RUSTUP_TOOLCHAIN`, `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET_DIR` unset, since the justfile's `disk` recipe packages the kernel from the checkout's own `target/`. The running `aios` boots and classifies every arm with its own QEMU arguments (an arm's justfile `run` recipe is not used), so an arm from before crash-fix step 1a is reported in the current classes and columns; `arms.tsv` records the arguments used. A missing `git`, `just`, `rustup`, `rustc`, `qemu-system-aarch64` or `mcopy` is refused before anything runs (`rustup` with `--no-build` too, since the `rustc --version` check relies on it picking each arm's toolchain), and so is a `qemu-system-aarch64` whose `--version` prints nothing. With `--no-build` nothing is built: each arm boots the ESP image already in its checkout, the arm-base and toolchain checks below cover the checkout's HEAD and pinned toolchain rather than that image and the compiler that built it, and `summary.md`'s Arm base, Toolchains and Build rows say so. Keeping everything but the change fixed applies here too. Before any build the harness refuses an arm that does not contain 7167d40 (#196), without which the kernel faults at the jump on strict-NX edk2 such as the CI runner's; arms that boot different firmware or pin different toolchain channels; and a host whose 1-minute load average is above its CPU count (`--ignore-load` skips that check; the loads are recorded either way). After the builds it refuses arms whose `rustc --version` differ, since such a pair compares the change plus the compiler (`--allow-mixed-toolchains` overrides this and the channel check and marks the summary), and an arm whose HEAD moved after the arm-base check (a branch switched during a build, say). Every boot runs the QEMU binary and firmware file that the preflight resolved, links followed, so a package upgrade that moves a symlink mid-soak cannot change what boots. It stops the soak (exit 2) if the QEMU version line, the sha256 of the QEMU binary (which also catches a Homebrew revision bump that keeps the version line) or the firmware's sha256 changes mid-soak (an upgrade from another session, say), when the UEFI stub never ran on an arm's first boot, or after 3 such boots in a row later on. Results go to `target/soak/<timestamp>-<mode>-arms/` in the checkout you run it from: an `arm-X/` single-run directory per arm, `arms.tsv`, `boots.tsv` (every boot in boot order) and the pair report `summary.md`, rewritten after every boot with a status line (`running`, `stopped (<reason>)` or `finished`). The report gives each arm's class counts and CLEAN rate with its Wilson interval; each arm's load mean and max, with "redo the pair" when two arms' means differ by more than 25%; per pair, Fisher exact tests on conclusive boots (the regression guard, one-sided toward fewer CLEAN in the later arm, then per class and per `--combine CLASS+CLASS` group both one-sided p values, the two-sided p and the `removed` and `new` markers); each arm's mean Gate 1 IPC average; tripwire counters per arm; and every non-CLEAN boot. Interleave mode is report-only: it exits 0 whatever the classes, 1 only with `--fail-on-regression` when a regression guard fails, and 2 on a refusal or a stop; `just soak --help` has the details. Giving the same checkout twice makes an A/A control, built once, which shows how far two identical arms drift apart by chance. The `Soak matrix` workflow (`.github/workflows/soak-matrix.yml`, manual dispatch only, e.g. `gh workflow run soak-matrix.yml -f refs="c1ce1a24ef34be4082a84814b02790db60c44b08 43fc8d5bfc51acedd143f2e1f922e5916aeac3c0" -f runs=30`) runs it on one `ubuntu-26.04` runner, 90 s per boot by default: each arm is a detached worktree under `$RUNNER_TEMP`, the harness is the dispatching ref's `aios`, and `--ignore-load` is passed, since the runner is single-tenant and its load at the start comes from the job's own setup. It uploads the `soak-matrix-logs` artifact. A revision there must be reachable from a branch or a tag on `origin`, or from the head of a pull request whose branch is in this repository (the workflow fetches those heads, so a squash-merged PR's commits stay usable after its branch is deleted). Fork pull request heads are never fetched, so a fork commit cannot be an arm. Every arm's build scripts run on the runner and can write to the Actions cache of the dispatching ref, which `ci.yml`'s cached jobs may restore later, so dispatch only revisions you have reviewed, and give each as the full 40-digit SHA of the reviewed commit. The workflow refuses branch names, since a branch resolves only when the job runs and a later push would be built unreviewed, and short SHAs, since git takes a tag named like a short SHA over the commit, and that tag could point at a commit crafted to share the prefix. Each arm builds into its own worktree's `target/`, so arms never share build output. The job uses no `rust-cache`: it cached nothing the soak uses, and its post-job save would carry files an arm's build scripts write under `~/.cargo` into later dispatches. Like `qemu-soak`, its numbers are their own baseline: do not pool them with local arm64 soaks.
 
 ---
 
@@ -1828,7 +1864,7 @@ kdebug!(Sched, "Context switch: {} -> {}", from_tid, to_tid);
 
 **Available log levels:** `Trace`, `Debug`, `Info`, `Warn`, `Error`. In debug builds, all levels from `Debug` up are emitted. In release builds, only `Info` and above.
 
-**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by the timer tick handler every 1 ms. This means early boot messages appear immediately, while later messages may be slightly delayed.
+**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by CPU 0's timer tick handler every 4th 1 ms tick (and by boot-time flushes). This means early boot messages appear immediately, while later messages may be slightly delayed.
 
 **Exception handler note:** Exception vector stubs use direct `putc()` calls, not `klog!`. This prevents recursive faults when TTBR0 is switched away from the identity map (which would make the logging format string inaccessible).
 
@@ -1922,7 +1958,7 @@ Idx Name           Size     VMA              LMA              Type
 
 1. Is `CNTP_CTL_EL0.ENABLE` set? (bit 0 = 1)
 2. Is `CNTP_CTL_EL0.IMASK` clear? (bit 1 = 0 means interrupts are not masked at the timer level)
-3. Is the GIC PPI enabled? Check that `gic.enable_irq(30)` was called (INTID 30 is the EL1 physical timer).
+3. Is the timer PPI set up on that CPU's redistributor? Each CPU's `[smp]` line reports it: `ppi=30` (the DTB's non-secure physical timer on QEMU virt), `ppi_grp1=1` (or `-` under `GICD_CTLR.DS` = 0), `ppi_en=1` and `ppi_ok=1`; on a failure a `cpu N timer PPI … setup failed` error names the failed flags ([observability.md §6.5](../kernel/observability.md), "SMP lines"). Enabled is not enough: the PPI must also be in Group 1, the only group the kernel enables, or it never fires (#200; [hal.md §4.1](../kernel/hal.md)).
 4. Is `PSTATE.I` clear? The CPU-level interrupt mask must be cleared: `msr DAIFClr, #0x2`.
 5. Is the GIC CPU interface priority mask set correctly? `ICC_PMR_EL1` must be higher than the interrupt priority.
 
@@ -2042,7 +2078,7 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 | Cause | Diagnosis | Fix |
 |---|---|---|
 | Missing VBAR_EL1 setup | First exception causes jump to address 0x0 | Set VBAR_EL1 in boot.S before any Rust code runs |
-| Stack pointer misaligned | SP not 16-byte aligned causes fault | Ensure `.balign 16` on stack symbols in linker script |
+| Stack pointer misaligned | SP not 16-byte aligned causes fault | Keep `ALIGN(16)` on the `.stack` output section in `linker.ld` (boot.S loads `__stack_top` from it) |
 | FPU not enabled | First NEON instruction faults | Enable FPU in boot.S: `orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb` |
 
 **QEMU prints exception info then halts:**
@@ -2066,10 +2102,10 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 
 Claude Code has LSP (Language Server Protocol) integration with `rust-analyzer` for semantic code intelligence. **Always prefer LSP over manual searching** when navigating the codebase.
 
-**Configuration** (already set up in `.claude/`):
+**Configuration** (already set up):
 
-- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section
-- `.claude/.lsp.json` — maps `.rs` files to `rust-analyzer`
+- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section, and `rust-analyzer-lsp@claude-plugins-official` in `enabledPlugins` (the plugin registers `rust-analyzer` for `.rs` files and runs it from `PATH`)
+- `rust-toolchain.toml` — `rust-analyzer` in `components`, so rustup installs the server that matches the pinned nightly
 
 **Available LSP operations:**
 
@@ -2249,42 +2285,30 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
 | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
-| **Code conventions** | [CLAUDE.md](../../CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
+| **Code conventions** | [.claude/rules/](../../.claude/rules/) | 01-code-conventions, 06-unsafe-documentation |
 
 ---
 
-## 8b. Obsidian Desktop Setup (Optional)
+## 8b. Browsing `docs/` in Obsidian (Optional)
 
-The AIOS knowledge hive is accessible via Claude Code automatically (MCP configured in `.mcp.json`). For visual exploration with graph view and backlinks, you can optionally install the Obsidian desktop app:
-
-1. Download Obsidian from https://obsidian.md
-2. Open `docs/` as a vault (File → Open folder as vault → select `docs/`)
-3. The `.obsidian/` config folder is gitignored — your personal settings stay local
-
-This gives you:
-- **Graph view**: See how 80+ architecture docs connect to each other
-- **Backlinks**: See which docs reference the current doc
-- **Tag search**: Filter by domain (kernel, platform, security, etc.)
-- **Quick switcher**: Cmd+O to jump to any doc by name
-
-This is purely optional — all docs are plain markdown readable in any editor or on GitHub.
+`docs/` is plain Markdown, readable in any editor or on GitHub; you can optionally open it as a vault in the [Obsidian](https://obsidian.md) app (its `.obsidian/` config folder is gitignored).
 
 ---
 
 ## 8c. Claude Code Agents, Skills & Worktrees
 
-AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and twelve slash-command skills (eight project skills plus the four `/justin:*` session skills) automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
 
-The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
+The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
 
 ### Agents
 
-Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows CLAUDE.md conventions.
+Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows the conventions in `.claude/rules/` (technical facts in `.claude/CLAUDE.md`).
 
 | Agent | Role | Spawned by | Key capabilities |
 | --- | --- | --- | --- |
 | `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
-| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, MultiEdit, Bash, Grep, Glob |
+| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, Bash, Grep, Glob |
 | `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
 | `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
 | `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
@@ -2309,7 +2333,7 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main. Other skills stop at a hand-off instead of merging |
+| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Preserves the PR worktree's soak results and agent memory → squash merges PR (gh deletes the remote+local branch and removes the worktree) → verifies removal → fast-forwards main. Other skills stop at a hand-off instead of merging |
 
 #### Skill usage examples
 
@@ -2348,7 +2372,8 @@ Many skills use **git worktrees** to isolate work from the main branch. This pre
 
 ```text
 create worktree → work on branch → commit → push → create PR
-    → review → merge → remove worktree → delete local branch → update main
+    → review → preserve soak results and agent memory
+    → squash merge (gh removes worktree + local branch) → verify → fast-forward main
 ```
 
 **Manual commands** (if not using skills):
@@ -2361,14 +2386,20 @@ git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 cd .claude/worktrees/docs-memory
 # ... edit files, commit, push, create PR ...
 
-# After PR merges, clean up (from main repo root)
+# Before the PR merges, from the main checkout: copy out what git ignores,
+# because removing the worktree deletes ignored files without asking
 cd /path/to/aios
-git worktree remove .claude/worktrees/docs-memory
-git branch -d claude/docs-update-memory
-git checkout main && git pull origin main
+mkdir -p target/soak && [ ! -e "target/soak/pr<number>-<run>" ] &&
+  cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<number>-<run>"   # per soak run
+# ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
+
+# Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
+gh pr merge <number> --squash --delete-branch
+git worktree list
+git fetch --prune origin && git merge --ff-only origin/main
 ```
 
-The `/merge-and-cleanup` skill automates the entire cleanup sequence.
+The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions). After a merge on GitHub, run it to preserve and clean up.
 
 ### Audit Loop Pattern
 
@@ -2394,11 +2425,11 @@ OUTER LOOP:
 
 **Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
+The audit loop is **mandatory before any PR** — see [rule 04](../../.claude/rules/04-phase-workflow.md) (Phase Implementation Workflow).
 
 ### Knowledge Hive Integration
 
-Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across sessions:
+Agents use the knowledge hive (`docs/knowledge/`, searched with Grep) for persistent memory across sessions:
 
 | Directory | Persistence | Purpose |
 |---|---|---|
@@ -2414,12 +2445,13 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 
 Agent teams and skills are configured in:
 
-- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables
-- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`) and `precompact-save.sh` (flushes Remember memory before compaction). They live under `.claude/` so edits to them are never auto-approved
+- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables, the plugins it enables (`enabledPlugins`: superpowers, remember, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
+- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/installed/aios` from the main checkout after checking its provenance stamp; its `guard` branch fails closed with an "ask" decision on every path that runs neither a fresh binary nor a runnable `AIOS_TOOLS_BIN` override, which is run without a stamp or freshness test). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
+- **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `10-harness-mechanics`)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
-- **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
+- **`.claude/CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
 
 ---
 

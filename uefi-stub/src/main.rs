@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+mod cache;
 mod elf;
 
 use alloc::vec;
@@ -96,13 +97,16 @@ fn main() -> Status {
     // --- Jump to kernel ---
     // SAFETY: entry_point is the physical address of the kernel's _start, inside
     // a PF_X segment that load_elf allocated as EfiLoaderCode, so edk2's identity
-    // map (still live in TTBR0 after ExitBootServices) maps it executable;
-    // boot_info_addr is the page-aligned physical address of a valid BootInfo.
+    // map (still live in TTBR0 after ExitBootServices) maps it executable, and
+    // whose copied instructions load_elf made visible to instruction fetch
+    // (cache::sync_icache); boot_info_addr is the page-aligned physical address
+    // of a valid BootInfo.
     // load_elf (which rejects an entry point outside every PF_X segment) and
     // allocate_boot_info maintain this; the stub never returns.
     // If the entry page were execute-never (e.g. allocated as EfiLoaderData under
     // edk2's strict NX policy), the first fetch would take a synchronous
     // instruction abort into the firmware's vectors and the boot would hang.
+    // Without the cache sync, real hardware could run stale instructions.
     unsafe {
         core::arch::asm!(
             "br {entry}",

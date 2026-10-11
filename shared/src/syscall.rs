@@ -3,6 +3,8 @@
 //! These are ABI-stable values shared between kernel and user space.
 //! Per ipc.md §3.1–3.2.
 
+use crate::cap::{CapabilityHandle, MAX_CAPS_PER_PROCESS};
+
 /// Syscall numbers matching the IPC architecture spec.
 ///
 /// Convention: x8 = syscall number, x0-x5 = args, return in x0.
@@ -70,8 +72,47 @@ pub enum IpcError {
 /// Number of defined IPC error codes.
 pub const IPC_ERROR_COUNT: usize = 13;
 
-/// Decode a 32-bit id (channel, region, notification, process, capability
-/// handle) from a 64-bit syscall argument register.
+impl IpcError {
+    /// Every error code, in discriminant order (-1 down to -13).
+    pub const ALL: [IpcError; IPC_ERROR_COUNT] = [
+        IpcError::Etimedout,
+        IpcError::Epipe,
+        IpcError::Eagain,
+        IpcError::Ecanceled,
+        IpcError::Eacces,
+        IpcError::Eperm,
+        IpcError::Enospc,
+        IpcError::Eproto,
+        IpcError::Enotsup,
+        IpcError::EcapDormant,
+        IpcError::Eexist,
+        IpcError::Einval,
+        IpcError::Enomem,
+    ];
+}
+
+impl TryFrom<i64> for IpcError {
+    type Error = i64;
+
+    /// Decode a raw return code (x0 of a syscall, or the `i64` error of a
+    /// kernel IPC function) into its `IpcError`.
+    ///
+    /// Returns `Err(code)` for any value that is not one of the codes above:
+    /// 0, positive values and negative values outside `-1..=-13`. This is the
+    /// only errno decoder; the IPC Kit's `IpcKitError::from_code` builds on it,
+    /// so the kernel and user-space tables cannot drift apart.
+    fn try_from(code: i64) -> Result<Self, i64> {
+        IpcError::ALL
+            .iter()
+            .copied()
+            .find(|e| *e as i64 == code)
+            .ok_or(code)
+    }
+}
+
+/// Decode a 32-bit id (channel, region, notification, process) from a 64-bit
+/// syscall argument register. Capability handles go through
+/// [`cap_handle_arg`] instead.
 ///
 /// Returns `Err(IpcError::Einval as i64)` when `reg` does not fit in `u32`.
 /// Always decode ids through this function, never through `reg as u32`: the
@@ -79,6 +120,49 @@ pub const IPC_ERROR_COUNT: usize = 13;
 #[inline]
 pub const fn id_arg(reg: u64) -> Result<u32, i64> {
     if reg <= u32::MAX as u64 {
+        Ok(reg as u32)
+    } else {
+        Err(IpcError::Einval as i64)
+    }
+}
+
+/// Decode a capability handle (x0 of CapabilityAttenuate and
+/// CapabilityRevoke) from a 64-bit syscall argument register.
+///
+/// A handle is a slot of the caller's capability table, so a value at or
+/// above [`MAX_CAPS_PER_PROCESS`] names a slot no process has: it is
+/// `Err(IpcError::Einval as i64)`, like any other out-of-range id
+/// (ipc.md §3.2). An in-range handle whose slot is empty or revoked is
+/// checked by the handler against the caller's table: that is EPERM, a
+/// capability the caller does not hold.
+#[inline]
+pub const fn cap_handle_arg(reg: u64) -> Result<CapabilityHandle, i64> {
+    if reg < MAX_CAPS_PER_PROCESS as u64 {
+        Ok(CapabilityHandle(reg as u32))
+    } else {
+        Err(IpcError::Einval as i64)
+    }
+}
+
+/// Memory permission bits a caller may set in a flags argument: bit 0 READ,
+/// bit 1 WRITE, bit 2 EXECUTE, the same values as the kernel's `VmFlags`.
+///
+/// Used by MemoryMap (x1), SharedMemoryCreate (x1), SharedMemoryMap (x1) and
+/// the IPC Kit's `shmem_create` / `shmem_map`. `VmFlags::USER` (bit 3) is not
+/// in the mask: every user mapping is user-accessible, so the kernel sets
+/// USER itself and a caller that passes it gets EINVAL.
+pub const MEMORY_FLAGS_MASK: u64 = 0b0111;
+
+/// Decode a memory flags argument from a 64-bit register or Kit argument.
+///
+/// Returns `Err(IpcError::Einval as i64)` when any bit outside
+/// [`MEMORY_FLAGS_MASK`] is set, bits 32-63 included. Always decode flags
+/// through this function, never through `reg as u32` or a masking
+/// conversion: those drop unknown bits without an error, so junk would be
+/// accepted and a flag added later would be ignored by an older kernel.
+#[inline]
+pub const fn flags_arg(reg: u64) -> Result<u32, i64> {
+    if reg & !MEMORY_FLAGS_MASK == 0 {
         Ok(reg as u32)
     } else {
         Err(IpcError::Einval as i64)
@@ -221,6 +305,29 @@ mod tests {
     }
 
     #[test]
+    fn ipc_error_all_lists_every_code_once_in_order() {
+        for (i, e) in IpcError::ALL.iter().enumerate() {
+            assert_eq!(*e as i64, -(i as i64) - 1);
+        }
+    }
+
+    #[test]
+    fn ipc_error_try_from_decodes_every_code() {
+        for e in IpcError::ALL {
+            assert_eq!(IpcError::try_from(e as i64), Ok(e));
+        }
+        assert_eq!(IpcError::try_from(-6), Ok(IpcError::Eperm));
+        assert_eq!(IpcError::try_from(-5), Ok(IpcError::Eacces));
+    }
+
+    #[test]
+    fn ipc_error_try_from_rejects_other_values() {
+        for code in [0, 1, 256, -14, -4001, i64::MIN, i64::MAX] {
+            assert_eq!(IpcError::try_from(code), Err(code));
+        }
+    }
+
+    #[test]
     fn ipc_error_copy_clone() {
         let e = IpcError::Etimedout;
         let e2 = e;
@@ -259,5 +366,61 @@ mod tests {
     #[test]
     fn id_arg_u64_max_is_einval() {
         assert_eq!(id_arg(u64::MAX), Err(IpcError::Einval as i64));
+    }
+
+    // --- cap_handle_arg tests ---
+
+    #[test]
+    fn cap_handle_arg_accepts_every_table_slot() {
+        assert_eq!(cap_handle_arg(0), Ok(CapabilityHandle(0)));
+        let last = (MAX_CAPS_PER_PROCESS - 1) as u64;
+        assert_eq!(cap_handle_arg(last), Ok(CapabilityHandle(last as u32)));
+    }
+
+    #[test]
+    fn cap_handle_arg_past_the_table_is_einval() {
+        // No process has these slots, so the handle is malformed, not a
+        // capability the caller lacks (EPERM).
+        let einval = Err(IpcError::Einval as i64);
+        assert_eq!(cap_handle_arg(MAX_CAPS_PER_PROCESS as u64), einval);
+        assert_eq!(cap_handle_arg(1000), einval);
+        assert_eq!(cap_handle_arg(u32::MAX as u64), einval);
+        // Bit 32 set above slot 5: a truncating decode would name slot 5.
+        assert_eq!(cap_handle_arg((1 << 32) | 5), einval);
+        assert_eq!(cap_handle_arg(u64::MAX), einval);
+    }
+
+    // --- flags_arg tests ---
+
+    #[test]
+    fn flags_arg_accepts_every_defined_combination() {
+        for bits in 0..=MEMORY_FLAGS_MASK {
+            assert_eq!(flags_arg(bits), Ok(bits as u32));
+        }
+    }
+
+    #[test]
+    fn flags_arg_high_bits_do_not_alias_low_flags() {
+        // `as u32` turned this into WRITE.
+        assert_eq!(flags_arg(0x1_0000_0002), Err(IpcError::Einval as i64));
+        assert_eq!(flags_arg(1 << 32), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn flags_arg_undefined_low_bit_is_einval() {
+        // VmFlags::from_bits masked this to empty flags.
+        assert_eq!(flags_arg(0x10), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn flags_arg_user_bit_is_einval() {
+        // USER is set by the kernel, never by the caller.
+        assert_eq!(flags_arg(0x8), Err(IpcError::Einval as i64));
+        assert_eq!(flags_arg(0x8 | 0x3), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn flags_arg_u64_max_is_einval() {
+        assert_eq!(flags_arg(u64::MAX), Err(IpcError::Einval as i64));
     }
 }

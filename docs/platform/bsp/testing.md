@@ -302,7 +302,7 @@ A BSP port is declared complete when all of the following are true:
 | Architecture doc for the platform updated in [platforms.md](./platforms.md) | Doc auditor |
 | `detect_platform()` returns correct type for all board revisions | Developer test |
 | No hardcoded timer constants or MMIO addresses outside DTB paths | Code review |
-| `CLAUDE.md` Key Technical Facts updated with platform constants | Developer |
+| `.claude/CLAUDE.md` Key Technical Facts updated with platform constants | Developer |
 
 ---
 

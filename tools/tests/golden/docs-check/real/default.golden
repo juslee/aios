@@ -1,0 +1,21 @@
+exit 0
+docs-check: 78 findings across 15 checks - 0 new, 78 baselined (2 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  md-links              23     0
+  section-refs           4     0
+  anchors                1     0
+  wiki-links             0     0
+  doc-map                4     0
+  repo-paths             0     0
+  just-recipes           1     0
+  test-count             1     0
+  lock-order            16     0
+  milestone-status       5     0
+  phase-count            1     0
+  layout                 3     0
+  harness-tables         0     0
+  pointer-doctor        17     0
+  knowledge-hygiene      2     0
+
+No new drift since baseline.

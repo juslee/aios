@@ -81,6 +81,11 @@ fn get_phdr(
 /// TTBR0 when boot.S runs the kernel text at its physical address. Segments
 /// must start on a page boundary, so no page holds both code and data.
 ///
+/// After copying an executable segment, the loader cleans it to the Point of
+/// Unification and invalidates the instruction cache
+/// ([`crate::cache::sync_icache`]), so instruction fetch sees the copied code
+/// rather than stale cache lines.
+///
 /// Returns the entry point and kernel extent information.
 pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
     if file_data.len() < core::mem::size_of::<Elf64Header>() {
@@ -169,8 +174,9 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
     }
 
     // Pass 2: allocate each PT_LOAD segment at its physical address, typed by
-    // its permissions (see the doc comment), zero it so BSS is clean, and copy
-    // its file data in.
+    // its permissions (see the doc comment), zero it so BSS is clean, copy its
+    // file data in, and for a PF_X segment make the copy visible to
+    // instruction fetch (cache::sync_icache).
     for i in 0..e_phnum as usize {
         let phdr = get_phdr(file_data, e_phoff, e_phentsize, i)?;
         if phdr.p_type != PT_LOAD || phdr.p_memsz == 0 {
@@ -218,6 +224,13 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
                 seg_base as *mut u8,
                 phdr.p_filesz as usize,
             );
+        }
+
+        // The segment went in through the data cache; make it visible to
+        // instruction fetch before anything can execute it. Nothing writes
+        // these pages again before the jump to the kernel.
+        if phdr.p_flags & PF_X != 0 {
+            crate::cache::sync_icache(seg_base..seg_end);
         }
     }
 

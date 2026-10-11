@@ -23,7 +23,10 @@
 
 use crate::arch::aarch64::exceptions;
 use crate::observability::metrics::METRICS;
+use crate::observability::tripwire::{self, DispatchSite};
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
+use shared::tripwire::{ClearResult, Key};
+use shared::ChannelId;
 
 // Re-export from shared crate so kernel code can use `direct::MAX_INHERITANCE_DEPTH`.
 pub use shared::MAX_INHERITANCE_DEPTH;
@@ -66,6 +69,7 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
 
     // Bounds check.
     if sender_idx >= table.len() || receiver_idx >= table.len() {
+        tripwire::bump_masked(Key::Badtid, 0);
         drop(table);
         // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -147,10 +151,19 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     // writes to the sender's context and restore_context reads from
     // the receiver's context.
     let sender_ctx_ptr = &mut table[sender_idx].as_mut().unwrap().context as *mut ThreadContext;
-    let receiver_ctx_ptr = &table[receiver_idx].as_ref().unwrap().context as *const ThreadContext;
+    let (receiver_ctx_ptr, receiver_stack_phys) = {
+        let receiver = table[receiver_idx].as_ref().unwrap();
+        (
+            &receiver.context as *const ThreadContext,
+            receiver.stack_phys,
+        )
+    };
 
-    // Update CURRENT_THREAD to receiver.
+    // Update CURRENT_THREAD to receiver. `cpu` was read before the mask, so
+    // the tripwire counts n4 if this thread has moved since; it also counts
+    // xdir/xnever from the receiver's last CPU.
     *CURRENT_THREAD[cpu].lock() = Some(receiver_tid);
+    let receiver_last_cpu = tripwire::note_dispatch(cpu, receiver_tid, DispatchSite::Direct);
 
     // Drop table lock before context switch — the receiver will need
     // to acquire it when it runs.
@@ -178,6 +191,11 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     let current_now = { *CURRENT_THREAD[actual_cpu].lock() };
 
     if current_now == Some(receiver_tid) {
+        // Count a saved PC or SP outside kernel text or the stack (N5), and
+        // rsthold if this stream still holds a lock stamped with the
+        // generation note_dispatch started.
+        tripwire::check_restore(receiver_ctx_ptr, receiver_stack_phys, receiver_last_cpu);
+        crate::sync::note_restore();
         // First time through — switch to receiver.
         // SAFETY: receiver_ctx_ptr points to the receiver's ThreadContext.
         // restore_context loads callee-saved regs, SP, and branches to
@@ -202,7 +220,17 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
 ///
 /// This function also restores the replier's original scheduling priority
 /// (undoing the priority inheritance from the call path).
-pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
+///
+/// `channel` and `clear` (the reply's own `clear_timeout` result for the
+/// caller) are instrumentation only: once the caller is validated, the
+/// tripwire classifies the wake against the caller's call phase and counts
+/// `misrep` if the caller was not waiting in a call on `channel`.
+pub fn try_reply_switch(
+    replier_tid: ThreadId,
+    caller_tid: ThreadId,
+    channel: ChannelId,
+    clear: ClearResult,
+) -> bool {
     let cpu = exceptions::core_id() as usize;
 
     // Mask IRQs for context switch.
@@ -215,6 +243,7 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
     let caller_idx = caller_tid.0 as usize;
 
     if replier_idx >= table.len() || caller_idx >= table.len() {
+        tripwire::bump_masked(Key::Badtid, 0);
         drop(table);
         // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -241,6 +270,10 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
             }
         }
     }
+
+    // The switch will happen: classify the reply's wake of the caller (the
+    // caller is blocked, so its call phase is stable under THREAD_TABLE).
+    tripwire::note_reply_switch(caller_tid, u64::from(channel.0), clear);
 
     // --- Restore replier's original priority (undo inheritance) ---
     {
@@ -277,12 +310,18 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
     }
 
     let replier_ctx_ptr = &mut table[replier_idx].as_mut().unwrap().context as *mut ThreadContext;
-    let caller_ctx_ptr = &table[caller_idx].as_ref().unwrap().context as *const ThreadContext;
+    let (caller_ctx_ptr, caller_stack_phys) = {
+        let caller = table[caller_idx].as_ref().unwrap();
+        (&caller.context as *const ThreadContext, caller.stack_phys)
+    };
 
     let replier_class = table[replier_idx].as_ref().unwrap().sched.effective_class;
 
-    // Update CURRENT_THREAD to caller.
+    // Update CURRENT_THREAD to caller. `cpu` was read before the mask, so
+    // the tripwire counts n4 if this thread has moved since; it also counts
+    // xrep/xnever from the caller's last CPU.
     *CURRENT_THREAD[cpu].lock() = Some(caller_tid);
+    let caller_last_cpu = tripwire::note_dispatch(cpu, caller_tid, DispatchSite::Reply);
 
     drop(table);
 
@@ -305,6 +344,11 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
     let current_now = { *CURRENT_THREAD[actual_cpu].lock() };
 
     if current_now == Some(caller_tid) {
+        // Count a saved PC or SP outside kernel text or the stack (N5), and
+        // rsthold if this stream still holds a lock stamped with the
+        // generation note_dispatch started.
+        tripwire::check_restore(caller_ctx_ptr, caller_stack_phys, caller_last_cpu);
+        crate::sync::note_restore();
         // First time through — switch to caller.
         // SAFETY: caller_ctx_ptr points to caller's ThreadContext.
         // restore_context resumes the caller where it called save_context

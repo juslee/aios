@@ -203,8 +203,13 @@ pub unsafe fn init_mmu() {
     BOOT_SCTLR.store(sctlr, Ordering::Relaxed);
 }
 
-/// Physical address of the L0 page table (for TTBR0_EL1 on secondary cores).
-#[allow(dead_code)]
+/// `TTBR0_EL1`/`TTBR1_EL1` translation table base address field, BADDR
+/// bits [47:1] (4 KiB granule, 48-bit output). It leaves out the ASID in
+/// bits [63:48] and CnP in bit 0.
+pub const TTBR_BADDR_MASK: u64 = 0x0000_FFFF_FFFF_FFFE;
+
+/// Physical address of the L0 page table: the identity map that boot.S
+/// `_secondary_entry` installs in TTBR0_EL1 on secondary cores.
 pub fn ttbr0_l0_addr() -> u64 {
     virt_to_phys(TTBR0_L0.entries.get() as u64)
 }

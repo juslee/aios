@@ -356,7 +356,7 @@ Must complete BEFORE Conversation Manager:
     Phase 3:  IPC & Capability System (capability-gated access)
     Phase 4:  Space Storage (conversation persistence)
     Phase 7:  Window Compositor (Conversation Bar rendering)
-    Phase 10a: GGML integration (inference engine)
+    Phase 10a: candle integration (inference engine)
     Phase 10b: KV cache management (concurrent sessions)
 
 Enabled BY Conversation Manager:

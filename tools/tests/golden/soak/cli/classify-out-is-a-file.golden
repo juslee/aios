@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --out cases/clean-text.txt exists and is not a directory

@@ -28,7 +28,7 @@ pub enum AirsInternalPath {
 }
 ```
 
-The security path and resource path share no mutable state. A resource decision never influences an intent verification, and vice versa. If the resource path is under load, the security path still meets its SLA (< 10 ms for synchronous intent checks).
+The security path and resource path share no mutable state. A resource decision never influences an intent verification, and vice versa. If the resource path is under load, the security path still meets its SLA: the deadline of the verification path each synchronous intent check takes, which is < 10 ms for single-round verification on NPU hardware ([pipeline.md](../intent-verifier/pipeline.md) §10.2).
 
 #### 10.1.1 Internal Crash Containment
 

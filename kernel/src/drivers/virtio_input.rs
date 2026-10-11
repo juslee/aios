@@ -318,8 +318,11 @@ fn try_init_device(
     let virt = MMIO_BASE + phys;
     match init_device(virt, phys, InputDeviceId(*count as u8)) {
         Ok(dev) => {
-            let name_str = core::str::from_utf8(&dev.name[..dev.name_len as usize])
-                .unwrap_or("<invalid utf8>");
+            // The config-space name size can count a terminating NUL
+            // (QEMU's does), so trim trailing NULs before printing.
+            let name = &dev.name[..dev.name_len as usize];
+            let name_end = name.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+            let name_str = core::str::from_utf8(&name[..name_end]).unwrap_or("<invalid utf8>");
             if dev.has_abs {
                 crate::kinfo!(
                     Input,

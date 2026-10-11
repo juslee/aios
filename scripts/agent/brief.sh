@@ -3,7 +3,8 @@
 #
 # Prints, as Markdown: git state (branch, dirty files, worktrees, unpushed
 # commits), open PRs with check status and a merge-ready verdict, main CI, the
-# newest soak of a main commit and the newest other soak, the .remember handoff,
+# newest soak of a main commit, the newest other soak and the newest interleaved
+# (aios soak --arm) soak, the .remember handoff,
 # knowledge notes changed since the last session, open needs-human issues, the
 # next unchecked step of the current phase doc, and a one-line docs-check summary.
 #
@@ -16,11 +17,16 @@
 # check is a checker error and counts like any other failing check; drift is
 # reported in the Docs drift section, from a local docs-check run.
 #
-# Every section degrades to a one-line notice when git, gh, jq, python3 or the
-# network is unavailable. Text from GitHub (titles, branch names) is printed as
-# data with control characters replaced; it is never executed. Side effects:
-# `git fetch --prune origin` (skip with --no-fetch) and a timestamp marker in
-# the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
+# Every section degrades to a one-line notice when git, gh, jq or the network
+# is unavailable. The aios tools binary blocks in the foreground on a release
+# build when missing or stale (SessionStart's `aios --prebuild` is the
+# mitigation); a drift summary from a stale binary whose rebuild failed is
+# flagged. Text from GitHub (titles, branch names) is printed as data with
+# control characters replaced; it is never executed. Side effects: `git fetch
+# --prune origin` (skip with --no-fetch), a timestamp marker in the git common
+# dir ($GIT_COMMON_DIR/aios-agent/last-brief) and, when the main checkout's aios
+# binary is missing or stale, a foreground `just tools` build of target/tools/
+# in the main checkout.
 #
 # Usage: scripts/agent/brief.sh [--no-fetch]
 # Works with macOS bash 3.2 and GNU/Linux.
@@ -32,7 +38,7 @@ for arg in "$@"; do
     case "$arg" in
         --no-fetch) FETCH=0 ;;
         -h | --help)
-            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -91,9 +97,9 @@ unpushed_desc() { # $1 = worktree path
 }
 
 # Start docs-check early; it is the slowest local step.
-if [ -f scripts/docs/check.py ] && command -v python3 >/dev/null 2>&1; then
+if [ -x .claude/hooks/aios ]; then
     (
-        python3 scripts/docs/check.py --json >"$TMP/docs.json" 2>"$TMP/docs.err"
+        .claude/hooks/aios docs-check --json >"$TMP/docs.json" 2>"$TMP/docs.err"
         echo $? >"$TMP/docs.rc"
     ) &
     DOCS_PID=$!
@@ -296,11 +302,17 @@ fi
 
 # Soak ------------------------------------------------------------------------
 #
-# scripts/soak-qemu.sh writes summary.tsv row by row and summary.md (with the
+# aios soak (just soak) writes summary.tsv row by row and summary.md (with the
 # commit, "<sha>" or "<sha>-dirty") when the run finishes. A run counts as a
 # main soak only when it finished and its commit is on origin/main with no
 # uncommitted changes; everything else (branch commits, dirty trees, runs still
 # in progress) is reported separately so it is never read as main's state.
+# just soak runs the booted checkout's own tools build, so in a single soak that
+# commit names the classifier too (with --arm, the top-level summary.md's Harness
+# row names the classifier and each arm's commit only its kernel). An interleaved soak (aios soak --arm, a directory holding
+# arms.tsv) is one run: it is listed on its own, with the status line of its
+# top-level summary.md and each arm's CLEAN count from boots.tsv, and never as
+# the main soak; its arm-X/ directories (single-run files) are not listed.
 
 MAIN_TIP=$(git rev-parse -q --verify refs/remotes/origin/main 2>/dev/null || echo "")
 
@@ -357,25 +369,64 @@ print_soak() { # $1 = label, $2 = run dir, $3 = worktree, $4 = mtime
             NR > 1 { n++; c[$3]++; mode = $2 }
             END {
                 if (n == 0) { print "  - summary.tsv has no rows yet"; exit }
-                printf "  - %s mode%s: CLEAN %d/%d, PCZERO %d, PANIC %d, EXCEPTION %d, WEDGE %d\n",
-                    mode, partial, c["CLEAN"], n, c["PCZERO"], c["PANIC"], c["EXCEPTION"], c["WEDGE"]
+                # A run from before crash-fix step 1a records WEDGE, not WEDGE-STUCK/-ALIVE.
+                old = c["WEDGE"] ? sprintf(", WEDGE %d", c["WEDGE"]) : ""
+                printf "  - %s mode%s: CLEAN %d/%d, PCZERO %d, PANIC-LOCK %d, PANIC %d, EXCEPTION %d, WEDGE-STUCK %d, WEDGE-ALIVE %d, DEGRADED %d%s\n",
+                    mode, partial, c["CLEAN"], n, c["PCZERO"], c["PANIC-LOCK"], c["PANIC"], c["EXCEPTION"],
+                    c["WEDGE-STUCK"], c["WEDGE-ALIVE"], c["DEGRADED"], old
             }' "$d/summary.tsv"
     elif [ -f "$d/summary.md" ]; then
         grep -m 1 '^CLEAN rate:' "$d/summary.md" | sed 's/^/  - /'
     fi
 }
 
+print_interleaved() { # $1 = run dir, $2 = worktree, $3 = mtime
+    local d=$1 b status
+    b=$(git -C "$2" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "(detached)")
+    status=$(grep -m 1 '^\*\*Status:\*\*' "$d/summary.md" 2>/dev/null | sed 's/^\*\*Status:\*\* *//')
+    echo "- newest interleaved soak (an A/B experiment, not main's state): $(rel_path "$d") (worktree on \`$b\`, $(fmt_epoch "$3" '+%Y-%m-%d %H:%M'))"
+    echo "  - status: ${status:-not recorded (no summary.md)}"
+    # Columns by header name: arms.tsv's arm and commit, boots.tsv's arm and class.
+    # shellcheck disable=SC2016 # the backticks are literal Markdown, not expansions
+    awk -F'\t' '
+        FNR == 1 { file++; for (i = 1; i <= NF; i++) col[file, $i] = i; next }
+        file == 1 { a = $col[1, "arm"]; order[++n] = a; commit[a] = $col[1, "commit"]; next }
+        { a = $col[2, "arm"]; boots[a]++; if ($col[2, "class"] == "CLEAN") clean[a]++ }
+        END {
+            if (n == 0) { print "  - arms.tsv lists no arms"; exit }
+            line = "  - CLEAN per arm:"
+            for (i = 1; i <= n; i++) {
+                a = order[i]
+                line = line sprintf("%s arm %s `%s` %d/%d", (i > 1 ? ";" : ""), a, commit[a], clean[a], boots[a])
+            }
+            print line
+        }' "$d/arms.tsv" "$d/boots.tsv" 2>/dev/null
+}
+
 section "Soak"
 main_dir="" main_wt="" main_m=0
 other_dir="" other_wt="" other_m=0
+il_dir="" il_wt="" il_m=0
 while IFS= read -r wt; do
     [ -n "$wt" ] && [ -d "$wt/target/soak" ] || continue
     # A run is any directory under target/soak holding a summary: the default
-    # is target/soak/<timestamp>-<mode>/, but soak-qemu.sh's out= can nest
+    # is target/soak/<timestamp>-<mode>/, but just soak's out= can nest
     # runs deeper (e.g. target/soak/167/main-text-r1/).
-    find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv \) 2>/dev/null |
+    find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv -o -name arms.tsv \) 2>/dev/null |
         sed 's|/[^/]*$||' | sort -u >"$TMP/soak-dirs"
     while IFS= read -r d; do
+        # An arm-X/ directory of an interleaved soak is part of that run.
+        [ -f "${d%/*}/arms.tsv" ] && continue
+        if [ -f "$d/arms.tsv" ]; then
+            m=$(mtime "$d/arms.tsv")
+            for f in summary.md boots.tsv; do
+                [ -f "$d/$f" ] && [ "$(mtime "$d/$f")" -gt "$m" ] && m=$(mtime "$d/$f")
+            done
+            if [ "$m" -gt "$il_m" ]; then
+                il_m=$m il_dir=$d il_wt=$wt
+            fi
+            continue
+        fi
         if [ -f "$d/summary.md" ]; then
             m=$(mtime "$d/summary.md")
         elif [ -f "$d/summary.tsv" ]; then
@@ -394,7 +445,7 @@ while IFS= read -r wt; do
 done <<EOF
 $WORKTREES
 EOF
-if [ -z "$main_dir$other_dir" ]; then
+if [ -z "$main_dir$other_dir$il_dir" ]; then
     echo "- no soak results (no summary.* under target/soak/ in any worktree); run \`just soak\` on main"
 else
     if [ -n "$main_dir" ]; then
@@ -404,6 +455,9 @@ else
     fi
     if [ -n "$other_dir" ]; then
         print_soak "newest other soak (not main's state)" "$other_dir" "$other_wt" "$other_m"
+    fi
+    if [ -n "$il_dir" ]; then
+        print_interleaved "$il_dir" "$il_wt" "$il_m"
     fi
 fi
 
@@ -526,21 +580,40 @@ section "Docs drift"
 if [ -n "$DOCS_PID" ]; then
     wait "$DOCS_PID" 2>/dev/null
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
+    # When a stale binary's foreground rebuild fails, the shim warns on stderr and
+    # runs the stale binary, whose exit 0 or 1 and JSON look current: flag it.
+    stale_note=""
+    if grep -q '^aios: rebuilding .* failed; running the stale binary' "$TMP/docs.err" 2>/dev/null; then
+        stale_note=" (from a stale aios binary whose rebuild failed; run \`just tools\`)"
+    fi
     if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
-        echo "- docs-check failed (exit $rc, a checker error, not drift): $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        # A foreground rebuild's `just tools`/cargo output, and the shim's "aios:
+        # rebuilding ... failed" warning, can come before the real error in the same
+        # stream. Prefer the checker's own "docs-check: ..." line (exit 2), then the
+        # binary's panic header (exit 101), then the shim's "aios: ..." line (exit 3,
+        # the binary never ran), then the last line (e.g. sh's exec error).
+        docs_err=$(grep -m1 '^docs-check: ' "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(grep -m1 -E "^thread 'main'( \([0-9]+\))? panicked" "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(grep -m1 '^aios: ' "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(tail -n 1 "$TMP/docs.err" 2>/dev/null)
+        echo "- docs-check failed (exit $rc, a checker error, not drift): $docs_err"
     elif ! command -v jq >/dev/null 2>&1; then
-        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`"
+        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`$stale_note"
     elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
-        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        # A foreground rebuild's cargo output comes first here too, so show the last
+        # stderr line (e.g. sh's exec error when the binary vanished mid-rebuild). The
+        # shim's stale-rebuild warning is not picked: $stale_note already reports it.
+        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(tail -n 1 "$TMP/docs.err" 2>/dev/null)$stale_note"
     else
-        jq -r '
+        jq -r --arg note "$stale_note" '
           "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, of which \(.summary.accepted // 0) accepted false positives; \(.summary.resolved) resolved)"
           + (if .summary.new > 0 then "; new in: " + ([.checks | to_entries[] | select((.value.new // 0) > 0) | "\(.key) \(.value.new)"] | join(", ")) else "" end)
           + (if (.summary.resolved + (.summary.reduced // 0)) > 0 then "; run `just docs-check --update-baseline` to prune resolved or reduced entries" else "" end)
+          + $note
         ' "$TMP/docs.json"
     fi
 else
-    echo "- docs-check unavailable (needs python3 and scripts/docs/check.py on this checkout)"
+    echo "- docs-check unavailable (needs .claude/hooks/aios on this checkout)"
 fi
 
 mkdir -p "$MARKER_DIR" 2>/dev/null && touch "$MARKER" 2>/dev/null

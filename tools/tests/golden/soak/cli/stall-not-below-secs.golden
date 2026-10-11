@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --stall-secs (10) must be smaller than --secs (10)

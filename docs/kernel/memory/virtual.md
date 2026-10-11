@@ -723,7 +723,7 @@ Agent A wants to share 1 MB with Agent B:
    -> Kernel maps the SAME physical frames into B at 0x1_0000_0000
    -> B can now read the data directly — no copy
 
-5. When done: either agent calls SharedMemoryUnmap
+5. When done: either agent calls MemoryUnmap on the region's address
    -> Kernel unmaps from that agent's address space
    -> When all mappings removed, frames freed
 ```
