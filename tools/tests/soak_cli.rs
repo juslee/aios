@@ -1,11 +1,17 @@
-//! `aios soak` command-line parity with the deleted `scripts/soak-qemu.sh`:
-//! `--classify` output and exit status, and the usage errors, byte for byte
-//! except for the documented `soak-qemu:` -> `soak:` message prefix.
+//! `aios soak` on the command line: `--classify` output and exit status, and
+//! the usage errors.
 //!
 //! - `cli_goldens_match_aios` replays every case of `CASES` and compares
-//!   `exit N`, stdout and stderr with `tests/golden/soak/cli/<case>.golden`.
-//! - `record_cli_goldens_from_oracle` (ignored) records them from the oracle.
-//! - `cli_differential_against_oracle` runs both tools on every case.
+//!   `exit N`, stdout and stderr (and, for a case with `--out DIR` or
+//!   `out=DIR`, the files written there) with
+//!   `tests/golden/soak/cli/<case>.golden`.
+//!   The goldens from before crash-fix step 1a were recorded from the deleted
+//!   `scripts/soak-qemu.sh` (R4's oracle) and are kept by aios since step 1a
+//!   split its classes; the `classify-out*` cases, new in step 1a (the script
+//!   had no `--out` for `--classify`), were recorded from aios.
+//!   `AIOS_BLESS_GOLDENS=1` rewrites them all from aios.
+//! - `help_prints_the_usage_whatever_came_before` and
+//!   `classify_works_outside_a_git_checkout` cover the rest.
 //!
 //! Every case runs in a directory holding the corpus as `cases/<name>.txt`, and
 //! none of them reaches the boot loop (tests/soak_harness.rs covers that).
@@ -13,9 +19,7 @@
 mod common;
 
 use aios_tools::cmd::soak::USAGE;
-use common::soak::{
-    check_golden, golden_dir, rename_prefix, run_oracle, synthetic_cases, write_cases,
-};
+use common::soak::{check_golden, synthetic_cases, write_cases};
 use common::{isolated, run_aios, unique_dir, Run};
 use std::path::{Path, PathBuf};
 
@@ -69,6 +73,44 @@ const CASES: &[(&str, &[&str])] = &[
             "007",
             "--classify",
             "cases/stall-override-wedge.txt",
+        ],
+    ),
+    (
+        "classify-out",
+        &[
+            "--report-only",
+            "--classify",
+            "--out",
+            "out-a",
+            "cases/clean-text.txt",
+            "cases/tripwire-panic-lock-with-events.txt",
+            "cases/tripwire-clean-g1-then-hb.txt",
+            "cases/tripwire-other-schema-last-wedge-alive.txt",
+            "cases/clean-text-log-only.txt",
+        ],
+    ),
+    (
+        "classify-out-kv-stall",
+        &[
+            "out=out-b",
+            "--stall-secs",
+            "5",
+            "--classify",
+            "cases/stall-override-wedge.txt",
+            "cases/clean-text.txt",
+        ],
+    ),
+    (
+        "classify-out-not-empty",
+        &["--classify", "--out", "cases", "cases/clean-text.txt"],
+    ),
+    (
+        "classify-out-is-a-file",
+        &[
+            "--classify",
+            "--out",
+            "cases/clean-text.txt",
+            "cases/clean-text.txt",
         ],
     ),
     ("classify-no-files", &["--classify"]),
@@ -142,13 +184,82 @@ fn args_of(case: &[&str], all: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// `exit N`, stdout and stderr: the golden format.
-fn outcome(run: &Run) -> Vec<u8> {
+/// The `--out DIR` or `out=DIR` of a case, if any.
+fn out_of(case: &[&str]) -> Option<String> {
+    case.iter().enumerate().find_map(|(i, a)| {
+        if *a == "--out" {
+            case.get(i + 1).map(|v| v.to_string())
+        } else {
+            a.strip_prefix("out=").map(str::to_string)
+        }
+    })
+}
+
+/// `data` with every `needle` replaced by `with`, byte for byte: bytes that
+/// are not UTF-8 (a character clipped at a field limit) pass through as is.
+fn replace_bytes(data: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
+    if needle.is_empty() {
+        return data.to_vec();
+    }
+    let mut out = Vec::with_capacity(data.len());
+    let mut rest = data;
+    while let Some(at) = rest.windows(needle.len()).position(|w| w == needle) {
+        out.extend_from_slice(&rest[..at]);
+        out.extend_from_slice(with);
+        rest = &rest[at + needle.len()..];
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+/// `data` with `dir` (canonical or as given) replaced by `<DIR>`. Byte-based,
+/// so the goldens pin aios's output bytes exactly.
+fn without_dir(data: &[u8], dir: &Path) -> Vec<u8> {
+    let canonical = std::fs::canonicalize(dir).expect("canonicalize the case dir");
+    let mut g = data.to_vec();
+    for form in [canonical.as_path(), dir] {
+        g = replace_bytes(&g, form.as_os_str().as_encoded_bytes(), b"<DIR>");
+    }
+    g
+}
+
+#[test]
+fn without_dir_keeps_bytes_that_are_not_utf8() {
+    let dir = unique_dir("soak-cli-without-dir");
+    let mut data = b"aa\xC3...\n".to_vec();
+    data.extend_from_slice(dir.as_os_str().as_encoded_bytes());
+    data.extend_from_slice(b"/x \xFF\n");
+    assert_eq!(without_dir(&data, &dir), b"aa\xC3...\n<DIR>/x \xFF\n");
+}
+
+/// `exit N`, stdout and stderr, then each file in `out` (a `--out`
+/// directory the case created): the golden format. `dir` is the case's
+/// working directory.
+fn outcome(run: &Run, dir: &Path, out: Option<&str>) -> Vec<u8> {
     let mut g = format!("exit {}\n--- stdout\n", run.code).into_bytes();
     g.extend_from_slice(&run.stdout);
     g.extend_from_slice(b"--- stderr\n");
     g.extend_from_slice(&run.stderr);
-    g
+    if let Some(out) = out {
+        let mut names: Vec<String> = std::fs::read_dir(dir.join(out))
+            .map(|entries| {
+                entries
+                    .map(|e| {
+                        e.expect("an entry")
+                            .file_name()
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        for name in names {
+            g.extend(format!("--- file {out}/{name}\n").into_bytes());
+            g.extend(std::fs::read(dir.join(out).join(&name)).expect("read an output file"));
+        }
+    }
+    without_dir(&g, dir)
 }
 
 fn run_aios_soak(dir: &Path, args: &[String]) -> Run {
@@ -157,59 +268,21 @@ fn run_aios_soak(dir: &Path, args: &[String]) -> Run {
     run_aios(dir, &full)
 }
 
-fn run_oracle_renamed(dir: &Path, args: &[String]) -> Run {
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let mut run = run_oracle(dir, &refs, &[]);
-    run.stderr = rename_prefix(&run.stderr);
-    run
-}
-
 #[test]
 fn cli_goldens_match_aios() {
     let (dir, all) = corpus_dir("soak-cli-goldens");
     let diffs: Vec<String> = CASES
         .iter()
         .filter_map(|(name, case)| {
+            // Only an output directory the case creates is part of its golden.
+            let out = out_of(case).filter(|o| !dir.join(o).exists());
+            let run = run_aios_soak(&dir, &args_of(case, &all));
             check_golden(
                 &format!("cli/{name}.golden"),
-                &outcome(&run_aios_soak(&dir, &args_of(case, &all))),
+                &outcome(&run, &dir, out.as_deref()),
             )
         })
         .collect();
-    assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
-}
-
-#[test]
-#[ignore = "rewrites tests/golden/soak/cli/ from the oracle"]
-fn record_cli_goldens_from_oracle() {
-    let (dir, all) = corpus_dir("soak-cli-record");
-    std::fs::create_dir_all(golden_dir().join("cli")).expect("golden dir");
-    for (name, case) in CASES {
-        let run = run_oracle_renamed(&dir, &args_of(case, &all));
-        std::fs::write(
-            golden_dir().join(format!("cli/{name}.golden")),
-            outcome(&run),
-        )
-        .expect("write a golden");
-    }
-}
-
-#[test]
-fn cli_differential_against_oracle() {
-    let (dir, all) = corpus_dir("soak-cli-diff");
-    let mut diffs = Vec::new();
-    for (name, case) in CASES {
-        let args = args_of(case, &all);
-        let want = outcome(&run_oracle_renamed(&dir, &args));
-        let got = outcome(&run_aios_soak(&dir, &args));
-        if want != got {
-            diffs.push(format!(
-                "{name}\n--- oracle\n{}\n--- aios\n{}",
-                String::from_utf8_lossy(&want),
-                String::from_utf8_lossy(&got)
-            ));
-        }
-    }
     assert!(diffs.is_empty(), "{}", diffs.join("\n\n"));
 }
 
@@ -266,7 +339,7 @@ fn classify_works_outside_a_git_checkout() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        out.stdout.starts_with(b"a.log  WEDGE "),
+        out.stdout.starts_with(b"a.log  WEDGE-STUCK "),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );

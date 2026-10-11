@@ -1,8 +1,10 @@
 //! `aios soak`'s boot loop: build the ESP, snapshot it, boot QEMU `runs` times
 //! under a [`Supervisor`], and write `run-NN.log`, `summary.tsv` and
-//! `summary.md`. A port of `cleanup`, `poll_log` and `run_soak` in the former
-//! `scripts/soak-qemu.sh` (blob at `212df62`, L522-801); `timeout(1)` is
-//! replaced by the supervisor, which reports the same exit statuses.
+//! `summary.md`. The snapshot and what identifies it make an [`Arm`], and
+//! [`boot_once`] runs one boot of it. A port of `cleanup`, `poll_log` and
+//! `run_soak` in the former `scripts/soak-qemu.sh` (blob at `212df62`,
+//! L522-801); `timeout(1)` is replaced by the supervisor, which reports the
+//! same exit statuses.
 //!
 //! Accepted divergences from the script:
 //! - Times come from a monotonic clock rounded down to whole seconds, where bash
@@ -32,10 +34,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use super::awk::contains;
-use super::classify::{classify, CLASSES};
+use std::collections::HashMap;
+
+use super::awk::{contains, fields};
+use super::classify::{classify, preprocess, Class};
 use super::host;
-use super::report::{self, BootTiming, SummaryInfo, TSV_HEADER};
+use super::report::{self, BootTiming, SummaryInfo, Tally};
 use super::signals::Interrupts;
 use crate::proc::Supervisor;
 
@@ -135,6 +139,55 @@ pub fn footer(cfg: &Config, elapsed: i64, rc: i32, p: &Progress, load1: &[u8]) -
     s.extend_from_slice(load1);
     s.push(b'\n');
     s
+}
+
+/// The `[soak] meta` values of a log, as [`footer`] wrote them: every
+/// `key=value` token of every footer line (a later one wins, as the
+/// classifier reads them), after the classifier's NUL, CR and ANSI clean-up.
+#[derive(Debug, Default)]
+pub struct Footer(HashMap<Vec<u8>, Vec<u8>>);
+
+impl Footer {
+    /// The footer values of the raw log `raw`.
+    pub fn parse(raw: &[u8]) -> Footer {
+        let mut values = HashMap::new();
+        for line in preprocess(raw).split(|&b| b == b'\n') {
+            if !line.starts_with(b"[soak] meta ") {
+                continue;
+            }
+            for field in fields(line).skip(2) {
+                if let Some(eq) = field.iter().position(|&b| b == b'=').filter(|&eq| eq > 0) {
+                    values.insert(field[..eq].to_vec(), field[eq + 1..].to_vec());
+                }
+            }
+        }
+        Footer(values)
+    }
+
+    /// The value of `key`, if the footer has it.
+    pub fn get(&self, key: &str) -> Option<&[u8]> {
+        self.0.get(key.as_bytes()).map(Vec::as_slice)
+    }
+
+    /// `key` as a whole number, if the footer has it and it is one.
+    fn number<T: std::str::FromStr>(&self, key: &str) -> Option<T> {
+        std::str::from_utf8(self.get(key)?).ok()?.parse().ok()
+    }
+
+    /// The `summary.tsv` timing fields the footer records: those of
+    /// [`Boot::timing`] for a log this harness wrote, `None` for a value it lacks.
+    pub fn timing(&self) -> BootTiming {
+        BootTiming {
+            elapsed: self.number("elapsed"),
+            rc: self.number("qemu_rc"),
+            load1: self.get("load1").map(<[u8]>::to_vec),
+            kstart: self.number("kstart"),
+            hb_first: self.number("hb_first"),
+            bench_start: self.number("bench_start"),
+            g1done: self.number("g1done"),
+            hb_max_gap: self.number("hb_max_gap"),
+        }
+    }
 }
 
 /// `a` + `b` + `c` as one OS string.
@@ -239,17 +292,17 @@ impl Drop for ScratchDir {
     }
 }
 
-fn bytes(p: &Path) -> &[u8] {
+pub(super) fn bytes(p: &Path) -> &[u8] {
     p.as_os_str().as_bytes()
 }
 
-fn warn(err: &mut dyn Write, message: &[u8]) -> Result<()> {
+pub(super) fn warn(err: &mut dyn Write, message: &[u8]) -> Result<()> {
     err.write_all(&[&b"soak: warning: "[..], message, b"\n"].concat())?;
     Ok(())
 }
 
 /// Append `data` to `path`.
-fn append(path: &Path, data: &[u8]) -> Result<()> {
+pub(super) fn append(path: &Path, data: &[u8]) -> Result<()> {
     let mut f = OpenOptions::new()
         .append(true)
         .open(path)
@@ -258,13 +311,331 @@ fn append(path: &Path, data: &[u8]) -> Result<()> {
         .with_context(|| format!("cannot append to {}", path.display()))
 }
 
-fn read(path: &Path) -> Result<Vec<u8>> {
+pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))
 }
 
 /// Whole seconds since `start`.
 fn secs_since(start: Instant) -> i64 {
     i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX)
+}
+
+/// One ESP image under test, as its boots need it: the QEMU program and the
+/// firmware it loads (single mode: the justfile's `edk2_fw`, as evaluated;
+/// interleave mode: that path resolved once, so every boot loads the file the
+/// harness hashed), the private snapshot of the ESP that every boot uses, and
+/// what the reports identify it by (the kernel ELF sha256 line and the git
+/// rev, with `-dirty`). Single mode runs `qemu-system-aarch64` from `PATH`;
+/// interleave mode, the one binary it resolved and checks before every boot.
+pub struct Arm {
+    pub qemu: OsString,
+    pub firmware: Vec<u8>,
+    pub esp: PathBuf,
+    pub kernel_sha: String,
+    pub git_rev: String,
+}
+
+/// A boot that ran to its end: QEMU exited, could not be spawned (status 127),
+/// or was stopped at its time limit. `load1` is the host's 1-minute load just
+/// before the boot, and `text` the whole log, footer included.
+pub struct Boot {
+    pub rc: i32,
+    pub elapsed: i64,
+    pub progress: Progress,
+    pub load1: Vec<u8>,
+    pub text: Vec<u8>,
+}
+
+impl Boot {
+    /// The boot's `summary.tsv` timing fields.
+    pub fn timing(&self) -> BootTiming {
+        BootTiming {
+            elapsed: Some(self.elapsed),
+            rc: Some(self.rc),
+            load1: Some(self.load1.clone()),
+            kstart: Some(self.progress.kernel),
+            hb_first: Some(self.progress.hb0),
+            bench_start: Some(self.progress.bench),
+            g1done: Some(self.progress.g1),
+            hb_max_gap: Some(self.progress.gap),
+        }
+    }
+}
+
+/// How [`boot_once`] ended.
+pub enum BootOutcome {
+    /// The boot ran to its end, and its log carries the footer.
+    Booted(Boot),
+    /// A signal arrived while QEMU ran: QEMU was stopped and waited for, the
+    /// log has no footer, and the soak ends with this status.
+    Interrupted(u8),
+}
+
+/// Boot `arm` once: with `cfg.fresh_data`, make `data` a fresh data disk;
+/// run QEMU on the arm's ESP snapshot and `data` under a [`Supervisor`],
+/// with its output in `log`; poll the log for progress; then append the
+/// footer. Signals and Ctrl-Z are handled as for the whole soak.
+pub fn boot_once(
+    arm: &Arm,
+    cfg: &Config,
+    log: &Path,
+    data: &Path,
+    interrupts: &Interrupts,
+) -> Result<BootOutcome> {
+    if cfg.fresh_data {
+        // Sparse 256 MiB of zeros: reads the same as create-data-disk's file
+        // without writing 256 MiB per boot.
+        let _ = std::fs::remove_file(data);
+        File::create(data)
+            .and_then(|f| f.set_len(DATA_DISK_BYTES))
+            .map_err(|_| anyhow::anyhow!("cannot create {}", data.display()))?;
+    }
+    let args = qemu_args(&cfg.mode, OsStr::from_bytes(&arm.firmware), &arm.esp, data);
+    let load1 = host::load1();
+    let mut progress = Progress::default();
+
+    let log_file = File::create(log).with_context(|| format!("cannot create {}", log.display()))?;
+    // QEMU's running time: a Ctrl-Z moves it forward by the time spent
+    // stopped, as it moves QEMU's time limit, so every progress time and
+    // the footer's elapsed share the limit's clock.
+    let mut start = Instant::now();
+    let mut command = host::command(&arm.qemu);
+    // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
+    command
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(log_file.try_clone()?)
+        .stderr(log_file);
+    let rc = {
+        // Until QEMU has exited, Ctrl-Z stops QEMU's group before the harness;
+        // nothing the harness waits for meanwhile runs in the terminal's
+        // foreground group. Declared before `qemu`, so it is dropped after it.
+        let _deferred = interrupts.defer_suspend();
+        match Supervisor::spawn(command, Duration::from_secs(cfg.secs), KILL_AFTER) {
+            Err(e) => {
+                // As timeout(1) did when it could not run the command: a note
+                // in the log, and status 127.
+                append(
+                    log,
+                    format!("soak: cannot run qemu-system-aarch64: {e}\n").as_bytes(),
+                )?;
+                127
+            }
+            Ok(mut qemu) => {
+                qemu.warn_as("soak");
+                loop {
+                    qemu.service()?;
+                    if let Some(rc) = qemu.exit_code() {
+                        break rc;
+                    }
+                    let wake = Instant::now() + POLL;
+                    loop {
+                        if let Some(code) = interrupts.pending() {
+                            qemu.terminate()?;
+                            qemu.wait()?;
+                            return Ok(BootOutcome::Interrupted(code));
+                        }
+                        if interrupts.take_suspend() {
+                            let paused = qemu.suspend(|| interrupts.stop_self())?;
+                            start = start.checked_add(paused).unwrap_or(start);
+                        }
+                        qemu.service()?;
+                        let now = Instant::now();
+                        if now >= wake {
+                            break;
+                        }
+                        std::thread::sleep(SLICE.min(wake - now));
+                    }
+                    progress.poll(&read(log)?, secs_since(start));
+                }
+            }
+        }
+    };
+    let elapsed = secs_since(start);
+    progress.poll(&read(log)?, elapsed);
+    append(log, &footer(cfg, elapsed, rc, &progress, &load1))?;
+    Ok(BootOutcome::Booted(Boot {
+        rc,
+        elapsed,
+        progress,
+        load1,
+        text: read(log)?,
+    }))
+}
+
+/// `just disk` in `root`, its output appended to `build_log`. `who` prefixes
+/// the messages (`""` in single mode, `"arm A: "` in interleave mode), and
+/// `env_remove` names variables the build must not inherit. Returns the
+/// signal's exit status when a signal arrived meanwhile.
+pub fn build_esp(
+    root: &Path,
+    build_log: &Path,
+    who: &str,
+    env_remove: Option<&[&str]>,
+    interrupts: &Interrupts,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Option<u8>> {
+    out.write_all(
+        &[
+            format!("soak: {who}building ESP image (just disk) -> ").as_bytes(),
+            bytes(build_log),
+            b"\n",
+        ]
+        .concat(),
+    )?;
+    out.flush()?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(build_log)
+        .with_context(|| format!("cannot create {}", build_log.display()))?;
+    let mut command = host::command("just");
+    command
+        .arg("disk")
+        .current_dir(root)
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    for var in env_remove.unwrap_or_default() {
+        command.env_remove(var);
+    }
+    let status = command.status();
+    if let Some(code) = interrupts.pending() {
+        return Ok(Some(code));
+    }
+    if !status.is_ok_and(|s| s.success()) {
+        err.write_all(host::tail_lines(&read(build_log)?, 30))?;
+        bail!(
+            "{who}build failed (just disk); full log: {}",
+            build_log.display()
+        );
+    }
+    Ok(None)
+}
+
+/// Snapshot the ESP image `disk_rel` of `root` to `esp`, so every boot uses
+/// identical bits even if the tree is rebuilt while the soak runs.
+pub fn snapshot_esp(root: &Path, disk_rel: &[u8], esp: &Path) -> Result<()> {
+    let disk = root.join(OsStr::from_bytes(disk_rel));
+    if !disk.is_file() {
+        bail!(
+            "ESP image {} missing (run without --no-build)",
+            disk.display()
+        );
+    }
+    std::fs::copy(&disk, esp)
+        .with_context(|| format!("cannot copy {} to {}", disk.display(), esp.display()))?;
+    Ok(())
+}
+
+/// What identifies the bits under test: the sha256 line of the kernel ELF
+/// inside the ESP snapshot `esp` (extracted to `scratch_elf`, then removed),
+/// which can differ from `root`'s `kernel_rel` with --no-build (a warning,
+/// prefixed with `who`); or the ESP image's own sha256 when `mcopy` cannot
+/// extract it.
+pub fn esp_kernel_sha(
+    root: &Path,
+    disk_rel: &[u8],
+    kernel_rel: &[u8],
+    esp: &Path,
+    scratch_elf: &Path,
+    who: &str,
+    err: &mut dyn Write,
+) -> Result<String> {
+    let extracted = host::find_in_path("mcopy").is_some()
+        && host::command("mcopy")
+            .arg("-n")
+            .arg("-i")
+            .arg(esp)
+            .arg("::/EFI/AIOS/aios.elf")
+            .arg(scratch_elf)
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+    if !extracted {
+        return Ok(format!(
+            "ESP image sha256 `{}`, kernel not extracted (mcopy)",
+            host::sha256_16(esp)?
+        ));
+    }
+    let sha = format!("kernel ELF sha256 `{}`", host::sha256_16(scratch_elf)?);
+    let target_kernel = root.join(OsStr::from_bytes(kernel_rel));
+    let same = target_kernel.is_file() && read(scratch_elf)? == read(&target_kernel)?;
+    if !same {
+        let d = String::from_utf8_lossy(disk_rel);
+        let k = String::from_utf8_lossy(kernel_rel);
+        warn(
+            err,
+            format!("{who}the kernel in {d} differs from {k}; the soak boots the one in {d}")
+                .as_bytes(),
+        )?;
+    }
+    let _ = std::fs::remove_file(scratch_elf);
+    Ok(sha)
+}
+
+/// Create the output directory `out_arg` (relative to `cwd`) and return it
+/// canonical. It must be new or empty, and must not be `root` (the
+/// repository root, for a soak): the harness writes its files there and never
+/// overwrites or deletes anything it did not create.
+pub fn fresh_out_dir(cwd: &Path, out_arg: &OsStr, root: Option<&Path>) -> Result<PathBuf> {
+    let out_path = cwd.join(out_arg);
+    let shown = String::from_utf8_lossy(out_arg.as_bytes()).into_owned();
+    if out_path.exists() && !out_path.is_dir() {
+        bail!("--out {shown} exists and is not a directory");
+    }
+    std::fs::create_dir_all(&out_path)
+        .map_err(|_| anyhow::anyhow!("cannot create output directory {shown}"))?;
+    let out_dir =
+        std::fs::canonicalize(&out_path).with_context(|| format!("cannot resolve {shown}"))?;
+    if root == Some(out_dir.as_path()) {
+        bail!("--out must not be the repository root (default: target/soak/<timestamp>-<mode>)");
+    }
+    if std::fs::read_dir(&out_dir)
+        .with_context(|| format!("cannot list {}", out_dir.display()))?
+        .next()
+        .is_some()
+    {
+        bail!(
+            "--out {} is not empty; choose a new or empty directory",
+            out_dir.display()
+        );
+    }
+    Ok(out_dir)
+}
+
+/// Write `summary.md` in `out_dir` (`head`, then the tables of `tally`),
+/// and print the head and where the summary files are.
+pub fn write_summary(
+    out_dir: &Path,
+    head: &[u8],
+    tally: &Tally,
+    out: &mut dyn Write,
+) -> Result<()> {
+    let md = write_summary_file(out_dir, head, tally)?;
+    let tsv = out_dir.join("summary.tsv");
+    out.write_all(b"\n")?;
+    out.write_all(head)?;
+    out.write_all(
+        &[
+            &b"\nsoak: per-boot table in "[..],
+            bytes(&md),
+            b", machine-readable rows in ",
+            bytes(&tsv),
+            b"\n",
+        ]
+        .concat(),
+    )?;
+    Ok(())
+}
+
+/// Write `summary.md` in `out_dir`: `head`, then the tables of `tally`.
+/// Returns its path.
+pub fn write_summary_file(out_dir: &Path, head: &[u8], tally: &Tally) -> Result<PathBuf> {
+    let md = out_dir.join("summary.md");
+    std::fs::write(&md, [head, &report::summary_tail(tally)].concat())
+        .with_context(|| format!("cannot write {}", md.display()))?;
+    Ok(md)
 }
 
 /// What [`run`] has settled before it installs the signal handlers: the
@@ -312,28 +683,7 @@ pub fn run(cfg: &Config, cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -
             .join(format!("{}-{}", host::timestamp()?, cfg.mode))
             .into_os_string(),
     };
-    let out_path = cwd.join(&out_arg);
-    let shown = String::from_utf8_lossy(out_arg.as_bytes()).into_owned();
-    if out_path.exists() && !out_path.is_dir() {
-        bail!("--out {shown} exists and is not a directory");
-    }
-    std::fs::create_dir_all(&out_path)
-        .map_err(|_| anyhow::anyhow!("cannot create output directory {shown}"))?;
-    let out_dir =
-        std::fs::canonicalize(&out_path).with_context(|| format!("cannot resolve {shown}"))?;
-    if out_dir == root {
-        bail!("--out must not be the repository root (default: target/soak/<timestamp>-<mode>)");
-    }
-    if std::fs::read_dir(&out_dir)
-        .with_context(|| format!("cannot list {}", out_dir.display()))?
-        .next()
-        .is_some()
-    {
-        bail!(
-            "--out {} is not empty; choose a new or empty directory",
-            out_dir.display()
-        );
-    }
+    let out_dir = fresh_out_dir(cwd, &out_arg, Some(&root))?;
 
     let interrupts = Interrupts::install()?;
     let setup = Setup {
@@ -368,7 +718,6 @@ fn build_and_boot(
         kernel_rel,
         out_dir,
     } = setup;
-    let firmware_os = OsStr::from_bytes(&firmware);
     let scratch = ScratchDir::create(&out_dir).map_err(|_| {
         anyhow::anyhow!("cannot create a scratch directory in {}", out_dir.display())
     })?;
@@ -381,45 +730,11 @@ fn build_and_boot(
     let build_log = out_dir.join("build.log");
 
     if cfg.build {
-        out.write_all(
-            &[
-                &b"soak: building ESP image (just disk) -> "[..],
-                bytes(&build_log),
-                b"\n",
-            ]
-            .concat(),
-        )?;
-        out.flush()?;
-        let log = File::create(&build_log)
-            .with_context(|| format!("cannot create {}", build_log.display()))?;
-        let status = host::command("just")
-            .arg("disk")
-            .current_dir(&root)
-            .stdout(log.try_clone()?)
-            .stderr(log)
-            .status();
-        if let Some(code) = interrupts.pending() {
+        if let Some(code) = build_esp(&root, &build_log, "", None, interrupts, out, err)? {
             return Ok(code);
         }
-        if !status.is_ok_and(|s| s.success()) {
-            err.write_all(host::tail_lines(&read(&build_log)?, 30))?;
-            bail!(
-                "build failed (just disk); full log: {}",
-                build_log.display()
-            );
-        }
     }
-    let disk = root.join(OsStr::from_bytes(&disk_rel));
-    if !disk.is_file() {
-        bail!(
-            "ESP image {} missing (run without --no-build)",
-            disk.display()
-        );
-    }
-    // Snapshot the ESP so every boot uses identical bits even if the tree is
-    // rebuilt while the soak runs.
-    std::fs::copy(&disk, &esp)
-        .with_context(|| format!("cannot copy {} to {}", disk.display(), esp.display()))?;
+    snapshot_esp(&root, &disk_rel, &esp)?;
     if !cfg.fresh_data && !data.is_file() {
         out.flush()?;
         let made = host::command("just")
@@ -432,48 +747,24 @@ fn build_and_boot(
     }
 
     let git_rev = host::git_rev(&root);
-    // Identify the bits under test: the kernel ELF inside the ESP snapshot,
-    // which can differ from target/ with --no-build.
-    let esp_kernel = scratch.path().join("aios.elf");
     out.flush()?;
-    let extracted = host::find_in_path("mcopy").is_some()
-        && host::command("mcopy")
-            .arg("-n")
-            .arg("-i")
-            .arg(&esp)
-            .arg("::/EFI/AIOS/aios.elf")
-            .arg(&esp_kernel)
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-    let kernel_sha = if extracted {
-        let sha = format!("kernel ELF sha256 `{}`", host::sha256_16(&esp_kernel)?);
-        let target_kernel = root.join(OsStr::from_bytes(&kernel_rel));
-        let same = target_kernel.is_file() && read(&esp_kernel)? == read(&target_kernel)?;
-        if !same {
-            let d = String::from_utf8_lossy(&disk_rel);
-            let k = String::from_utf8_lossy(&kernel_rel);
-            warn(
-                err,
-                format!("the kernel in {d} differs from {k}; the soak boots the one in {d}")
-                    .as_bytes(),
-            )?;
-        }
-        let _ = std::fs::remove_file(&esp_kernel);
-        sha
-    } else {
-        format!(
-            "ESP image sha256 `{}`, kernel not extracted (mcopy)",
-            host::sha256_16(&esp)?
-        )
+    let kernel_sha = esp_kernel_sha(
+        &root,
+        &disk_rel,
+        &kernel_rel,
+        &esp,
+        &scratch.path().join("aios.elf"),
+        "",
+        err,
+    )?;
+    let arm = Arm {
+        qemu: OsString::from("qemu-system-aarch64"),
+        firmware,
+        esp,
+        kernel_sha,
+        git_rev,
     };
-    let qemu_version = host::command("qemu-system-aarch64")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()
-        .map(|o| host::first_line(&o.stdout).to_vec())
-        .unwrap_or_default();
+    let qemu_version = host::qemu_version(&arm.qemu);
     let load_start = host::loadavg();
     // A signal that ended one of the probes above (git, mcopy, QEMU's version,
     // sysctl) without failing the soak: stop before any report, as the trap did.
@@ -482,17 +773,18 @@ fn build_and_boot(
     }
 
     let tsv = out_dir.join("summary.tsv");
-    std::fs::write(&tsv, TSV_HEADER).with_context(|| format!("cannot write {}", tsv.display()))?;
+    std::fs::write(&tsv, report::tsv_header())
+        .with_context(|| format!("cannot write {}", tsv.display()))?;
 
     let data_word = if cfg.fresh_data { "fresh" } else { "reused" };
     out.write_all(
         format!(
-            "soak: {} x {}s, mode={}, commit={git_rev}, data={data_word}\n",
-            cfg.runs_raw, cfg.secs_raw, cfg.mode
+            "soak: {} x {}s, mode={}, commit={}, data={data_word}\n",
+            cfg.runs_raw, cfg.secs_raw, cfg.mode, arm.git_rev
         )
         .as_bytes(),
     )?;
-    out.write_all(&[&b"soak: firmware="[..], &firmware, b"\n"].concat())?;
+    out.write_all(&[&b"soak: firmware="[..], &arm.firmware, b"\n"].concat())?;
     out.write_all(
         &[
             &b"soak: logs in "[..],
@@ -503,10 +795,8 @@ fn build_and_boot(
     )?;
 
     let width = cfg.runs_raw.len().max(2);
-    let mut counts = [0u64; 6];
+    let mut tally = Tally::default();
     let mut non_clean = false;
-    let mut md_rows: Vec<u8> = Vec::new();
-    let mut loads: Vec<Vec<u8>> = Vec::new();
 
     for n in 1..=cfg.runs {
         if let Some(code) = interrupts.pending() {
@@ -515,162 +805,64 @@ fn build_and_boot(
         let idx = format!("{n:0width$}");
         let log_name = format!("run-{idx}.log");
         let log = out_dir.join(&log_name);
-        if cfg.fresh_data {
-            // Sparse 256 MiB of zeros: reads the same as create-data-disk's file
-            // without writing 256 MiB per boot.
-            let _ = std::fs::remove_file(&data);
-            File::create(&data)
-                .and_then(|f| f.set_len(DATA_DISK_BYTES))
-                .map_err(|_| anyhow::anyhow!("cannot create {}", data.display()))?;
-        }
-        let args = qemu_args(&cfg.mode, firmware_os, &esp, &data);
-        let load1 = host::load1();
-        let mut progress = Progress::default();
-
-        let log_file =
-            File::create(&log).with_context(|| format!("cannot create {}", log.display()))?;
-        // QEMU's running time: a Ctrl-Z moves it forward by the time spent
-        // stopped, as it moves QEMU's time limit, so every progress time and
-        // the footer's elapsed share the limit's clock.
-        let mut start = Instant::now();
-        let mut command = host::command("qemu-system-aarch64");
-        // stdin from /dev/null: QEMU's stdio serial must never read the terminal.
-        command
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(log_file.try_clone()?)
-            .stderr(log_file);
-        let rc = {
-            // Until QEMU has exited, Ctrl-Z stops QEMU's group before the harness;
-            // nothing the harness waits for meanwhile runs in the terminal's
-            // foreground group. Declared before `qemu`, so it is dropped after it.
-            let _deferred = interrupts.defer_suspend();
-            match Supervisor::spawn(command, Duration::from_secs(cfg.secs), KILL_AFTER) {
-                Err(e) => {
-                    // As timeout(1) did when it could not run the command: a note
-                    // in the log, and status 127.
-                    append(
-                        &log,
-                        format!("soak: cannot run qemu-system-aarch64: {e}\n").as_bytes(),
-                    )?;
-                    127
-                }
-                Ok(mut qemu) => {
-                    qemu.warn_as("soak");
-                    loop {
-                        qemu.service()?;
-                        if let Some(rc) = qemu.exit_code() {
-                            break rc;
-                        }
-                        let wake = Instant::now() + POLL;
-                        loop {
-                            if let Some(code) = interrupts.pending() {
-                                qemu.terminate()?;
-                                qemu.wait()?;
-                                return Ok(code);
-                            }
-                            if interrupts.take_suspend() {
-                                let paused = qemu.suspend(|| interrupts.stop_self())?;
-                                start = start.checked_add(paused).unwrap_or(start);
-                            }
-                            qemu.service()?;
-                            let now = Instant::now();
-                            if now >= wake {
-                                break;
-                            }
-                            std::thread::sleep(SLICE.min(wake - now));
-                        }
-                        progress.poll(&read(&log)?, secs_since(start));
-                    }
-                }
-            }
+        let boot = match boot_once(&arm, cfg, &log, &data, interrupts)? {
+            BootOutcome::Booted(boot) => boot,
+            BootOutcome::Interrupted(code) => return Ok(code),
         };
-        let elapsed = secs_since(start);
-        progress.poll(&read(&log)?, elapsed);
-        append(&log, &footer(cfg, elapsed, rc, &progress, &load1))?;
 
         // A boot on which the UEFI stub never ran says nothing about the kernel.
         // On the first boot it means the setup is broken (QEMU failed to start,
         // or the firmware never loaded the stub), so stop.
-        let text = read(&log)?;
-        if n == 1 && !contains(&text, b"AIOS UEFI stub") {
-            err.write_all(host::tail_lines(&text, 20))?;
+        if n == 1 && !contains(&boot.text, b"AIOS UEFI stub") {
+            err.write_all(host::tail_lines(&boot.text, 20))?;
             bail!(
-                "the UEFI stub never ran on the first boot (QEMU exit status {rc} after {elapsed}s): check QEMU, the firmware ({}) and the ESP image; see {}",
-                String::from_utf8_lossy(&firmware),
+                "the UEFI stub never ran on the first boot (QEMU exit status {} after {}s): check QEMU, the firmware ({}) and the ESP image; see {}",
+                boot.rc,
+                boot.elapsed,
+                String::from_utf8_lossy(&arm.firmware),
                 log.display()
             );
         }
 
-        let c = classify(&text, None);
+        let c = classify(&boot.text, None);
         out.write_all(&report::format_result(
             format!("run {idx}/{}", cfg.runs_raw).as_bytes(),
             &c,
         ))?;
-        let slot = CLASSES
-            .iter()
-            .position(|k| *k == c.class)
-            .expect("a known class");
-        counts[slot] += 1;
-        non_clean |= c.class != "CLEAN";
-        let timing = BootTiming {
-            elapsed,
-            rc,
-            load1: load1.clone(),
-            kstart: progress.kernel,
-            hb_first: progress.hb0,
-            bench_start: progress.bench,
-            g1done: progress.g1,
-            hb_max_gap: progress.gap,
-        };
+        non_clean |= c.class != Class::Clean;
+        let timing = boot.timing();
         append(
             &tsv,
             &report::tsv_row(&idx, &cfg.mode, &c, &timing, &log_name),
         )?;
-        md_rows.extend(report::md_row(&idx, &c));
-        loads.push(load1);
+        tally.add(&idx, &c, &timing);
     }
     drop(scratch); // the ESP snapshot and the fresh data disk
     let load_end = host::loadavg();
 
     let host_line = [&host::uname()[..], b", ", &host::host_cpus(), b" CPUs"].concat();
-    let load_refs: Vec<&[u8]> = loads.iter().map(Vec::as_slice).collect();
     let info = SummaryInfo {
         mode: &cfg.mode,
         runs: &cfg.runs_raw,
         secs: &cfg.secs_raw,
         stall_secs: &cfg.stall_raw,
-        fresh_data: cfg.fresh_data,
-        git_rev: &git_rev,
-        kernel_sha: &kernel_sha,
+        fresh_data: Some(cfg.fresh_data),
+        git_rev: &arm.git_rev,
+        kernel_sha: &arm.kernel_sha,
         qemu_version: &qemu_version,
-        firmware: &firmware,
+        firmware: &arm.firmware,
         host: &host_line,
         load_start: &load_start,
         load_end: &load_end,
         out: bytes(&out_dir),
     };
-    let head = report::summary_head(&info, &counts, cfg.runs, &load_refs);
+    let head = report::summary_head(&info, &tally);
     // A signal after the last boot's QEMU exited: the script's trap exited at
     // once, so there is no summary.md.
     if let Some(code) = interrupts.pending() {
         return Ok(code);
     }
-    let md = out_dir.join("summary.md");
-    std::fs::write(&md, &head).with_context(|| format!("cannot write {}", md.display()))?;
-    out.write_all(b"\n")?;
-    out.write_all(&head)?;
-    append(&md, &report::summary_table(&md_rows))?;
-    out.write_all(
-        &[
-            &b"\nsoak: per-boot table in "[..],
-            bytes(&md),
-            b", machine-readable rows in ",
-            bytes(&tsv),
-            b"\n",
-        ]
-        .concat(),
-    )?;
+    write_summary(&out_dir, &head, &tally, out)?;
 
     if let Some(code) = interrupts.pending() {
         return Ok(code);
@@ -742,6 +934,50 @@ mod tests {
             footer(&cfg("text"), 76, 124, &p, b"1.50"),
             b"\n[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=1 hb_first=2 bench_start=7 g1done=8 hb_count=3 hb_last_advance=70 hb_max_gap=5 stall_limit=15 load1=1.50\n"
         );
+    }
+
+    #[test]
+    fn the_footer_reads_back_as_the_boot_s_timing() {
+        let boot = Boot {
+            rc: 124,
+            elapsed: 76,
+            progress: Progress {
+                hb: 3,
+                adv: 70,
+                kernel: 1,
+                hb0: 2,
+                bench: -1,
+                g1: -1,
+                gap: -1,
+            },
+            load1: b"1.50".to_vec(),
+            text: Vec::new(),
+        };
+        let log = [
+            &b"[heartbeat] tick=0\r\n\x1b[0m"[..],
+            &footer(
+                &cfg("gpu"),
+                boot.elapsed,
+                boot.rc,
+                &boot.progress,
+                &boot.load1,
+            ),
+        ]
+        .concat();
+        let f = Footer::parse(&log);
+        assert_eq!(f.timing(), boot.timing());
+        assert_eq!(f.get("mode"), Some(&b"gpu"[..]));
+        assert_eq!(f.get("stall_limit"), Some(&b"15"[..]));
+        // An empty load is kept as written; a log without a footer has nothing.
+        let empty = footer(&cfg("text"), 1, 0, &boot.progress, b"");
+        assert_eq!(Footer::parse(&empty).timing().load1, Some(Vec::new()));
+        assert_eq!(
+            Footer::parse(b"AIOS UEFI stub\n").timing(),
+            BootTiming::default()
+        );
+        // A value that is not a number is unknown.
+        let odd = Footer::parse(b"[soak] meta elapsed=7x qemu_rc=1\n").timing();
+        assert_eq!((odd.elapsed, odd.rc), (None, Some(1)));
     }
 
     #[test]

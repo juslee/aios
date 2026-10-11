@@ -20,4 +20,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
+# The tripwire key catalogue (crash-fix step 1a), so the soak parser reads the
+# kernel's keys from one source.
+shared = { path = "../shared" }
 signal-hook = { version = "0.4.4", default-features = false }

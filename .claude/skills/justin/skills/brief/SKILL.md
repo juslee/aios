@@ -30,7 +30,7 @@ Runbook for the human side (stages, state locations, merge policy): `docs/projec
 
 2. Summarise in at most 12 lines, in this order:
    - **State**: branch, uncommitted or unpushed work in any worktree, main CI.
-   - **Red**: failing checks, unresolved review threads, a main CI failure, crashes in the **main soak** line, new docs drift (from the Docs drift section; the Docs CI check never fails on drift). The "newest other soak" line is an experiment on another commit: mention it as such, never as main's state.
+   - **Red**: failing checks, unresolved review threads, a main CI failure, crashes in the **main soak** line, new docs drift (from the Docs drift section; the Docs CI check never fails on drift). The "newest other soak" and "newest interleaved soak" entries are experiments (another commit, or an A/B of several checkouts): mention them as such, never as main's state.
    - **Needs you**: open `needs-human` issues (number and title); PRs whose `merge-ready` is `yes` (the human merges them with `/merge-and-cleanup <PR>`); PRs held by a gate, with the gating issue.
    - **Next**: the next phase-doc step the script found, and the open PR for that milestone if the script names one.
 

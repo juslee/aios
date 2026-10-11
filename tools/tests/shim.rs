@@ -248,6 +248,7 @@ impl Sandbox {
             "tools/src/lib.rs",
             "// the shim only needs tools/ to exist\n",
         );
+        repo.write("shared/src/lib.rs", "// a build input of the aios binary\n");
         repo.write("Cargo.lock", "# a build input of the aios binary\n");
         repo.write("Cargo.toml", "# a build input of the aios binary\n");
         repo.write(
@@ -493,9 +494,10 @@ fn a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
 }
 
 #[test]
-fn a_newer_toolchain_pin_manifest_cargo_config_or_justfile_makes_the_binary_stale() {
+fn a_newer_toolchain_pin_manifest_cargo_config_shared_crate_or_justfile_makes_the_binary_stale() {
     // A pull that only bumps the pinned nightly (or the workspace manifest, the
-    // cargo config, or the justfile whose recipe builds and stamps the binary)
+    // cargo config, the shared crate whose tripwire key catalogue aios-tools
+    // links, or the justfile whose recipe builds and stamps the binary)
     // touches nothing under tools/ and not Cargo.lock, yet changes the build. A legacy rust-toolchain file, which rustup prefers
     // to rust-toolchain.toml, changes it too, even untracked.
     for (label, input) in [
@@ -503,6 +505,7 @@ fn a_newer_toolchain_pin_manifest_cargo_config_or_justfile_makes_the_binary_stal
         ("shim-stale-legacy-toolchain", "rust-toolchain"),
         ("shim-stale-manifest", "Cargo.toml"),
         ("shim-stale-cargo-config", ".cargo/config.toml"),
+        ("shim-stale-shared", "shared/src/lib.rs"),
         ("shim-stale-justfile", "justfile"),
     ] {
         let sandbox = Sandbox::new(label);
@@ -1257,6 +1260,7 @@ fn a_missing_or_foreign_stamp_is_stale() {
         "rust-toolchain.toml",
         "rust-toolchain",
         ".cargo/config.toml",
+        "shared/src/lib.rs",
         "justfile",
     ] {
         std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
@@ -1409,6 +1413,8 @@ fn os_and_editor_files_under_the_inputs_keep_a_build_clean() {
         "tools/src/lib.rs~",
         "tools/src/lib.rs.bk",
         ".cargo/.config.toml.swo",
+        "shared/.DS_Store",
+        "shared/src/lib.rs~",
     ];
     for file in inert {
         sandbox.repo.write(file, "not a build input\n");
@@ -1422,7 +1428,7 @@ fn os_and_editor_files_under_the_inputs_keep_a_build_clean() {
         sandbox.repo.write(file, "rewritten after the build\n");
         set_mtime(&sandbox.repo.path().join(file), NEWER_STAMP);
     }
-    for dir in ["tools", "tools/src", ".cargo"] {
+    for dir in ["tools", "tools/src", ".cargo", "shared", "shared/src"] {
         set_mtime(&sandbox.repo.path().join(dir), NEWER_STAMP);
     }
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));

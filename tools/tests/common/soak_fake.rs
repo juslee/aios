@@ -1,22 +1,32 @@
-//! The fake QEMU environment for tests/soak_harness.rs: fake `qemu-system-aarch64`,
-//! `just` and `mcopy` executables, a throwaway repository per run, the harness
-//! scenarios, and the normalisation that makes two runs of a scenario comparable.
+//! The fake QEMU environment for tests/soak_harness.rs and
+//! tests/soak_interleave.rs: fake `qemu-system-aarch64`, `just`, `mcopy`,
+//! `rustup` and `rustc` executables, a throwaway repository per run (with
+//! fake arm checkouts, worktrees of it, for `--arm`), the harness scenarios,
+//! and the normalisation that makes two runs of a scenario comparable.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use aios_tools::cmd::soak::report::TSV_COLUMNS;
 use regex::bytes::Regex;
 
 use super::isolated;
-use super::soak::{oracle_script, rename_prefix};
 use super::unique_dir;
 
 /// Fake `qemu-system-aarch64`: `--version` prints a fixed banner; a boot
-/// records its arguments in `argv-N` and runs the scenario's `boot-N.sh`
-/// (or `boot.sh`) as the QEMU process itself.
-const FAKE_QEMU: &str = r#"#!/bin/sh
+/// records its arguments in `argv-N` and runs the scenario's `boot-N.sh`, else
+/// (interleave scenarios) `boot-<arm>.sh` for the arm named in the ESP image
+/// it boots, else `boot.sh`, as the QEMU process itself. Before that, in an
+/// interleaved soak, it copies the top-level `summary.md` to
+/// `summary-before-N.md`, and with the flag `qemu-changes-at-N` it changes
+/// its own file, as an upgrade during the boot would; with
+/// `firmware-retargeted-at-N` it points the `fw.fd` link at `fw2.fd`, as a
+/// package upgrade that moves a firmware symlink would; with
+/// `boots-tsv-readonly-at-N` it makes the soak's `boots.tsv` read-only, so
+/// the harness's next row append fails (a full disk, say).
+const FAKE_QEMU: &str = r##"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "QEMU emulator version 99.1.0 (aios test fake)"
     echo "Copyright (c) the aios tests"
@@ -26,26 +36,64 @@ n=$(cat "$AIOS_FAKE_ROOT/boot-count" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" >"$AIOS_FAKE_ROOT/boot-count"
 printf '%s\n' "$@" >"$AIOS_FAKE_ROOT/argv-$n"
+esp=
+for a in "$@"; do
+    case "$a" in
+        if=none,id=disk0,file=*) esp=${a#if=none,id=disk0,file=}; esp=${esp%,format=raw} ;;
+    esac
+done
+out=$(dirname "$(dirname "$esp")")
+if [ -f "$out/arms.tsv" ] && [ -f "$out/summary.md" ]; then
+    cp "$out/summary.md" "$AIOS_FAKE_ROOT/summary-before-$n.md"
+fi
+if [ -f "$AIOS_FAKE_ROOT/qemu-changes-at-$n" ]; then
+    echo "# changed during boot $n" >>"$AIOS_FAKE_ROOT/bin/qemu-system-aarch64"
+fi
+if [ -f "$AIOS_FAKE_ROOT/firmware-retargeted-at-$n" ]; then
+    ln -sfn fw2.fd "$AIOS_FAKE_ROOT/fw.fd"
+fi
+if [ -f "$AIOS_FAKE_ROOT/boots-tsv-readonly-at-$n" ]; then
+    chmod a-w "$out/boots.tsv"
+fi
+arm=$(sed -n 's/^ESP image arm=//p' "$esp" 2>/dev/null)
 script="$AIOS_FAKE_ROOT/boot-$n.sh"
-[ -f "$script" ] || script="$AIOS_FAKE_ROOT/boot.sh"
+if [ ! -f "$script" ]; then
+    script="$AIOS_FAKE_ROOT/boot-$arm.sh"
+    [ -n "$arm" ] && [ -f "$script" ] || script="$AIOS_FAKE_ROOT/boot.sh"
+fi
 exec sh "$script"
-"#;
+"##;
 
-/// Fake `just`: the four variables the harness evaluates and the two recipes it runs.
+/// Fake `just`: the four variables the harness evaluates and the two recipes
+/// it runs. In a fake arm checkout, `.fake-fw` names its firmware, `.fake-arm`
+/// its name (written into the ESP image), and every `just disk` is logged to
+/// `just.log` with the directory and the two variables an arm's build must
+/// not inherit. With the flag `head-moves-in-build`, `just disk` checks out
+/// the commit before HEAD, as a user switching branches during a build would.
 const FAKE_JUST: &str = r#"#!/bin/sh
 case "$*" in
-    "--evaluate edk2_fw") printf '%s' "$AIOS_FAKE_ROOT/fw.fd" ;;
+    "--evaluate edk2_fw")
+        if [ -f .fake-fw ]; then cat .fake-fw; else printf '%s' "$AIOS_FAKE_ROOT/fw.fd"; fi
+        ;;
     "--evaluate disk_img") printf 'aios.img' ;;
     "--evaluate data_img") printf 'data.img' ;;
     "--evaluate kernel_elf") printf 'target/aarch64-unknown-none/debug/kernel' ;;
     disk)
+        echo "disk in $PWD RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN-unset} CARGO_TARGET_DIR=${CARGO_TARGET_DIR-unset} CARGO_BUILD_TARGET_DIR=${CARGO_BUILD_TARGET_DIR-unset}" >>"$AIOS_FAKE_ROOT/just.log"
         if [ -f "$AIOS_FAKE_ROOT/build-fails" ]; then
             i=1
             while [ "$i" -le 40 ]; do echo "build line $i"; i=$((i + 1)); done
             exit 1
         fi
+        if [ -f "$AIOS_FAKE_ROOT/head-moves-in-build" ]; then
+            git checkout -q --detach HEAD~1
+        fi
         echo "fake build"
-        printf 'ESP image' >aios.img
+        if [ -f .fake-arm ]; then
+            printf 'ESP image arm=%s\n' "$(cat .fake-arm)" >aios.img
+        else
+            printf 'ESP image' >aios.img
+        fi
         ;;
     create-data-disk)
         if [ -f "$AIOS_FAKE_ROOT/data-disk-interrupted" ]; then
@@ -60,12 +108,43 @@ case "$*" in
 esac
 "#;
 
+/// Fake `rustup`: logs its arguments and directory to `rustup.log`, and fails
+/// under the `rustup-fails` flag.
+const FAKE_RUSTUP: &str = r#"#!/bin/sh
+echo "$* in $PWD RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN-unset}" >>"$AIOS_FAKE_ROOT/rustup.log"
+if [ -f "$AIOS_FAKE_ROOT/rustup-fails" ]; then
+    echo "error: fake rustup cannot install the toolchain"
+    exit 1
+fi
+echo "fake rustup: toolchain installed"
+"#;
+
+/// Fake `rustc`: `--version` prints the checkout's `.fake-rustc`.
+const FAKE_RUSTC: &str = r#"#!/bin/sh
+[ "$1" = "--version" ] || exit 64
+if [ -f .fake-rustc ]; then cat .fake-rustc; else echo "rustc 1.99.0-nightly (fake)"; fi
+"#;
+
 /// Fake `sha256sum`, installed by the `sha256-interrupted` flag: a terminal
 /// Ctrl-C while it runs, so SIGINT reaches the harness and ends this child.
 const FAKE_SHA256SUM: &str = r#"#!/bin/sh
 kill -INT "$PPID"
 kill -INT $$
 exit 130
+"#;
+
+/// Fake `sha256sum` for an interleaved soak, installed by the
+/// `sha256-interrupted-after-1` flag: a fixed digest until the first boot has
+/// run, then, once, a terminal Ctrl-C while it runs (SIGINT reaches the
+/// harness and ends this child), as in the probe after boot 1.
+const FAKE_SHA256SUM_AFTER_FIRST_BOOT: &str = r#"#!/bin/sh
+if [ -f "$AIOS_FAKE_ROOT/boot-count" ] && [ ! -f "$AIOS_FAKE_ROOT/sha256-interrupted" ]; then
+    : >"$AIOS_FAKE_ROOT/sha256-interrupted"
+    kill -INT "$PPID"
+    kill -INT $$
+    exit 130
+fi
+echo "f6881a5e580c7942f6881a5e580c7942f6881a5e580c7942f6881a5e580c7942  $1"
 "#;
 
 /// Fake `mcopy`: writes a fixed kernel to its last argument, or fails when the
@@ -98,7 +177,23 @@ exit 1
 ";
 
 /// Gate 1 completes and the heartbeat advances: CLEAN if QEMU runs to the limit.
-const CLEAN_TAIL: &str = r"printf '[bench] === Gate 1 Benchmark ===\r\nGate 1: IPC < 10 us: PASS\r\n=== Gate 1 Complete ===\r\n[heartbeat] tick=1000\r\n'
+const CLEAN_TAIL: &str = r"printf '[bench] === Gate 1 Benchmark ===\r\n[bench] IPC round-trip (same core): avg=6 us, p99=8 us, min=4992 ns, max=754000 ns (10000 iters)\r\nGate 1: IPC < 10 us: PASS\r\n=== Gate 1 Complete ===\r\n[heartbeat] tick=1000\r\n'
+";
+
+/// Crash-fix step 1b's output before a `lock re-entry:` panic: a heartbeat
+/// tripwire line, a lock event, the two-line panic and its `src=panic` line,
+/// which is the last complete one. QEMU then exits 1.
+const PANIC_LOCK_TRIPWIRE_TAIL: &str = r"printf '[tripwire] v=1 src=hb cpu=0 t=1 ncpu=4 tick=1,0,0,0 twc=0 twn=0 twmax=0 n=9\r\n'
+printf '[tripwire-ev] kind=stuck cpu=3 lock=THREAD_TABLE idx=- ctx=thread-off owner_cpu=0\r\n'
+printf 'PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:\r\n'
+printf 'lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/cap/mod.rs:39 holder_irqs=on tid=16 gen=508894\r\n'
+printf '[tripwire] v=1 src=panic cpu=0 t=544 ncpu=4 irqsw=6,0,0,0 twc=9 twn=2 twmax=9 n=9\r\n'
+exit 1
+";
+
+/// The `src=g1` line after Gate 1, then a heartbeat line, both complete.
+const G1_TRIPWIRE: &str = r"printf '[tripwire] v=1 src=g1 cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10\r\n'
+printf '[tripwire] v=1 src=hb cpu=0 t=1001 ncpu=4 tick=1001,0,0,0 elrmm=1,0,0,0 twc=9 twn=1 twmax=94000 n=10\r\n'
 ";
 
 /// The heartbeat goes on advancing until QEMU is stopped.
@@ -336,16 +431,26 @@ pub fn scenarios() -> Vec<Scenario> {
     );
     no_qemu.no_qemu = true;
     v.push(no_qemu);
+    let mut tripwire = Scenario::new(
+        "tripwire",
+        &[
+            "--no-build",
+            "runs=2",
+            "secs=3",
+            "stall_secs=2",
+            "report_only=1",
+            "out=out",
+        ],
+        format!("{BOOT_HEAD}{PANIC_LOCK_TRIPWIRE_TAIL}"),
+    );
+    tripwire.boots.push((
+        2,
+        format!("{BOOT_HEAD}{CLEAN_TAIL}{G1_TRIPWIRE}exec sleep 30\n"),
+    ));
+    v.push(tripwire);
     v.push(interrupted("interrupt-int", "INT"));
     v.push(interrupted("interrupt-term", "TERM"));
     v
-}
-
-/// The tool a scenario runs.
-#[derive(Clone, Copy, Debug)]
-pub enum Tool {
-    Aios,
-    Oracle,
 }
 
 /// What a scenario run produced, before normalisation.
@@ -375,41 +480,6 @@ fn write_exec(path: &Path, text: &str) {
 /// The system directories at the end of every scenario's PATH but `no-qemu`'s.
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
-/// What the oracle runs before it looks for QEMU: `bash` itself, `dirname` for
-/// its repository, `cat` for its awk program, and `sh` and `sleep` in its probe
-/// of `timeout`. aios runs nothing before that check.
-const PRE_QEMU_TOOLS: [&str; 5] = ["bash", "cat", "dirname", "sh", "sleep"];
-
-/// A directory of links to [`PRE_QEMU_TOOLS`] in [`SYSTEM_PATH`], and nothing else.
-fn pre_qemu_tools(root: &Path) -> PathBuf {
-    let dir = root.join("sys-bin");
-    std::fs::create_dir_all(&dir).expect("sys-bin");
-    for name in PRE_QEMU_TOOLS {
-        let found = SYSTEM_PATH
-            .split(':')
-            .map(|d| Path::new(d).join(name))
-            .find(|p| p.is_file())
-            .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
-        std::os::unix::fs::symlink(found, dir.join(name)).expect("symlink a system tool");
-    }
-    dir
-}
-
-/// The `timeout` (or `gtimeout`) on the ambient PATH, for the oracle.
-fn ambient_timeout() -> PathBuf {
-    let out = Command::new("sh")
-        .args(["-c", "command -v timeout || command -v gtimeout"])
-        .output()
-        .expect("run sh");
-    let path = String::from_utf8(out.stdout).expect("a UTF-8 path");
-    let path = path.lines().next().unwrap_or("");
-    assert!(
-        !path.is_empty(),
-        "the oracle needs timeout or gtimeout on PATH (macOS: brew install coreutils)"
-    );
-    PathBuf::from(path)
-}
-
 fn fake_git(dir: &Path, args: &[&str]) {
     super::git(dir, args);
 }
@@ -430,9 +500,9 @@ fn still_running(pid: &str) -> bool {
     }
 }
 
-/// Build the fake root for `sc` and run `tool` in it.
-pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
-    let root = unique_dir(&format!("soak-{}-{tool:?}", sc.name));
+/// Build the fake root for `sc` and run `aios soak` in it.
+pub fn run_scenario(sc: &Scenario) -> Outcome {
+    let root = unique_dir(&format!("soak-{}", sc.name));
     std::fs::write(root.join("fw.fd"), "firmware").expect("fw");
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
@@ -479,9 +549,6 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
     if !sc.no_image {
         std::fs::write(repo.join("aios.img"), "ESP image").expect("image");
     }
-    // The oracle finds its repository from its own location.
-    std::fs::create_dir_all(repo.join("scripts")).expect("scripts");
-    std::fs::copy(oracle_script(), repo.join("scripts/soak-qemu.sh")).expect("oracle");
     let cwd = repo.join(sc.cwd);
     if let (Some(kind), Out::At(out)) = (sc.out_exists, sc.out) {
         let out = cwd.join(out);
@@ -495,36 +562,17 @@ pub fn run_scenario(tool: Tool, sc: &Scenario) -> Outcome {
     }
 
     let mut path = bin.clone().into_os_string();
-    if matches!(tool, Tool::Oracle) {
-        let oracle_bin = root.join("oracle-bin");
-        std::fs::create_dir_all(&oracle_bin).expect("oracle-bin");
-        std::os::unix::fs::symlink(ambient_timeout(), oracle_bin.join("timeout"))
-            .expect("symlink timeout");
+    // A distro QEMU in a system directory (Linux's qemu-system-arm package)
+    // would be found there, so `no-qemu` gets the fake `bin` alone: aios runs
+    // nothing before it looks for QEMU.
+    if !sc.no_qemu {
         path.push(":");
-        path.push(&oracle_bin);
-    }
-    path.push(":");
-    if sc.no_qemu {
-        // A distro QEMU in a system directory (Linux's qemu-system-arm package)
-        // would be found there, so give the tool only what it runs first.
-        path.push(pre_qemu_tools(&root));
-    } else {
         path.push(SYSTEM_PATH);
     }
 
-    let mut command = match tool {
-        Tool::Aios => {
-            let mut c = Command::new(env!("CARGO_BIN_EXE_aios"));
-            c.arg("soak");
-            c
-        }
-        Tool::Oracle => {
-            let mut c = Command::new("bash");
-            c.arg(repo.join("scripts/soak-qemu.sh"));
-            c
-        }
-    };
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aios"));
     isolated(&mut command)
+        .arg("soak")
         .args(sc.args)
         .current_dir(&cwd)
         .env("PATH", &path)
@@ -667,8 +715,26 @@ static RULES: LazyLock<Vec<(Regex, &'static [u8])>> = LazyLock::new(|| {
         (r"\| Host \| [^\n]*", b"| Host | <HOST> |"),
         (r"\| Load average \| [^\n]*", b"| Load average | <L> |"),
         (r"after [0-9]+s\)", b"after <N>s)"),
+        (r"\| Harness \| [^\n]*", b"| Harness | <HARNESS> |"),
+        // The cargo configs above the fake arms are the test host's own
+        // (the workspace holding CARGO_TARGET_TMPDIR, say).
         (
-            r"(?m)^(\| [0-9]+ \| [A-Z]+ \| [^|]* \| )[^|]* \|",
+            r"(?m)^soak: warning: arm [A-D]: parent cargo config [^\n]*\n",
+            b"",
+        ),
+        (
+            r"\| Parent cargo config \| [^\n]*",
+            b"| Parent cargo config | <CARGO-CONFIG> |",
+        ),
+        (r"above its [0-9]+ CPUs", b"above its <N> CPUs"),
+        (
+            r"\(load average after the builds: [^)\n]*\)",
+            b"(load average after the builds: <L>)",
+        ),
+        // The per-boot table's stall cell (the second cell is a class name;
+        // the interleaved report's non-CLEAN rows have an arm letter there).
+        (
+            r"(?m)^(\| [0-9]+ \| [A-Z][A-Z-]+ \| [^|]* \| )[^|]* \|",
             b"${1}<N> |",
         ),
         // bash reports a background job that SIGKILL ended; the port has no such job.
@@ -698,14 +764,21 @@ pub fn normalize(data: &[u8], root: &Path) -> Vec<u8> {
     for (re, to) in RULES.iter() {
         text = re.replace_all(&text, *to).into_owned();
     }
-    // summary.tsv rows: the stall, elapsed, load1 and harness-time columns.
+    // summary.tsv rows, and boots.tsv rows with their round, position and arm
+    // first (by their column count): the stall, elapsed, load1 and
+    // harness-time columns.
     let lines: Vec<Vec<u8>> = text
         .split(|&b| b == b'\n')
         .map(|line| {
             let mut cells: Vec<&[u8]> = line.split(|&b| b == b'\t').collect();
-            if cells.len() == 22 && cells[0] != b"run" {
+            let skip = match cells.len() {
+                n if n == TSV_COLUMNS && cells[0] != b"run" => Some(0),
+                n if n == TSV_COLUMNS + 3 && cells[0] != b"round" => Some(3),
+                _ => None,
+            };
+            if let Some(skip) = skip {
                 for i in [5, 6, 8, 9, 10, 11, 12, 13] {
-                    cells[i] = b"<N>";
+                    cells[i + skip] = b"<N>";
                 }
             }
             cells.join(&b'\t')
@@ -715,15 +788,8 @@ pub fn normalize(data: &[u8], root: &Path) -> Vec<u8> {
 }
 
 /// The golden text of an outcome: every part, normalised, in a fixed order.
-pub fn golden_text(o: &Outcome, rename: bool) -> Vec<u8> {
-    let n = |d: &[u8]| {
-        let d = normalize(d, &o.root);
-        if rename {
-            rename_prefix(&d)
-        } else {
-            d
-        }
-    };
+pub fn golden_text(o: &Outcome) -> Vec<u8> {
+    let n = |d: &[u8]| normalize(d, &o.root);
     let mut g = format!("exit {}\n--- stdout\n", o.code).into_bytes();
     g.extend(n(&o.stdout));
     g.extend_from_slice(b"--- stderr\n");
@@ -751,5 +817,422 @@ pub fn golden_text(o: &Outcome, rename: bool) -> Vec<u8> {
         )
         .into_bytes(),
     );
+    g
+}
+
+// ---------------------------------------------------------------------------
+// Interleave mode (`--arm`): fake arm checkouts
+// ---------------------------------------------------------------------------
+
+/// The channel every fake arm pins unless it says otherwise.
+pub const FAKE_CHANNEL: &str = "nightly-2026-10-09";
+
+/// A commit of the fake repository a fake arm is checked out at.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum At {
+    /// The first commit, older than the arm base.
+    First,
+    /// The second commit, the arm base (`AIOS_SOAK_MIN_ARM_BASE`).
+    Base,
+}
+
+/// One fake arm checkout: a detached worktree of the fake repository at
+/// `<root>/arms/<name>`, with its own `.fake-arm`, `.fake-rustc` and, when
+/// given, `.fake-fw`.
+#[derive(Clone)]
+pub struct FakeArm {
+    pub name: &'static str,
+    pub at: At,
+    /// A different channel in its `rust-toolchain.toml` (a tracked change).
+    pub channel: Option<&'static str>,
+    /// What its `rustc --version` prints.
+    pub rustc: &'static str,
+    /// Its `edk2_fw`, relative to the fake root.
+    pub firmware: Option<&'static str>,
+}
+
+impl FakeArm {
+    pub fn new(name: &'static str) -> FakeArm {
+        FakeArm {
+            name,
+            at: At::Base,
+            channel: None,
+            rustc: "rustc 1.99.0-nightly (fake 2026-10-09)",
+            firmware: None,
+        }
+    }
+}
+
+/// One interleave scenario: arguments (run in `<root>/repo`, the arms at
+/// `../arms/<name>`), boot scripts by file name (`boot.sh`, `boot-<arm>.sh`,
+/// `boot-<N>.sh` for the N-th QEMU boot), flag files in the fake root
+/// (`rustup-fails`, `build-fails`, `qemu-changes-at-N`,
+/// `firmware-retargeted-at-N`, `boots-tsv-readonly-at-N`,
+/// `head-moves-in-build`; `firmware-symlink` makes `fw.fd` a link to
+/// `fw-real.fd`;
+/// `sha256-interrupted-after-1` also installs
+/// [`FAKE_SHA256SUM_AFTER_FIRST_BOOT`]), the fake arms, and whether rustup is
+/// on PATH, and the load average every probe reads ([`DEFAULT_LOADAVG`]
+/// unless set).
+pub struct ArmScenario {
+    pub name: &'static str,
+    pub args: Vec<String>,
+    pub boots: Vec<(String, String)>,
+    pub flags: Vec<String>,
+    pub arms: Vec<FakeArm>,
+    pub no_rustup: bool,
+    /// `AIOS_SOAK_LOADAVG`: the 1, 5 and 15-minute loads the harness reads.
+    pub loadavg: &'static str,
+    /// Send this signal to the harness once the file (relative to the output
+    /// directory) shows the kernel booting.
+    pub interrupt: Option<(&'static str, &'static str)>,
+}
+
+impl ArmScenario {
+    /// `--arm ../arms/<a>` for each name, then `rest`, with arms `a` and `b`
+    /// unless `arms` is replaced.
+    pub fn new(name: &'static str, arm_names: &[&str], rest: &[&str]) -> ArmScenario {
+        let mut args: Vec<String> = Vec::new();
+        for a in arm_names {
+            args.push("--arm".into());
+            args.push(format!("../arms/{a}"));
+        }
+        args.extend(rest.iter().map(|s| s.to_string()));
+        ArmScenario {
+            name,
+            args,
+            boots: vec![("boot.sh".into(), panic_boot())],
+            flags: Vec::new(),
+            arms: vec![FakeArm::new("a"), FakeArm::new("b")],
+            no_rustup: false,
+            loadavg: DEFAULT_LOADAVG,
+            interrupt: None,
+        }
+    }
+}
+
+/// The load average of an interleave scenario unless it sets its own: below
+/// any host's CPU count, so the load check passes.
+pub const DEFAULT_LOADAVG: &str = "0.50 0.40 0.30";
+
+/// A load average above any host's CPU count.
+pub const HIGH_LOADAVG: &str = "100000.00 1.00 1.00";
+
+/// A CLEAN boot with the `src=g1` and heartbeat tripwire lines, when QEMU
+/// runs to the time limit (`secs=3 stall_secs=2`).
+pub fn clean_script() -> String {
+    format!("{BOOT_HEAD}{CLEAN_TAIL}{G1_TRIPWIRE}exec sleep 30\n")
+}
+
+/// The boot script that panics at once.
+pub fn panic_script() -> String {
+    panic_boot()
+}
+
+/// A boot script with an EL1 exception (text mode); QEMU exits 1.
+pub fn exception_script() -> String {
+    format!(
+        "{BOOT_HEAD}printf 'EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff000000081234\\r\\n'\nexit 1\n"
+    )
+}
+
+/// A boot script on which the UEFI stub never runs.
+pub fn no_stub_script() -> String {
+    NO_STUB.to_string()
+}
+
+/// A boot script whose kernel starts, then waits for the harness's signal.
+pub fn wait_for_signal_script() -> String {
+    format!("{BOOT_HEAD}{WAIT_FOR_SIGNAL_TAIL}")
+}
+
+/// What an interleave scenario produced.
+pub struct ArmOutcome {
+    pub code: i32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    /// Every file under the output directory, by relative path, sorted;
+    /// `None` when the directory does not exist.
+    pub files: Option<Vec<(String, Vec<u8>)>>,
+    /// The output directory, when it exists.
+    pub out: Option<PathBuf>,
+    /// `argv-N` files written by the fake QEMU (one per boot).
+    pub boots: usize,
+    /// `rustup.log` and `just.log` from the fake root (empty when absent).
+    pub rustup_log: String,
+    pub just_log: String,
+    /// `summary-before-N.md`: the top-level summary as boot N found it.
+    pub before: Vec<(usize, String)>,
+    /// Pid files whose process still runs after the harness exited.
+    pub alive: Vec<String>,
+    pub root: PathBuf,
+}
+
+impl ArmOutcome {
+    /// The output file `rel`.
+    pub fn file(&self, rel: &str) -> &[u8] {
+        &self
+            .files
+            .as_ref()
+            .expect("an output directory")
+            .iter()
+            .find(|(n, _)| n == rel)
+            .unwrap_or_else(|| panic!("no {rel}"))
+            .1
+    }
+
+    /// The output file `rel` as text.
+    pub fn text(&self, rel: &str) -> String {
+        String::from_utf8_lossy(self.file(rel)).into_owned()
+    }
+
+    /// The output files' relative paths.
+    pub fn names(&self) -> Vec<&str> {
+        self.files
+            .as_ref()
+            .map(|f| f.iter().map(|(n, _)| n.as_str()).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// git in `dir` with fixed dates and identity, so the fake repository's
+/// commits (and the reports' commit ids) are the same in every run.
+fn git_fixed(dir: &Path, args: &[&str]) -> String {
+    let mut cmd = Command::new("git");
+    super::isolated(&mut cmd)
+        .args([
+            "-c",
+            "user.name=aios-test",
+            "-c",
+            "user.email=aios-test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .env("GIT_AUTHOR_DATE", "2026-10-10T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-10-10T00:00:00Z")
+        .current_dir(dir);
+    let out = cmd.output().expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).expect("git printed UTF-8")
+}
+
+/// Every regular file under `dir`, by path relative to it, sorted.
+fn files_under(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).expect("list a directory") {
+            let p = e.expect("an entry").path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.is_file() {
+                let rel = p
+                    .strip_prefix(dir)
+                    .expect("under the directory")
+                    .to_string_lossy()
+                    .into_owned();
+                found.push((rel, std::fs::read(&p).expect("read an output file")));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Build the fake root, repository and arms for `sc`, and run `aios soak` in
+/// `<root>/repo`.
+pub fn run_arm_scenario(sc: &ArmScenario) -> ArmOutcome {
+    let root = unique_dir(&format!("soak-arms-{}", sc.name));
+    if sc.flags.iter().any(|f| f == "firmware-symlink") {
+        std::fs::write(root.join("fw-real.fd"), "firmware").expect("fw-real");
+        std::os::unix::fs::symlink("fw-real.fd", root.join("fw.fd")).expect("fw link");
+    } else {
+        std::fs::write(root.join("fw.fd"), "firmware").expect("fw");
+    }
+    std::fs::write(root.join("fw2.fd"), "other firmware").expect("fw2");
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    write_exec(&bin.join("qemu-system-aarch64"), FAKE_QEMU);
+    write_exec(&bin.join("just"), FAKE_JUST);
+    write_exec(&bin.join("mcopy"), FAKE_MCOPY);
+    write_exec(&bin.join("rustc"), FAKE_RUSTC);
+    if !sc.no_rustup {
+        write_exec(&bin.join("rustup"), FAKE_RUSTUP);
+    }
+    if sc.flags.iter().any(|f| f == "sha256-interrupted-after-1") {
+        write_exec(&bin.join("sha256sum"), FAKE_SHA256SUM_AFTER_FIRST_BOOT);
+    }
+    for (name, script) in &sc.boots {
+        std::fs::write(root.join(name), script).expect("boot script");
+    }
+    for flag in &sc.flags {
+        std::fs::write(root.join(flag), "").expect("flag");
+    }
+
+    // The fake repository: a first commit, then the arm base.
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo");
+    git_fixed(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("README"), "readme\n").expect("README");
+    std::fs::write(
+        repo.join("rust-toolchain.toml"),
+        format!("[toolchain]\nchannel = \"{FAKE_CHANNEL}\"\n"),
+    )
+    .expect("rust-toolchain.toml");
+    git_fixed(&repo, &["add", "README", "rust-toolchain.toml"]);
+    git_fixed(&repo, &["commit", "-q", "-m", "first"]);
+    let first = git_fixed(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+    std::fs::write(repo.join("README"), "base\n").expect("README");
+    git_fixed(&repo, &["commit", "-q", "-am", "the arm base"]);
+    let base = git_fixed(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+
+    for arm in &sc.arms {
+        let dir = root.join("arms").join(arm.name);
+        let at = if arm.at == At::First { &first } else { &base };
+        let dir_s = dir.to_string_lossy().into_owned();
+        git_fixed(&repo, &["worktree", "add", "-q", "--detach", &dir_s, at]);
+        if let Some(channel) = arm.channel {
+            std::fs::write(
+                dir.join("rust-toolchain.toml"),
+                format!("[toolchain]\nchannel = \"{channel}\"\n"),
+            )
+            .expect("rust-toolchain.toml");
+        }
+        std::fs::write(dir.join(".fake-arm"), arm.name).expect(".fake-arm");
+        std::fs::write(dir.join(".fake-rustc"), format!("{}\n", arm.rustc)).expect(".fake-rustc");
+        if let Some(fw) = arm.firmware {
+            std::fs::write(
+                dir.join(".fake-fw"),
+                root.join(fw).to_string_lossy().as_bytes(),
+            )
+            .expect(".fake-fw");
+        }
+        let kernel_dir = dir.join("target/aarch64-unknown-none/debug");
+        std::fs::create_dir_all(&kernel_dir).expect("kernel dir");
+        std::fs::write(kernel_dir.join("kernel"), "KERNEL ELF").expect("kernel");
+        std::fs::write(
+            dir.join("aios.img"),
+            format!("ESP image arm={}\n", arm.name),
+        )
+        .expect("image");
+    }
+
+    let mut path = bin.clone().into_os_string();
+    path.push(":");
+    path.push(SYSTEM_PATH);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aios"));
+    isolated(&mut command)
+        .arg("soak")
+        .args(&sc.args)
+        .current_dir(&repo)
+        .env("PATH", &path)
+        .env("AIOS_FAKE_ROOT", &root)
+        .env("AIOS_SOAK_MIN_ARM_BASE", &base)
+        .env("AIOS_SOAK_LOADAVG", sc.loadavg)
+        .env("RUSTUP_TOOLCHAIN", "the-harness-toolchain")
+        .env("CARGO_TARGET_DIR", "/the-harness-target")
+        .env("CARGO_BUILD_TARGET_DIR", "/the-harness-build-target")
+        .env_remove("AIOS_EDK2_FW")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("start the harness");
+    if let Some((signal, log)) = sc.interrupt {
+        let log = repo.join("out").join(log);
+        let until = Instant::now() + Duration::from_secs(60);
+        while !std::fs::read(&log).is_ok_and(|t| t.windows(19).any(|w| w == b"AIOS kernel booting"))
+        {
+            assert!(
+                Instant::now() < until,
+                "{}: the boot never started",
+                sc.name
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let sent = Command::new("kill")
+            .arg(format!("-{signal}"))
+            .arg(child.id().to_string())
+            .status()
+            .expect("run kill");
+        assert!(sent.success(), "kill -{signal}");
+    }
+    let out = child.wait_with_output().expect("wait for the harness");
+
+    let out_dir = if sc.args.iter().any(|a| a == "out=out") {
+        Some(repo.join("out"))
+    } else {
+        std::fs::read_dir(repo.join("target/soak"))
+            .ok()
+            .and_then(|mut entries| entries.next())
+            .map(|e| e.expect("an entry").path())
+    };
+    let out_dir = out_dir.filter(|d| d.is_dir());
+    let files = out_dir.as_deref().map(files_under);
+    let read = |name: &str| std::fs::read_to_string(root.join(name)).unwrap_or_default();
+    let mut before = Vec::new();
+    let mut boots = 0;
+    for e in std::fs::read_dir(&root).expect("list the root") {
+        let name = e.expect("entry").file_name().to_string_lossy().into_owned();
+        if name.starts_with("argv-") {
+            boots += 1;
+        }
+        if let Some(n) = name
+            .strip_prefix("summary-before-")
+            .and_then(|r| r.strip_suffix(".md"))
+        {
+            before.push((n.parse().expect("a boot number"), read(&name)));
+        }
+    }
+    before.sort();
+    let alive = ["qemu.pid", "child.pid"]
+        .iter()
+        .filter(|f| {
+            std::fs::read_to_string(root.join(f)).is_ok_and(|pid| still_running(pid.trim()))
+        })
+        .map(|f| f.to_string())
+        .collect();
+    ArmOutcome {
+        code: out.status.code().unwrap_or(-1),
+        stdout: out.stdout,
+        stderr: out.stderr,
+        files,
+        out: out_dir,
+        boots,
+        rustup_log: read("rustup.log"),
+        just_log: read("just.log"),
+        before,
+        alive,
+        root,
+    }
+}
+
+/// The golden text of an interleave outcome: every part, normalised.
+pub fn arm_golden_text(o: &ArmOutcome) -> Vec<u8> {
+    let n = |d: &[u8]| normalize(d, &o.root);
+    let mut g = format!("exit {}\n--- stdout\n", o.code).into_bytes();
+    g.extend(n(&o.stdout));
+    g.extend_from_slice(b"--- stderr\n");
+    g.extend(n(&o.stderr));
+    match &o.files {
+        Some(files) => {
+            let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+            g.extend(format!("--- out: {}\n", names.join(" ")).into_bytes());
+            for (name, data) in files {
+                g.extend(format!("--- file {name}\n").into_bytes());
+                g.extend(n(data));
+            }
+        }
+        None => g.extend_from_slice(b"--- out: (none)\n"),
+    }
+    g.extend(format!("--- boots: {}\n--- rustup.log\n", o.boots).into_bytes());
+    g.extend(n(o.rustup_log.as_bytes()));
+    g.extend_from_slice(b"--- just.log\n");
+    g.extend(n(o.just_log.as_bytes()));
     g
 }

@@ -1,21 +1,41 @@
-//! Classifier parity with `CLASSIFY_AWK` in the deleted `scripts/soak-qemu.sh`.
+//! The soak classifier against its goldens and against the oracle,
+//! `CLASSIFY_AWK` in the deleted `scripts/soak-qemu.sh` (read from git history
+//! at `ORACLE_COMMIT`).
 //!
-//! - `classify_goldens_match_aios` compares the classifier line of every case in
-//!   `tests/fixtures/soak/synthetic.txt` with `tests/golden/soak/classify.golden`
-//!   (`<case>\t<11 fields>` per line), recorded from the oracle.
-//! - `record_classify_goldens_from_oracle` (ignored) rewrites that file from the
-//!   oracle: the script at `ORACLE_COMMIT`, read from git history.
-//! - `classify_differential_against_oracle` runs the oracle and aios side by side
-//!   on every case; it keeps running after the switch-over deleted the script.
-//! - `classify_differential_on_real_logs` (ignored) does the same for every
-//!   `*.log` under the directories in `AIOS_SOAK_REAL_LOGS` (colon-separated):
-//!   real soak logs are never committed (owner decision, 2026-09-29).
+//! - `classify_goldens_match_aios` compares the classifier line (refined class
+//!   first) of every case in `tests/fixtures/soak/synthetic.txt` with
+//!   `tests/golden/soak/classify.golden` (`<case>\t<11 fields>` per line);
+//!   `AIOS_BLESS_GOLDENS=1` rewrites it from aios.
+//! - `classify_differential_against_oracle` is the fold differential: on every
+//!   case, `base_line()` (the line with the base class, WEDGE-STUCK and
+//!   WEDGE-ALIVE read as WEDGE, PANIC-LOCK as PANIC, DEGRADED as CLEAN) is
+//!   byte-identical to the oracle's line. So crash-fix step 1a's refinements
+//!   changed nothing else.
+//! - `line_and_base_line_differ_in_the_class_only` checks that `line()` and
+//!   `base_line()` differ in field 1 alone, on every case.
+//! - `ipc_iterations_match_the_kernel_bench` keeps the classifier's CLEAN
+//!   threshold equal to `IPC_ITERATIONS` in `kernel/src/bench.rs`.
+//! - `class_lists_match_class_all` keeps the class lists in the `just soak`
+//!   recipe comment and the `just soak` rows of the developer guide and the
+//!   README equal to `Class::ALL`.
+//! - `classify_differential_on_real_logs` (ignored) runs the fold differential
+//!   for every `*.log` but `build.log` under the directories in `AIOS_SOAK_REAL_LOGS`
+//!   (colon-separated; real soak logs are never committed, owner decision
+//!   2026-09-29), prints the transition matrix (oracle class -> class) and every
+//!   boot whose class changed, and checks each log's class under the same fold
+//!   against the `class` column of the `summary.tsv` beside it, if any. With
+//!   `AIOS_SOAK_EXPECT_CHANGES` (`FROM->TO=N,...`, e.g.
+//!   `WEDGE->WEDGE-STUCK=10,WEDGE->WEDGE-ALIVE=2` for run 167) it also asserts
+//!   that the boots whose class changed are exactly those transitions and
+//!   counts, so a wrong split within a base class fails too.
 
 mod common;
 
-use aios_tools::cmd::soak::classify::{classify, CLASSES};
-use common::soak::{check_golden, golden_dir, oracle_classify, synthetic_cases, write_cases};
+use aios_tools::cmd::soak::classify::{classify, Class, IPC_ITERATIONS};
+use common::fixture::repo_root;
+use common::soak::{check_golden, oracle_classify, synthetic_cases, write_cases};
 use common::unique_dir;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 /// `<case>\t<classifier line>\n` for every case, the classify.golden format.
@@ -30,16 +50,28 @@ fn golden_lines<'a>(rows: impl IntoIterator<Item = (&'a str, Vec<u8>)>) -> Vec<u
     out
 }
 
+/// Field 1 of a classifier line.
+fn class_field(line: &[u8]) -> String {
+    let end = line.iter().position(|&b| b == b'\t').unwrap_or(line.len());
+    String::from_utf8_lossy(&line[..end]).into_owned()
+}
+
+/// A class name read as its base class: WEDGE-STUCK and WEDGE-ALIVE as WEDGE,
+/// PANIC-LOCK as PANIC, DEGRADED as CLEAN; the script's names as themselves.
+fn fold(name: &str) -> &str {
+    Class::from_name(name).map_or(name, |c| c.base().name())
+}
+
 #[test]
 fn corpus_covers_every_class_and_stays_public_safe() {
     let cases = synthetic_cases();
-    assert_eq!(cases.len(), 108, "update this count with the corpus");
-    for class in CLASSES {
+    assert_eq!(cases.len(), 127, "update this count with the corpus");
+    for class in Class::ALL {
         let n = cases
             .iter()
             .filter(|c| classify(&c.log, c.stall).class == class)
             .count();
-        assert!(n >= 5, "only {n} {class} cases");
+        assert!(n >= 5, "only {n} {} cases", class.name());
     }
     let text = std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/soak/synthetic.txt"),
@@ -52,6 +84,56 @@ fn corpus_covers_every_class_and_stays_public_safe() {
     assert!(
         !text.windows(6).any(|w| w == b"/home/"),
         "a local path in the corpus"
+    );
+}
+
+#[test]
+fn ipc_iterations_match_the_kernel_bench() {
+    let path = repo_root().join("kernel/src/bench.rs");
+    let text = std::fs::read_to_string(&path).expect("kernel/src/bench.rs");
+    let decl = "const IPC_ITERATIONS: usize = ";
+    let values: Vec<u64> = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix(decl))
+        .map(|v| {
+            let v = v.strip_suffix(';').expect("a `;` after the value");
+            v.replace('_', "").parse().expect("a decimal literal")
+        })
+        .collect();
+    assert_eq!(
+        values,
+        [IPC_ITERATIONS],
+        "{}: one `{decl}...;` declaration, equal to the classifier's",
+        path.display()
+    );
+}
+
+/// The one line of `rel` (repo-relative) that starts with `prefix`.
+fn line_starting_with(rel: &str, prefix: &str) -> String {
+    let path = repo_root().join(rel);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with(prefix)).collect();
+    assert_eq!(lines.len(), 1, "{rel}: one line starting {prefix:?}");
+    lines[0].to_string()
+}
+
+#[test]
+fn class_lists_match_class_all() {
+    let all = Class::ALL.map(Class::name).join("/");
+    let recipe = line_starting_with("justfile", "# Soak-test boots:");
+    assert!(
+        recipe.ends_with(&format!(" classified {all}")),
+        "justfile `just soak` comment lists other classes than {all}: {recipe}"
+    );
+    let row = line_starting_with("docs/project/developer-guide.md", "| `just soak` |");
+    assert!(
+        row.contains(&format!("({all})")),
+        "developer-guide `just soak` row lists other classes than {all}: {row}"
+    );
+    let row = line_starting_with("README.md", "| `just soak` |");
+    assert!(
+        row.contains(&format!("({all})")),
+        "README `just soak` row lists other classes than {all}: {row}"
     );
 }
 
@@ -69,22 +151,6 @@ fn classify_goldens_match_aios() {
 }
 
 #[test]
-#[ignore = "rewrites tests/golden/soak/classify.golden from the oracle"]
-fn record_classify_goldens_from_oracle() {
-    let dir = unique_dir("soak-record-classify");
-    let cases = synthetic_cases();
-    let rels = write_cases(&dir, &cases);
-    let golden = golden_lines(
-        cases
-            .iter()
-            .zip(&rels)
-            .map(|(c, rel)| (c.name.as_str(), oracle_classify(&dir.join(rel), c.stall))),
-    );
-    std::fs::create_dir_all(golden_dir()).expect("golden dir");
-    std::fs::write(golden_dir().join("classify.golden"), golden).expect("write the golden");
-}
-
-#[test]
 fn classify_differential_against_oracle() {
     let dir = unique_dir("soak-diff-classify");
     let cases = synthetic_cases();
@@ -92,7 +158,7 @@ fn classify_differential_against_oracle() {
     let mut diffs = Vec::new();
     for (case, rel) in cases.iter().zip(&rels) {
         let want = oracle_classify(&dir.join(rel), case.stall);
-        let got = classify(&case.log, case.stall).line();
+        let got = classify(&case.log, case.stall).base_line();
         if want != got {
             diffs.push(format!(
                 "{}\n  oracle {}\n  aios   {}",
@@ -111,7 +177,19 @@ fn classify_differential_against_oracle() {
     );
 }
 
-/// Every `*.log` below `dir`, sorted.
+#[test]
+fn line_and_base_line_differ_in_the_class_only() {
+    for case in synthetic_cases() {
+        let c = classify(&case.log, case.stall);
+        let (line, base) = (c.line(), c.base_line());
+        let tail = |l: &[u8]| l[l.iter().position(|&b| b == b'\t').expect("a tab")..].to_vec();
+        assert_eq!(tail(&line), tail(&base), "{}", case.name);
+        assert_eq!(class_field(&line), c.class.name(), "{}", case.name);
+        assert_eq!(class_field(&base), c.class.base().name(), "{}", case.name);
+    }
+}
+
+/// Every `*.log` below `dir`, sorted, except the harness's `build.log`.
 fn logs_under(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -121,8 +199,40 @@ fn logs_under(dir: &Path, out: &mut Vec<PathBuf>) {
     for p in paths {
         if p.is_dir() {
             logs_under(&p, out);
-        } else if p.extension().is_some_and(|e| e == "log") {
+        } else if p.extension().is_some_and(|e| e == "log")
+            && p.file_name().is_some_and(|n| n != "build.log")
+        {
             out.push(p);
+        }
+    }
+}
+
+/// The `class` column of every `summary.tsv` below `dir`, by the log it names.
+fn recorded_classes(dir: &Path, out: &mut HashMap<PathBuf, String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries {
+        let p = entry.expect("an entry").path();
+        if p.is_dir() {
+            recorded_classes(&p, out);
+        } else if p.file_name().is_some_and(|n| n == "summary.tsv") {
+            let text = std::fs::read(&p).expect("read a summary.tsv");
+            let mut rows = text.split(|&b| b == b'\n').filter(|r| !r.is_empty());
+            let header: Vec<&[u8]> = rows
+                .next()
+                .map(|h| h.split(|&b| b == b'\t').collect())
+                .unwrap_or_default();
+            let column = |name: &[u8]| header.iter().position(|h| *h == name);
+            let (Some(class), Some(log)) = (column(b"class"), column(b"log")) else {
+                panic!("{}: no class or log column", p.display());
+            };
+            for row in rows {
+                let cells: Vec<&[u8]> = row.split(|&b| b == b'\t').collect();
+                let at = |i: usize| String::from_utf8_lossy(cells.get(i).copied().unwrap_or(b""));
+                let parent = p.parent().expect("a parent");
+                out.insert(parent.join(at(log).as_ref()), at(class).into_owned());
+            }
         }
     }
 }
@@ -133,25 +243,90 @@ fn classify_differential_on_real_logs() {
     let dirs = std::env::var_os("AIOS_SOAK_REAL_LOGS")
         .expect("set AIOS_SOAK_REAL_LOGS to directories of soak logs");
     let mut logs = Vec::new();
+    let mut recorded = HashMap::new();
     for dir in std::env::split_paths(&dirs) {
         logs_under(&dir, &mut logs);
+        recorded_classes(&dir, &mut recorded);
     }
     assert!(!logs.is_empty(), "no *.log files under AIOS_SOAK_REAL_LOGS");
-    let mut counts = std::collections::BTreeMap::new();
+    let mut counts: BTreeMap<Class, usize> = BTreeMap::new();
+    let mut transitions: BTreeMap<(String, Class), usize> = BTreeMap::new();
+    let mut changed = Vec::new();
     let mut diffs = Vec::new();
+    let mut checked = 0;
     for log in &logs {
         let raw = std::fs::read(log).expect("read a log");
         let got = classify(&raw, None);
         *counts.entry(got.class).or_insert(0) += 1;
         let want = oracle_classify(log, None);
-        if want != got.line() {
-            diffs.push(log.display().to_string());
+        let oracle = class_field(&want);
+        *transitions.entry((oracle.clone(), got.class)).or_insert(0) += 1;
+        if oracle != got.class.name() {
+            changed.push(format!(
+                "  {}: {oracle} -> {}",
+                log.display(),
+                got.class.name()
+            ));
+        }
+        if want != got.base_line() {
+            diffs.push(format!(
+                "{}\n  oracle {}\n  base   {}",
+                log.display(),
+                String::from_utf8_lossy(&want),
+                String::from_utf8_lossy(&got.base_line())
+            ));
+        }
+        if let Some(rec) = recorded.get(log) {
+            checked += 1;
+            if fold(rec) != fold(got.class.name()) {
+                diffs.push(format!(
+                    "{}: summary.tsv records {rec}, aios classifies {}",
+                    log.display(),
+                    got.class.name()
+                ));
+            }
         }
     }
-    eprintln!("{} real logs: {counts:?}", logs.len());
+    if let Some(spec) = std::env::var_os("AIOS_SOAK_EXPECT_CHANGES") {
+        let spec = spec.to_string_lossy().into_owned();
+        let want: BTreeMap<String, usize> =
+            spec.split(',')
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| {
+                    let (edge, n) = t.trim().rsplit_once('=').unwrap_or_else(|| {
+                        panic!("AIOS_SOAK_EXPECT_CHANGES: '{t}' is not FROM->TO=N")
+                    });
+                    let n = n
+                        .parse()
+                        .unwrap_or_else(|_| panic!("AIOS_SOAK_EXPECT_CHANGES: bad count in '{t}'"));
+                    (edge.to_string(), n)
+                })
+                .collect();
+        let got: BTreeMap<String, usize> = transitions
+            .iter()
+            .filter(|((from, to), _)| from.as_str() != to.name())
+            .map(|((from, to), n)| (format!("{from}->{}", to.name()), *n))
+            .collect();
+        if got != want {
+            diffs.push(format!(
+                "AIOS_SOAK_EXPECT_CHANGES: expected changes {want:?}, got {got:?}"
+            ));
+        }
+    }
+    let names: BTreeMap<&str, usize> = counts.iter().map(|(c, n)| (c.name(), *n)).collect();
+    eprintln!("{} real logs: {names:?}", logs.len());
+    eprintln!("{checked} of them checked against a summary.tsv class");
+    eprintln!("transitions (oracle class -> class: boots):");
+    for ((from, to), n) in &transitions {
+        eprintln!("  {from} -> {}: {n}", to.name());
+    }
+    eprintln!("{} boots changed class:", changed.len());
+    for line in &changed {
+        eprintln!("{line}");
+    }
     assert!(
         diffs.is_empty(),
-        "{} logs differ:\n{}",
+        "{} differences:\n{}",
         diffs.len(),
         diffs.join("\n")
     );
