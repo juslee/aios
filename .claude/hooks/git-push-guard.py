@@ -80,9 +80,13 @@ subagent, AIOS_TEAM from the lead's launch line):
      per-team spelling `bash scripts/agent/qemu-lock.sh run --team
      team-build ...` or `... --team team-fix ...`, so a background
      verifier's boot needs no prompt; this rule is the check on the
-     wrapped command, and its ask or deny overrides that allow. Any other
-     `run` spelling (`--team solo`, another path, sh, a prefix) goes
-     through the permission prompt (refused in background and -p runs).
+     wrapped command, and its ask or deny overrides that allow. A `run`
+     spelling that misses the allow (`--team solo`, another path, sh, an
+     env prefix or variable assignment) goes through the permission prompt
+     (refused in background and -p runs); a cd ... && or nohup prefix may
+     still match, and verifier.md forbids it. Neither this rule nor the
+     wrapper compares `--team` with AIOS_TEAM (rule 11 says who writes
+     which team).
        deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
              exists; any start that is not the wrapper; an agent with no
              usable agent_type; any agent but the verifier; a team lead

@@ -53,13 +53,15 @@ just test 2>&1
 
 ### Gate 4: QEMU boot
 
-Spawn the verifier (rule 11: `isolation: "worktree"`; the worktree path, the sha to boot (its tip) and the team in the prompt) in mode `boot`: one text boot, plus one gpu boot when the phase needs the display, with the phase's UART lines as acceptance. Its run directories land in `<W>/target/soak/`; remove its temporary worktree afterwards (`/justin:team`, Placement).
+A team lead spawns the verifier (rule 11: `isolation: "worktree"`; the worktree path, the sha to boot (its tip) and the lead's team in the prompt) in mode `boot`: one text boot, plus one gpu boot when the phase needs the display, with the phase's UART lines as acceptance. Its run directories land in `<W>/target/soak/`; remove its temporary worktree afterwards (`/justin:team`, Placement).
 
-**PASS condition:** the verifier reports `PASS`, with every expected UART line of the phase doc's acceptance criteria matched. `DEFERRED` means the host was loaded: re-run later.
+A solo session spawns no verifier: the settings allow `run` only for `team-build` and `team-fix`, and a background verifier could not answer the prompt of a `--team solo` call. Its main thread runs the same boots itself, from `W`'s root, as `verifier.md` (Running) spells them but with `--team solo`, and the owner answers the prompt (rule 11, QEMU and the host). It then runs Gates 5 and 6 there too.
+
+**PASS condition:** the verifier (or the solo main thread) reports `PASS`, with every expected UART line of the phase doc's acceptance criteria matched. `DEFERRED` means the host was loaded: re-run later.
 
 ### Gate 5: Objdump (section addresses)
 
-The verifier runs the sysroot `llvm-objdump -h` command from rule 02 in the same spawn:
+The verifier runs the sysroot `llvm-objdump -h` command from rule 02 in the same spawn (in a solo session, the main thread, from `W`'s root):
 
 ```bash
 "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-objdump -h target/aarch64-unknown-none/debug/kernel

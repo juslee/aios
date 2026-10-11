@@ -105,7 +105,7 @@ T16 ran the placement for real with `claude -p` (CLI 2.1.292):
 - **E1 (worker).** The worker committed `docs/e2e-probe.md` on its `worktree-agent-<id>` branch. The commit reached `W`'s branch only through the lead's `git -C <W> merge --ff-only`; the worker never touched `W`.
 - **E5 (kernel-dev).** The kernel-dev range went through the Fable review (round 1: 0 must/should/nit), the fast-forward and the clean-up in that order. No worktree or temporary branch from the run was left (a stray `worktree-agent-abe2b20d` from an earlier session predates it).
 
-### Workflow `agent()` worktrees (T7b)
+### Workflow `agent()` worktrees (rule 4 change of 2026-10-10, 0293e47)
 
 A Workflow `agent()` with `isolation: "worktree"` does not get the `agent-<id>` shape. Headless probes (CLI 2.1.292) of the PreToolUse payloads of its Bash calls showed:
 
@@ -114,7 +114,7 @@ A Workflow `agent()` with `isolation: "worktree"` does not get the `agent-<id>` 
 - without isolation the `cwd` is the main checkout; an Agent-tool spawn with isolation still gets `agent-<id>` on `worktree-agent-<id>`, with an `agent_id` that matches `<id>`;
 - an agent's `cwd` persists across Bash calls (after `cd X`, the next payload's `cwd` is X).
 
-Before T7b, guard rule 4 knew only `agent-<id>`, so every isolated workflow agent was denied its first `git reset --hard`. Rule 4 now accepts both shapes (strict names, git's admin directory carrying the same name) and owns a worktree by payload `cwd`. The owner dropped a state-file binding store after two attack rounds, since a file agents can reach cannot be defended by command-text analysis; the guard stops accidents by cooperative agents, and the lead's range check before every fast-forward is the backstop. The target-resolution gaps that remain (a stopped rebase in the own worktree, `mkdir d && cd d && git commit`) are tracked in #241.
+Before 0293e47, guard rule 4 knew only `agent-<id>`, so every isolated workflow agent was denied its first `git reset --hard`. Rule 4 now accepts both shapes (strict names, git's admin directory carrying the same name) and owns a worktree by payload `cwd`. The owner dropped a state-file binding store after two attack rounds, since a file agents can reach cannot be defended by command-text analysis; the guard stops accidents by cooperative agents, and the lead's range check before every fast-forward is the backstop. The target-resolution gaps that remain (a stopped rebase in the own worktree, `mkdir d && cd d && git commit`) are tracked in #241.
 
 ## Update 2026-10-10: an editor holding a temporary worktree open
 

@@ -99,7 +99,7 @@ The working plan is the plan file the user approved in plan mode (`<planFilePath
     a. Read the step's acceptance criteria from the phase doc BEFORE writing any code
     b. Consult your working plan doc (`docs/knowledge/plans/*-jl-phase-$ARGUMENTS-*.md`) for the approach, key decisions, and files to modify
     c. Record the tip (`git -C <W> rev-parse HEAD`), then spawn kernel-dev (or worker or doc-writer for non-kernel steps) with the step text, the tip and the commit message `Phase $ARGUMENTS MN: Step X — <step description>` — the full step, no partial work
-    d. Run `/justin:team`'s Placement on the writer's range: the range check, the Fable review (code-reviewer, `rules` and `bugs`) for a kernel-dev range, at most three rounds, then the writer's gate output at its head, the fast-forward and the clean-up. Route boots to the verifier on the new tip; a `DEFERRED` boot is retried later.
+    d. Run `/justin:team`'s Placement on the writer's range: the range check, the Fable review (code-reviewer, `rules` and `bugs`) for a kernel-dev range, at most three rounds, then the writer's gate output at its head, the fast-forward and the clean-up. Route boots to the verifier on the new tip (a solo session boots on its main thread with `--team solo`, rule 11, QEMU and the host); a `DEFERRED` boot is retried later.
     e. If any gate fails: read the error, fix the root cause through a fresh writer, re-run — do not skip
     f. Push from the worktree with the explicit refspec (Placement's last step)
     g. Mark the task completed
