@@ -4,7 +4,7 @@
 //! so context switches don't require full TLB flushes. When the ASID space wraps,
 //! a generation bump + full TLB flush invalidates all stale entries.
 //!
-//! Per memory.md §3.4.
+//! Per memory/virtual.md §3.4.
 
 /// ASID value with generation tracking.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

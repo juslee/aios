@@ -163,14 +163,16 @@ pub struct LogEntry {
     pub level: LogLevel,         // 1 byte
     /// Originating subsystem.
     pub subsystem: Subsystem,    // 1 byte
-    /// Flags: bit 0 = continuation (message truncated, next entry continues it).
+    /// Flags: bit 0 = continued (the next entry of the same ring continues
+    /// this message); bit 1 = continuation (this entry continues the
+    /// message of the entry before it).
     pub flags: u8,               // 1 byte
     /// Length of valid bytes in `message` (0..=48).
     pub msg_len: u8,             // 1 byte
     /// Reserved for future use.
     pub _reserved: [u8; 3],      // 3 bytes
-    /// Inline message buffer. Messages longer than 48 bytes are truncated
-    /// (with the continuation flag set if a second entry follows).
+    /// Inline message buffer. A message longer than 48 bytes continues in a
+    /// second entry (bits 0 and 1 of `flags`).
     /// UTF-8 encoded. Not null-terminated.
     pub message: [u8; 48],       // 48 bytes
 }                                // Total: 64 bytes
@@ -178,7 +180,13 @@ pub struct LogEntry {
 const _: () = assert!(core::mem::size_of::<LogEntry>() == 64);
 ```
 
-The 48-byte inline message covers the vast majority of kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 35 bytes. For the rare longer message, the continuation flag allows chaining two entries (96 bytes of message), which is sufficient for any kernel diagnostic.
+The 48-byte inline message covers most kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 32 bytes. A longer message takes two entries, 96 bytes of message in all:
+
+- The **head** entry has flags bit 0 set and holds the first 48 bytes. The **continuation** entry, the next entry of the same ring, has bit 1 set, holds the rest, and repeats the head's timestamp, core, level and subsystem.
+- Each part ends on a UTF-8 character boundary. A character that would straddle byte 48 moves whole into the continuation, so the head can hold fewer than 48 bytes.
+- A message longer than two entries keeps the first 95 bytes or fewer (again cut on a character boundary) and ends with `~`, which marks the dropped text.
+
+The splitting and joining logic is host-tested in `shared/src/observability.rs`: `LogMessageBuf` formats a message and builds its entries, and `next_log_line` joins them again on the drain side (§2.7).
 
 ### 2.5 Per-Core Ring Buffer
 
@@ -186,9 +194,10 @@ The 48-byte inline message covers the vast majority of kernel log messages. A ty
 /// Lock-free per-core log ring buffer.
 ///
 /// One instance per CPU core, indexed by core ID. The owning core is the
-/// sole producer (writes to `head`). The UART drain function is the sole
-/// consumer (reads from `tail`). This single-producer/single-consumer
-/// design requires no locks or atomic RMW — only Release/Acquire ordering.
+/// sole producer (writes to `head`), with IRQs masked for the whole push.
+/// The UART drain function is the sole consumer (reads from `tail`). This
+/// single-producer/single-consumer design requires no locks or atomic RMW —
+/// only Release/Acquire ordering.
 pub struct LogRing {
     /// Fixed-size entry array. Power-of-2 count for efficient masking.
     entries: [LogEntry; 256],       // 256 * 64 = 16 KiB per core
@@ -196,6 +205,12 @@ pub struct LogRing {
     head: AtomicU32,
     /// Next read position (consumer, drain task only).
     tail: AtomicU32,
+    /// Messages dropped because the ring was full (producer only).
+    dropped: AtomicU32,
+    /// Ring position of the latest drop: `head` when it happened (producer only).
+    drop_pos: AtomicU32,
+    /// `dropped` as of the drain's last report (consumer only).
+    dropped_reported: AtomicU32,
 }
 
 /// Global log rings, one per core. BSS-allocated (zero-initialized at boot).
@@ -203,7 +218,9 @@ pub struct LogRing {
 static LOG_RINGS: [LogRing; MAX_CORES] = [const { LogRing::INIT }; MAX_CORES];
 ```
 
-When the ring is full (head catches tail), new entries **overwrite** the oldest entries. This is intentional — log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock).
+When the ring has no room for a new message (one entry, or two for a head and its continuation), the new message is **dropped**, counted in `dropped`, and its position (the current `head`) kept in `drop_pos`; the entries already in the ring are kept. Log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock). Dropping rather than overwriting the oldest entries keeps the single-producer/single-consumer split: the producer never writes `tail`, and it never writes a slot a single drain may be reading, because it loads `tail` with Acquire (pairing with the drain's Release store) and writes only slots that drain has finished with. Two overlapping `drain_logs` calls (§2.7) break this: one can store `tail` past a slot the other is still reading, and a push can then tear the entry the slower drain reads. The drain prints the count (§2.7).
+
+`log_impl` formats the message before masking IRQs, in whatever IRQ state its caller has, then masks IRQs (saving and restoring DAIF, so a caller that is already masked stays masked) while it reads the core ID and pushes to that core's ring. Masking keeps the owning core the only producer: an IRQ-context log call on the same core, such as the load balancer's, cannot run in the middle of a push, and the thread cannot migrate between reading the core ID and pushing. A head entry and its continuation are written first and then published together by one Release store of `head`, so the drain sees both or neither, and a full ring drops the whole message, never half of it.
 
 ### 2.6 Logging Macros
 
@@ -237,7 +254,7 @@ macro_rules! ktrace { ($subsys:ident, $($arg:tt)*) => { klog!(Trace, $subsys, $(
 
 ### 2.7 UART Drain
 
-A drain function, called periodically from the timer tick handler or idle loop, reads all per-core rings and writes formatted entries to the UART:
+A drain function, called from the CPU 0 timer tick handler (every 4th 1 ms tick), from the boot sequence, from the scheduler's `pc=0` check before it panics (on any CPU), and from the panic handler on CPU 0 (a bounded loop that empties the rings, skipped when CPU 0 was already inside a drain), reads all per-core rings and writes formatted entries to the UART:
 
 ```text
 [   0.003142] [0] INFO  Mm   Pool init: 32768 pages in Kernel
@@ -249,7 +266,11 @@ A drain function, called periodically from the timer tick handler or idle loop, 
 
 The format is: `[seconds.micros] [core] LEVEL Subsys Message`. The timestamp is converted from CNTVCT_EL0 ticks to seconds using the timer frequency (62.5 MHz on QEMU).
 
-The drain function holds the UART lock for the duration of one batch (up to 16 entries per drain call). This bounds the maximum time the UART is held, preventing log storms from blocking other cores.
+The drain joins a head entry with its continuation into one line. The producer never splits a pair, but a second drain call popping the same ring at the same time can take part of one (`drain_logs` has callers besides the CPU 0 timer tick, listed above). If the entry after a head is not its continuation (same timestamp and core, bit 1 set), the drain prints the head followed by `~<lost>` and then prints the other entry on its own. A continuation read without its head prints as `<lost>~` followed by its text.
+
+Messages dropped because a ring was full are not lost silently either. The drain prints one `[log] core N: K messages dropped (ring full)` line where the loss happened: when its read position in the ring reaches `drop_pos`, after the entries logged before the drop and before those logged after it. The report line has no timestamp of its own; its place in the log gives the gap. If a ring drops messages at more than one position before the drain reaches the first, the one report comes at the latest position and counts them all.
+
+One drain call prints up to 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus one dropped-messages line per ring whose drop position it reaches, and then stops once no entry is pending. An entry popped while looking for a missing continuation cannot be put back, so the call prints it even past the limit, usually as one more line. When that pending entry is itself a head whose continuation is also missing, printing it pops another entry, so while drains overlap each such head can add one more line, up to what the ring holds. The limit on lines per call bounds how long the CPU 0 timer tick spends draining; a full batch still runs well past one 1 ms tick at 115200 baud (see `timer.rs`). The UART itself has no lock.
 
 ### 2.8 Early Boot Fallback
 
@@ -706,27 +727,44 @@ These two streams share the same **access interface** (`AuditRead` syscall, capa
 
 ### 6.2 UART Drain (Phase 3)
 
-The primary export path during development. The drain function is called from the timer tick handler (every 1 ms) or the idle loop:
+The primary export path during development. The drain function is called from the CPU 0 timer tick handler (every 4th 1 ms tick), from the boot sequence to flush bursts, and from the scheduler's `pc=0` check before it panics (on any CPU). Abridged from `drain_logs` in `kernel/src/observability/mod.rs`:
 
 ```rust
-/// Drain log entries from all per-core rings to the UART.
-/// Reads up to `max_entries` per call to bound UART hold time.
-pub fn drain_logs_to_uart(max_entries: usize) {
-    for core in 0..core_count() {
-        let ring = &LOG_RINGS[core];
-        let mut drained = 0;
-        while let Some(entry) = ring.try_read() {
-            uart_format_entry(&entry);
-            drained += 1;
-            if drained >= max_entries {
+/// Drain the per-core log rings to the UART. One call prints
+/// DRAIN_BATCH_SIZE (16) lines across all rings, plus entries left pending
+/// and dropped-messages lines (§2.7), to bound each call. A head entry and
+/// its continuation print as one line.
+pub fn drain_logs() {
+    let freq = read_cntfrq();
+    let mut w = UartWriter;
+    let mut drained = 0;
+    for (core, ring) in LOG_RINGS.iter().enumerate() {
+        // An entry popped while looking for a continuation that was not
+        // there. It cannot be put back, so it prints next, even past the limit.
+        let mut pending = None;
+        while drained < DRAIN_BATCH_SIZE || pending.is_some() {
+            // pop_entry prints the `[log] core N: K messages dropped` line
+            // first when the read position reaches the ring's drop_pos.
+            let Some(line) = next_log_line(&mut pending, || pop_entry(ring, core)) else {
                 break;
-            }
+            };
+            let entry = &line.first;
+            let (secs, micros) = timestamp_to_secs_micros(entry.timestamp, freq);
+            let mut line_storage = [0u8; MAX_LINE_LEN];
+            let mut lb = LineBuf::new(&mut line_storage);
+            let _ = write!(lb, "[{:4}.{:06}] [{}] {} {} ", secs, micros,
+                entry.core_id, entry.level.name(), entry.subsystem.name());
+            // Joined text, with `~<lost>` / `<lost>~` for a missing half.
+            let _ = line.write_message(&mut lb);
+            let line_len = lb.len();
+            emit_drained_line(&mut w, &line_storage[..line_len]);
+            drained += 1;
         }
     }
 }
 ```
 
-The drain function formats each entry as a human-readable line (see §2.7) and writes it to the UART. Under normal load, the drain keeps up with log production. Under burst load, the ring buffer absorbs the burst and the drain catches up over subsequent ticks.
+The drain function formats each message (a single entry, or a head entry joined with its continuation) as a human-readable line (see §2.7) and writes it to the UART. Under normal load, the drain keeps up with log production. Under burst load, the ring buffer absorbs the burst and the drain catches up over subsequent ticks; a burst larger than the ring is dropped and counted (§2.5).
 
 ### 6.3 Kernel Info Page (Phase 3)
 
@@ -808,6 +846,96 @@ pub enum Scope {
 ```
 
 This allows Inspector to query both security provenance and operational metrics through the same capability-gated API, while keeping the underlying storage separate.
+
+### 6.5 Tripwire Line (crash-fix step 1b)
+
+The boot-crash fix ([ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md), step 1b) adds detect-only counters, which the kernel prints to the UART as one-line `[tripwire]` records. The format and the key catalogue are in `shared/src/tripwire.rs`, where host tests pin them; `Key::ALL` is the print order. The kernel runtime (the counter table, the UART printer and the print schedule) is `kernel/src/observability/tripwire.rs`.
+
+```text
+[tripwire] v=1 src=hb cpu=0 t=12001 ncpu=4 tick=12001,11890,11875,11902 twc=655500 twn=13 twmax=210312 n=9
+```
+
+**Format (schema `v=1`).**
+
+- After `[tripwire]`, every token is `key=value`. The prefix comes first: `v` (the schema version), `src`, `cpu` (the printing CPU), `t` (`TICK_COUNT`) and `ncpu` (the online CPUs). The counter keys follow in `Key::ALL` order, and `n` closes the line.
+- Keys are lowercase. Values match `^[0-9,]+$`, except `src` (`hb`, `g1`, `panic` or `exc`). A key with several values prints them comma-separated in index order: per CPU (`ncpu` values), per wake source, per lock class, per scheduler class, per N2 kind or per bad-channel site.
+- `n` is the number of `key=value` tokens before it, the prefix included.
+- `NonZero` mode omits every key whose values are all 0, except the prefix, `twc`, `twn`, `twmax` and `n`. `Full` mode prints every key.
+- A line never contains `[heartbeat]`, `PANIC:` followed by a space, or the uppercase exception fields (`ESR=`, `ELR=`, `EC=0x`, `FAR=`) that the soak classifier matches.
+
+**Parser contract: use the last complete line of a log.** A line is complete when its token count equals `n`, and a key missing from a complete line is 0. Most keys count events and never decrease. The gauges (`orphan_now`, `nowaker_now`, `wakefl_now`, `scanhold1`, `scanhold2`, `twmax`) are levels or maxima, and the `*_now` gauges fall when a flag clears. A parser that keeps the last value seen per key across lines is therefore wrong for gauges.
+
+The soak harness (`aios soak`, `tools/src/cmd/soak/tripwire.rs`, [developer-guide.md §5.6](../project/developer-guide.md)) is the consumer. It reads `Key::ALL` from `shared`, so a new key needs no harness edit, and applies the contract per boot: a line counts from its first `[tripwire] ` (another CPU's output can precede it), it is complete when every token after `[tripwire]` is `key=value` and the last is `n=N` with N equal to the number of `key=value` tokens before it (the prefix included, `[tripwire]` itself not), and the last complete line wins (`src=panic` and `src=exc` included); so does the last complete `src=g1` line. `summary.tsv` gets `tw_v`, `tw_src`, `tw_cpu`, `tw_t`, `tw_ncpu`, one `tw_<key>` column per key in `Key::ALL` order (the value as printed, `0` for a key the line leaves out), `g1_elrmm`, and the whole lines `g1_line` and `tw_line`. A log with no complete line has `-` in every one of them; a complete line of another schema version is kept whole in `tw_line`, with its version in `tw_v` and `-` in the decoded columns. The `[tripwire-ev]` lock events are counted by `kind` into `ev_ph`, `ev_self`, `ev_self_irq` and `ev_stuck`.
+
+**When lines print.**
+
+| `src` | Mode | When |
+|---|---|---|
+| `hb` | `NonZero` | Once per `[heartbeat] tick=N` line, before the next heartbeat |
+| `g1` | `Full` | Once, after `[bench] === Gate 1 Complete ===` |
+| `panic` | `Full` | From the panic handler on the panicking CPU, after the `PANIC:` lines and a `[panic]` line |
+| `exc` | `Full` | From the synchronous exception report on the faulting CPU, after its `regs:` and `ctx:` lines |
+
+The `hb` and `g1` lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler`, after the tick's own work (time slice, IPC timeouts, load balance, `NEED_RESCHED`). The UART has no lock, so a line waits while a thread holds the console: the Gate 1 bench marks it busy from its header to `=== Gate 1 Complete ===`. A line also waits while the thread CPU 0 interrupted holds one of the IRQ-class locks (`sync::held_by_stream(0)`, [deadlock-prevention.md](./deadlock-prevention.md) §3.3), so that the print does not stretch that hold while other CPUs spin on it. After 256 ticks of waiting the line prints anyway, and `hbdefer` counts it. That cap is below the 1000 ticks between heartbeats. At most one line prints per tick, the heartbeat's first.
+
+**Counters.** `CpuCounters` keeps one row of counters per CPU. Only that CPU writes its row, with IRQs masked, using `Relaxed` load and store only (no atomic read-modify-write). A per-CPU key prints each CPU's own row; any other key prints the sum over the rows, or the maximum for a gauge. `tick` counts each CPU's own timer IRQs, while `t` (`TICK_COUNT`) advances on CPU 0 only. Every CPU sets up its own timer PPI at boot (its `[smp]` line's `ppi_ok`, under "SMP lines" below). `ppi_ok=0` alone does not say whether a CPU ticks: a failed `group1` or `enabled` flag (named in the `kerror!`) leaves the CPU without timer IRQs, so its `tick` and `irqsw` read 0, while a failed `wake`, `rwp`, `priority` or `level` flag can leave the PPI firing; the CPU's `tick` column says which. `pcphys` (a single value) counts restores of threads that were switched out on the IRQ path at a physical-alias PC, which CPUs 1–3 run their exception paths at (`vbar_kva=0`).
+
+**Key groups.** `shared/src/tripwire.rs` documents every key; in short:
+
+| Keys | Width | Meaning |
+|---|---|---|
+| `tick`, `irqsw`, `irqsw0`, `nest`, `insched`, `n4` | per CPU | Timer IRQs; switches committed by `schedule()` on the IRQ return path (`irqsw0`: with no current thread); nested IRQ entries; `schedule()` calls refused by its re-entrancy guard; dispatches on a CPU other than the one read before masking (N4) |
+| `elrmm`, `spsrmm` | per CPU | IRQ returns whose ELR_EL1 or SPSR_EL1 differs from the value the stub saved at entry (H1). Every step-1b boot that runs past about tick 1000 shows one on CPU 0, most likely a harmless swap of the bench threads' `wfe` tail loops after Gate 1 (the crash-fix ADR's 2026-10-09 errata), so a single mismatch is not by itself evidence of harm |
+| `rsthold`, `tpidrbad` | per CPU | A `restore_context` while the dispatching stream still held a lock stamped with its own generation; a TPIDR_EL1 that is not MPIDR_EL1 Aff0. Both expected 0 |
+| `xdir`, `xrep`, `xnever`, `n1` | 1 | Direct and reply switches to a thread that last ran on another CPU, or never ran; `schedule()` on the IRQ return path leaving its Runnable current thread unqueued (N1) |
+| `pcnull`, `pcphys`, `pcother`, `spbad` | 1 | Restore-site checks: a saved PC of 0, in the physical alias of the kernel text, or elsewhere (or misaligned); a saved SP outside the thread's stack |
+| `n2` | 4 | `rpre`, `rblk`, `vpre`, `vblk`: wakes that skipped a waiter. `rblk` (reply side) and `vblk` (receive side) mean the waiter is left with no timeout, the N2 lost-wakeup precursor; `rpre`/`vpre` heal when the waiter's timeout fires |
+| `latereply`, `misrep`, `ctbusy` | 1 | Reply skips that heal by the caller's timeout; replies that woke a thread blocked in another wait; wakes whose `clear_timeout` found `TIMEOUT_QUEUE` busy and left a stale entry |
+| `ubrun`, `ubrbl`, `ubdead`, `ubnone`, `ubmove` | 15, per wake source | `unblock` outcomes per source (`call`, `reply`, `send`, `selcall`, `selsend`, `selsig`, `sig`, `ndestroy`, `nto`, `nsto`, `pwait`, `to`, `chdestroy`, `pexit`, `cancel`): skipped a Running or Runnable target, revived a non-blocked one, found no thread, queued off the target's last CPU. `ubrun[reply]` (index 1) counts N2 and late replies together; `n2` splits them |
+| `lkph`, `lkpho`, `lkphrun`, `lkoxp`, `lkself`, `lktry`, `lktph`, `lkstk` | 9, per lock class | IRQ-class lock contention (§3.3 of [deadlock-prevention.md](./deadlock-prevention.md)). `lkoxp` is large in healthy boots (tens to hundreds of thousands for `THREAD_TABLE` by `g1`): every dispatch bumps the CPU's switch generation while holding `THREAD_TABLE`, so a waiter on another CPU sees a stamp whose CPU has dispatched since. It counts mostly that window, not migrated holders |
+| `lb`, `enqfull`, `badchan`, `badtid` | 1, 1, 3, 1 | Load-balancer migrations; enqueues dropped on a full run queue; out-of-range channel ids rejected at the capability check, `ipc_select` and the table slot; out-of-range thread ids met by the instrumentation |
+
+The scan keys are under "Heartbeat scans" below, and `twc`, `twn` and `twmax` under "Cost".
+
+**Heartbeat scans.** Right before each `src=hb` line, under the same deferral rule, CPU 0 runs two read-only scans of the scheduler and IPC state. Every lock is a try-lock that counts nothing (`try_lock_quiet`, and `spin::Mutex::try_lock` for `CHANNEL_TABLE`), so a scan never waits and never panics; a busy lock skips the scan.
+
+- **Scan A** (`sched::scan_snapshot`) holds all 8 run queues in ascending CPU order and then `THREAD_TABLE`, all at once, and reads each online CPU's current thread from the lock-free `CURRENT_TID` mirror, which equals `CURRENT_THREAD` while `THREAD_TABLE` is held. It flags an **orphan** (Runnable, not queued and not current) and a **starved** thread (queued and Runnable, not run for more than 1000 ticks, counted per scheduler class), and counts `dupq` (queued twice), `dupcur` (current on two CPUs) and `qbad` (queued but not Runnable) once per scan. `scana` counts completed scans, `skipa` scans skipped on a busy lock, and `skipaself` those whose lock CPU 0's own interrupted stream held. `scanhold1` is the longest hold.
+- **Scan B** (`ipc::scan_wakers`) runs only after a completed scan A, whose thread states it needs. It try-locks each waker table alone and drops it before the next: `CHANNEL_TABLE` (pending callers and waiting receivers), `TIMEOUT_QUEUE`, `NOTIFY_DEADLINES`, and `NOTIFICATION_TABLE`'s waiter lists (only when scan A saw a thread blocked on a notification or in a select). `SELECT_WAITERS` is not a waker. A thread blocked in IPC (sleep included) with no timeout and no channel reference, on a notification with no deadline, waiter entry or timeout, or in a select with none of the four, has no waker. `BlockedProcessWait` is not checked. If the thread's lock-free wake-pending marker is set (a waker has taken its last reference and not yet run `unblock`), it is **`wakefl`**, a wake in flight: starvation of the waker, not a lost wakeup. Otherwise it is **`nowaker`**. `scanb` counts completed scans, `skipb` skipped ones, and `scanhold2` is the longest single-table hold.
+- **Two strikes.** A flag is confirmed only when two consecutive completed scans of its kind (orphan, starved, no-waker, wake in flight; each kind keeps its own history) flag the thread, its last-run stamp is unchanged, and every online CPU whose `tick` has ever advanced has advanced by at least 100 since the first strike. A CPU whose `tick` is still 0 has taken no timer IRQ (it has not unmasked IRQs yet, or its timer PPI setup failed, `ppi_ok=0`) and does not gate. When the tick gate fails, `scanstall` counts it and the first strike is kept.
+- **Edge counting.** The event keys `orphan`, `nowaker`, `wakefl` and `starved` count a thread when it enters its kind's confirmed set, and again only after it has left the set and re-entered it. The gauges `orphan_now`, `nowaker_now` and `wakefl_now` hold the size of the confirmed set now, and fall when a flag clears.
+
+**Lock event lines.** The IRQ-class lock (`kernel/src/sync/irq_spin_lock.rs`) prints rare contention events as `[tripwire-ev]` lines, from the waiting CPU, straight to the UART with IRQs masked:
+
+```text
+[tripwire-ev] kind=ph cpu=0 lock=THREAD_TABLE idx=- ctx=irq owner_cpu=0 owner_gen=4711 holder_tid=12 cur_tid=3 holder_running=none holder=kernel/src/cap/mod.rs:39
+```
+
+`kind` is `ph` (a holder switched out on this CPU and not current elsewhere, met with IRQs masked; not by itself evidence of a wedge), `self` (the holder is the waiter's own thread, a same-stream deadlock the stamp cannot see) or `stuck` (one `lock()` has waited more than 2 s). `idx` is the per-CPU array index, or `-` for a scalar static; `ctx` is `thread`, `thread-off`, `irq` or `irq-exit`; `owner_cpu` and `owner_gen` decode the lock word the waiter saw; `holder_running` is the CPU the holder is current on, `none` or `?`. Unknown values print `?`. The same events are counted in the `lk*` keys, which the `[tripwire]` line carries. They are not `[tripwire]` lines and have no `n`.
+
+**Re-entry panic and fatal dumps.** An `IrqSpinLock` whose word already holds its waiter's own stamp panics. The panic handler prints the location and the message on two lines, and the soak harness joins them:
+
+```text
+PANIC: panicked at kernel/src/sched/scheduler.rs:196:38:
+lock re-entry: THREAD_TABLE on CPU 0 ctx=irq-exit holder=kernel/src/sync/selftest.rs:94 holder_irqs=on tid=19 gen=96512
+[panic] cpu=0 tid=19 ctx=irq-exit irq_was=off t=6.142418 irq_elr=0xffff000000087c84
+[tripwire] v=1 src=panic cpu=0 ...
+```
+
+That is the `tripwire-selftest` boot (below). `ctx` is the waiter's context, `holder` the holder's acquisition site (`?` when the IRQ landed between the holder's CAS and its field stores), and `gen` the stamp's switch generation. `ctx=irq` or `ctx=irq-exit` with `holder_irqs=on` is the crash-fix ADR's H3. The `[panic]` line names the CPU, the current thread, the context, whether IRQs were on, the CNTVCT time and, in IRQ context, `irq_elr`, the PC the IRQ interrupted (the holder's PC when the holder is the interrupted thread). The handler masks IRQs before it prints, halts at once on a second panic on the same CPU and, on CPU 0, then empties the log rings (§2.7). A synchronous exception report keeps its head and `Abort` lines and adds `regs:` (SP, SPSR, TTBR0_EL1, VBAR_EL1) and `ctx:` (CPU, thread, raw `IRQ_CTX`, in-scheduler) lines, indented two spaces, and a `src=exc` line.
+
+A lock word is bit 63 HELD, bit 62 IRQS_ON (IRQs were on at the acquisition), bits 54–61 the CPU and bits 0–53 that CPU's switch generation (`shared/src/lock.rs`). A fatal ELR, FAR or register value with the top two bits set and a small number in the low bits is a lock word, not an address: 0xc000000000034f51 is held, IRQs on, CPU 0, generation 216,913. Seeing one as a PC means a stale copy of a lock word was used as a return address.
+
+**Self-test.** The kernel feature `tripwire-selftest` (off by default, never in a soak arm) adds `kernel/src/sync/selftest.rs`: an Interactive thread pinned to CPU 0 takes `THREAD_TABLE` with IRQs on and spins for 3 ticks, so CPU 0's next tick re-enters the lock and prints the re-entry panic above end to end. Build it with `cargo build --target aarch64-unknown-none -p kernel --features tripwire-selftest`, assemble the ESP as the `justfile` `disk` recipe does, and boot it with `just soak runs=1 secs=40 --no-build report_only=1`. Without a panic it prints a `[selftest] ... FAIL` line.
+
+**SMP lines.** Each CPU prints one `[smp]` line at boot, straight to the UART (`smp::print_cpu_line`), recording where its exception vectors and `TTBR0_EL1` point and how its timer PPI setup ended:
+
+```text
+[smp] cpu=1 vbar=0x0000000040081000 ttbr0=0x00000000402ad000 vbar_kva=0 ttbr0_idmap=1 ppi=30 ppi_grp1=1 ppi_en=1 ppi_ok=1
+```
+
+`vbar_kva` is 1 when `VBAR_EL1` is a kernel (TTBR1) VA, and `ttbr0_idmap` is 1 when `TTBR0_EL1`'s table base (ASID and CnP masked off) is the boot identity map. CPUs 1–3 install `VBAR_EL1` with `adrp` while their MMU is off, so theirs is the physical alias of the vector table (`vbar_kva=0`, `ttbr0_idmap=1`), and their exception paths run at physical-alias PCs. A secondary prints its line inside its `PRINT_TURN` window, right after `Core N online`. CPU 0 prints its own after the boot address-space switch test: a TTBR1 VBAR (`vbar_kva=1`) and address space B's `TTBR0_EL1`, whose ASID is in bits [63:48] (`ttbr0_idmap=0`). Those positions are execution order, not serial-log order: `Core N online`, `4 CPUs online` and `TTBR0 switch: ASID 1 -> ASID 2` are ring-buffered `kinfo!` entries that reach the UART only at the next log drain, while the `[smp]` line is a direct `println!`, so in the log all four `[smp]` lines appear above those earlier entries. The `[smp]` line has no timestamp; match CPU 0's `ttbr0` ASID to the `TTBR0 switch` line by content, not by line order. The four `ppi` fields come from the CPU's own timer PPI setup on its redistributor (`gic::setup_timer_ppi`; the readback rules are in `shared::gic`): `ppi` is the INTID the boot CPU published from the DTB (30 on QEMU virt), `ppi_grp1` and `ppi_en` are the group and enable flags, each `1` (pass), `0` (fail) or `-` (not checked: the group under `GICD_CTLR.DS` = 0, where `GICR_IGROUPR0` is RAZ/WI to the kernel, and both fields when the setup did not run because the boot CPU published no timer PPI: a DTB timer INTID of 32 or above, which `enable_irq` takes as an SPI, so the line reads `ppi=1023` and CPU 0 panics after SMP bringup instead of printing its own line), and `ppi_ok` is 1 when none of the six flags (wake, rwp, group1, enabled, priority, level) failed. When `ppi_ok=0`, a `kerror!` (`cpu N timer PPI I setup failed: <failed flags>`, or `… not run, <error>`) follows through the log ring, and the CPU carries on: without a timer IRQ when `group1` or `enabled` failed, and possibly still ticking when only `wake`, `rwp`, `priority` or `level` failed (its `tick` column says which; "Counters" above). A secondary sets the PPI up before its kmap TTBR1 install, while the UART is unreachable, so its status is printed here, after the install. Expect one line per CPU in `ONLINE_CPUS`. When the bring-up wait times out (`SMP timeout: …`, after 100 ms), CPU 0 stops waiting and goes on printing, so a late secondary's `[smp]` line can interleave with CPU 0's output, and a secondary that never comes up has no line. No parser depends on `[smp]` lines; they are not `[tripwire]` lines and have no `n`.
+
+**Cost.** The printer uses `putc` only, with no `core::fmt`, no lock and no buffer, and runs with IRQs masked. `twc` is the cumulative CNTVCT time spent printing lines, `twn` the number of lines, and `twmax` the longest single line. A line's own cost is added after it prints, so the next line reports it. Under QEMU a line costs about 4.9 µs (about 300 CNTVCT ticks) per byte: a 95-byte heartbeat line about 29,000 ticks, and the `Full` `g1` line (about 940 bytes) 190,000–330,000 ticks (3.0–5.3 ms) in the boots so far, more under host load. So from Gate 1 on, `twmax` is the `g1` line's cost, and a bound meant for heartbeat lines must be checked against their own cost.
 
 -----
 
@@ -924,7 +1052,7 @@ Phase 3 is the natural landing point for most infrastructure because the schedul
 | Decision | Options Considered | Chosen | Rationale |
 |---|---|---|---|
 | **Log ring topology** | (a) Global ring with spinlock; (b) Per-core lock-free rings | Per-core lock-free | No contention on hot path. UART drain reads all cores sequentially — latency is bounded by drain batch size, not ring contention. |
-| **Log message format** | (a) Binary structured fields; (b) Inline string in fixed-size entry | Inline string (48 bytes) in 64-byte entry | Strings are human-readable on UART without a decoder. Fixed-size entries avoid heap allocation and allow simple ring buffer indexing. 48 bytes covers 95%+ of kernel messages. |
+| **Log message format** | (a) Binary structured fields; (b) Inline string in fixed-size entry | Inline string (48 bytes) in 64-byte entry, with one continuation entry for longer messages | Strings are human-readable on UART without a decoder. Fixed-size entries avoid heap allocation and allow simple ring buffer indexing. 48 bytes covers most kernel messages; the continuation carries the rest up to 96 bytes. |
 | **Metric sharding** | (a) Single atomic per counter (contention under SMP); (b) Per-core sharded atomics | Per-core sharded for Counters; single atomic for Gauges | Counters are write-heavy (every alloc increments). Per-core sharding eliminates cache-line bouncing. Gauges are write-infrequent and represent a single system-wide value, so sharding adds complexity without benefit. |
 | **Trace record size** | (a) 16 bytes (minimal); (b) 32 bytes (comfortable); (c) 64 bytes (rich) | 32 bytes | Two per cache line. Enough for 8-byte timestamp + 1-byte core ID + 17-byte event payload + 6 bytes padding. 4096 entries per core = 128 KiB, fits comfortably alongside the 16 KiB log ring. |
 | **Userspace export** | (a) Syscall per metric read; (b) Shared memory page with seqlock | Shared memory page | Zero-syscall reads for Inspector. Kernel updates on timer tick (1 ms). Inspector polls at UI rate (1 Hz). The seqlock pattern is proven (Linux vDSO) and requires no kernel entry on the read path. |
@@ -1021,13 +1149,13 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 ### 10.6 Semantic Log Compression
 
-**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, important log entries are overwritten within seconds. The log ring treats all entries as equally important — a routine "timer tick" entry displaces a diagnostic "IPC timeout on channel 7" entry.
+**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, the ring fills within seconds and important log entries are dropped. The log ring treats all entries as equally important — a routine "timer tick" entry takes the slot that a later diagnostic "IPC timeout on channel 7" entry needed.
 
 **AI solution.** AIRS learns normal log patterns from historical data. Common sequences — such as "IPC blocked on channel X" followed by "IPC unblocked on channel X" — are compressed to a single summary entry. Deviations from learned patterns are flagged and preserved at higher priority: "IPC blocked on channel 7 but unblocked by TIMEOUT instead of reply" is more informative than the two routine entries it replaces.
 
 **Effect.** 10× more effective use of fixed-size log rings. The ring holds 10× as many semantically distinct events because routine patterns are compressed. Anomalous entries are never displaced by routine entries.
 
-**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, overwrite-on-full, no pattern awareness.
+**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, drop-on-full, no pattern awareness.
 
 **Research.** KernelAGI [R6] proposes pattern-aware kernel logging as part of its ML subsystem. eBPF [R10] enables in-kernel log filtering and aggregation, which AIOS extends with learned pattern recognition.
 

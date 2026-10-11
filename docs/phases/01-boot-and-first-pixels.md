@@ -167,7 +167,7 @@ qemu-system-aarch64 \
 **GICv3 (hal.md §4.1):**
 - [x] Read GICv3 distributor base (`GICD`) and redistributor base (`GICR`) from DTB. On QEMU virt: `GICD` at `0x0800_0000`, `GICR` at `0x080A_0000` (8 redistributor frames × 128 KiB each for 4 cores)
 - [x] Initialize distributor: set `GICD_CTLR.ARE_NS` (affinity routing enable), enable Group 1 non-secure interrupts
-- [x] Initialize per-CPU redistributor: wake redistributor (clear `GICR_WAKER.ProcessorSleep`, wait for `ChildrenAsleep` to clear), enable Group 1 SGIs
+- [x] Initialize per-CPU redistributor: wake redistributor (clear `GICR_WAKER.ProcessorSleep`, wait for `ChildrenAsleep` to clear), enable Group 1 SGIs *(Note, 2026-10-11: the Group 1 part was never done. No path wrote `GICR_IGROUPR0`, so on CPUs 1–3 the SGIs and PPIs stayed in Group 0, which the kernel never enables, and their timer PPI never fired; only CPU 0, whose group edk2 sets, took timer IRQs (#200). Crash-fix step 200 writes `GICR_IGROUPR0` = 0xffffffff on every CPU's redistributor as part of its per-CPU timer PPI setup, with a readback ([hal.md §4.1](../kernel/hal.md)).)*
 - [x] Enable CPU interface via system registers: `ICC_SRE_EL1 |= 1` (enable system register interface), `ICC_IGRPEN1_EL1 = 1` (enable Group 1), set `ICC_PMR_EL1 = 0xFF` (allow all priorities)
 - [x] Store `InterruptController` handle in `KernelState.interrupt_controller`
 - [x] Advance `EarlyBootPhase` to `InterruptsReady`

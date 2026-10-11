@@ -1,0 +1,8 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --arm needs 2 to 4 arms, got 5
+--- out: (none)
+--- boots: 0
+--- rustup.log
+--- just.log

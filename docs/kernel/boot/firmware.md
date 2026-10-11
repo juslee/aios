@@ -23,13 +23,17 @@ DRAM training, PCI enumeration`"]
 
     LOAD_STUB --> STUB["`AIOS UEFI stub
 (runs in UEFI Boot Services, EL1)`"]
-    STUB --> PARSE["Parse UEFI memory map"]
-    PARSE --> LOAD_ELF["Locate and load kernel ELF from ESP"]
-    LOAD_ELF --> GOP["Acquire framebuffer via GOP"]
-    GOP --> DTB["Acquire device tree or ACPI tables"]
+    STUB --> LOAD_ELF["`Locate and load kernel ELF from ESP:
+allocate each PT_LOAD segment at its physical address,
+copy it, clean its text to PoU, invalidate I-cache`"]
+    LOAD_ELF --> BOOTINFO["Allocate and zero the BootInfo page"]
+    BOOTINFO --> GOP["Acquire framebuffer via GOP"]
+    GOP --> DTB["Scan UEFI config tables for the device tree and ACPI RSDP"]
     DTB --> RNG["Request RNG seed from UEFI for KASLR"]
-    RNG --> ALLOC["Allocate contiguous region for kernel"]
-    ALLOC --> EBS["ExitBootServices() -- point of no return"]
+    RNG --> EBS["`uefi::boot::exit_boot_services:
+GetMemoryMap() for the final map and its key,
+then ExitBootServices() -- point of no return,
+map recorded in BootInfo`"]
 
     EBS --> KERNEL["`Jump to kernel entry point
 (all UEFI Boot Services gone)`"]
@@ -101,7 +105,7 @@ pub struct BootInfo {
 }
 ```
 
-The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. The UEFI stub populates all available fields before calling `ExitBootServices()`.
+The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. Before calling `ExitBootServices()`, the UEFI stub fills in `magic` and the kernel extent (`kernel_phys_base`, `kernel_size`), and, where the firmware provides them, the GOP framebuffer fields (`framebuffer`, `fb_*`), the `device_tree` and `acpi_rsdp` addresses and the `rng_seed`. It then records the final memory map (`memory_map_*`): uefi-rs's `exit_boot_services` fetches it with `GetMemoryMap()` just before calling `ExitBootServices()`, which needs that call's map key. The stub does not fill `runtime_services`, `initramfs_*` or `cmdline_*` yet, so they stay 0: the command line (§2.3) and the initramfs and `boot.cfg` on the ESP (§2.4) are designed but not yet implemented.
 
 **Memory descriptors** follow the EFI_MEMORY_DESCRIPTOR layout with a 4-byte padding field for alignment:
 

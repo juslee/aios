@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: unexpected argument: foo (see --help)

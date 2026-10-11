@@ -6,9 +6,11 @@
 //! Per ipc.md §5.
 
 use crate::sched;
+use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use shared::lock::LockClass;
+use shared::tripwire::{BadchanSite, Key, WakeSource};
 use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
-use spin::Mutex;
 
 /// Per-thread select registration: what sources a BlockedSelect thread is
 /// waiting on, and which one fired.
@@ -29,8 +31,10 @@ pub(super) struct SelectWaiter {
 
 /// Per-thread select waiters. Lock ordering: after NOTIFICATION_TABLE,
 /// after CHANNEL_TABLE (per deadlock-prevention §3).
-pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
-    Mutex::new([const { None }; MAX_THREADS]);
+/// An IRQ-class lock (`sync::IrqSpinLock`): the notification timeout scan
+/// try-locks it from the timer IRQ.
+pub(super) static SELECT_WAITERS: IrqSpinLock<[Option<SelectWaiter>; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::SelectWaiters, [const { None }; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
 // API
@@ -38,6 +42,14 @@ pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
 
 /// Perform IpcSelect: wait on multiple sources, return the index of the
 /// first ready source. `entries` is a slice of SelectEntry.
+///
+/// Every channel entry requires `Capability::ChannelAccess(id)`, the same
+/// check `ipc_recv` makes. The whole set is validated before the
+/// non-blocking scan and before the thread is registered as a waiter on any
+/// source, so a rejected call observes nothing and leaves no partial
+/// registration: `EINVAL` if any id is out of range, otherwise
+/// `EPERM` if the caller lacks access to any channel in the set (or, for a
+/// set with a channel entry, if the calling thread has no owning process).
 ///
 /// Returns `(ready_index, matched_bits)` on success.
 /// `matched_bits` is non-zero only for notification entries.
@@ -55,7 +67,8 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     for entry in entries {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
-                if ch_id.0 as usize >= shared::MAX_CHANNELS {
+                if ch_id.index().is_none() {
+                    crate::observability::tripwire::bump(Key::Badchan, BadchanSite::Select.index());
                     return Err(IpcError::Einval as i64);
                 }
             }
@@ -67,19 +80,29 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
         }
     }
 
+    // Capability enforcement: ChannelAccess for every channel in the set
+    // (fail-closed). It must run before the non-blocking scan, which reports
+    // whether a channel has a pending message and consumes notification bits:
+    // scanning first would leak traffic on channels the caller cannot access.
+    // Lock order agrees: the scan and the registration below take
+    // CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS, while the check
+    // takes THREAD_TABLE (process_of_thread) and then PROCESS_TABLE
+    // (check_channel_access) one at a time; both rank above all three, so
+    // none of them may be held here.
+    check_channel_entries(my_tid, entries)?;
+
     // --- Non-blocking scan: check each entry ---
     if let Some((idx, bits)) = scan_entries(entries) {
         return Ok((idx, bits));
     }
 
     // --- Blocking path ---
-    let deadline = if timeout_ticks == u64::MAX {
-        u64::MAX
-    } else {
-        TICK_COUNT
-            .load(core::sync::atomic::Ordering::Relaxed)
-            .saturating_add(timeout_ticks)
-    };
+    // NOTIFY_DEADLINES stores no deadline as u64::MAX.
+    let deadline = shared::deadline_after(
+        TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+        timeout_ticks,
+    )
+    .unwrap_or(u64::MAX);
 
     // Register as select waiter.
     {
@@ -129,6 +152,37 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
 }
 
 // ---------------------------------------------------------------------------
+// Capability check
+// ---------------------------------------------------------------------------
+
+/// Check that the process owning `tid` holds `ChannelAccess` for every
+/// channel entry in `entries`. Returns the first failure.
+///
+/// Each id goes through `cap::check_channel_access`, the path `ipc_call`,
+/// `ipc_send`, `ipc_recv`, `ipc_cancel` and `channel_destroy` use, so a
+/// denial counts toward `ipc_cap_denied` (with `kernel-metrics`) and logs the
+/// same warning. Notification entries are not capability-checked, matching
+/// `notify::notification_wait`. A set without channel entries skips the
+/// process lookup.
+fn check_channel_entries(tid: ThreadId, entries: &[SelectEntry]) -> Result<(), i64> {
+    use crate::syscall::IpcError;
+
+    let mut channels = entries
+        .iter()
+        .filter_map(|entry| match entry.kind {
+            SelectKind::Channel(ch_id) => Some(ch_id),
+            SelectKind::Notification(..) => None,
+        })
+        .peekable();
+    if channels.peek().is_none() {
+        return Ok(());
+    }
+
+    let pid = crate::cap::process_of_thread(tid).ok_or(IpcError::Eperm as i64)?;
+    channels.try_for_each(|ch_id| crate::cap::check_channel_access(pid, ch_id))
+}
+
+// ---------------------------------------------------------------------------
 // Non-blocking scan
 // ---------------------------------------------------------------------------
 
@@ -138,8 +192,8 @@ fn scan_entries(entries: &[SelectEntry]) -> Option<(usize, u64)> {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 // Check if the channel has a pending message.
-                let table = super::CHANNEL_TABLE.lock();
-                if let Some(ch) = &table[ch_id.0 as usize] {
+                let mut table = super::CHANNEL_TABLE.lock();
+                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
                     if ch.ring.len > 0 {
                         return Some((i, 0));
                     }
@@ -179,7 +233,7 @@ fn register_on_sources(tid: ThreadId, entries: &[SelectEntry]) {
                 // For channels, set waiting_receiver if not already set.
                 // The channel's ipc_call/ipc_send code checks waiting_receiver.
                 let mut table = super::CHANNEL_TABLE.lock();
-                if let Some(ch) = &mut table[ch_id.0 as usize] {
+                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
                     if ch.waiting_receiver.is_none() {
                         ch.waiting_receiver = Some(tid);
                     }
@@ -207,7 +261,7 @@ fn unregister_from_sources(tid: ThreadId, entries: &[SelectEntry]) {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 let mut table = super::CHANNEL_TABLE.lock();
-                if let Some(ch) = &mut table[ch_id.0 as usize] {
+                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
                     if ch.waiting_receiver == Some(tid) {
                         ch.waiting_receiver = None;
                     }
@@ -239,8 +293,9 @@ fn unregister_from_sources(tid: ThreadId, entries: &[SelectEntry]) {
 /// and from notification_signal when bits match.
 ///
 /// Returns true if the thread was select-woken (caller should NOT do
-/// separate unblock).
-pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64) -> bool {
+/// separate unblock). `src` names the caller for the tripwire's per-source
+/// `unblock` counters.
+pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64, src: WakeSource) -> bool {
     // Check thread state first (cheap — avoids SELECT_WAITERS lock if not select-blocked).
     let is_select = {
         let table = crate::task::THREAD_TABLE.lock();
@@ -273,7 +328,7 @@ pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64) -> boo
                 sw.ready_index = Some(i);
                 sw.ready_bits = bits;
                 drop(waiters);
-                sched::unblock(tid);
+                sched::unblock(tid, src);
                 return true;
             }
         }

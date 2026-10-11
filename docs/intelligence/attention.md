@@ -284,10 +284,14 @@ impl AttentionManager {
                 markers: analysis.urgency_markers,
             });
         }
-        signals.push(UrgencySignal::SentimentAnalysis {
-            sentiment: analysis.sentiment,
-            confidence: analysis.confidence,
-        });
+        // Only a distressed or emergency sentiment is an urgency signal; a calm
+        // message adds nothing, however confident the classifier is.
+        if analysis.sentiment.indicates_distress() {
+            signals.push(UrgencySignal::SentimentAnalysis {
+                sentiment: analysis.sentiment,
+                confidence: analysis.confidence,
+            });
+        }
 
         // 3. Historical engagement patterns
         let history = self.audit_log.engagement_stats(&item.source).await;
@@ -318,59 +322,54 @@ impl AttentionManager {
             }
         }
 
-        // 6. Compute final urgency from signals
-        let urgency = Self::compute_urgency(&signals);
+        // 6. Source agent trust (system agents rank higher), from the agent registry
+        signals.push(UrgencySignal::AgentTrustLevel {
+            trust: self.agent_registry.trust_level(item.source),
+        });
+
+        // 7. Compute final urgency from signals
+        let urgency = self.compute_urgency(&signals);
         let confidence = Self::compute_confidence(&signals);
 
         UrgencyAssessment { urgency, confidence, signals }
     }
 
-    fn compute_urgency(signals: &[UrgencySignal]) -> Urgency {
+    /// Every item without an inherent-urgency signal is scored with the per-user
+    /// `AttentionModel` (§4.1.1), and the total is mapped onto its thresholds.
+    /// Sentiment and agent trust count like any other signal, through their
+    /// learned weights.
+    fn compute_urgency(&self, signals: &[UrgencySignal]) -> Urgency {
         // Any inherent urgency signal → Interrupt
         if signals.iter().any(|s| matches!(s, UrgencySignal::InherentUrgency { .. })) {
             return Urgency::Interrupt;
         }
 
-        // Family + urgency markers → Interrupt
-        let has_family = signals.iter().any(|s| matches!(s,
-            UrgencySignal::RelationshipPriority { trust: TrustLevel::Trusted, .. }
-        ));
-        let has_urgency_markers = signals.iter().any(|s| matches!(s,
-            UrgencySignal::ContentUrgencyMarkers { .. }
-        ));
-        if has_family && has_urgency_markers {
-            return Urgency::Interrupt;
-        }
+        let model = &self.model;
+        let score: f32 = signals
+            .iter()
+            .map(|signal| {
+                let weight = model.signal_weights.get(&signal.kind()).copied().unwrap_or(0.0);
+                // intensity(): the signal's strength in 0.0–1.0 (trust level, marker
+                // count, confidence of the distress sentiment, deadline proximity,
+                // event severity)
+                weight * signal.intensity()
+            })
+            .sum();
 
-        // Time-sensitive → NextBreak (or Interrupt if < 5 min)
-        if let Some(UrgencySignal::TimeSensitivity { deadline }) =
-            signals.iter().find(|s| matches!(s, UrgencySignal::TimeSensitivity { .. }))
-        {
-            let until = deadline.duration_since(SystemTime::now()).unwrap_or_default();
-            if until < Duration::from_secs(300) {
-                return Urgency::Interrupt;
+        if score >= model.interrupt_threshold {
+            // Auto-dampening: past the hourly interrupt budget, wait for a break
+            if self.interrupts_in_last_hour() >= model.interrupt_rate_limit {
+                Urgency::NextBreak
+            } else {
+                Urgency::Interrupt
             }
-            return Urgency::NextBreak;
+        } else if score >= model.next_break_threshold {
+            Urgency::NextBreak
+        } else if score >= model.digest_threshold {
+            Urgency::Digest
+        } else {
+            Urgency::Silent
         }
-
-        // Known person with fast historical response → NextBreak
-        let has_known_person = signals.iter().any(|s| matches!(s,
-            UrgencySignal::RelationshipPriority { .. }
-        ));
-        let fast_response = signals.iter().any(|s| matches!(s,
-            UrgencySignal::HistoricalEngagement { .. }
-        ));
-        if has_known_person && fast_response {
-            return Urgency::NextBreak;
-        }
-
-        // Default for known persons
-        if has_known_person {
-            return Urgency::NextBreak;
-        }
-
-        // Everything else → Digest
-        Urgency::Digest
     }
 }
 ```
@@ -467,7 +466,10 @@ pub struct BreakDetector {
 impl BreakDetector {
     pub fn is_user_on_break(&self) -> bool {
         let idle_duration = Instant::now() - self.last_input_time;
+        // A breakpoint the Context Engine reports (app switch, build start)
+        // is a break even while input continues.
         idle_duration > self.break_threshold
+            || self.context_engine.breakpoint_pending()
     }
 
     pub fn on_input_event(&mut self) {
@@ -481,7 +483,7 @@ impl BreakDetector {
 }
 ```
 
-When the user pauses (30 seconds of no input), queued `NextBreak` items appear as subtle toasts — visible but not blocking.
+When the user pauses (30 seconds of no input), queued `NextBreak` items appear as subtle toasts — visible but not blocking. The 30-second default is the `attention.break_threshold` preference. `BreakDetector` also treats the breakpoints that the Context Engine's `BreakpointDetector` reports through `context_engine` (such as an app switch or a build start; [learning.md](./context-engine/learning.md) §13.4) as breaks, even during continuous input; the two share this idle threshold.
 
 ### 5.3 Context Transition Flush
 
@@ -1377,29 +1379,27 @@ pub enum PresentationCommand {
 
 ## 16. Implementation Order
 
-Development plan phases (see development-plan.md — not to be confused with boot phases):
+Development plan phases (see development-plan.md §8 — not to be confused with boot phases):
 
-```text
-Dev Phase 12a:  Attention Manager service          → intake queue, audit log
-Dev Phase 12b:  AIRS urgency assessment            → basic content analysis
-Dev Phase 12c:  Context filtering                  → context-aware thresholds
-Dev Phase 12d:  Status Strip badge                 → unseen count visible
-
-Dev Phase 16a:  Attention Panel UI                 → digest view with grouping
-Dev Phase 16b:  Interrupt overlay                  → urgent items break through
-Dev Phase 16c:  Toast notifications                → NextBreak delivery
-Dev Phase 16d:  Grouping and summarization         → AI-generated summaries
-
-Dev Phase 22a:  Auto-actionable items              → one-click actions
-Dev Phase 22b:  Relationship-aware priority        → identity integration
-Dev Phase 22c:  User controls                      → per-agent, per-person settings
-Dev Phase 22d:  Conversational configuration       → Conversation Bar integration
-
-Dev Phase 25:   Break detection                    → idle-based NextBreak delivery
-Dev Phase 28:   Pattern analysis                   → AIRS learns from engagement
-Dev Phase 31:   Cross-device attention sync        → Space Mesh attention state
-Dev Phase 35:   Attention analytics                → queryable history, trends
-```
+| Dev phase | Work | Result |
+|---|---|---|
+| 17 (Attention, Task Manager & Notification) | Attention Manager service | intake queue, audit log |
+| 17 (Attention, Task Manager & Notification) | AIRS urgency assessment | basic content analysis |
+| 17 (Attention, Task Manager & Notification) | Context filtering | context-aware thresholds |
+| 17 (Attention, Task Manager & Notification) | Status Strip badge | unseen count visible |
+| 17 (Attention, Task Manager & Notification) | Attention Panel UI | digest view with grouping |
+| 17 (Attention, Task Manager & Notification) | Interrupt overlay | urgent items break through |
+| 17 (Attention, Task Manager & Notification) | Toast notifications | NextBreak delivery |
+| 17 (Attention, Task Manager & Notification) | Grouping and summarization | AI-generated summaries |
+| 17 (Attention, Task Manager & Notification) | Auto-actionable items | one-click actions |
+| 19 (Identity & Credentials) | Relationship-aware priority | identity integration |
+| 17 (Attention, Task Manager & Notification) | User controls | per-agent, per-person settings |
+| 18 (Conversation Manager) | Conversational configuration | Conversation Bar integration |
+| 17 (Attention, Task Manager & Notification) | Break detection | idle-based NextBreak delivery |
+| 17 (Attention, Task Manager & Notification) | Pattern analysis | AIRS learns from engagement |
+| 17 (Attention, Task Manager & Notification) | Content-aware urgency model (quantized DistilBERT or TinyBERT, Tier 3; [context-engine/learning.md](./context-engine/learning.md) §13.4) | urgency read from notification content |
+| 42 (Multi-Device Sync & Pairing) | Cross-device attention sync | Space Mesh attention state |
+| 17 (Attention, Task Manager & Notification) | Attention analytics | queryable history, trends |
 
 -----
 
@@ -1714,14 +1714,14 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 
 | Component | Test category | Key assertions |
 | --- | --- | --- |
-| `UrgencyAssessment` | Signal scoring | InherentUrgency always → Interrupt; family + urgency markers → Interrupt; default → Digest |
+| `UrgencyAssessment` | Signal scoring | InherentUrgency always → Interrupt; weighted score ≥ `interrupt_threshold` → Interrupt; at `interrupt_rate_limit` interrupts in the last hour → NextBreak instead; score between `digest_threshold` and `next_break_threshold` → Digest; below `digest_threshold` → Silent |
 | `ContextFilter` | Threshold logic | Focus mode blocks NextBreak; Work mode passes NextBreak; suppress_all blocks Interrupt |
 | `AttentionGroup` | Grouping keys | Same channel → one group; same agent → one group; mixed → separate groups |
 | `RateLimiter` | Token bucket | At limit → Throttled; after window reset → Allowed; burst within window → partial accept |
 | `ContentScreener` | Sanitization | Markup stripped; impersonation rejected; trust-level violations caught |
 | `UrgencyCalibrator` | Weight update | Acted → positive shift; Never → negative shift; weights clamped [0, 1] |
 | `PostingRateMonitor` | EWMA tracking | Normal rate → Normal; 3× rate spike → Anomalous; EWMA converges after spike |
-| `BreakDetector` | Idle detection | 30s idle → break; continuous input → no break; input resets timer |
+| `BreakDetector` | Idle and breakpoint detection | 30s idle → break; continuous input with no Context Engine breakpoint → no break; input resets timer; Context Engine breakpoint (app switch, build start) → break without 30s idle |
 | `AuditEntry` | Hash chain | Each entry's prev_hash matches previous entry's hash; empty chain starts with zero hash |
 
 ### 20.2 Integration Tests

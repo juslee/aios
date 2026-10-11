@@ -1,0 +1,3 @@
+@@@ append .claude/CLAUDE.md
+
+The kernel entry point is `kernel/src/missing.rs`.

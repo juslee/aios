@@ -159,7 +159,7 @@ fn compositor_loop() -> ! {
             Err(e) => {
                 crate::kerror!(
                     Compositor,
-                    "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
+                    "Compositor: display handoff failed ({:?}); GPU Service keeps display",
                     e
                 );
             }
@@ -665,6 +665,10 @@ fn fill_buffer(handle: &GpuBufferHandle, color: u32) {
 
 /// Release a framebuffer obtained from `gpu_allocate_framebuffer`: detach
 /// backing pages, unref the VirtIO resource, free the DMA pages.
+///
+/// `#[track_caller]`: a bad address's `[mm] BUG: free_pages(` assertion in
+/// `free_dma_pages` names this function's caller.
+#[track_caller]
 fn release_buffer(handle: &GpuBufferHandle) {
     let _ = virtio_gpu::gpu_resource_detach_backing(handle.resource_id);
     let _ = virtio_gpu::gpu_resource_unref(handle.resource_id);
@@ -761,7 +765,7 @@ pub fn init_compositor() {
 
     // Create the compositor's IPC channel.
     let compositor_tid = ThreadId(0xA10); // Debug label for the compositor thread.
-    let ch = ipc::channel_create_unchecked(compositor_tid);
+    let ch = ipc::channel_create_unchecked(ProcessId(10));
 
     // Grant ChannelAccess to the compositor process and the kernel process so
     // kernel-side test apps can call us during M24 bring-up.

@@ -1,0 +1,457 @@
+{
+  "comment": "Accepted docs drift. A finding is new when its key is missing here or it occurs on more lines than 'count' (default 1). 'reason' marks an accepted false positive and survives regeneration. Regenerate with: just docs-check --update-baseline",
+  "version": 1,
+  "counts": {
+    "md-links": 23,
+    "section-refs": 4,
+    "doc-map": 4,
+    "just-recipes": 1,
+    "lock-order": 18,
+    "milestone-status": 5,
+    "phase-count": 1,
+    "layout": 3,
+    "pointer-doctor": 1,
+    "knowledge-hygiene": 2
+  },
+  "findings": [
+    {
+      "key": "md-links|docs/kernel/device-model/lifecycle.md|../../kernel/src/service/mod.rs",
+      "check": "md-links",
+      "file": "docs/kernel/device-model/lifecycle.md",
+      "target": "../../kernel/src/service/mod.rs",
+      "message": "broken link -> ../../kernel/src/service/mod.rs"
+    },
+    {
+      "key": "md-links|docs/kernel/memory/physical.md|./deadlock-prevention.md",
+      "check": "md-links",
+      "file": "docs/kernel/memory/physical.md",
+      "target": "./deadlock-prevention.md",
+      "message": "broken link -> ./deadlock-prevention.md"
+    },
+    {
+      "key": "md-links|docs/kernel/memory/virtual.md|./ipc.md",
+      "check": "md-links",
+      "file": "docs/kernel/memory/virtual.md",
+      "target": "./ipc.md",
+      "message": "broken link -> ./ipc.md"
+    },
+    {
+      "key": "md-links|docs/kits/platform/network.md|./flow.md",
+      "check": "md-links",
+      "file": "docs/kits/platform/network.md",
+      "target": "./flow.md",
+      "message": "broken link -> ./flow.md"
+    },
+    {
+      "key": "md-links|docs/kits/platform/storage.md|../platform/flow.md",
+      "check": "md-links",
+      "file": "docs/kits/platform/storage.md",
+      "target": "../platform/flow.md",
+      "message": "broken link -> ../platform/flow.md"
+    },
+    {
+      "key": "md-links|docs/kits/platform/storage.md|./flow.md",
+      "check": "md-links",
+      "file": "docs/kits/platform/storage.md",
+      "target": "./flow.md",
+      "message": "broken link -> ./flow.md"
+    },
+    {
+      "key": "md-links|docs/kits/platform/thermal.md|../kernel/scheduler.md",
+      "check": "md-links",
+      "file": "docs/kits/platform/thermal.md",
+      "target": "../kernel/scheduler.md",
+      "message": "broken link -> ../kernel/scheduler.md"
+    },
+    {
+      "key": "md-links|docs/platform/bsp.md|../../kernel/boot/firmware.md",
+      "check": "md-links",
+      "file": "docs/platform/bsp.md",
+      "target": "../../kernel/boot/firmware.md",
+      "message": "broken link -> ../../kernel/boot/firmware.md"
+    },
+    {
+      "key": "md-links|docs/platform/bsp.md|../../kernel/device-model.md",
+      "check": "md-links",
+      "file": "docs/platform/bsp.md",
+      "target": "../../kernel/device-model.md",
+      "message": "broken link -> ../../kernel/device-model.md"
+    },
+    {
+      "key": "md-links|docs/platform/bsp.md|../../kernel/hal.md",
+      "check": "md-links",
+      "file": "docs/platform/bsp.md",
+      "target": "../../kernel/hal.md",
+      "message": "broken link -> ../../kernel/hal.md"
+    },
+    {
+      "key": "md-links|docs/platform/bsp.md|../../project/architecture.md",
+      "check": "md-links",
+      "file": "docs/platform/bsp.md",
+      "target": "../../project/architecture.md",
+      "message": "broken link -> ../../project/architecture.md"
+    },
+    {
+      "key": "md-links|docs/platform/bsp.md|../subsystem-framework.md",
+      "check": "md-links",
+      "file": "docs/platform/bsp.md",
+      "target": "../subsystem-framework.md",
+      "message": "broken link -> ../subsystem-framework.md"
+    },
+    {
+      "key": "md-links|docs/platform/bsp.md|../thermal/platform-drivers.md",
+      "check": "md-links",
+      "file": "docs/platform/bsp.md",
+      "target": "../thermal/platform-drivers.md",
+      "message": "broken link -> ../thermal/platform-drivers.md"
+    },
+    {
+      "key": "md-links|docs/platform/linux-compat/virtual-filesystems.md|../../kernel/task/process.rs",
+      "check": "md-links",
+      "file": "docs/platform/linux-compat/virtual-filesystems.md",
+      "target": "../../kernel/task/process.rs",
+      "message": "broken link -> ../../kernel/task/process.rs"
+    },
+    {
+      "key": "md-links|docs/platform/thermal/cooling.md|../device-model/lifecycle.md",
+      "check": "md-links",
+      "file": "docs/platform/thermal/cooling.md",
+      "target": "../device-model/lifecycle.md",
+      "message": "broken link -> ../device-model/lifecycle.md"
+    },
+    {
+      "key": "md-links|docs/security/fuzzing/adoption-roadmap.md|model.md",
+      "check": "md-links",
+      "file": "docs/security/fuzzing/adoption-roadmap.md",
+      "target": "model.md",
+      "message": "broken link -> model.md"
+    },
+    {
+      "key": "md-links|docs/security/fuzzing/adoption-roadmap.md|static-analysis.md",
+      "check": "md-links",
+      "file": "docs/security/fuzzing/adoption-roadmap.md",
+      "target": "static-analysis.md",
+      "message": "broken link -> static-analysis.md"
+    },
+    {
+      "key": "md-links|docs/security/fuzzing/ai-native.md|model.md",
+      "check": "md-links",
+      "file": "docs/security/fuzzing/ai-native.md",
+      "target": "model.md",
+      "message": "broken link -> model.md"
+    },
+    {
+      "key": "md-links|docs/security/fuzzing/ai-native.md|static-analysis.md",
+      "check": "md-links",
+      "file": "docs/security/fuzzing/ai-native.md",
+      "target": "static-analysis.md",
+      "message": "broken link -> static-analysis.md",
+      "count": 2
+    },
+    {
+      "key": "md-links|docs/security/fuzzing/strategies.md|model.md",
+      "check": "md-links",
+      "file": "docs/security/fuzzing/strategies.md",
+      "target": "model.md",
+      "message": "broken link -> model.md",
+      "count": 3
+    },
+    {
+      "key": "md-links|docs/security/fuzzing/strategies.md|static-analysis.md",
+      "check": "md-links",
+      "file": "docs/security/fuzzing/strategies.md",
+      "target": "static-analysis.md",
+      "message": "broken link -> static-analysis.md"
+    },
+    {
+      "key": "md-links|docs/security/model/hardening.md|fuzzing.md",
+      "check": "md-links",
+      "file": "docs/security/model/hardening.md",
+      "target": "fuzzing.md",
+      "message": "broken link -> fuzzing.md"
+    },
+    {
+      "key": "md-links|docs/security/model/hardening.md|static-analysis.md",
+      "check": "md-links",
+      "file": "docs/security/model/hardening.md",
+      "target": "static-analysis.md",
+      "message": "broken link -> static-analysis.md",
+      "count": 2
+    },
+    {
+      "key": "section-refs|docs/intelligence/task-manager.md|../kernel/boot/lifecycle.md §4",
+      "check": "section-refs",
+      "file": "docs/intelligence/task-manager.md",
+      "target": "../kernel/boot/lifecycle.md §4",
+      "message": "no §4 heading in docs/kernel/boot/lifecycle.md or its hub members"
+    },
+    {
+      "key": "section-refs|docs/intelligence/tool-manager/security.md|../airs.md §9.3",
+      "check": "section-refs",
+      "file": "docs/intelligence/tool-manager/security.md",
+      "target": "../airs.md §9.3",
+      "message": "no §9.3 heading in docs/intelligence/airs.md or its hub members",
+      "reason": "false positive: §9.3 means principle 3 ('Graceful degradation') of the numbered list under airs.md §9 Design Principles"
+    },
+    {
+      "key": "section-refs|docs/kernel/boot/lifecycle.md|../../applications/agents.md §2.4",
+      "check": "section-refs",
+      "file": "docs/kernel/boot/lifecycle.md",
+      "target": "../../applications/agents.md §2.4",
+      "message": "no §2.4 heading in docs/applications/agents.md or its hub members"
+    },
+    {
+      "key": "section-refs|docs/kernel/boot/testing.md|../../applications/agents.md §2.4",
+      "check": "section-refs",
+      "file": "docs/kernel/boot/testing.md",
+      "target": "../../applications/agents.md §2.4",
+      "message": "no §2.4 heading in docs/applications/agents.md or its hub members"
+    },
+    {
+      "key": "doc-map|docs/experience/scriptable-protocol.md|unlisted",
+      "check": "doc-map",
+      "file": "docs/experience/scriptable-protocol.md",
+      "target": "unlisted",
+      "message": "docs/experience/scriptable-protocol.md is not listed in docs/project/doc-map.md"
+    },
+    {
+      "key": "doc-map|docs/kits/platform/content-type-registry.md|unlisted",
+      "check": "doc-map",
+      "file": "docs/kits/platform/content-type-registry.md",
+      "target": "unlisted",
+      "message": "docs/kits/platform/content-type-registry.md is not listed in docs/project/doc-map.md"
+    },
+    {
+      "key": "doc-map|docs/kits/platform/package-format.md|unlisted",
+      "check": "doc-map",
+      "file": "docs/kits/platform/package-format.md",
+      "target": "unlisted",
+      "message": "docs/kits/platform/package-format.md is not listed in docs/project/doc-map.md"
+    },
+    {
+      "key": "doc-map|docs/project/ccc-integration-analysis.md|unlisted",
+      "check": "doc-map",
+      "file": "docs/project/ccc-integration-analysis.md",
+      "target": "unlisted",
+      "message": "docs/project/ccc-integration-analysis.md is not listed in docs/project/doc-map.md"
+    },
+    {
+      "key": "just-recipes|justfile|undocumented:run-input",
+      "check": "just-recipes",
+      "file": "justfile",
+      "target": "undocumented:run-input",
+      "message": "public recipe `run-input` is missing from the README Build Commands and developer-guide §5.1 tables"
+    },
+    {
+      "key": "lock-order|.claude/CLAUDE.md|unknown:VIRTIO_INPUT",
+      "check": "lock-order",
+      "file": ".claude/CLAUDE.md",
+      "target": "unknown:VIRTIO_INPUT",
+      "message": "lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:COMPOSITOR_CHANNEL",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:COMPOSITOR_CHANNEL",
+      "message": "production lock COMPOSITOR_CHANNEL is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:CURSOR_POS",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:CURSOR_POS",
+      "message": "production lock CURSOR_POS is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:DRAG_STATE",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:DRAG_STATE",
+      "message": "production lock DRAG_STATE is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:FOCUS_MANAGER",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:FOCUS_MANAGER",
+      "message": "production lock FOCUS_MANAGER is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:GPU_SERVICE_CHANNEL",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:GPU_SERVICE_CHANNEL",
+      "message": "production lock GPU_SERVICE_CHANNEL is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:INPUT_DEVICES",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:INPUT_DEVICES",
+      "message": "production lock INPUT_DEVICES is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:INPUT_QUEUE",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:INPUT_QUEUE",
+      "message": "production lock INPUT_QUEUE is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:PENDING_POINTER",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:PENDING_POINTER",
+      "message": "production lock PENDING_POINTER is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:STATUS_STRIP",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:STATUS_STRIP",
+      "message": "production lock STATUS_STRIP is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:SURFACE_TABLE",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:SURFACE_TABLE",
+      "message": "production lock SURFACE_TABLE is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:TASKBAR",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:TASKBAR",
+      "message": "production lock TASKBAR is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:TITLE_FONT",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:TITLE_FONT",
+      "message": "production lock TITLE_FONT is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:VIRTIO_GPU",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:VIRTIO_GPU",
+      "message": "production lock VIRTIO_GPU is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:WINDOW_Z_ORDER",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:WINDOW_Z_ORDER",
+      "message": "production lock WINDOW_Z_ORDER is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:WORKSPACE",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:WORKSPACE",
+      "message": "production lock WORKSPACE is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|kernel/src/compositor/service.rs|unknown:VIRTIO_INPUT",
+      "check": "lock-order",
+      "file": "kernel/src/compositor/service.rs",
+      "target": "unknown:VIRTIO_INPUT",
+      "message": "lock-ordering comment names VIRTIO_INPUT, which is not a Mutex static"
+    },
+    {
+      "key": "lock-order|kernel/src/compositor/surface.rs|unknown:VIRTIO_INPUT",
+      "check": "lock-order",
+      "file": "kernel/src/compositor/surface.rs",
+      "target": "unknown:VIRTIO_INPUT",
+      "message": "lock-ordering comment names VIRTIO_INPUT, which is not a Mutex static"
+    },
+    {
+      "key": "milestone-status|README.md|latest:M25",
+      "check": "milestone-status",
+      "file": "README.md",
+      "target": "latest:M25",
+      "message": "README status does not mention the latest merged milestone M25"
+    },
+    {
+      "key": "milestone-status|docs/phases/02-memory-management.md|M8:unchecked",
+      "check": "milestone-status",
+      "file": "docs/phases/02-memory-management.md",
+      "target": "M8:unchecked",
+      "message": "merged milestone M8 still has 4 unchecked task(s)"
+    },
+    {
+      "key": "milestone-status|docs/phases/05-kit-foundation.md|M18:unchecked",
+      "check": "milestone-status",
+      "file": "docs/phases/05-kit-foundation.md",
+      "target": "M18:unchecked",
+      "message": "merged milestone M18 still has 7 unchecked task(s)"
+    },
+    {
+      "key": "milestone-status|docs/project/development-plan.md|§8.1:M24",
+      "check": "milestone-status",
+      "file": "docs/project/development-plan.md",
+      "target": "§8.1:M24",
+      "message": "§8.1 Velocity Summary has no row covering merged milestone M24"
+    },
+    {
+      "key": "milestone-status|docs/project/development-plan.md|§8.1:M25",
+      "check": "milestone-status",
+      "file": "docs/project/development-plan.md",
+      "target": "§8.1:M25",
+      "message": "§8.1 Velocity Summary has no row covering merged milestone M25"
+    },
+    {
+      "key": "phase-count|README.md|claimed:30",
+      "check": "phase-count",
+      "file": "README.md",
+      "target": "claimed:30",
+      "message": "says 30 phases; development-plan §8 lists 47"
+    },
+    {
+      "key": "layout|.claude/rules/05-file-placement.md|missing:kernel/src/compositor/",
+      "check": "layout",
+      "file": ".claude/rules/05-file-placement.md",
+      "target": "missing:kernel/src/compositor/",
+      "message": "rule 05 does not list kernel/src/compositor/"
+    },
+    {
+      "key": "layout|.claude/rules/05-file-placement.md|missing:kernel/src/gpu/",
+      "check": "layout",
+      "file": ".claude/rules/05-file-placement.md",
+      "target": "missing:kernel/src/gpu/",
+      "message": "rule 05 does not list kernel/src/gpu/"
+    },
+    {
+      "key": "layout|.claude/rules/05-file-placement.md|missing:kernel/src/input/",
+      "check": "layout",
+      "file": ".claude/rules/05-file-placement.md",
+      "target": "missing:kernel/src/input/",
+      "message": "rule 05 does not list kernel/src/input/"
+    },
+    {
+      "key": "pointer-doctor|.claude/skills/write-arch-doc/SKILL.md|path:docs/security/security.md",
+      "check": "pointer-doctor",
+      "file": ".claude/skills/write-arch-doc/SKILL.md",
+      "target": "path:docs/security/security.md",
+      "message": "path does not exist: docs/security/security.md",
+      "reason": "false positive: the line cites docs/security/security.md on purpose as the hub name to avoid ('model.md instead of security.md')"
+    },
+    {
+      "key": "knowledge-hygiene|docs/knowledge/research/2026-03-18-claude-inference-engine-techniques-survey.md|name",
+      "check": "knowledge-hygiene",
+      "file": "docs/knowledge/research/2026-03-18-claude-inference-engine-techniques-survey.md",
+      "target": "name",
+      "message": "file name is not YYYY-MM-DD-initials-short-description.md"
+    },
+    {
+      "key": "knowledge-hygiene|docs/knowledge/research/2026-03-18-inference-integration-survey.md|name",
+      "check": "knowledge-hygiene",
+      "file": "docs/knowledge/research/2026-03-18-inference-integration-survey.md",
+      "target": "name",
+      "message": "file name is not YYYY-MM-DD-initials-short-description.md"
+    }
+  ]
+}

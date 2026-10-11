@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: no such log file: cases

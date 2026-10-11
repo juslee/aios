@@ -23,7 +23,7 @@ Phases 0–6 and Phase 7 milestones M23–M24 are complete. The kernel boots via
 
 ## Architecture
 
-```
+```text
 Experience Layer:  Workspace, Conversation Bar, Browser, Settings, Agents
 Services Layer:    AIRS (inference, context, agents), Storage, Compositor, Networking
 Subsystem Layer:   Universal hardware abstraction with capability gates
@@ -67,18 +67,24 @@ just run
 
 ## Project Structure
 
-```
+```text
 aios/
 ├── docs/
 │   ├── project/          # Vision, architecture, development plan
 │   ├── kernel/           # Kernel subsystem specifications
 │   └── phases/           # Per-phase implementation guides (00-, 01-, ...)
 ├── .claude/
+│   ├── CLAUDE.md         # Project memory for Claude Code: technical facts, workspace layout, agent and skill tables
 │   ├── agents/           # Claude agent definitions
-│   └── skills/           # Reusable skill scripts
+│   ├── hooks/            # Session hooks: push guard (rule 11's QEMU, spawn and placement rules), setup,
+│   │                     # aios tools shim (repeat-error, path-guard, route-shadow, route-outcome)
+│   ├── rules/            # Project rules and conventions (auto-loaded)
+│   ├── skills/           # Reusable skill scripts
+│   └── workflows/        # Workflow scripts (audit-loop.js: one /audit-loop round)
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
-└── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
+├── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
+└── tools/                # Host tools crate: the aios binary (docs-check, hook, soak), built with just tools
 ```
 
 ---
@@ -114,14 +120,18 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just run-display` | Boot with QEMU display window (for framebuffer visual verification) |
 | `just run-direct` | Boot kernel directly via QEMU `-kernel` (Phase 0 mode) |
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
+| `just soak` | Boot repeatedly under QEMU and classify each boot (PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN): `runs=N secs=T mode=text\|gpu`, logs in `target/soak/`. `--arm DIR`, given 2–4 times, interleaves git checkouts boot by boot and reports Fisher tests per pair ([developer guide §5.6](docs/project/developer-guide.md#56-boot-soak-testing-just-soak)) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
+| `just tools` | Build the host tools binary `aios` and install it, with a provenance stamp, at `target/tools/installed/aios`, which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
+| `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
+| `just docs-check-all` | List every docs drift finding, baselined and new |
 
 ---
 
 ## Knowledge Hive
 
-The `docs/` directory doubles as an [Obsidian](https://obsidian.md) vault with a shared knowledge base in `docs/knowledge/`. Claude Code instances automatically connect via the Obsidian MCP server (configured in `.mcp.json`). See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions.
+`docs/knowledge/` is a shared knowledge base of plain Markdown (lessons, decisions, research, discussions, plans) that agents search with Grep. See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions. `docs/` can optionally be opened as an [Obsidian](https://obsidian.md) vault.
 
 ## License
 
@@ -133,4 +143,6 @@ No GPL dependencies. All third-party crates must be BSD, MIT, Apache-2.0, or ISC
 
 ## Contributing
 
-This project follows conventions documented in [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+This project follows conventions documented in [.claude/rules/](.claude/rules/) and [CONTRIBUTING.md](CONTRIBUTING.md); technical facts are in [.claude/CLAUDE.md](.claude/CLAUDE.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+
+Development runs through Claude Code sessions; [docs/project/agent-loop.md](docs/project/agent-loop.md) describes the `/justin:start` session skills, pausing and resuming, and the merge policy.

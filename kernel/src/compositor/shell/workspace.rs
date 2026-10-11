@@ -554,8 +554,7 @@ fn render_frame(buffer: &mut [u32], width: u32, height: u32, snap: &WorkspaceSna
             WORKSPACE_BG,
         );
     } else {
-        for i in 0..entries_to_render {
-            let entry = &snap.spaces[i];
+        for entry in snap.spaces.iter().take(entries_to_render) {
             let name = &entry.name[..entry.name_len as usize];
             // Bullet marker so an empty name still has a visible row.
             draw_text_clipped(

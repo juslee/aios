@@ -755,7 +755,7 @@ DTB compatible string during `detect_platform()` and stored in `AppleSiliconPlat
 | Section | Topic | Related Document |
 |---|---|---|
 | §4 | QEMU virt reference platform | hal.md §4, boot/firmware.md §2 |
-| §4.2 | QEMU device addresses | CLAUDE.md Key Technical Facts |
+| §4.2 | QEMU device addresses | `.claude/CLAUDE.md` Key Technical Facts |
 | §4.3 | Emulation gaps | device-model/virtio.md §10 |
 | §5 | Raspberry Pi 4 / BCM2711 | thermal/platform-drivers.md §8.2 |
 | §5.2 | BCM2711 device addresses | hal.md §4.1 (GICv2), hal.md §4.3 (PL011) |

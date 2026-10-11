@@ -1,6 +1,6 @@
 # Architecture Document Map
 
-Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `CLAUDE.md`).
+Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `.claude/CLAUDE.md`).
 
 | Topic | Document | Key Sections |
 | --- | --- | --- |
@@ -176,7 +176,7 @@ Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `CL
 | Data protection & compliance | `docs/platform/multi-device/data-protection.md` | §9.1–§9.4 DLP, content classification, provenance, encryption zones; §10.1–§10.4 SIEM, compliance frameworks, reporting, data residency |
 | Multi-device intelligence | `docs/platform/multi-device/intelligence.md` | §13.1–§13.3 Kernel-internal ML (sync, anomaly, handoff); §14.1–§14.5 AIRS (GNN fleet, RL self-healing, federated learning, AI DLP, NL policy); §15 Future |
 | AI Runtime AIRS (hub) | `docs/intelligence/airs.md` | §1 Core Insight, §2 Architecture, §9 Design Principles, §12 Impl Order, Document Map |
-| AIRS inference engine | `docs/intelligence/airs/inference.md` | §3.1–§3.11 GGML runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence, cross-references |
+| AIRS inference engine | `docs/intelligence/airs/inference.md` | §3.1–§3.11 candle runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence, cross-references |
 | AIRS model registry | `docs/intelligence/airs/model-registry.md` | §4.1–§4.6 Storage, profiles, quantization, LRU eviction, boot selection |
 | AIRS intelligence services | `docs/intelligence/airs/intelligence-services.md` | §5.1–§5.9 Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
 | AIRS lifecycle & data | `docs/intelligence/airs/lifecycle-and-data.md` | §6 Agent Lifecycle, §7 Data Model, §8 Key Technology Choices |
@@ -346,4 +346,5 @@ Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `CL
 | Kit docs — Application layer | `docs/kits/application/{app,interface,browser,conversation,identity,notification,security}.md` | Kit API traits extracted inline per phase |
 | Kit cookbook | `docs/kits/cookbook.md` | SDK examples, Phase 26 |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
+| Agent loop runbook (`/justin:*` session skills, pause/resume, merge policy, rollout stages) | `docs/project/agent-loop.md` | All |
 | AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |

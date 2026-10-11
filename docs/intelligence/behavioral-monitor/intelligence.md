@@ -377,7 +377,8 @@ pub struct SemanticCache {
 }
 
 pub struct CacheEntry {
-    /// Hash of the behavioral pattern (agent category + anomaly type + context)
+    /// Hash of the behavioral pattern (agent category + anomaly type + context:
+    /// hour, severity and the user command or intent in effect; see "Cache key")
     pattern_hash: u64,
     /// Cached verdict
     verdict: SemanticVerdict,
@@ -395,8 +396,9 @@ pub struct CacheEntry {
 - Anomaly type (from Tier 1 classification)
 - Hourly bucket (which hour of the day)
 - Severity bucket (low/medium/high)
+- Command context: a hash of the user command or declared intent that the classifier was given (for example "organize by date"), or a fixed no-command value when none was active
 
-This allows the cache to match "email agent with a FrequencySpike of medium severity at 3 PM" without requiring an exact match on all behavioral dimensions.
+This allows the cache to match "email agent with a FrequencySpike of medium severity at 3 PM during an 'organize by date' command" without requiring an exact match on all behavioral dimensions. Because a `FalsePositive` verdict suppresses enforcement on the strength of that context, the command context is part of the key: the same anomaly without the command misses the cache and is classified afresh, so a cached `FalsePositive` cannot suppress enforcement for a context it was not given.
 
 **Cache invalidation:** Entries expire after 24 hours. Entries are also invalidated when:
 - The agent is updated (new version → new behavior expectations)

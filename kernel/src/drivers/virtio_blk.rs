@@ -113,8 +113,9 @@ pub fn capacity_sectors() -> u64 {
 /// Find a VirtIO block device. DTB first, then brute-force MMIO scan.
 fn probe(dt: &DeviceTree) -> Option<usize> {
     // Strategy 1: DTB-provided VirtIO MMIO bases.
-    for i in 0..dt.virtio_mmio_count {
-        let phys = dt.virtio_mmio_bases[i] as usize;
+    let dtb_bases = &dt.virtio_mmio_bases[..dt.virtio_mmio_count];
+    for (i, &base) in dtb_bases.iter().enumerate() {
+        let phys = base as usize;
         if probe_slot(phys) {
             crate::kinfo!(Storage, "VirtIO-blk: DTB slot {}, phys {:#x}", i, phys);
             return Some(phys);

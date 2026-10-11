@@ -17,8 +17,8 @@ preference key at any point in time. `BehavioralObserver` watches user actions o
 emits inferred preference updates with confidence scores -- these are never applied silently;
 the user must approve behavioral inferences before they take effect. A natural language
 settings interface backed by the [AIRS Kit](airs.md) NLU pipeline allows users to say "make
-the font bigger" through the Conversation Bar, which the Kit maps to
-`display.font_scale = 1.2`.
+the font bigger" through the Conversation Bar, which the Kit maps to one schema step up,
+`display.font_scale` 1.0 → 1.1.
 
 Use the Preference Kit when your agent needs to read user preferences, expose its own
 configurable settings, or register context-driven temporal rules. Do not use it for transient

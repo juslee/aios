@@ -1,0 +1,7 @@
+exit 2
+--- stdout
+--- stderr
+soak: warning: --secs 30 leaves under 20s beyond --stall-secs 15 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 15s of a boot is never seen
+soak: error: qemu-system-aarch64 not found in PATH
+--- out: (none)
+--- still running: -

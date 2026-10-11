@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --mode must be text or gpu, got 'fast'

@@ -1,0 +1,59 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    # Optional: Only run on specific file changes
+    # paths:
+    #   - "src/**/*.ts"
+    #   - "src/**/*.tsx"
+    #   - "src/**/*.js"
+    #   - "src/**/*.jsx"
+
+# A newer push to the same PR supersedes an in-flight review.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # Skip bot-triggered events (e.g. Renovate opening/rebasing PRs): the action
+    # rejects non-human actors and would otherwise fail the check. Human pushes
+    # to bot-authored PRs are still reviewed. Draft PRs are skipped too; marking
+    # one ready (the ready_for_review event) re-triggers the review.
+    if: ${{ !github.event.pull_request.draft && !endsWith(github.actor, '[bot]') }}
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # The code-review plugin fetches the PR with gh (view/diff/comments) before it
+          # reviews; without these, its first gh call is denied and it exits silently
+          # (tools list mirrors the plugin's own allowed-tools frontmatter).
+          # Its compliance and scoring agents get "the root CLAUDE.md" plus the CLAUDE.md
+          # files in the changed directories. This repository keeps its project memory at
+          # .claude/CLAUDE.md and its conventions in .claude/rules/, which that search
+          # misses, so the appended system prompt names them for every PR.
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+          claude_args: >-
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
+            --append-system-prompt "This repository keeps its project memory at .claude/CLAUDE.md (there is no root CLAUDE.md) and its conventions in the rule files under .claude/rules/. When the code-review command collects the root CLAUDE.md and the CLAUDE.md files of the changed directories, treat .claude/CLAUDE.md as the root CLAUDE.md and add every rule file under .claude/rules/ to that list, for every pull request."
+

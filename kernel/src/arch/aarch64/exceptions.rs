@@ -3,11 +3,26 @@
 //! The boot.S stub vectors serve as a safety net for the window between `_start`
 //! and `kernel_main`. This Rust-owned table is installed from `kernel_main`.
 //!
-//! Current EL with SP_ELx synchronous handler: reads ESR_EL1/FAR_EL1 and
-//! prints diagnostics for data/instruction aborts (guard page faults).
-//! All other vector entries halt on exception.
+//! Handled entries:
+//! - Current EL with SP_ELx, synchronous: reads ESR_EL1, FAR_EL1, ELR_EL1,
+//!   the SP at the exception and SPSR_EL1, prints diagnostics (data and
+//!   instruction aborts decoded, e.g. guard page faults; then the registers,
+//!   the CPU's thread and context, and a `[tripwire] src=exc` line) and
+//!   halts the core.
+//! - Current EL with SP_ELx, IRQ: `irq_el1_entry` saves the caller-saved
+//!   registers, calls `irq_handler_el1`, counts an ELR_EL1/SPSR_EL1 that
+//!   changed since entry (`irq_frame_check`), restores and returns with
+//!   `eret`.
+//! - Lower EL (AArch64), synchronous and IRQ: full `TrapFrame` save, the
+//!   handler, restore, `eret`.
+//!
+//! All other entries (SP_EL0, FIQ, SError, AArch32) halt with `b .`.
 
 use core::arch::global_asm;
+
+use shared::tripwire::Key;
+
+use crate::observability::tripwire;
 
 // ---------------------------------------------------------------------------
 // Rust-owned exception vector table
@@ -31,6 +46,8 @@ global_asm!(
     "    b .",
     "",
     "// Current EL with SP_ELx — Synchronous",
+    "// 13 of the slot's 32 instructions. x3 = the SP at the exception (the",
+    "// three pushes below are 48 bytes), x4 = SPSR_EL1.",
     ".balign 128",
     "    stp x29, x30, [sp, #-16]!",
     "    stp x0, x1, [sp, #-16]!",
@@ -38,6 +55,8 @@ global_asm!(
     "    mrs x0, ESR_EL1",
     "    mrs x1, FAR_EL1",
     "    mrs x2, ELR_EL1",
+    "    add x3, sp, #48",
+    "    mrs x4, SPSR_EL1",
     "    bl sync_exception_handler",
     "    ldp x2, x3, [sp], #16",
     "    ldp x0, x1, [sp], #16",
@@ -141,7 +160,20 @@ global_asm!(
     "    add sp, sp, #272",
     "    eret",
     "",
-    // Current EL IRQ — minimal save (caller-saved regs that Rust clobbers).
+    // Current EL IRQ — minimal save: the caller-saved registers Rust may
+    // clobber, x29, and a copy of ELR_EL1/SPSR_EL1 taken at entry. The
+    // 192-byte frame on the interrupted stack, as offsets from the SP at
+    // `bl irq_handler_el1`:
+    //   0x00 ELR_EL1, SPSR_EL1 at entry (compared, never restored)
+    //   0x10 x29, pad (xzr)
+    //   0x20 x18, x30
+    //   0x30 x16, x17 ... 0xb0 x0, x1
+    // SP at the two `bl`s is the interrupted SP - 192 and - 176, both
+    // 16-byte aligned. The stub restores x0-x18, x29 and x30 only. If
+    // `irq_handler_el1` switched threads, the `eret` uses the ELR_EL1 and
+    // SPSR_EL1 the last exception on the resuming CPU left (crash-fix ADR,
+    // H1); `irq_frame_check` counts that (`elrmm`, `spsrmm`) and changes
+    // nothing.
     ".global irq_el1_entry",
     "irq_el1_entry:",
     "    stp x0,  x1,  [sp, #-16]!",
@@ -155,7 +187,12 @@ global_asm!(
     "    stp x16, x17, [sp, #-16]!",
     "    stp x18, x30, [sp, #-16]!", // x18 + LR
     "    stp x29, xzr, [sp, #-16]!", // FP + padding
+    "    mrs x0, ELR_EL1",
+    "    mrs x1, SPSR_EL1",
+    "    stp x0,  x1,  [sp, #-16]!", // entry ELR_EL1 + SPSR_EL1
     "    bl irq_handler_el1",
+    "    ldp x0,  x1,  [sp], #16", // entry ELR_EL1 + SPSR_EL1 as arguments
+    "    bl irq_frame_check",
     "    ldp x29, xzr, [sp], #16",
     "    ldp x18, x30, [sp], #16",
     "    ldp x16, x17, [sp], #16",
@@ -269,13 +306,52 @@ pub fn install_vector_table() -> u64 {
     addr
 }
 
+/// Count an IRQ return whose `eret` state differs from the IRQ's entry state
+/// (crash-fix ADR, H1). Detect-only.
+///
+/// `irq_el1_entry` calls this after `irq_handler_el1` returns, before it
+/// restores registers and runs `eret`, with the ELR_EL1 and SPSR_EL1 values
+/// it saved at entry. When `irq_handler_el1` switched this thread out and it
+/// was resumed later, possibly on another CPU, the registers hold what the
+/// last exception on the resuming CPU wrote. A difference adds 1 to `elrmm`
+/// or `spsrmm` in this CPU's row. Nothing is restored: the `eret` uses the
+/// registers as they are.
+///
+/// IRQ path: IRQs are masked here (exception entry sets PSTATE.I, and every
+/// dispatch that resumes a thread runs with IRQs masked). No lock, no
+/// `core::fmt`, and it compares register values only: CPUs 1–3 run their IRQ
+/// path at physical-alias PCs, so an address this code computed would be
+/// physical there.
+#[no_mangle]
+#[inline(never)]
+extern "C" fn irq_frame_check(entry_elr: u64, entry_spsr: u64) {
+    if read_elr_el1() != entry_elr {
+        tripwire::bump_masked(Key::Elrmm, 0);
+    }
+    if read_spsr_el1() != entry_spsr {
+        tripwire::bump_masked(Key::Spsrmm, 0);
+    }
+}
+
 /// Synchronous exception handler called from the vector table.
 ///
 /// Decodes ESR_EL1 to identify the exception class and prints diagnostics.
 /// Uses direct putc() instead of println!() to avoid recursive faults when
 /// TTBR0 has been switched away from the identity map.
+///
+/// The head line and the Abort line are unchanged; the soak harness parses
+/// them. Then come, all lowercase:
+///
+/// ```text
+///   regs: sp=0x… spsr=0x… ttbr0=0x… vbar=0x…
+///   ctx: cpu=0 tid=12 irq=1 sched=0
+/// [tripwire] v=1 src=exc …
+/// ```
+///
+/// `sp` is the SP when the exception was taken (the stub passes it), and
+/// `ttbr0` and `vbar` are read here. Exception entry masked IRQs.
 #[no_mangle]
-extern "C" fn sync_exception_handler(esr: u64, far: u64, elr: u64) {
+extern "C" fn sync_exception_handler(esr: u64, far: u64, elr: u64, sp: u64, spsr: u64) {
     use crate::arch::aarch64::uart::putc;
 
     let ec = (esr >> 26) & 0x3F;
@@ -310,6 +386,18 @@ extern "C" fn sync_exception_handler(esr: u64, far: u64, elr: u64) {
         _ => {}
     }
 
+    put_str("  regs: sp=0x");
+    put_hex(sp);
+    put_str(" spsr=0x");
+    put_hex(spsr);
+    put_str(" ttbr0=0x");
+    put_hex(read_ttbr0_el1());
+    put_str(" vbar=0x");
+    put_hex(read_vbar_el1());
+    putc(b'\r');
+    putc(b'\n');
+    tripwire::print_exception_ctx();
+
     // Halt this core to prevent infinite re-fault loops.
     // SAFETY: wfe is a hint instruction, safe at any EL.
     loop {
@@ -341,4 +429,47 @@ pub fn read_vbar_el1() -> u64 {
         core::arch::asm!("mrs {}, VBAR_EL1", out(reg) vbar, options(nomem, nostack, preserves_flags))
     };
     vbar
+}
+
+/// Read `TTBR0_EL1`: ASID in bits [63:48], translation table base below.
+pub fn read_ttbr0_el1() -> u64 {
+    let ttbr0: u64;
+    // SAFETY: TTBR0_EL1 is readable at EL1 and reading it has no side
+    // effects. All kernel code runs at EL1, which the boot path establishes.
+    // At EL0 the read would trap as an undefined instruction and the
+    // exception handler would report it.
+    unsafe {
+        core::arch::asm!("mrs {}, TTBR0_EL1", out(reg) ttbr0, options(nomem, nostack, preserves_flags))
+    };
+    ttbr0
+}
+
+/// Read `ELR_EL1`: the return address the next `eret` on this CPU uses.
+/// In IRQ context with no exception returned since entry, that is the PC
+/// the IRQ interrupted (the panic report's `irq_elr`).
+#[inline(always)]
+pub(crate) fn read_elr_el1() -> u64 {
+    let elr: u64;
+    // SAFETY: ELR_EL1 is readable at EL1 and reading it has no side effects.
+    // All kernel code runs at EL1, which the boot path establishes. At EL0
+    // the read would trap as an undefined instruction and the exception
+    // handler would report it.
+    unsafe {
+        core::arch::asm!("mrs {}, ELR_EL1", out(reg) elr, options(nomem, nostack, preserves_flags))
+    };
+    elr
+}
+
+/// Read `SPSR_EL1`: the PSTATE the next `eret` on this CPU restores.
+#[inline(always)]
+fn read_spsr_el1() -> u64 {
+    let spsr: u64;
+    // SAFETY: SPSR_EL1 is readable at EL1 and reading it has no side
+    // effects. All kernel code runs at EL1, which the boot path establishes.
+    // At EL0 the read would trap as an undefined instruction and the
+    // exception handler would report it.
+    unsafe {
+        core::arch::asm!("mrs {}, SPSR_EL1", out(reg) spsr, options(nomem, nostack, preserves_flags))
+    };
+    spsr
 }

@@ -1,0 +1,99 @@
+exit 1
+{
+  "baseline": "scripts/docs/baseline.json",
+  "summary": {
+    "total": 4,
+    "new": 1,
+    "baselined": 3,
+    "accepted": 1,
+    "resolved": 1,
+    "reduced": 1
+  },
+  "checks": {
+    "md-links": {
+      "total": 2,
+      "new": 0
+    },
+    "section-refs": {
+      "total": 0,
+      "new": 0
+    },
+    "anchors": {
+      "total": 0,
+      "new": 0
+    },
+    "wiki-links": {
+      "total": 0,
+      "new": 0
+    },
+    "doc-map": {
+      "total": 0,
+      "new": 0
+    },
+    "repo-paths": {
+      "total": 0,
+      "new": 0
+    },
+    "just-recipes": {
+      "total": 0,
+      "new": 0
+    },
+    "test-count": {
+      "total": 0,
+      "new": 0
+    },
+    "lock-order": {
+      "total": 0,
+      "new": 0
+    },
+    "milestone-status": {
+      "total": 0,
+      "new": 0
+    },
+    "phase-count": {
+      "total": 0,
+      "new": 0
+    },
+    "layout": {
+      "total": 0,
+      "new": 0
+    },
+    "harness-tables": {
+      "total": 0,
+      "new": 0
+    },
+    "pointer-doctor": {
+      "total": 2,
+      "new": 1
+    },
+    "knowledge-hygiene": {
+      "total": 0,
+      "new": 0
+    }
+  },
+  "findings": [
+    {
+      "key": "pointer-doctor|.claude/agents/worker.md|claude-md:Build Matrix",
+      "check": "pointer-doctor",
+      "file": ".claude/agents/worker.md",
+      "line": 12,
+      "also": [],
+      "count": 1,
+      "baseline_count": null,
+      "target": "claude-md:Build Matrix",
+      "message": "points to CLAUDE.md 'Build Matrix', which is not a section of CLAUDE.md",
+      "detail": "",
+      "new": true,
+      "accepted": null
+    }
+  ],
+  "resolved": [
+    "anchors|docs/kernel/alpha.md|#gone"
+  ],
+  "reduced": {
+    "md-links|docs/kernel/beta.md|older-spec.md": {
+      "baseline": 2,
+      "current": 1
+    }
+  }
+}

@@ -8,7 +8,7 @@
 //! Page table pages are accessed via TTBR1 direct map (DIRECT_MAP_BASE + phys)
 //! since TTBR0 is switched between user address spaces.
 //!
-//! Per memory.md §5.1, §9.5.
+//! Per memory/virtual.md §5.1, memory/hardening.md §9.5.
 
 use core::ptr;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -22,7 +22,7 @@ use super::asid::{Asid, AsidAllocator};
 
 const PAGE_SIZE: usize = 4096;
 
-// ── User VA layout (per memory.md §9.5) ──────────────────────────────
+// ── User VA layout (per memory/virtual.md §3.1) ──────────────────────
 
 /// User code segment base address.
 #[allow(dead_code)]
@@ -33,7 +33,6 @@ pub const USER_TEXT_BASE: usize = 0x0000_0000_0040_0000;
 pub const USER_DATA_BASE: usize = 0x0000_0000_0100_0000;
 
 /// User heap base address.
-#[allow(dead_code)]
 pub const USER_HEAP_BASE: usize = 0x0000_0000_1000_0000;
 
 /// Top of the user stack (grows downward).
@@ -41,7 +40,6 @@ pub const USER_HEAP_BASE: usize = 0x0000_0000_1000_0000;
 pub const USER_STACK_TOP: usize = 0x0000_7FFF_FFFF_F000;
 
 /// Base of the user stack region.
-#[allow(dead_code)]
 pub const USER_STACK_BASE: usize = 0x0000_7FFF_FFC0_0000;
 
 // ── Global ASID allocator ────────────────────────────────────────────

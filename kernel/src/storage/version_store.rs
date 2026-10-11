@@ -4,7 +4,7 @@
 //! by hash. The chain forms a Merkle DAG that supports listing, rollback,
 //! and tamper detection.
 //!
-//! Per spaces.md §5.1 Merkle DAG, §5.3 DAG Operations.
+//! Per spaces/versioning.md §5.1 Merkle DAG, §5.3 DAG Operations.
 
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;

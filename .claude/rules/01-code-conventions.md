@@ -8,7 +8,7 @@
 - No TODO comments in code — complete implementations only
 - Naming: `snake_case` for functions/variables, `CamelCase` for types, `SCREAMING_SNAKE` for constants
 - Error handling: `Result<T, E>` for fallible operations; panics reserved for unrecoverable invariant violations
-- Panic handler: always prints to UART then halts with `wfe` loop (not `loop {}`)
+- Panic handler: masks IRQs first, prints to UART without taking a lock, then halts with `wfe` loop (not `loop {}`)
 - Prefer the best approach over the simplest — choose the design that is cleanest, most maintainable, and architecturally sound, even if a shortcut exists
 
 ## Architecture-Specific (aarch64)
@@ -29,12 +29,20 @@
 - Entry symbols: `#[no_mangle]` on the Rust side
 - Vector table: `.align 7` (128 bytes) per entry in assembly; `ALIGN(2048)` for section in linker script
 - All 16 exception vector entries present; stubs `b .` until real handlers added
-- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → convert SP to virtual → branch to virtual `kernel_main`
+- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → convert SP to virtual → set `TPIDR_EL1` = MPIDR_EL1 Aff0 → branch to virtual `kernel_main` (`_secondary_entry` also sets `TPIDR_EL1` before branching to `secondary_main`)
 - Exception handler: uses direct `putc()` output, not `println!()`, to prevent recursive faults
 
 ## Crate & Dependency Rules
 
 - All kernel crates: `no_std`, `no_main`
-- All dependencies: must be `no_std` compatible
+- All dependencies of `kernel/`, `shared/` and `uefi-stub/`: must be `no_std` compatible
+- Host tools (`tools/`, package `aios-tools`, binary `aios`) are a std crate built for the host: the `no_std`/`no_main` rules and the `no_std` dependency rule do not apply there. Its dependencies are the approved set clap, anyhow, serde, serde_json, regex and signal-hook (R4) (`time` is added by the first PR that uses it), plus the workspace's own `shared` crate by path (crash-fix step 1a: the tripwire key catalogue), which brings in `sha2` (no default features) transitively and makes `shared/` a build input of the binary. It forbids `unsafe` in its own code; `shared`'s documented `unsafe` comes with the dependency.
 - License: MIT or Apache-2.0 preferred (BSD-2-Clause compatible). **No GPL in kernel/ or shared/**
 - `Cargo.lock`: committed (binary crate, reproducible builds)
+
+## No Legacy
+
+- Never keep legacy (owner rule, 2026-10-05). This applies to code, config, docs and harness files. Carry over only what is current and in use: before you copy or keep something, check that something current still references it.
+- Nothing retired keeps a stub, a disabled flag, a shim or compatibility alias, a dead reference (obsolete settings or model keys, retired plugins, skills or hooks) or a compatibility note. Do not keep a stopgap duplicate "until X merges".
+- When a change supersedes something, delete the old thing in the same change, not in a later cleanup.
+- Do not carry over old-session leftovers (transcripts, checkpoints, prompt history) just because they exist.

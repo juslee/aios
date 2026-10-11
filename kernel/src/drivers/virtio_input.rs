@@ -102,12 +102,12 @@ pub fn init_all(dt: &DeviceTree) -> usize {
     let mut initialized_phys = [0usize; MAX_INPUT_DEVICES];
 
     // Strategy 1: DTB-provided VirtIO MMIO bases.
-    for i in 0..dt.virtio_mmio_count {
+    for &base in &dt.virtio_mmio_bases[..dt.virtio_mmio_count] {
         if count >= MAX_INPUT_DEVICES {
             crate::kwarn!(Input, "max input devices reached, stopping scan");
             return count;
         }
-        let phys = dt.virtio_mmio_bases[i] as usize;
+        let phys = base as usize;
         if probe_slot(phys) && try_init_device(phys, &mut count, &mut initialized_phys) {
             continue;
         }
@@ -318,8 +318,11 @@ fn try_init_device(
     let virt = MMIO_BASE + phys;
     match init_device(virt, phys, InputDeviceId(*count as u8)) {
         Ok(dev) => {
-            let name_str = core::str::from_utf8(&dev.name[..dev.name_len as usize])
-                .unwrap_or("<invalid utf8>");
+            // The config-space name size can count a terminating NUL
+            // (QEMU's does), so trim trailing NULs before printing.
+            let name = &dev.name[..dev.name_len as usize];
+            let name_end = name.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+            let name_str = core::str::from_utf8(&name[..name_end]).unwrap_or("<invalid utf8>");
             if dev.has_abs {
                 crate::kinfo!(
                     Input,

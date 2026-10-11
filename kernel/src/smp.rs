@@ -6,6 +6,8 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use shared::gic::{GicError, PpiStatus};
+
 /// Maximum supported CPU cores.
 pub const MAX_CORES: usize = 8;
 
@@ -99,7 +101,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
     }
 
     // Allocate stacks and populate SECONDARY_STACKS for each secondary core.
-    for i in 1..cpu_count {
+    // `i` is still needed alongside `core_info`: it selects the DTB MPIDR and the
+    // SECONDARY_STACKS slot that `_secondary_entry` reads for this core.
+    for (i, core_info) in sched.cores[..cpu_count].iter_mut().enumerate().skip(1) {
         let mpidr = dt.cpu_mpidr(i);
         // Allocate 16 KiB stack (buddy order 2 = 4 pages).
         // SAFETY: Identity map is active post-MMU init; buddy allocator is initialized.
@@ -118,9 +122,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
         let stack_size = 4096 * 4; // 16 KiB
         let stack_top = stack_phys + stack_size;
 
-        sched.cores[i].mpidr = mpidr;
-        sched.cores[i].stack_base = stack_phys;
-        sched.cores[i].stack_size = stack_size;
+        core_info.mpidr = mpidr;
+        core_info.stack_base = stack_phys;
+        core_info.stack_size = stack_size;
 
         // SAFETY: Single writer (boot CPU), secondaries not yet awake.
         unsafe {
@@ -177,14 +181,92 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
     sched
 }
 
+/// Print this CPU's `[smp]` line straight to the UART:
+///
+/// ```text
+/// [smp] cpu=1 vbar=0x0000000040081000 ttbr0=0x… vbar_kva=0 ttbr0_idmap=1 ppi=30 ppi_grp1=1 ppi_en=1 ppi_ok=1
+/// ```
+///
+/// `vbar_kva` is 1 when `VBAR_EL1` is a kernel (TTBR1) VA. CPUs 1–3 install
+/// it with `adrp` while their MMU is off, so theirs is the physical alias of
+/// the vector table and their exception paths run at physical-alias PCs.
+/// `ttbr0_idmap` is 1 when `TTBR0_EL1`'s table base is the boot identity map
+/// ([`ttbr0_l0_addr`](crate::arch::aarch64::mmu::ttbr0_l0_addr)).
+///
+/// The `ppi*` fields report this CPU's timer PPI setup (`ppi`: the INTID the
+/// boot CPU published from the DTB): `ppi_grp1` and `ppi_en` are its group
+/// and enable flags (`1` pass, `0` fail, `-` not checked: the group under
+/// `GICD_CTLR.DS` = 0, both when the setup did not run), and `ppi_ok` is 1
+/// when no flag failed. When `ppi_ok` is 0, a `kerror!` names the failed
+/// flags and the CPU carries on (crash-fix step 200, Q5 A): a failed `group1`
+/// or `enabled` flag leaves it without a timer IRQ, while a failed `wake`,
+/// `rwp`, `priority` or `level` flag can leave the PPI firing.
+///
+/// A direct UART line, not `kinfo!`, whose messages carry at most 96 bytes
+/// (a head entry and one continuation) and reach the UART only at the next
+/// log drain. A secondary prints it inside its `PRINT_TURN` window; CPU 0 prints its own
+/// after the boot address-space switch test, from `kernel_main`. It runs at
+/// thread level during boot only, never on the IRQ path.
+pub fn print_cpu_line(cpu: usize, ppi: Result<PpiStatus, GicError>) {
+    use crate::arch::aarch64::{exceptions, gic, mmu};
+
+    let vbar = exceptions::read_vbar_el1();
+    let ttbr0 = exceptions::read_ttbr0_el1();
+    let vbar_kva = vbar >= mmu::KERNEL_BASE as u64;
+    let ttbr0_idmap = ttbr0 & mmu::TTBR_BADDR_MASK == mmu::ttbr0_l0_addr();
+    let intid = gic::timer_ppi_intid();
+    let (grp1, en, ok) = match ppi {
+        Ok(status) => (status.group1.field(), status.enabled.field(), status.ok()),
+        Err(_) => ('-', '-', false),
+    };
+    crate::println!(
+        "[smp] cpu={} vbar={:#018x} ttbr0={:#018x} vbar_kva={} ttbr0_idmap={} ppi={} ppi_grp1={} ppi_en={} ppi_ok={}",
+        cpu,
+        vbar,
+        ttbr0,
+        u8::from(vbar_kva),
+        u8::from(ttbr0_idmap),
+        intid,
+        grp1,
+        en,
+        u8::from(ok)
+    );
+    match ppi {
+        Ok(status) if !status.ok() => crate::kerror!(
+            Smp,
+            "cpu {} timer PPI {} setup failed: {}",
+            cpu,
+            intid,
+            status.failed_flags()
+        ),
+        Ok(_) => {}
+        Err(e) => crate::kerror!(
+            Smp,
+            "cpu {} timer PPI {} setup failed: not run, {:?}",
+            cpu,
+            intid,
+            e
+        ),
+    }
+}
+
 /// Entry point for secondary cores (called from boot.S _secondary_entry).
 #[no_mangle]
 pub extern "C" fn secondary_main(core_id: u64) -> ! {
+    // Count a TPIDR_EL1 that is not this CPU's MPIDR Aff0 (tpidrbad) before
+    // this CPU's first IRQ-class lock, which stamps its CPU id from it.
+    // _secondary_entry wrote it just before branching here.
+    crate::observability::tripwire::check_tpidr();
+
     let core_id = core_id as usize;
 
-    // Initialize this core's GIC redistributor and CPU interface.
+    // Initialize this core's GIC redistributor, timer PPI and CPU interface.
+    // GICR_BASE is physical, reached through the boot identity TTBR0, and the
+    // UART is not mapped until the kmap install below, so the setup cannot
+    // report anything here: it returns its status, which print_cpu_line
+    // reports once the UART is mapped.
     let gicr_base = GICR_BASE.load(Ordering::Relaxed);
-    crate::arch::aarch64::gic::init_gicv3_secondary(gicr_base, core_id);
+    let ppi_status = crate::arch::aarch64::gic::init_gicv3_secondary(gicr_base, core_id);
 
     // Install the full kmap TTBR1 (with MMIO + direct map) on this core.
     // boot.S only installs a minimal TTBR1 covering the kernel image.
@@ -201,6 +283,7 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     }
 
     crate::kinfo!(Smp, "Core {} online", core_id);
+    print_cpu_line(core_id, ppi_status);
 
     // Signal next core's turn to print.
     PRINT_TURN.store(core_id + 1, Ordering::Release);

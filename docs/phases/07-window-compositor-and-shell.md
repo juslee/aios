@@ -17,7 +17,7 @@ The compositor is a **system service** (not a Kit) following the [ADR: Composito
 
 Phase 7 implements Layer 1 only ([ADR: Three Interaction Layers](../knowledge/decisions/2026-03-16-jl-three-interaction-layers.md)): traditional windows, taskbar, manual floating layout, no intelligence. If AIRS fails, crashes, or hasn't loaded yet, the user has a fully functional desktop. Layer 2 (Smart Desktop, context-aware layout) and Layer 3 (Intelligence Surface, generative UI) are future phases.
 
-By the end of this phase: (1) VirtIO-input devices (keyboard + tablet) probed and delivering events; (2) compositor service running with IPC-based surface lifecycle; (3) software composition with flat z-order alpha blending and damage tracking; (4) floating window layout with title bars, move/resize, and Alt+Tab switching; (5) desktop shell with Status Strip, Taskbar, and static Workspace; (6) Input Kit Tier 1 traits extracted; (7) Gate 2 benchmarks pass.
+By the end of this phase: (1) VirtIO-input devices (keyboard + tablet) probed and delivering events; (2) compositor service running with IPC-based surface lifecycle; (3) software composition with flat z-order alpha blending and damage tracking; (4) floating window layout with title bars, move/resize, and Alt+Tab switching; (5) desktop shell with Status Strip, Taskbar, and static Workspace; (6) Input Kit Tier 1 traits extracted; (7) compositor performance benchmarks pass.
 
 -----
 
@@ -57,7 +57,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 | **M24 — Compositor Core** | 8–16 | End of week 4 | Compositor service running; IPC-based surface lifecycle; software composition with flat z-order and damage tracking; multi-surface display on QEMU; display handoff from GPU Service |
 | **M25 — Window Manager & Input Routing** | 17–23 | End of week 5 | Floating window layout with decorations; pointer hit-testing with software cursor; keyboard/pointer focus; input routing pipeline; move/resize; Alt+Tab; shared crate tests |
 | **M26 — Desktop Shell** | 24–30 | End of week 6 | Status Strip (time, CPU%, memory); Taskbar (surface list, focus indicator); Workspace (static home view); test application + per-client surface channels validating full IPC stack; shell rendering optimization. **Substantively complete; visible-pixel acceptance gated on `COMPOSITOR_PRESENT_ENABLED` flag, deferred to a follow-up workstream — see Step 28 note.** |
-| **M27 — Input Kit, Integration & Gate** | 31–36 | End of week 7 | Input Kit Tier 1 traits extracted; animation stubs; Gate 2 benchmarks pass; `just run-compositor` target; documentation updated; all quality gates pass |
+| **M27 — Input Kit, Integration & Gate** | 31–36 | End of week 7 | Input Kit Tier 1 traits extracted; animation stubs; compositor performance benchmarks pass; `just run-compositor` target; documentation updated; all quality gates pass |
 
 -----
 
@@ -646,7 +646,7 @@ code is exercised by host-side `just test`. Total test count:
 
 **Key reference:** [experience.md](../experience/experience.md) §6 (Status Strip)
 
-**Note (post-implementation):** The strip is compositor-internal — owned by `ProcessId(10)` on the well-known compositor channel. M25's `is_self_channel` already suppresses self-delivery so the strip never receives IPC events. Backed by `shared_memory_create` (the compositor process is granted `SharedMemoryCreate` so the shell stays a normal client of the shmem subsystem). The font renderer is `compositor::text::draw_text_clipped` (spleen 8×16) rather than a hypothetical `gpu::text` 16×32 path. `STATUS_STRIP` is a leaf-independent mutex (see CLAUDE.md lock-ordering note for M26) — never co-held with `SURFACE_TABLE`, `SHARED_REGION_TABLE`, or `FRAME_ALLOC`. Visual confirmation is gated on `COMPOSITOR_PRESENT_ENABLED` (still `false` at end of M26 — see Step 28).
+**Note (post-implementation):** The strip is compositor-internal — owned by `ProcessId(10)` on the well-known compositor channel. M25's `is_self_channel` already suppresses self-delivery so the strip never receives IPC events. Backed by `shared_memory_create` (the compositor process is granted `SharedMemoryCreate` so the shell stays a normal client of the shmem subsystem). The font renderer is `compositor::text::draw_text_clipped` (spleen 8×16) rather than a hypothetical `gpu::text` 16×32 path. `STATUS_STRIP` is a leaf-independent mutex (see `.claude/CLAUDE.md` lock-ordering note for M26) — never co-held with `SURFACE_TABLE`, `SHARED_REGION_TABLE`, or `FRAME_ALLOC`. Visual confirmation is gated on `COMPOSITOR_PRESENT_ENABLED` (still `false` at end of M26 — see Step 28).
 
 **Acceptance:** Top bar visible showing time, memory%, core count; updates every second; doesn't obscure window content below
 
@@ -775,7 +775,7 @@ Deferred: `COMPOSITOR_PRESENT_ENABLED` stays `false`. Flipping it surfaces a pre
 
 ## Milestone 27 — Input Kit, Integration & Gate (End of Week 7)
 
-*Goal: Extract Input Kit traits, add animation stubs, run Gate 2 benchmarks, update QEMU targets, update all documentation, and pass all quality gates.*
+*Goal: Extract Input Kit traits, add animation stubs, run compositor performance benchmarks, update QEMU targets, update all documentation, and pass all quality gates.*
 
 ### Step 31: Input Kit Tier 1 trait extraction
 
@@ -817,12 +817,12 @@ Deferred: `COMPOSITOR_PRESENT_ENABLED` stays `false`. Flipping it surfaces a pre
 
 -----
 
-### Step 33: Gate 2 benchmarks
+### Step 33: Compositor performance benchmarks
 
 **What:** Phase 7 performance benchmarks, following the Gate 1 pattern from Phase 3.
 
 **Tasks:**
-- [ ] Add Gate 2 benchmarks to `kernel/src/bench.rs`
+- [ ] Add compositor performance benchmarks to `kernel/src/bench.rs`
 - [ ] Benchmark 1: compositor frame composition time — compose 3 surfaces, measure time (target <5ms)
 - [ ] Benchmark 2: input event latency — inject event, measure time until surface IPC delivery (target <2ms)
 - [ ] Benchmark 3: surface creation IPC round-trip — CreateSurface → Configure (target <1ms)
@@ -854,7 +854,7 @@ Deferred: `COMPOSITOR_PRESENT_ENABLED` stays `false`. Flipping it surfaces a pre
 **What:** Update all project documentation to reflect Phase 7 changes.
 
 **Tasks:**
-- [ ] Update CLAUDE.md: Workspace Layout (new compositor/* and input/* modules, ~20 new files), Key Technical Facts (new constants: VirtIO-input device ID=18, MAX_SURFACES=32, MAX_INPUT_DEVICES=4, compositor ProcessId=10, etc.), Architecture Doc Map (new entries), lock ordering
+- [ ] Update `.claude/CLAUDE.md`: Workspace Layout (new compositor/* and input/* modules, ~20 new files), Key Technical Facts (new constants: VirtIO-input device ID=18, MAX_SURFACES=32, MAX_INPUT_DEVICES=4, compositor ProcessId=10, etc.), lock ordering; `docs/project/doc-map.md` (new entries)
 - [ ] Update README.md: Project Structure, new QEMU targets, Phase 7 status
 - [ ] Update `docs/project/developer-guide.md`: new modules, test counts, file sizes, patterns
 - [ ] Check off Phase 7 tasks in phase doc
@@ -874,7 +874,7 @@ Deferred: `COMPOSITOR_PRESENT_ENABLED` stays `false`. Flipping it surfaces a pre
 - [ ] `just run-compositor` — visual verification: Status Strip, Taskbar, movable test app window, input working
 - [ ] `just run` — still boots normally (text-only fallback)
 - [ ] CI passes on push
-- [ ] Gate 2 benchmarks logged
+- [ ] Compositor performance benchmarks logged
 - [ ] Audit loop final pass: 0 issues
 
 **Acceptance:** All gates pass; boot log shows: VirtIO-input probed (2 devices), compositor started, display handoff complete, surfaces composited, input routing active, shell rendered, test app interactive
@@ -903,7 +903,7 @@ Deferred: `COMPOSITOR_PRESENT_ENABLED` stays `false`. Flipping it surfaces a pre
 - [ ] `just test` — all pass, >500 tests
 - [ ] `just run-compositor` — graphical desktop: Status Strip (top), Taskbar (bottom), test app window (movable, resizable, keyboard-interactive), Alt+Tab switching, workspace toggle
 - [ ] `just run` — text-only boot still works
-- [ ] Gate 2: composition <5ms, input latency <2ms, surface creation <1ms, focus switch <1ms
+- [ ] Compositor performance benchmarks: composition <5ms, input latency <2ms, surface creation <1ms, focus switch <1ms
 - [ ] All milestones checked off above
 - [ ] Lock ordering documented and verified
 - [ ] Input Kit Tier 1 traits defined and dyn-compatible

@@ -73,7 +73,7 @@ When AIRS is online, a distilled transformer model provides multi-word and sente
 | Model type | 6-layer transformer decoder (distilled) |
 | Parameters | 5–15M (INT8 quantized) |
 | Size | 5–15MB |
-| Inference latency | 5–10ms on Cortex-A72 (NEON SIMD via GGML Runtime) |
+| Inference latency | 5–10ms on Cortex-A72 (NEON SIMD via candle runtime) |
 | Vocabulary | 50K subword tokens (BPE) |
 | Context window | Last 256 tokens + application context from Context Engine |
 | Privacy | Federated learning (gradient updates only, never raw text) |

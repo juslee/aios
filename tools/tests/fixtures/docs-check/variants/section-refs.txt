@@ -1,0 +1,2 @@
+@@@ append docs/kernel/alpha.md
+See [deadlock](deadlock-prevention.md) §9.9 as well.

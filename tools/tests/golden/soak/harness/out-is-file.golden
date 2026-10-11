@@ -1,0 +1,6 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: --out out exists and is not a directory
+--- out: (none)
+--- still running: -

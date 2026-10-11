@@ -29,6 +29,15 @@ core.*
 # Obsidian local config (each dev's personal theme/plugins/workspace)
 docs/.obsidian/
 
-# Claude Code worktrees and agent memory
+# Session handoffs: .remember/handoff-<key>.md (team-build, team-fix, solo-<name>) in the main checkout, written by /justin:pause
+.remember/
+
+# Claude Code worktrees
 .claude/worktrees/**/*
-.claude/agent-memory/**/*
+.claude/settings.local.json
+
+# Python bytecode from the Claude Code hook tests
+__pycache__/
+
+# Per-developer direnv settings (such as CLAUDE_CONFIG_DIR); never committed
+.envrc
