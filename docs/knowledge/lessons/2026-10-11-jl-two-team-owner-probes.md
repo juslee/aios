@@ -36,7 +36,7 @@ If a message never arrives, run the receiving lead once with `--debug-file` and 
 
 ### Foreground `.claude/` edit prompts (OP3)
 
-OP3 checks the premise of rule 11's "`.claude/**` edits run in the foreground": a foreground subagent's permission prompt for a `.claude/` path reaches the owner in the lead's window and names the file, and the subagent waits for the answer and reports a refusal without trying another route. Until it runs, that premise is unconfirmed. The same premise backs spawning a verifier that boots in the foreground (rule 11, Host QEMU lock). What PR #234 did show is that in auto mode the classifier refuses an agent's Write of `.claude/settings.json`, a `git rm` of hook files and the commit that carries them (#244), so those changes are owner steps (rule 11, Config).
+OP3 checks the premise of rule 11's "`.claude/**` edits run in the foreground": a foreground subagent's permission prompt for a `.claude/` path reaches the owner in the lead's window and names the file, and the subagent waits for the answer and reports a refusal without trying another route. Until it runs, that premise is unconfirmed. Verifier boots do not rest on it: they run in the background, and the settings allow their `qemu-lock.sh run --team team-build` or `--team team-fix` call (rule 11, QEMU and the host; agent-loop.md, Host QEMU lock). What PR #234 did show is that in auto mode the classifier refuses an agent's Write of `.claude/settings.json`, a `git rm` of hook files and the commit that carries them (#244), so those changes are owner steps (rule 11, Config).
 
 ## How to avoid next time
 

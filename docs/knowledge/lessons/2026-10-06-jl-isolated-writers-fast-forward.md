@@ -81,13 +81,14 @@ Two more facts:
   claude --version
   S=$(mktemp -d); sh "$D/probe/setup.sh.v5" "$S"
   R=$S/repo; WT=$R/.claude/worktrees/probe; L=$R/.git/probe-hooks.jsonl
-  BASE="env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT AIOS_PROBE_BIN=$MAIN/target/tools/installed/aios AIOS_HOOK_STATE_DIR=$S/hookstate"
+  probe_env() { env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT \
+    AIOS_PROBE_BIN="$MAIN/target/tools/installed/aios" AIOS_HOOK_STATE_DIR="$S/hookstate" "$@"; }
   TOOLS="Bash,Read,Write,Edit,Grep,Glob,Agent,ToolSearch"
-  cd "$R" && $BASE claude -p --model opus --output-format json --allowedTools "$TOOLS" \
+  cd "$R" && probe_env claude -p --model opus --output-format json --allowedTools "$TOOLS" \
     --debug-file "$S/run-a.debug" "$(sed -e "s#@WT@#$WT#g" -e "s#@R@#$R#g" -e "s#@LOG@#$L#g" "$D/probe/run-a.v5.txt")" >"$S/run-a.json"
   ```
 
-  `D` is made absolute because the run `cd`s into the scratch repository. `S` is a fresh `<scratch>` directory outside every git repository. Then the checks:
+  `D` is made absolute because the run `cd`s into the scratch repository. The environment prefix is a function because zsh does not word-split a string variable ([the model-routing wiring lesson](2026-10-06-jl-model-routing-wiring-checks.md)). `S` is a fresh `<scratch>` directory outside every git repository. Then the checks:
 
   | # | Command | Pass |
   | --- | --- | --- |
@@ -115,9 +116,9 @@ A Workflow `agent()` with `isolation: "worktree"` does not get the `agent-<id>` 
 
 Before T7b, guard rule 4 knew only `agent-<id>`, so every isolated workflow agent was denied its first `git reset --hard`. Rule 4 now accepts both shapes (strict names, git's admin directory carrying the same name) and owns a worktree by payload `cwd`. The owner dropped a state-file binding store after two attack rounds, since a file agents can reach cannot be defended by command-text analysis; the guard stops accidents by cooperative agents, and the lead's range check before every fast-forward is the backstop. The target-resolution gaps that remain (a stopped rebase in the own worktree, `mkdir d && cd d && git commit`) are tracked in #241.
 
-### An editor holding a temporary worktree open (T4)
+## Update 2026-10-10: an editor holding a temporary worktree open
 
-On 2026-10-10, step 7's `git worktree remove .claude/worktrees/agent-<id>` failed with "Directory not empty". VS Code's rust-analyzer had opened the temporary worktree as a cargo workspace and was writing `target/flycheck0` into it while git deleted the tree. Git unregisters a worktree even when deleting its directory fails, so the directory stayed on disk but left `git worktree list`, and a second `git worktree remove` can no longer name it. The writer's commits were already in `W`, so the lead deleted the directory.
+On 2026-10-10, the clean-up's `git worktree remove .claude/worktrees/agent-<id>` (step 6 of rule 11's Placement list, step 5 of the team skill's Placement section) failed with "Directory not empty". VS Code's rust-analyzer had opened the temporary worktree as a cargo workspace and was writing `target/flycheck0` into it while git deleted the tree. Git unregisters a worktree even when deleting its directory fails, so the directory stayed on disk but left `git worktree list`, and a second `git worktree remove` can no longer name it. The writer's commits were already in `W`, so the lead deleted the directory.
 
 - **Keep the editor out.** Add `.claude/worktrees` to `rust-analyzer.files.exclude` in the owner's VS Code settings (the repository tracks no `.vscode/`).
 - **Recover an orphan.** Close the folder in the editor first. Then check that its commits reached `W`: `git -C <W> merge-base --is-ancestor worktree-agent-<id> HEAD` must exit 0. Only then delete the directory and run `git -C <W> branch -d worktree-agent-<id>`. If the check fails, keep the directory and the branch: they hold commits `W` lacks.

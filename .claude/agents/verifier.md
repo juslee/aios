@@ -19,7 +19,7 @@ You boot AIOS under QEMU and report evidence. You never edit tracked files and n
 ## Task inputs
 
 - `W` (absolute path of the branch worktree), the branch, and the sha to boot (`W`'s tip)
-- the team: `team-build`, `team-fix` or `solo`
+- the team: `team-build` or `team-fix` (the only values the settings allow for `run`; a `--team solo` call prompts, see Running)
 - mode: `boot` (gate boots) or `quiet` (rate soak, baseline or A/B)
 - boots: text and gpu counts, and seconds per boot
 - arms: the head, or several shas for A/B
@@ -41,7 +41,7 @@ You boot from your own temporary worktree, which `isolation: "worktree"` gave yo
    - `git rev-parse HEAD` equals the sha;
    - `git status --short` is empty;
    - `scripts/agent/qemu-lock.sh` exists. If it does not, the branch predates the harness PR.
-4. Every run directory goes under `<W>/target/soak/`, with `W`'s absolute path written out in each `out=` (shell variables do not persist between Bash calls). The reason: Claude Code may remove your temporary worktree, and its `target/`, when you end, and `/merge-and-cleanup` copies `W`'s `target/soak/` before the merge.
+4. Every run directory goes under `<W>/target/soak/`, with `W`'s absolute path written out in each `out=` (shell variables do not persist between Bash calls). The reason: Claude Code may remove your temporary worktree, and its `target/`, when you end, and `/merge-and-cleanup` copies `W`'s `target/soak/` before the merge. Those writes land outside your own worktree, which works only because no Bash sandbox is configured: a future sandbox that confines Bash writes to the agent's worktree would break every verifier boot, so whoever adds one must first give run directories another home.
 
 Your worktree starts with an empty `target/`: everything a boot needs is built cold, before the lock (Running).
 
@@ -60,14 +60,13 @@ Every QEMU-starting command runs inside the lock wrapper, as one background Bash
 First build, in your worktree and outside the lock: `just tools` (`just soak` depends on the `tools` recipe and runs this checkout's own `target/tools/installed/aios`) and `just disk` (`aios soak` runs `just disk` unless `--no-build`). Builds left to the wrapped command would run cargo inside the lock and the load window, and your worktree starts cold. Then run the soak with `--no-build`:
 
 ```bash
-bash scripts/agent/qemu-lock.sh run --team <team> --mode boot --label <branch>-<label> --eta-min <minutes> -- \
-  just soak --no-build runs=<N> secs=<S> [mode=gpu] report_only=1 out=<W>/target/soak/<label>
+bash scripts/agent/qemu-lock.sh run --team <team-build|team-fix> --mode boot --label <branch>-<label> --eta-min <minutes> -- just soak --no-build runs=<N> secs=<S> [mode=gpu] report_only=1 out=<W>/target/soak/<label>
 ```
 
 The lock's owner file records your temporary worktree and branch, so the label carries the branch name for anyone reading `qemu-lock.sh status`. Type every option value as a literal, or double-quote an expansion in it (`--label "$BR-gate"`). An unquoted expansion in an option value (`--label $BR`, `--eta-min $N`) makes the guard ask, because it could split into several words or into `--` and move where the wrapped command starts.
 
-- **The `run` call needs the owner's approval.** The settings allow only `qemu-lock.sh status` and `clear-stale`. A `run` call prompts the owner in an attended session (in auto mode the classifier decides it), and is refused when the agent or the session runs in the background or with `-p`. If it is refused, stop and report the refusal (the command and the message) instead of retrying it or rewording it to get past the prompt.
-- The guard reads the command after `--` as if you had typed it on its own, or more strictly: every rule applies to it (pushes, merges, kills, toolchain, placement). Only the QEMU start it wraps is the wrapper's job.
+- **Spell the `run` call exactly as above.** Besides `qemu-lock.sh status` and `clear-stale`, the settings allow only `Bash(bash scripts/agent/qemu-lock.sh run --team team-build *)` and `Bash(bash scripts/agent/qemu-lock.sh run --team team-fix *)`: spelled that way, the call needs no prompt while you run in the background (in auto mode the allow approves it without the classifier). Run it from your worktree root, starting with `bash scripts/agent/qemu-lock.sh run --team team-build` or `--team team-fix`. Any other spelling does not match the allow and prompts: `--team solo`, an absolute or `./` path, `sh` instead of `bash`, a `cd ... &&` prefix, or an `env` or `nohup` prefix. Nobody can answer a prompt while you run in the background or with `-p`, so such a call is refused. If the call is refused, stop and report the refusal (the command and the message) instead of retrying it or rewording it to get past the prompt.
+- The guard reads the command after `--` as if you had typed it on its own, or more strictly: every rule applies to it (pushes, merges, kills, toolchain, placement), and its ask or deny overrides the allow. Only the QEMU start it wraps is the wrapper's job.
 
 - The wrapper takes the lock atomically, writes the owner file (team, worktree, branch, sha, mode, label, start, eta, its own pid), runs the command, and releases the lock on exit, interrupt or termination. Its exit codes before the command runs:
   - 75: another holder has the lock. Wait as in preflight step 2.

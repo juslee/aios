@@ -77,14 +77,14 @@ Use the Agent tool. Never pass `name` or `model`. The guard (rule 3) denies a na
 
 - Pass `subagent_type` (chosen by area, rule 11) and `isolation: "worktree"`.
 - One writer per branch worktree at a time (rule 11, Placement); two writers at once only on two different branches.
-- Run them in the background, except for a task that edits `.claude/**` and a verifier task that boots (no allow rule covers its `qemu-lock.sh run` call, rule 11): spawn those with `run_in_background: false`, so the prompt reaches the owner.
+- Run them in the background, except for a task that edits `.claude/**`: spawn that one with `run_in_background: false`, so the prompt reaches the owner. A verifier that boots runs in the background too: the settings allow its `bash scripts/agent/qemu-lock.sh run --team <team> ...` call for `team-build` and `team-fix` (rule 11, QEMU and the host). A call spelled any other way prompts and is refused in the background; the verifier reports the refusal instead of retrying.
 - Before the spawn, record the tip: `git -C <W> rev-parse HEAD`.
 - The prompt states:
   - `W` (absolute branch worktree path), the branch, and the tip: "your first command that changes anything is `git reset --hard <tip>`";
   - the one task: the plan step text, the findings, or "merge origin/main";
   - the commit message (rule 03 format);
   - the plan path;
-  - for the verifier: the sha to boot (the tip), the team (`<team>`) for the lock's owner file, and that run directories go under `<W>/target/soak/`.
+  - for the verifier: the sha to boot (the tip), the team (`<team>`, `team-build` or `team-fix`) for the lock's `--team` and owner file, and that run directories go under `<W>/target/soak/`.
 - On the first writer spawn of the session, check that the Agent result status is `async_launched` (or `completed` for a foreground spawn), never `teammate_spawned`. If it is a teammate, stop it with TaskStop and stop: the session is misconfigured.
 
 **Reviewers** (code-reviewer, doc-auditor, skeptic):

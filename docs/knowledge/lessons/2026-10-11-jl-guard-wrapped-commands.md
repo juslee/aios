@@ -9,7 +9,7 @@ status: final
 
 ## What happened
 
-Guard rule 1 (`.claude/hooks/git-push-guard.py`) lets the verifier and an owner or solo main thread start QEMU only through the host lock wrapper, `scripts/agent/qemu-lock.sh run ... -- <command>`. Until PR #234's T17 security review (2026-10-10), the guard trusted the genuine wrapper without reading its body, on the reasoning that running the command after `--` is the wrapper's job. It never analysed that command. The settings allowed `Bash(bash scripts/agent/qemu-lock.sh *)`. So `bash scripts/agent/qemu-lock.sh run --team solo --mode boot --label x --eta-min 5 -- git push origin HEAD:main` passed both the permission layer and the guard, for the main thread and for the verifier. So did `gh pr merge`, pattern kills, toolchain changes and rule 4 placement changes wrapped the same way.
+Guard rule 1 (`.claude/hooks/git-push-guard.py`) lets the verifier and an owner or solo main thread start QEMU only through the host lock wrapper, `scripts/agent/qemu-lock.sh run ... -- <command>`. Until PR #234's security review of its commit a2fbc05 (2026-10-10), the guard trusted the genuine wrapper without reading its body, on the reasoning that running the command after `--` is the wrapper's job. It never analysed that command. The settings allowed `Bash(bash scripts/agent/qemu-lock.sh *)`. So `bash scripts/agent/qemu-lock.sh run --team solo --mode boot --label x --eta-min 5 -- git push origin HEAD:main` passed both the permission layer and the guard, for the main thread and for the verifier. So did `gh pr merge`, pattern kills, toolchain changes and rule 4 placement changes wrapped the same way.
 
 The fix took three rounds. Each was written test first: the guard's tests went from 126 to 133, 137 and 140, and the tests that pin each hole failed on the head before its fix. Each fix but the last was broken by the attack round that followed it:
 
@@ -28,7 +28,7 @@ The fix took three rounds. Each was written test first: the guard's tests went f
    The third fix (f294d1d) changed three things. The parser's per-word flag now tells a bare expansion from one only inside double quotes. The guard asks for an option value or option stop that may split or be `--`, and analyses a subcommand from an expansion as a `run` and asks. It checks the genuine wrapper's `run` against its own repository's lock.
 4. **The attack round on the third fix (2026-10-11) approved it.** The bypass review and the regression review both completed. The regression review compared the guard's decisions before and after over 18948 command evaluations: 1120 differed, all intended. No deny or ask reason was lost, and nothing outside the wrapper changed. What remained is out of model (below).
 
-The permission layer was fixed apart from the guard. In a separate commit, a189f7a (2026-10-11), the owner narrowed the settings allow from `qemu-lock.sh *` to the wrapper's `status` and `clear-stale`, an edit of `.claude/settings.json` that agents do not make (rule 11, Config).
+The permission layer was fixed apart from the guard. In a separate commit, a189f7a (2026-10-11), the owner narrowed the settings allow from `qemu-lock.sh *` to the wrapper's `status` and `clear-stale`, an edit of `.claude/settings.json` that agents do not make (rule 11, Config). Once the third fix was approved, the owner decided the same day to allow `run` again, but only in the verifier's two per-team spellings, `Bash(bash scripts/agent/qemu-lock.sh run --team team-build *)` and `... --team team-fix *)`, so background verifiers can boot ([the two-team harness ADR](../decisions/2026-10-10-jl-two-team-harness.md)). For those two spellings the guard's analysis of the wrapped command is the only check, and its ask or deny overrides the allow; every other `run` still prompts.
 
 ## Why it happened
 
@@ -56,10 +56,10 @@ The guard is a stateless text analyser for cooperative agents (its threat model,
 - **Kills inside programs the guard does not parse**, such as a Python script or a build step.
 - **A trusted wrapper edited before it runs.** Rule 1 trusts the genuine wrapper by realpath, as the main checkout's, the project's or the agent's own temporary worktree's `scripts/agent/qemu-lock.sh`, and does not read its body. A verifier that rewrites the copy in its own temporary worktree (a `sed -i` from Bash, say) and then calls it runs whatever the edit says. Only the command after `--` is analysed.
 
-When R5 (the guard's Rust port, row R5 of [the Rust agent tools discussion](../discussions/2026-09-22-jl-rust-agent-tools.md)) ports the guard, give each of these a table test pinned to its current decision, so that changing one is deliberate. #241 collects the guard work deferred to R5.
+When R5 (the guard's Rust port, row R5 of [the Rust agent tools discussion](../discussions/2026-09-22-jl-rust-agent-tools.md)) ports the guard, give each of these a table test pinned to its current decision, so that changing one is deliberate. Issue #241 tracks rule 4's target-resolution gaps, and its 2026-10-11 comment lists these wrapper gaps for R5.
 
 ## How to avoid next time
 
 - When a rule trusts a tool by path or name, write down what that tool runs for its caller, and analyse that under the same rules.
-- Review every `Bash(<tool> *)` allow for a subcommand or option that runs something, and narrow it to subcommands that run nothing (here `status` and `clear-stale`).
-- For R5 (the guard's Rust port; its deferred work is collected in #241): keep the per-word expansion state (bare or quoted), pass nested commands as argument vectors, keep parse errors local, and port the T17 tests in `.claude/hooks/tests/test_git_push_guard.py` into the table.
+- Review every `Bash(<tool> *)` allow for a subcommand or option that runs something, and narrow it to subcommands that run nothing (here `status` and `clear-stale`). Allow a subcommand that runs something only in a spelling as narrow as the caller needs (here `run --team team-build` and `run --team team-fix`), and only once the guard analyses what it runs.
+- For R5 (the guard's Rust port; #241 and its 2026-10-11 comment list the gaps it inherits): keep the per-word expansion state (bare or quoted), pass nested commands as argument vectors, keep parse errors local, and port the `WrappedCommands` tests in `.claude/hooks/tests/test_git_push_guard.py` into the table.

@@ -9,13 +9,13 @@ status: final
 
 ## What happened
 
-`scripts/agent/qemu-lock.sh` is rule 11's host QEMU lock, added in PR #234. That PR changed no kernel code, so it was tested without a single QEMU boot: a real boot takes minutes and holds the very lock under test. The cases ran on 2026-10-06 (v3 draft), 2026-10-09 (v4) and 2026-10-10 (review fixes) as throwaway smoke scripts that were never committed, so the repository has no test file for the script. Issue #243 asks for a test of each deferred qemu-lock edge case, written in "the existing shell test harness with a temp lock path", before the fix. That harness is the recipe below, which replaces the throwaway scripts.
+`scripts/agent/qemu-lock.sh` is rule 11's host QEMU lock, added in PR #234. That PR changed no kernel code, so it was tested without a single QEMU boot: a real boot takes minutes and holds the very lock under test. The cases ran on 2026-10-06 (the wrapper's first draft), 2026-10-09 (its revision with the harness-first stop) and 2026-10-10 (PR #234's review fixes) as throwaway smoke scripts that were never committed, so the repository has no test file for the script. Issue #243 asks for a test of each deferred qemu-lock edge case, written in "the existing shell test harness with a temp lock path", before the fix. That harness is the recipe below, which replaces the throwaway scripts.
 
 ## Why it happened
 
 - The lock path is fixed to the script's own repository, so a test of the worktree's copy would take the host's real lock. A test needs a copy in a scratch repository and a fake QEMU, and nothing in the tree set that up.
 - The cases lived only in the PR's working plan, which was deleted when the PR was distilled.
-- Since PR #234, guard rule 1 denies a fake QEMU start and asks for every call of a copied wrapper, and no allow rule covers `run`, so the cases cannot run unattended inside Claude Code.
+- Since PR #234, guard rule 1 denies a fake QEMU start and asks for every call of a copied wrapper, and the settings allow `run` only as the genuine wrapper's per-team spelling `bash scripts/agent/qemu-lock.sh run --team team-build|team-fix ...`, which a call of a copy never matches, so the cases cannot run unattended inside Claude Code.
 
 ## What we learned
 

@@ -75,8 +75,13 @@ subagent, AIOS_TEAM from the lead's launch line):
      starts; the words after a literal `--` are still analysed. A
      subcommand from such an expansion asks and is analysed as a `run`.
      The genuine wrapper takes the lock of its own repository, so its
-     `run` is checked against that lock. The settings
-     allow only the wrapper's `status` and `clear-stale`: a `run` goes
+     `run` is checked against that lock. The settings allow the
+     wrapper's `status` and `clear-stale`, and `run` only as the exact
+     per-team spelling `bash scripts/agent/qemu-lock.sh run --team
+     team-build ...` or `... --team team-fix ...`, so a background
+     verifier's boot needs no prompt; this rule is the check on the
+     wrapped command, and its ask or deny overrides that allow. Any other
+     `run` spelling (`--team solo`, another path, sh, a prefix) goes
      through the permission prompt (refused in background and -p runs).
        deny  while the lock directory <git-common-dir>/aios-agent/qemu.lock
              exists; any start that is not the wrapper; an agent with no
