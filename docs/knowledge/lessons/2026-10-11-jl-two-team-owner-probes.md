@@ -43,3 +43,27 @@ OP3 checks the premise of rule 11's "`.claude/**` edits run in the foreground": 
 - Until OP1 passes, a lead that cannot see its peer in ListAgents works in one-lead mode (agent-loop.md, Teams) and never sends to a guessed name.
 - Record each result as a dated update at the end of this lesson, not by rewriting the sections above: the CLI version, `result: pass` or `fail`, what each item showed, and the debug lines for anything that failed. A failure also gets an issue labelled `team-build`. When both probes have a passing result, set `status: final`.
 - Re-run both probes after a Claude Code update that changes messaging or permission prompts, with the headless checks in agent-loop.md, "Re-check after each Claude Code update".
+
+## Update 2026-10-12: OP1 and OP2 pass
+
+Claude Code 2.1.296, both leads launched from the main checkout on 2d4a9f7 (post-#234) with `AIOS_TEAM=<team> claude -n <team> --model opus`.
+
+**OP1 (cross-session messaging), result: pass.**
+
+- Preflight (`/justin:team`) passed all seven items in both leads, and again in the resumed team-fix lead. Item 3 printed `unset`; item 6 named the session's own team.
+- ListAgents listed each lead under its `-n` name. Both `HELLO` messages arrived (build to fix and fix to build), and so did the resumed team-fix lead's second `HELLO`. No "held" or `crossSessionInbound` notice appeared. So messaging works with the agent-teams flag out of the project env.
+- A background worker spawned by the team-build lead (`isolation: "worktree"`, task "merge origin/main") came back `async_launched`. Its first command, `git reset --hard <tip>`, ran with no prompt and no refusal, and HEAD equalled the tip. The merge was a no-op, because the branch already held main. The lead's range check, `merge --ff-only` and clean-up all worked.
+- `claude --resume team-fix` offered the `team-fix` session in its picker. The resumed session kept its name without `/rename`.
+- Two things the probe surfaced:
+  - The pre-restart leads were still live next to the new ones for a while, so each bare name matched two sessions until the owner closed the old ones. A lead must send by `name [ref]` while ListAgents shows a name twice.
+  - `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` still comes from the user settings (`~/.claude-personal/settings.json` env), not the project. No spawn became a teammate, because rule 11's spawn shape (no `name` without `isolation`) holds either way.
+
+**OP2 (the ExitPlanMode Fable plan gate on main), result: pass.**
+
+- The probe was re-run on main with the Tools R3 working plan (about 160 KB), in a session launched with `--debug-file`.
+- The gate returned `FABLE-PLAN-GATE pass 1/2: no must-fix finding under the plan lens`.
+- The debug counts were 22 for `dispatching to firstParty model=claude-fable-5-1`, 0 for `not_found_error` and 3 for `planFilePath`.
+- A non-working note went straight to the approval dialog.
+- The gate leaves no transcript or log entry in the lead's session, so a plan exit can only be confirmed as gated with `--debug-file`.
+
+**OP3**: not yet run; `status` stays `in-progress`.
