@@ -6,18 +6,19 @@
 
 use core::sync::atomic::Ordering;
 
+use crate::arch::aarch64::daif;
 use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::observability::metrics::METRICS;
 use crate::observability::tripwire::{self, WaitSide};
-use crate::sched;
+use crate::sched::{self, wake};
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
 use shared::tripwire::WakeSource;
 use shared::{deadline_after, ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
-    arm_timeout, clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, REPLY_SLOTS,
-    TIMEOUT_QUEUE,
+    arm_timeout, clear_own_timeout, clear_timeout, get_wakeup_error, wake_with_error, ReplySlot,
+    REPLY_SLOTS, TIMEOUT_QUEUE,
 };
 use super::{channel_mut, direct, DeadlineArm, CHANNEL_TABLE};
 
@@ -279,6 +280,17 @@ pub fn ipc_call(
 // IpcRecv — wait for a message on a channel
 // ---------------------------------------------------------------------------
 
+/// What one `ipc_recv` pass found in its CHANNEL_TABLE critical section.
+enum RecvPass {
+    /// The pass ended before its arm: a lookup error, a Dead endpoint
+    /// (EPIPE), a message (popped and copied), or an empty poll (EAGAIN).
+    Ended(Result<(usize, ThreadId), i64>),
+    /// The pass armed, then found another thread in the receiver slot.
+    Taken,
+    /// The pass armed and is the channel's waiting receiver.
+    Registered,
+}
+
 /// Wait for a message on a channel.
 ///
 /// `recv_buf`: buffer to receive message payload.
@@ -288,117 +300,124 @@ pub fn ipc_call(
 ///
 /// Returns (bytes_received, sender_tid) on success, or negative error.
 /// The sender's ThreadId is returned so the receiver knows who to reply to.
+///
+/// The caller's tid comes from `sched::current_tid()` (EPERM with no
+/// current thread). Each pass runs one CHANNEL_TABLE critical section
+/// (`recv_pass`): a lookup error or a Dead endpoint (EPIPE) ends the
+/// receive, a queued message is popped and returned, and a poll with none
+/// returns EAGAIN; otherwise the pass arms (`wake::prepare_block`) and
+/// registers as the channel's `waiting_receiver`, or fails EAGAIN if another
+/// thread holds that slot. After the release it publishes its timeout entry
+/// (`timeout::arm_timeout`, ETIMEDOUT once the deadline has passed) and
+/// blocks. A wake with no message (a stale sender whose `clear_timeout`
+/// removed the entry, or any other stale `unblock`) costs one more pass,
+/// which re-registers and re-inserts the entry, so the receive returns only
+/// on a message, a failure or its own deadline.
+///
+/// A return from the first pass before its arm publishes nothing and takes
+/// nothing. Every other exit clears the receiver slot if it is still this
+/// thread's, removes the timeout entry, takes and discards the thread's
+/// `WAKEUP_ERRORS` code once (destroy and exit write EPIPE there; the result
+/// comes from the channel's state, capability-lifetime ADR §9), and cancels
+/// the arm if its pass armed.
 pub fn ipc_recv(
     channel: ChannelId,
     recv_buf: &mut [u8],
     timeout_ticks: u64,
 ) -> Result<(usize, ThreadId), i64> {
-    let receiver_tid = match super::current_thread_id() {
-        Some(t) => t,
-        None => return Err(IpcError::Eperm as i64),
-    };
+    let me = sched::current_tid().ok_or(IpcError::Eperm as i64)?;
 
     // Capability enforcement: check ChannelAccess (fail-closed).
-    let pid = crate::cap::process_of_thread(receiver_tid).ok_or(IpcError::Eperm as i64)?;
+    let pid = crate::cap::process_of_thread(me).ok_or(IpcError::Eperm as i64)?;
     crate::cap::check_channel_access(pid, channel)?;
 
-    // Try to dequeue a message.
-    let deadline = {
-        let mut table = CHANNEL_TABLE.lock();
-        let ch = channel_mut(&mut table, channel)?;
-
-        if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
-            return Err(IpcError::Epipe as i64);
-        }
-
-        if let Some(msg) = ch.ring.pop() {
-            let copy_len = msg.len.min(recv_buf.len());
-            recv_buf[..copy_len].copy_from_slice(&msg.data[..copy_len]);
-
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_recv.inc();
-
-            return Ok((copy_len, msg.sender));
-        }
-
-        // No message — non-blocking poll?
-        if timeout_ticks == 0 {
-            return Err(IpcError::Eagain as i64);
-        }
-
-        // Register as waiting receiver.
-        if ch.waiting_receiver.is_some() {
-            // Only one receiver per channel.
-            return Err(IpcError::Eagain as i64);
-        }
-        ch.waiting_receiver = Some(receiver_tid);
-        let deadline = deadline_from_now(timeout_ticks);
-        // Tripwire N2 phase: published, timeout not yet registered.
-        tripwire::wait_published(
-            WaitSide::Recv,
-            receiver_tid,
-            u64::from(channel.raw()),
-            deadline.is_some(),
-        );
-        deadline
+    let poll = timeout_ticks == 0;
+    let deadline = if poll {
+        None
+    } else {
+        deadline_from_now(timeout_ticks)
     };
 
-    // Register timeout. The tripwire N2 phase becomes armed inside the
-    // TIMEOUT_QUEUE critical section.
-    let arm = arm_timeout(
-        receiver_tid,
-        deadline,
-        IpcError::Etimedout as i64,
-        Some(WaitSide::Recv),
-    );
-
-    // Block until message arrives or timeout, unless the deadline has
-    // already passed (no entry was published).
-    if arm == DeadlineArm::Armed {
+    let mut first = true;
+    // Whether the pass that ends the loop armed (its exit cancels).
+    let mut armed = false;
+    let result = loop {
+        match recv_pass(me, channel, recv_buf, poll, deadline.is_some()) {
+            // Pass 1 before its arm: nothing published, nothing to take.
+            RecvPass::Ended(result) if first => return result,
+            RecvPass::Ended(result) => break result,
+            RecvPass::Taken => {
+                armed = true;
+                break Err(IpcError::Eagain as i64);
+            }
+            RecvPass::Registered => {}
+        }
+        first = false;
+        // Publish the timeout entry after the arm (ADR §8 rule 1). The
+        // tripwire N2 phase becomes armed inside the TIMEOUT_QUEUE hold.
+        let arm = arm_timeout(
+            me,
+            deadline,
+            IpcError::Etimedout as i64,
+            Some(WaitSide::Recv),
+        );
+        if arm == DeadlineArm::Expired {
+            armed = true;
+            break Err(IpcError::Etimedout as i64);
+        }
         sched::block_current(ThreadState::BlockedIpc {
             channel: u64::from(channel.raw()),
         });
-    }
+    };
 
-    // Woken up. The receive's tripwire N2 phase ends here.
-    tripwire::wait_ended(WaitSide::Recv, receiver_tid);
-    // Clear timeout.
-    {
-        let mut tq = TIMEOUT_QUEUE.lock();
-        tq[receiver_tid.0 as usize] = None;
-    }
-
-    // Clear waiting_receiver.
+    // --- Exit: the wait published a record in an earlier or this pass ---
+    // The receive's tripwire N2 phase ends here.
+    tripwire::wait_ended(WaitSide::Recv, me);
     {
         let mut table = CHANNEL_TABLE.lock();
         if let Ok(ch) = channel_mut(&mut table, channel) {
-            if ch.waiting_receiver == Some(receiver_tid) {
+            if ch.waiting_receiver == Some(me) {
                 ch.waiting_receiver = None;
             }
         }
     }
-
-    // Check for error wake. A receive whose deadline had passed at
-    // registration did not block: it takes the code all the same, as its
-    // fired timeout would have, and ends with ETIMEDOUT.
-    let error = get_wakeup_error(receiver_tid);
-    let error = if arm == DeadlineArm::Expired {
-        IpcError::Etimedout as i64
-    } else {
-        error
-    };
-    if error != 0 {
-        #[cfg(feature = "kernel-metrics")]
-        if error == IpcError::Etimedout as i64 {
-            METRICS.ipc_timeout.inc();
-        }
-        return Err(error);
+    clear_own_timeout(me);
+    // Taken once per wait and discarded: it decides nothing (ADR §9).
+    daif::with_irqs_masked(|| get_wakeup_error(me));
+    if armed {
+        wake::cancel_block(me);
     }
 
-    // Retry dequeue (message was enqueued while we were blocked).
-    let mut table = CHANNEL_TABLE.lock();
-    let ch = channel_mut(&mut table, channel)?;
+    #[cfg(feature = "kernel-metrics")]
+    if matches!(result, Err(code) if code == IpcError::Etimedout as i64) {
+        METRICS.ipc_timeout.inc();
+    }
+    result
+}
 
+/// One `ipc_recv` pass for `me`, in one CHANNEL_TABLE critical section: a
+/// lookup error, a Dead endpoint, a queued message (popped into `recv_buf`)
+/// or an empty `poll` ends it before the arm. Otherwise it arms
+/// (`wake::prepare_block`, inside the hold and after the pop, so a receive
+/// that finds a message never arms) and registers `me` as the channel's
+/// `waiting_receiver`, keeping a registration of its own from an earlier
+/// pass, or finds another receiver there. `timed` is the N2 phase's flag:
+/// whether the wait has a deadline.
+fn recv_pass(
+    me: ThreadId,
+    channel: ChannelId,
+    recv_buf: &mut [u8],
+    poll: bool,
+    timed: bool,
+) -> RecvPass {
+    let mut table = CHANNEL_TABLE.lock();
+    let ch = match channel_mut(&mut table, channel) {
+        Ok(ch) => ch,
+        Err(code) => return RecvPass::Ended(Err(code)),
+    };
+    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+        return RecvPass::Ended(Err(IpcError::Epipe as i64));
+    }
     if let Some(msg) = ch.ring.pop() {
         let copy_len = msg.len.min(recv_buf.len());
         recv_buf[..copy_len].copy_from_slice(&msg.data[..copy_len]);
@@ -406,11 +425,23 @@ pub fn ipc_recv(
         #[cfg(feature = "kernel-metrics")]
         METRICS.ipc_recv.inc();
 
-        Ok((copy_len, msg.sender))
-    } else {
-        // Shouldn't happen — we were woken without error and no message.
-        Err(IpcError::Eagain as i64)
+        return RecvPass::Ended(Ok((copy_len, msg.sender)));
     }
+    if poll {
+        return RecvPass::Ended(Err(IpcError::Eagain as i64));
+    }
+
+    // Arm before publishing the receiver slot (ADR §8 rule 1).
+    wake::prepare_block(me);
+    match ch.waiting_receiver {
+        None => ch.waiting_receiver = Some(me),
+        Some(tid) if tid == me => {}
+        // Only one receiver per channel.
+        Some(_) => return RecvPass::Taken,
+    }
+    // Tripwire N2 phase: published, timeout not yet registered.
+    tripwire::wait_published(WaitSide::Recv, me, u64::from(channel.raw()), timed);
+    RecvPass::Registered
 }
 
 // ---------------------------------------------------------------------------

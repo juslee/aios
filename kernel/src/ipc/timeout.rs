@@ -14,7 +14,7 @@ use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 use shared::deadline_after;
 use shared::lock::LockClass;
-use shared::tripwire::{ClearResult, WakeSource};
+use shared::tripwire::{ClearResult, Key, WakeSource};
 use spin::Mutex;
 
 use super::DeadlineArm;
@@ -252,6 +252,9 @@ pub(super) fn clear_reply_slot(tid: ThreadId) {
 /// is empty (a later pass of the same wait finds its own entry still there
 /// unless a waker removed it) and the result is [`DeadlineArm::Armed`].
 /// `None` (no deadline) inserts nothing and gives [`DeadlineArm::Armed`].
+/// An out-of-range `me`, whose entry no slot can hold, counts `badtid` and
+/// gives [`DeadlineArm::Expired`], so the wait ends instead of blocking with
+/// nothing to time it out.
 ///
 /// `side` is the tripwire N2 phase of an `ipc_call` or `ipc_recv`, moved to
 /// armed inside the same hold whatever the result, or at the point where it
@@ -272,10 +275,15 @@ pub(super) fn arm_timeout(
     };
     daif::with_irqs_masked(|| {
         let mut tq = TIMEOUT_QUEUE.lock();
-        let arm = if TICK_COUNT.load(Ordering::Relaxed) >= wake_at_tick {
-            DeadlineArm::Expired
-        } else {
-            if let Some(slot) = tq.get_mut(me.0 as usize) {
+        let arm = match tq.get_mut(me.0 as usize) {
+            // No slot can hold the entry, so nothing would end the wait:
+            // fail closed rather than block unbounded.
+            None => {
+                tripwire::bump_masked(Key::Badtid, 0);
+                DeadlineArm::Expired
+            }
+            Some(_) if TICK_COUNT.load(Ordering::Relaxed) >= wake_at_tick => DeadlineArm::Expired,
+            Some(slot) => {
                 if slot.is_none() {
                     *slot = Some(TimeoutEntry {
                         tid: me,
@@ -283,8 +291,8 @@ pub(super) fn arm_timeout(
                         error_code: code,
                     });
                 }
+                DeadlineArm::Armed
             }
-            DeadlineArm::Armed
         };
         if let Some(side) = side {
             tripwire::wait_armed(side, me, true);

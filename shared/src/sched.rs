@@ -1137,12 +1137,13 @@ mod tests {
             .any(|w| w.reset_armed && w.blocked_ran && w.idle_dead_block));
     }
 
-    // ── Wake token: the loop model (capability-lifetime steps 11–12) ────
+    // ── Wake token: the loop model (capability-lifetime steps 11–13) ────
 
     /// An exhaustive model of a converted waiting site against its wakers,
     /// explored over every interleaving of their atomic steps, with the
     /// decisions taken from [`wake_action`] and [`block_action`], as the
-    /// kernel's `notify.rs`, `select.rs` and `timeout.rs` take them.
+    /// kernel's `notify.rs`, `select.rs`, `timeout.rs` and `channel.rs` take
+    /// them.
     ///
     /// - [`Site::Notify`] is `notification_wait`: a fast path (no arm), then
     ///   passes that each, in one NOTIFICATION_TABLE critical section, take
@@ -1163,13 +1164,22 @@ mod tests {
     ///   TIMEOUT_QUEUE entry (`arm_timeout`; Expired ends the sleep), and
     ///   block as BlockedTimer. Its only record is the entry, and its exit
     ///   removes the entry and cancels the arm.
+    /// - [`Site::Recv`] is `ipc_recv`: a first-pass pop with no arm, then
+    ///   passes that, in one CHANNEL_TABLE critical section, pop a queued
+    ///   message or arm and take the receiver slot; then publish the
+    ///   TIMEOUT_QUEUE entry (`arm_timeout`; Expired gives ETIMEDOUT), and
+    ///   block as BlockedIpc. Every exit after the first pass's pop clears
+    ///   the receiver slot and the entry and cancels the arm. The sender
+    ///   queues the message and takes the receiver slot under the lock,
+    ///   then removes the receiver's entry (`clear_timeout`) and calls
+    ///   `unblock`.
     /// - The timeout fires once the clock has passed the deadline and the
     ///   entry is published (`check_notification_timeouts`, or
-    ///   `check_timeouts` for a sleep), then calls `unblock`. A stale
-    ///   `unblock` (the wake helper's) can land anywhere, for a sleep after
-    ///   an optional removal of the entry (`stale_clear`: a stale reply or
-    ///   send's `clear_timeout`, or a late `wake_with_error`), and one tick
-    ///   can preempt the waiter.
+    ///   `check_timeouts` for a sleep or a receive), then calls `unblock`. A
+    ///   stale `unblock` (the wake helper's) can land anywhere, for a sleep
+    ///   or a receive after an optional removal of the entry (`stale_clear`:
+    ///   a stale reply or send's `clear_timeout`, or a late
+    ///   `wake_with_error`), and one tick can preempt the waiter.
     mod loop_model {
         extern crate std;
 
@@ -1203,6 +1213,7 @@ mod tests {
             Notify,
             Select,
             Sleep,
+            Recv,
         }
 
         impl Site {
@@ -1212,12 +1223,13 @@ mod tests {
                     Site::Notify => ThreadState::BlockedNotification { notification: 0 },
                     Site::Select => ThreadState::BlockedSelect,
                     Site::Sleep => ThreadState::BlockedTimer { wake_at: 0 },
+                    Site::Recv => ThreadState::BlockedIpc { channel: 0 },
                 }
             }
         }
 
         /// The event waker: none, a notification signal, or a channel send
-        /// (Select only).
+        /// (Select and Recv).
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub(super) enum Event {
             None,
@@ -1242,6 +1254,10 @@ mod tests {
             pub(super) reinsert: bool,
             /// The waiter arms (negative control: `false`).
             pub(super) arm: bool,
+            /// Recv only, negative control: each pass takes the receiver
+            /// slot and publishes the timeout entry before it arms (ADR §8
+            /// rule 1 broken).
+            pub(super) late_arm: bool,
             /// Notify only, negative control: the old signal path, which
             /// removes the record and consumes the bits under the lock but
             /// writes the result into a per-thread slot after the release.
@@ -1275,6 +1291,7 @@ mod tests {
         const EXIT_CLEAR: u8 = 9;
         const EXIT_CANCEL: u8 = 10;
         const DONE: u8 = 11;
+        const LATE_ARM: u8 = 12;
 
         /// The waiter's record on the notification.
         #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -1301,9 +1318,10 @@ mod tests {
             rec: Rec,
             /// The old signal path's per-thread result slot.
             slot: bool,
-            /// Select: a message is queued on the channel.
+            /// Select and Recv: a message is queued on the channel.
             msg: bool,
-            /// Select: the channel's `waiting_receiver` is the waiter.
+            /// Select and Recv: the channel's `waiting_receiver` is the
+            /// waiter.
             recv: bool,
             /// The deadline entry is published.
             entry: bool,
@@ -1312,7 +1330,8 @@ mod tests {
             /// The clock has passed the deadline.
             past: bool,
             /// Event waker: 0 = not run, 1 = owes an `unblock`, 2 = done; 3 =
-            /// the old path owes its result write.
+            /// the old path owes its result write; 4 = a sender to a Recv
+            /// owes the receiver's `clear_timeout`.
             ev: u8,
             /// Timeout: 0 = idle, 1 = owes an `unblock`.
             timer: u8,
@@ -1422,7 +1441,7 @@ mod tests {
             fn ret(&mut self, res: Res, cfg: Config) {
                 self.res = Some(res);
                 self.past_at_return = self.past;
-                self.pc = if cfg.site == Site::Select {
+                self.pc = if matches!(cfg.site, Site::Select | Site::Recv) {
                     EXIT_UNREG
                 } else {
                     EXIT_CLEAR
@@ -1459,6 +1478,17 @@ mod tests {
                 }
                 match self.pc {
                     FAST if cfg.site == Site::Sleep => self.pc = PASS,
+                    FAST if cfg.site == Site::Recv => {
+                        // The first pass's pop, before its arm: it returns
+                        // with nothing published and runs no exit.
+                        if self.msg {
+                            self.msg = false;
+                            self.res = Some(Res::Msg);
+                            self.pc = DONE;
+                        } else {
+                            self.pc = PASS;
+                        }
+                    }
                     FAST => {
                         if self.bit {
                             self.bit = false;
@@ -1475,6 +1505,20 @@ mod tests {
                     PASS if cfg.site == Site::Sleep => {
                         self.prepare(cfg);
                         self.pc = DEADLINE;
+                    }
+                    PASS if cfg.site == Site::Recv => {
+                        // One CHANNEL_TABLE section: pop, or arm and take
+                        // the receiver slot.
+                        if self.msg {
+                            self.msg = false;
+                            self.ret(Res::Msg, cfg);
+                        } else {
+                            if !cfg.late_arm {
+                                self.prepare(cfg);
+                            }
+                            self.recv = true;
+                            self.pc = DEADLINE;
+                        }
                     }
                     PASS => {
                         // Select: arm, then the notification entry.
@@ -1519,8 +1563,12 @@ mod tests {
                                 self.entry = cfg.deadline;
                                 self.inserted = true;
                             }
-                            self.pc = BLOCK;
+                            self.pc = if cfg.late_arm { LATE_ARM } else { BLOCK };
                         }
+                    }
+                    LATE_ARM => {
+                        self.prepare(cfg);
+                        self.pc = BLOCK;
                     }
                     EXPIRE => {
                         // Notify: remove the record under the lock; its
@@ -1605,12 +1653,23 @@ mod tests {
                                 false
                             }
                             (_, Site::Sleep) => panic!("a sleep has no event waker"),
+                            (_, Site::Recv) => panic!("a receive's only event is a send"),
                         };
-                        self.ev = if found { 1 } else { 2 };
+                        self.ev = match (found, cfg.site) {
+                            (true, Site::Recv) => 4,
+                            (true, _) => 1,
+                            (false, _) => 2,
+                        };
                     }
                     3 => {
                         // The old path's result write, after the release.
                         self.slot = true;
+                        self.ev = 1;
+                    }
+                    4 => {
+                        // The sender's clear of the receiver's entry, after
+                        // the release.
+                        self.entry = false;
                         self.ev = 1;
                     }
                     1 => {
@@ -1722,9 +1781,10 @@ mod tests {
             event,
             deadline,
             stale: true,
-            stale_clear: site == Site::Sleep,
+            stale_clear: matches!(site, Site::Sleep | Site::Recv),
             reinsert: true,
             arm: true,
+            late_arm: false,
             old_signal: false,
             split: false,
         });
@@ -1790,6 +1850,59 @@ mod tests {
             stale_clear: true,
             reinsert: false,
             arm: true,
+            late_arm: false,
+            old_signal: false,
+            split: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_wake()));
+    }
+
+    #[test]
+    fn loop_model_recv_never_loses_a_wake() {
+        // The sender, the timeout, and a stale sender that removes the
+        // entry and then wakes the receiver: the next pass re-inserts it.
+        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
+        for &deadline in deadlines {
+            check_loop_site(Site::Recv, Event::Send, deadline);
+        }
+        check_loop_site(Site::Recv, Event::None, true);
+    }
+
+    #[test]
+    fn loop_model_recv_entry_before_the_arm_loses_the_wake() {
+        // Negative control (today's order): the receiver slot and the
+        // timeout entry are published before the arm, so a timeout that
+        // fires before the arm finds the receiver Running with an Idle word
+        // and skips it, and the receiver then blocks with nothing to wake it.
+        let finals = loop_model::explore(loop_model::Config {
+            site: Site::Recv,
+            event: Event::None,
+            deadline: true,
+            stale: false,
+            stale_clear: false,
+            reinsert: true,
+            arm: true,
+            late_arm: true,
+            old_signal: false,
+            split: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_wake()));
+    }
+
+    #[test]
+    fn loop_model_recv_without_the_reinsert_hangs() {
+        // Negative control: only the first pass publishes the entry, so a
+        // stale sender's clear and wake leave the receiver blocked with no
+        // entry and no wake.
+        let finals = loop_model::explore(loop_model::Config {
+            site: Site::Recv,
+            event: Event::None,
+            deadline: true,
+            stale: true,
+            stale_clear: true,
+            reinsert: false,
+            arm: true,
+            late_arm: false,
             old_signal: false,
             split: false,
         });
@@ -1808,6 +1921,7 @@ mod tests {
             stale_clear: false,
             reinsert: true,
             arm: true,
+            late_arm: false,
             old_signal: true,
             split: false,
         });
@@ -1826,6 +1940,7 @@ mod tests {
             stale_clear: false,
             reinsert: true,
             arm: false,
+            late_arm: false,
             old_signal: false,
             split: false,
         });
@@ -1845,6 +1960,7 @@ mod tests {
                 stale_clear: false,
                 reinsert: true,
                 arm: true,
+                late_arm: false,
                 old_signal: false,
                 split: true,
             });

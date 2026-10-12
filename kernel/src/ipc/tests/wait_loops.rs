@@ -4,8 +4,8 @@
 //! the waits from the same CPU.
 //!
 //! Outcome-only (owner, 2026-10-11, Q8): each case checks which wake source
-//! fired (the result the wait returned, and for a sleep whether its backstop
-//! fired), the order of events (the helper's stale wake landed inside the
+//! fired (the result the wait returned, and for a sleep or a receive whether
+//! its backstop fired), the order of events (the helper's stale wake landed inside the
 //! wait, which the helper guarantees by waiting for the wait's record, and a
 //! timed-out wait did not return before its deadline) and the state left
 //! behind (no waiter record, registration, deadline or timeout entry). No
@@ -27,7 +27,7 @@ use crate::ipc::timeout::{has_timeout_entry, sleep_ticks};
 use crate::ipc::{channel_create, channel_destroy, channel_mut, DeadlineArm, CHANNEL_TABLE};
 use crate::sched;
 use crate::syscall::IpcError;
-use crate::task::{ThreadId, ThreadState};
+use crate::task::ThreadId;
 use shared::{Capability, ChannelId, NotificationId, SelectEntry, SelectKind, MAX_MESSAGE_SIZE};
 
 use super::wake_helper::{self, Command};
@@ -185,8 +185,8 @@ impl SelectSet {
 /// - (c) the same select with `Send(ch1)` at +5: `Ok((1, 0))`; then
 ///   `ipc_recv` drains ch1.
 /// - (d) the helper blocks in `RecvBlock(ch2, 2000)`; the driver yields
-///   until the helper is ch2's waiting receiver and blocked (at most 32
-///   yields), then `select([ch2], 2000)` must return EAGAIN without
+///   until the helper is ch2's waiting receiver (at most 32 yields), then
+///   `select([ch2], 2000)` must return EAGAIN without
 ///   blocking, and `ipc_send(ch2)` releases the helper, whose receive must
 ///   return `Ok`.
 ///
@@ -290,9 +290,9 @@ fn select_case_c(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
 
 /// Select-loop case (d): ch2's receiver slot is taken, so the select fails
 /// EAGAIN (#186 item 2) after its arm, without blocking. The driver waits
-/// for the helper to be blocked in its receive, not only published as the
-/// receiver: `ipc_recv` is not converted until step 13, and a send that
-/// found the helper published but not yet blocked would skip it.
+/// for the helper to be ch2's waiting receiver; the helper's receive armed
+/// before it took the slot, so the send that releases it is kept as a token
+/// if the helper has not blocked yet.
 fn select_case_d(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
     let Some(helper) = wake_helper::helper_tid() else {
         return Some("no helper");
@@ -304,13 +304,7 @@ fn select_case_d(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
     if !wake_helper::post(recv, 0) {
         return Some("helper busy");
     }
-    let receiving = || {
-        receiver_is(set.ch2, Some(helper))
-            && matches!(
-                sched::thread_probe(helper, false).state,
-                Some(ThreadState::BlockedIpc { .. })
-            )
-    };
+    let receiving = || receiver_is(set.ch2, Some(helper));
     let mut yields = 0;
     while !receiving() && yields < wake_helper::MAX_POLLS {
         sched::thread_yield();
@@ -394,5 +388,81 @@ fn sleep_case(me: ThreadId) -> Option<&'static str> {
         return Some("early");
     }
     wake_helper::stale_failure(helper, true)
+        .or_else(|| has_timeout_entry(me).then_some("entry left"))
+}
+
+/// `Recv-loop test`: `ipc_recv(ch, 2000)` on a pid-1 channel with no sender,
+/// with a stale wake at +5 that first removes the receive's TIMEOUT_QUEUE
+/// entry (`Command::Stale` with `clear_timeout`: a stale sender that clears
+/// the receiver's entry and wakes it), so only the receive's re-insert of
+/// its entry can end it on time. The channel comes from `channel_create` in
+/// pid 1 (minting pid 1's `ChannelAccess`); it is destroyed afterwards and
+/// the minted token revoked.
+///
+/// A backstop deadline (`arm_deadline`), 2000 ticks after the receive's, is
+/// published first, as in `Sleep-loop`. Pass: ETIMEDOUT with the backstop
+/// not fired (the receive's own re-inserted entry ended it), at or past its
+/// deadline; the helper removed an entry; and afterwards the channel's
+/// `waiting_receiver` is `None` and no TIMEOUT_QUEUE entry is left. Logs
+/// `Recv-loop test: as expected`, or `Recv-loop test: entry lost` (the
+/// backstop fired first), `Recv-loop test: early` (returned before its
+/// deadline), the wrong result by name, or a line naming the helper's or
+/// the leftover's failure.
+pub(super) fn recv_loop_test(me: ThreadId) {
+    let failure = match channel_create(me) {
+        Ok((ch, _access)) => {
+            let failure = recv_case(me, ch);
+            let _ = channel_destroy(ch);
+            super::stale_id::revoke_all(TEST_PID, Capability::ChannelAccess(ch));
+            failure
+        }
+        Err(_) => Some("create failed"),
+    };
+    // A case that failed with the helper still in its command: the receive
+    // it waited for has returned, so the command is abandoned.
+    wake_helper::reclaim();
+    match failure {
+        None => crate::kinfo!(Ipc, "Recv-loop test: as expected"),
+        Some(what) => crate::kwarn!(Ipc, "Recv-loop test: {}", what),
+    }
+}
+
+/// The Recv-loop case on channel `ch`: the failure, if any.
+fn recv_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
+    // The receive's own deadline is at or after this one.
+    let deadline = now().saturating_add(LOOP_TICKS);
+    let backstop = deadline.saturating_add(BACKSTOP_TICKS);
+    if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
+        return Some("backstop expired");
+    }
+    let stale = Command::Stale {
+        target: me,
+        clear_timeout: true,
+    };
+    if !wake_helper::post(stale, DUE_TICKS) {
+        clear_deadline(me);
+        return Some("helper busy");
+    }
+    let mut buf = [0u8; MAX_MESSAGE_SIZE];
+    let result = ipc_recv(ch, &mut buf, LOOP_TICKS);
+    let returned = now();
+    let backstop_fired = deadline_of(me) != backstop;
+    clear_deadline(me);
+    let helper = wake_helper::finish();
+    if backstop_fired {
+        return Some("entry lost");
+    }
+    match result {
+        Err(e) if e == IpcError::Etimedout as i64 => {}
+        Ok(_) => return Some("Ok"),
+        Err(e) if e == IpcError::Eagain as i64 => return Some("EAGAIN"),
+        Err(e) if e == IpcError::Epipe as i64 => return Some("EPIPE"),
+        Err(_) => return Some("wrong error"),
+    }
+    if returned < deadline {
+        return Some("early");
+    }
+    wake_helper::stale_failure(helper, true)
+        .or_else(|| (!receiver_is(ch, None)).then_some("receiver left"))
         .or_else(|| has_timeout_entry(me).then_some("entry left"))
 }

@@ -129,7 +129,9 @@ pub(crate) struct Channel {
     pub(crate) owner_b: Option<ProcessId>,
     /// Message ring buffer (requests and async sends).
     pub(crate) ring: MessageRing,
-    /// Thread currently blocked in ipc_recv() on this channel, if any.
+    /// Thread waiting in ipc_recv() or ipc_select() on this channel, if any:
+    /// armed for its wait (`wake::prepare_block`) before it registers here,
+    /// and blocked or about to block. A waker takes it, then wakes it.
     pub(crate) waiting_receiver: Option<ThreadId>,
     /// Thread currently blocked in ipc_call() waiting for a reply.
     /// The receiver uses this to deliver the reply.
