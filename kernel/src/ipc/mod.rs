@@ -31,7 +31,6 @@ pub use shared::{
 // Re-export channel operations so callers see the same public API.
 pub use channel::{ipc_call, ipc_cancel, ipc_recv, ipc_reply, ipc_send};
 pub(crate) use scan::scan_wakers;
-pub(crate) use tests::channel_create_unchecked;
 pub use tests::init;
 pub(crate) use timeout::wake_with_error;
 pub use timeout::{check_timeouts, current_thread_id, sleep_ticks};
@@ -148,20 +147,61 @@ impl Channel {
 // Global channel table
 // ---------------------------------------------------------------------------
 
-/// Backing array of `CHANNEL_TABLE`, indexed by `ChannelId::index()`.
-type ChannelTable = [Option<Channel>; MAX_CHANNELS];
+/// One `CHANNEL_TABLE` slot: its channel, if any, and the generation that the
+/// slot's channel carries, or that its next channel will carry.
+///
+/// A channel in the slot always has the id `ChannelId::new(slot, generation)`.
+/// `free` is the only way a channel leaves its slot: it advances the
+/// generation in the same `CHANNEL_TABLE` hold, so an id issued before the
+/// free never matches the slot again. A slot freed at `ID_GEN_MAX` is retired
+/// (`ID_GEN_RETIRED`) and never allocated again.
+pub(crate) struct ChannelSlot {
+    /// Set by `free` only; private to the IPC module.
+    generation: u32,
+    /// The channel in the slot. Walks of the table read and update it in
+    /// place; only `channel_alloc` and `free` add or remove one.
+    pub(crate) channel: Option<Channel>,
+}
 
-pub(crate) static CHANNEL_TABLE: Mutex<ChannelTable> = {
-    const NONE: Option<Channel> = None;
-    Mutex::new([NONE; MAX_CHANNELS])
-};
+impl ChannelSlot {
+    /// A never-used slot: empty, at the first generation.
+    const EMPTY: Self = Self {
+        generation: shared::ID_GEN_FIRST,
+        channel: None,
+    };
+
+    /// Whether `channel_alloc` may put a new channel here: empty and not
+    /// retired.
+    fn is_free(&self) -> bool {
+        self.channel.is_none() && self.generation != shared::ID_GEN_RETIRED
+    }
+
+    /// Take the channel out of the slot if it is the one `id` names, and
+    /// advance the slot's generation (retiring it at `ID_GEN_MAX`). Returns
+    /// `None`, changing nothing, when the slot is empty or holds another
+    /// generation's channel.
+    fn free(&mut self, id: ChannelId) -> Option<Channel> {
+        if self.channel.as_ref()?.id != id {
+            return None;
+        }
+        self.generation = shared::next_generation(self.generation);
+        self.channel.take()
+    }
+}
+
+/// Backing array of `CHANNEL_TABLE`, indexed by `ChannelId::index()`.
+pub(crate) type ChannelTable = [ChannelSlot; MAX_CHANNELS];
+
+pub(crate) static CHANNEL_TABLE: Mutex<ChannelTable> =
+    Mutex::new([ChannelSlot::EMPTY; MAX_CHANNELS]);
 
 /// Range-checked access to a channel's slot in a locked `CHANNEL_TABLE`.
 ///
-/// Returns `Err(EINVAL)` when `id` is `>= MAX_CHANNELS`. No channel can exist
-/// at such an id, so a raw index would run past the end of the table and
-/// panic the kernel. Every channel lookup goes through this function.
-fn channel_slot_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Option<Channel>, i64> {
+/// Returns `Err(EINVAL)` when `id`'s slot is `>= MAX_CHANNELS` (malformed).
+/// No channel can exist at such an id, so a raw index would run past the end
+/// of the table and panic the kernel. Every channel lookup goes through this
+/// function.
+fn channel_slot_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut ChannelSlot, i64> {
     match id.index() {
         // `index()` only returns ids below MAX_CHANNELS, the length of the
         // table array, so this indexing cannot panic.
@@ -176,20 +216,48 @@ fn channel_slot_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Opti
     }
 }
 
-/// Look up a live channel in a locked `CHANNEL_TABLE`.
+/// Look up the live channel `id` names in a locked `CHANNEL_TABLE`.
 ///
-/// Returns `Err(EINVAL)` when `id` is out of range (see `channel_slot_mut`)
-/// and `Err(EPIPE)` when the slot is empty, i.e. the channel was destroyed or
-/// never created.
-fn channel_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Channel, i64> {
-    channel_slot_mut(table, id)?
-        .as_mut()
-        .ok_or(IpcError::Epipe as i64)
+/// Returns `Err(EINVAL)` when `id`'s slot is malformed (see
+/// `channel_slot_mut`) and `Err(EPIPE)` when the slot is empty or holds a
+/// channel with another id (the full `u32`, generation included): the
+/// channel was destroyed or never created, and a stale id never reaches the
+/// channel now in its slot.
+pub(crate) fn channel_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Channel, i64> {
+    match &mut channel_slot_mut(table, id)?.channel {
+        Some(ch) if ch.id == id => Ok(ch),
+        _ => Err(IpcError::Epipe as i64),
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Channel create / destroy
 // ---------------------------------------------------------------------------
+
+/// Put a new channel in the lowest free slot of `CHANNEL_TABLE`, at that
+/// slot's generation. Endpoint A belongs to `owner`; `creation_cap` is the
+/// token the cascade revocation matches, or `None` for a kernel channel.
+///
+/// Returns `Err(ENOSPC)` when no slot is free (each holds a channel or is
+/// retired). The one allocator of `channel_create` and
+/// `channel_create_unchecked`.
+fn channel_alloc(
+    owner: ProcessId,
+    creation_cap: Option<shared::CapabilityTokenId>,
+) -> Result<ChannelId, i64> {
+    let mut table = CHANNEL_TABLE.lock();
+    let idx = table
+        .iter()
+        .position(ChannelSlot::is_free)
+        .ok_or(IpcError::Enospc as i64)?;
+    let slot = &mut table[idx];
+    // A free slot is not retired, so its generation is one `new` accepts.
+    let id = ChannelId::new(idx, slot.generation);
+    let mut ch = Channel::new(id, owner);
+    ch.creation_cap = creation_cap;
+    slot.channel = Some(ch);
+    Ok(id)
+}
 
 /// Create a new IPC channel. Returns channel_id.
 ///
@@ -203,20 +271,30 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
     let pid = crate::cap::process_of_thread(creator).ok_or(IpcError::Eperm as i64)?;
     let auth_token = crate::cap::check_channel_create(pid)?;
 
-    let mut table = CHANNEL_TABLE.lock();
-    // Find a free slot.
-    let slot = table.iter().position(|s| s.is_none());
-    let idx = match slot {
-        Some(i) => i,
-        None => return Err(IpcError::Enospc as i64),
-    };
-
-    let id = ChannelId::new(idx, shared::ID_GEN_FIRST);
-    let mut ch = Channel::new(id, pid);
-    ch.creation_cap = Some(auth_token);
-    table[idx] = Some(ch);
+    let id = channel_alloc(pid, Some(auth_token))?;
     crate::kinfo!(Ipc, "Channel {} created by thread {}", id, creator.0);
     Ok(id)
+}
+
+/// Create a kernel channel without a capability check and with no
+/// `creation_cap`, so no revocation cascades to it. The caller names the
+/// process that owns endpoint A: init code that runs before the owning
+/// threads exist (before `enter_scheduler`), and self-tests (ADR §11's
+/// interim exception).
+///
+/// # Panics
+///
+/// If the channel table has no free slot: these callers create a handful of
+/// channels, so a full table is a kernel bug.
+pub(crate) fn channel_create_unchecked(owner: ProcessId) -> ChannelId {
+    let id = channel_alloc(owner, None).expect("channel table full");
+    crate::kinfo!(
+        Ipc,
+        "Channel {} created (unchecked) for pid {}",
+        id,
+        owner.0
+    );
+    id
 }
 
 /// Set the process that owns the peer endpoint (B) of a channel.
@@ -240,10 +318,17 @@ pub fn channel_destroy(channel: ChannelId) -> Result<(), i64> {
 
 /// Internal channel destruction — bypasses capability checks.
 /// Used by cascade revocation (kernel-initiated teardown).
+///
+/// Returns `Err(EINVAL)` for a malformed slot and `Err(EPIPE)` when the slot
+/// is empty or holds a channel with another id. The identity check comes
+/// before the take (`ChannelSlot::free`): `check_channel_access` passes a
+/// stale id when the caller still holds the stale token, and a cascade can
+/// name a channel destroyed since its walk, so without the check a stale
+/// destroy would tear down the channel now in that slot.
 pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
     let mut table = CHANNEL_TABLE.lock();
     let ch = channel_slot_mut(&mut table, channel)?
-        .take()
+        .free(channel)
         .ok_or(IpcError::Epipe as i64)?;
 
     // Wake any blocked threads with EPIPE (both receiver and caller).
@@ -567,20 +652,24 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
     fn shmem_destroy(&mut self, id: shared::SharedMemoryId) -> Result<(), IpcKitError> {
         // No dedicated kernel destroy function exists. Walk the region's
         // mappings and unmap each one. The last unmap frees backing pages.
+        // The unmaps name the full id, so if the region is freed and its slot
+        // reused meanwhile, they return EPIPE and leave the new region alone.
         let pids_to_unmap: alloc::vec::Vec<crate::task::process::ProcessId> = {
-            let Some(idx) = id.index() else {
-                return Err(IpcKitError::SharedMemoryError {
-                    reason: "invalid region id",
-                });
-            };
-            let table = shmem::SHARED_REGION_TABLE.lock();
-            match &table[idx] {
-                Some(region) => region
+            let mut table = shmem::SHARED_REGION_TABLE.lock();
+            match shmem::region_mut(&mut table, id) {
+                Ok(region) => region
                     .mappings
                     .iter()
                     .filter_map(|m| m.as_ref().map(|mapping| mapping.pid))
                     .collect(),
-                None => {
+                Err(code) if code == IpcError::Einval as i64 => {
+                    return Err(IpcKitError::SharedMemoryError {
+                        reason: "invalid region id",
+                    })
+                }
+                // EPIPE: the slot is empty or holds another generation's
+                // region.
+                Err(_) => {
                     return Err(IpcKitError::SharedMemoryError {
                         reason: "region not found",
                     })

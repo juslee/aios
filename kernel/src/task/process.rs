@@ -164,7 +164,7 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
     let mut epipe_count = 0usize;
     {
         let mut channels = crate::ipc::CHANNEL_TABLE.lock();
-        for ch in channels.iter_mut().flatten() {
+        for ch in channels.iter_mut().filter_map(|slot| slot.channel.as_mut()) {
             if ch.owner_a == pid || ch.owner_b == Some(pid) {
                 // Mark channel as destroyed by setting endpoints to Dead.
                 ch.state_a = shared::EndpointState::Dead;

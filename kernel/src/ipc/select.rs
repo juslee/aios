@@ -50,6 +50,9 @@ pub(super) static SELECT_WAITERS: IrqSpinLock<[Option<SelectWaiter>; MAX_THREADS
 /// registration: `EINVAL` if any id is out of range, otherwise
 /// `EPERM` if the caller lacks access to any channel in the set (or, for a
 /// set with a channel entry, if the calling thread has no owning process).
+/// A channel entry that names no live channel (destroyed, never created, or
+/// a stale id of another generation) returns `EPIPE`, from the scan or from
+/// the registration; a failed registration is rolled back first.
 ///
 /// Returns `(ready_index, matched_bits)` on success.
 /// `matched_bits` is non-zero only for notification entries.
@@ -92,7 +95,9 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     check_channel_entries(my_tid, entries)?;
 
     // --- Non-blocking scan: check each entry ---
-    if let Some((idx, bits)) = scan_entries(entries) {
+    // A channel lookup error (EPIPE: destroyed, or a stale id) returns here,
+    // before anything is registered.
+    if let Some((idx, bits)) = scan_entries(entries)? {
         return Ok((idx, bits));
     }
 
@@ -120,8 +125,15 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
         waiters[my_tid.0 as usize] = Some(sw);
     }
 
-    // Register on each source's waiter list.
-    register_on_sources(my_tid, entries);
+    // Register on each source's waiter list. A channel destroyed since the
+    // scan fails the registration, which has then undone its own partial
+    // work: clear the SELECT_WAITERS record too, so a waker's
+    // set_select_ready finds nothing to write into, and return before the
+    // deadline is set.
+    if let Err(code) = register_on_sources(my_tid, entries) {
+        SELECT_WAITERS.lock()[my_tid.0 as usize] = None;
+        return Err(code);
+    }
 
     // Store deadline for timeout checking.
     super::notify::set_select_deadline(my_tid, deadline);
@@ -186,17 +198,18 @@ fn check_channel_entries(tid: ThreadId, entries: &[SelectEntry]) -> Result<(), i
 // Non-blocking scan
 // ---------------------------------------------------------------------------
 
-/// Scan all entries for a ready source. Returns `(index, matched_bits)`.
-fn scan_entries(entries: &[SelectEntry]) -> Option<(usize, u64)> {
+/// Scan all entries for a ready source. Returns `(index, matched_bits)` for
+/// the first ready one, `None` if none is ready, and the lookup error of the
+/// first channel entry that names no live channel (EPIPE: destroyed, never
+/// created, or a stale id).
+fn scan_entries(entries: &[SelectEntry]) -> Result<Option<(usize, u64)>, i64> {
     for (i, entry) in entries.iter().enumerate() {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 // Check if the channel has a pending message.
                 let mut table = super::CHANNEL_TABLE.lock();
-                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
-                    if ch.ring.len > 0 {
-                        return Some((i, 0));
-                    }
+                if super::channel_mut(&mut table, ch_id)?.ring.len > 0 {
+                    return Ok(Some((i, 0)));
                 }
                 // Lock dropped here.
             }
@@ -211,14 +224,14 @@ fn scan_entries(entries: &[SelectEntry]) -> Option<(usize, u64)> {
                         notif
                             .word
                             .fetch_and(!matched, core::sync::atomic::Ordering::AcqRel);
-                        return Some((i, matched));
+                        return Ok(Some((i, matched)));
                     }
                 }
                 // Lock dropped here.
             }
         }
     }
-    None
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------
@@ -226,16 +239,27 @@ fn scan_entries(entries: &[SelectEntry]) -> Option<(usize, u64)> {
 // ---------------------------------------------------------------------------
 
 /// Register the select-waiting thread on each source's waiter list.
-fn register_on_sources(tid: ThreadId, entries: &[SelectEntry]) {
-    for entry in entries {
+///
+/// A channel entry that names no live channel (EPIPE, as in `scan_entries`)
+/// stops the registration: the entries before it are unregistered again and
+/// its lookup error is returned, so a failed call leaves `tid` on no source.
+fn register_on_sources(tid: ThreadId, entries: &[SelectEntry]) -> Result<(), i64> {
+    for (i, entry) in entries.iter().enumerate() {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 // For channels, set waiting_receiver if not already set.
                 // The channel's ipc_call/ipc_send code checks waiting_receiver.
                 let mut table = super::CHANNEL_TABLE.lock();
-                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
-                    if ch.waiting_receiver.is_none() {
-                        ch.waiting_receiver = Some(tid);
+                match super::channel_mut(&mut table, ch_id) {
+                    Ok(ch) => {
+                        if ch.waiting_receiver.is_none() {
+                            ch.waiting_receiver = Some(tid);
+                        }
+                    }
+                    Err(code) => {
+                        drop(table);
+                        unregister_from_sources(tid, &entries[..i]);
+                        return Err(code);
                     }
                 }
             }
@@ -253,6 +277,7 @@ fn register_on_sources(tid: ThreadId, entries: &[SelectEntry]) {
             }
         }
     }
+    Ok(())
 }
 
 /// Remove the select-waiting thread from each source's waiter list.

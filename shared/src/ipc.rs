@@ -734,25 +734,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: slot <")]
     fn channel_id_new_rejects_a_malformed_slot() {
         let _ = ChannelId::new(MAX_CHANNELS, ID_GEN_FIRST);
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: slot <")]
     fn shared_memory_id_new_rejects_a_malformed_slot() {
         let _ = SharedMemoryId::new(MAX_SHARED_REGIONS, ID_GEN_FIRST);
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: generation >=")]
     fn id_new_rejects_the_retired_generation() {
         let _ = ChannelId::new(0, ID_GEN_RETIRED);
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: generation >=")]
     fn id_new_rejects_a_generation_past_max() {
         let _ = SharedMemoryId::new(0, ID_GEN_MAX + 1);
     }

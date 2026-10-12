@@ -387,7 +387,7 @@ fn revoke_channels_for_cap(token_id: CapabilityTokenId) {
 
     {
         let table = crate::ipc::CHANNEL_TABLE.lock();
-        for ch in table.iter().flatten() {
+        for ch in table.iter().filter_map(|slot| slot.channel.as_ref()) {
             if ch.creation_cap == Some(token_id) && count < channels_to_destroy.len() {
                 // The stored id, generation included.
                 channels_to_destroy[count] = Some(ch.id);

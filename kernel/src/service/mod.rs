@@ -326,12 +326,12 @@ fn echo_server_entry() -> ! {
     }
 }
 
-/// Endpoint states (A, B) of `channel`, or `None` if the channel is gone.
+/// Endpoint states (A, B) of `channel`, or `None` if the channel is gone
+/// (its slot is empty or holds another generation's channel).
 fn channel_endpoint_states(channel: ChannelId) -> Option<(ipc::EndpointState, ipc::EndpointState)> {
-    let table = ipc::CHANNEL_TABLE.lock();
-    channel
-        .index()
-        .and_then(|idx| table[idx].as_ref())
+    let mut table = ipc::CHANNEL_TABLE.lock();
+    ipc::channel_mut(&mut table, channel)
+        .ok()
         .map(|ch| (ch.state_a, ch.state_b))
 }
 

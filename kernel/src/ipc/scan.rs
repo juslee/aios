@@ -46,7 +46,7 @@ fn scan_channels() -> bool {
         return false;
     };
     let start = timer::read_counter();
-    for channel in table.iter().flatten() {
+    for channel in table.iter().filter_map(|slot| slot.channel.as_ref()) {
         if let Some(tid) = channel.waiting_receiver {
             tripwire::scan_note_waker(ScanWaker::ChanRef, tid.0);
         }

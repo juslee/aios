@@ -102,10 +102,73 @@ unsafe impl Send for SharedMemoryRegion {}
 // Global shared region table
 // ---------------------------------------------------------------------------
 
-pub static SHARED_REGION_TABLE: Mutex<[Option<SharedMemoryRegion>; MAX_SHARED_REGIONS]> = {
-    const NONE: Option<SharedMemoryRegion> = None;
-    Mutex::new([NONE; MAX_SHARED_REGIONS])
-};
+/// One `SHARED_REGION_TABLE` slot: its region, if any, and the generation
+/// that the slot's region carries, or that its next region will carry.
+///
+/// A region in the slot always has the id `SharedMemoryId::new(slot,
+/// generation)`. `free` is the only way a region leaves its slot: it advances
+/// the generation in the same `SHARED_REGION_TABLE` hold, so an id issued
+/// before the free never matches the slot again. A slot freed at
+/// `ID_GEN_MAX` is retired (`ID_GEN_RETIRED`) and never allocated again.
+/// Both fields are private to this module; other code reaches a region only
+/// through `region_mut`.
+pub struct RegionSlot {
+    generation: u32,
+    region: Option<SharedMemoryRegion>,
+}
+
+impl RegionSlot {
+    /// A never-used slot: empty, at the first generation.
+    const EMPTY: Self = Self {
+        generation: shared::ID_GEN_FIRST,
+        region: None,
+    };
+
+    /// Whether `shared_memory_create` may put a new region here: empty and
+    /// not retired.
+    fn is_free(&self) -> bool {
+        self.region.is_none() && self.generation != shared::ID_GEN_RETIRED
+    }
+
+    /// Take the region out of the slot if it is the one `id` names, and
+    /// advance the slot's generation (retiring it at `ID_GEN_MAX`). Returns
+    /// `None`, changing nothing, when the slot is empty or holds another
+    /// generation's region.
+    fn free(&mut self, id: SharedMemoryId) -> Option<SharedMemoryRegion> {
+        if self.region.as_ref()?.id != id {
+            return None;
+        }
+        self.generation = shared::next_generation(self.generation);
+        self.region.take()
+    }
+}
+
+/// Backing array of `SHARED_REGION_TABLE`, indexed by
+/// `SharedMemoryId::index()`.
+pub type RegionTable = [RegionSlot; MAX_SHARED_REGIONS];
+
+pub static SHARED_REGION_TABLE: Mutex<RegionTable> =
+    Mutex::new([RegionSlot::EMPTY; MAX_SHARED_REGIONS]);
+
+/// Look up the live region `id` names in a locked `SHARED_REGION_TABLE`.
+///
+/// Returns `Err(EINVAL)` when `id`'s slot is `>= MAX_SHARED_REGIONS`
+/// (malformed), and `Err(EPIPE)` when the slot is empty or holds a region
+/// with another id (the full `u32`, generation included): the region was
+/// freed or never created, and a stale id never reaches the region now in
+/// its slot. Every lookup of a region by id goes through this function.
+pub(crate) fn region_mut(
+    table: &mut RegionTable,
+    id: SharedMemoryId,
+) -> Result<&mut SharedMemoryRegion, i64> {
+    // `index()` only returns ids below MAX_SHARED_REGIONS, the length of the
+    // table array, so this indexing cannot panic.
+    let idx = id.index().ok_or(IpcError::Einval as i64)?;
+    match &mut table[idx].region {
+        Some(region) if region.id == id => Ok(region),
+        _ => Err(IpcError::Epipe as i64),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Create
@@ -166,9 +229,10 @@ pub fn shared_memory_create(
         core::ptr::write_bytes(dmap_va as *mut u8, 0, (1 << order) * PAGE_SIZE);
     }
 
-    // Find a free slot in the table.
+    // Find a free slot in the table: the lowest one that is empty and not
+    // retired.
     let mut table = SHARED_REGION_TABLE.lock();
-    let idx = table.iter().position(|s| s.is_none()).ok_or_else(|| {
+    let idx = table.iter().position(RegionSlot::is_free).ok_or_else(|| {
         // No free slots — free the pages and return error.
         // SAFETY: base_phys was just allocated with the given order.
         unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
@@ -176,8 +240,10 @@ pub fn shared_memory_create(
         IpcError::Enospc as i64
     })?;
 
-    let id = SharedMemoryId::new(idx, shared::ID_GEN_FIRST);
-    table[idx] = Some(SharedMemoryRegion {
+    let slot = &mut table[idx];
+    // A free slot is not retired, so its generation is one `new` accepts.
+    let id = SharedMemoryId::new(idx, slot.generation);
+    slot.region = Some(SharedMemoryRegion {
         id,
         base_phys,
         order,
@@ -234,8 +300,9 @@ pub fn shared_memory_create(
 ///
 /// Errors: EINVAL for an out-of-range id, WRITE | EXECUTE, or flags beyond
 /// the region's `max_flags`; EPERM without `SharedMemoryAccess(id)`; EPIPE if
-/// the region does not exist; EEXIST if `pid` already maps it; ENOSPC if the
-/// region has `MAX_SHARED_MAPPINGS` mappings.
+/// the region does not exist or `id` is stale (another generation); EEXIST
+/// if `pid` already maps it; ENOSPC if the region has `MAX_SHARED_MAPPINGS`
+/// mappings.
 pub fn shared_memory_map(
     pid: ProcessId,
     region_id: SharedMemoryId,
@@ -254,7 +321,7 @@ pub fn shared_memory_map(
     crate::cap::check_shared_memory_access(pid, region_id)?;
 
     let mut table = SHARED_REGION_TABLE.lock();
-    let region = table[idx].as_mut().ok_or(IpcError::Epipe as i64)?;
+    let region = region_mut(&mut table, region_id)?;
 
     // Verify flags are a subset of max_flags. The limit belongs to the
     // region, not to the caller, so asking for more is EINVAL for everyone.
@@ -293,7 +360,8 @@ pub fn shared_memory_map(
             IpcError::Enospc as i64
         })?;
 
-    // Compute VA for this mapping: base + region_id * stride.
+    // Compute VA for this mapping from the region's slot (not the raw id,
+    // which carries the generation): base + slot * stride.
     let va = SHM_VA_BASE + idx * SHM_VA_STRIDE;
     let base_phys = region.base_phys;
     let size_bytes = region.size_bytes;
@@ -340,16 +408,16 @@ pub fn shared_memory_map(
 /// backing pages.
 ///
 /// Errors: EINVAL for an out-of-range id (or a ref_count already 0); EPIPE
-/// if the region does not exist; EPERM if `pid` has no mapping of it, a
-/// right the caller lacks, like a missing capability. No capability is
-/// checked: holding the mapping is the authority to remove it.
+/// if the region does not exist or `region_id` is stale; EPERM if `pid` has
+/// no mapping of it, a right the caller lacks, like a missing capability. No
+/// capability is checked: holding the mapping is the authority to remove it.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
     let Some(idx) = region_id.index() else {
         return Err(IpcError::Einval as i64);
     };
 
     let mut table = SHARED_REGION_TABLE.lock();
-    let region = table[idx].as_mut().ok_or(IpcError::Epipe as i64)?;
+    let region = region_mut(&mut table, region_id)?;
 
     // Find and remove the mapping for this pid.
     let mapping = region
@@ -390,10 +458,10 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
     let order = region.order;
     let size_bytes = region.size_bytes;
 
-    // If last reference, free the region.
+    // If last reference, free the region and advance its slot's generation.
     let should_free = old_ref == 1;
     if should_free {
-        table[idx] = None;
+        table[idx].free(region_id);
     }
 
     drop(table);
@@ -442,7 +510,9 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 ///
 /// Returns `Err(EINVAL)` for a region id whose slot is `>= MAX_SHARED_REGIONS`
 /// or a `target_pid >= MAX_PROCESSES`, before taking any lock; EPIPE if the
-/// region does not exist; EPERM if `pid` is not the region's creator (a
+/// region does not exist or `region_id` is stale (another generation), so
+/// the grant always names the full id of the region the check found; EPERM
+/// if `pid` is not the region's creator (a
 /// right the caller lacks) or the target process does not exist. The
 /// second EPERM is not a missing right: it is the empty-slot code of the
 /// process accessors (`process_mut`) today (ipc.md §3.2). SharedMemoryShare
@@ -453,9 +523,9 @@ pub fn shared_memory_share(
     region_id: SharedMemoryId,
     target_pid: ProcessId,
 ) -> Result<(), i64> {
-    let Some(idx) = region_id.index() else {
+    if region_id.index().is_none() {
         return Err(IpcError::Einval as i64);
-    };
+    }
     // target_pid comes straight from the SharedMemoryShare syscall. Reject an
     // out-of-range pid here, before SHARED_REGION_TABLE or PROCESS_TABLE is
     // locked; grant_to_process would also return EINVAL for it.
@@ -463,10 +533,11 @@ pub fn shared_memory_share(
         return Err(IpcError::Einval as i64);
     }
 
-    // Verify the caller owns the region.
+    // Verify the region is the one `region_id` names (region.id, generation
+    // included) and that the caller owns it.
     {
-        let table = SHARED_REGION_TABLE.lock();
-        let region = table[idx].as_ref().ok_or(IpcError::Epipe as i64)?;
+        let mut table = SHARED_REGION_TABLE.lock();
+        let region = region_mut(&mut table, region_id)?;
 
         if region.creator != pid {
             crate::kwarn!(
@@ -481,7 +552,8 @@ pub fn shared_memory_share(
     }
     // SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering).
 
-    // Grant SharedMemoryAccess capability to the target process.
+    // Grant SharedMemoryAccess for the full id (slot and generation) to the
+    // target process.
     crate::cap::grant_to_process(
         target_pid,
         shared::Capability::SharedMemoryAccess(region_id),
@@ -512,29 +584,32 @@ pub fn process_cleanup_shared_memory(pid: ProcessId) {
     let mut free_count = 0;
 
     for slot in table.iter_mut() {
-        if let Some(region) = slot {
-            // Remove any mapping for this pid.
-            let had_mapping = region.mappings.iter_mut().any(|m| {
-                if m.is_some_and(|m| m.pid == pid) {
-                    *m = None;
-                    true
-                } else {
-                    false
-                }
-            });
+        let Some(region) = &mut slot.region else {
+            continue;
+        };
+        // Remove any mapping for this pid.
+        let had_mapping = region.mappings.iter_mut().any(|m| {
+            if m.is_some_and(|m| m.pid == pid) {
+                *m = None;
+                true
+            } else {
+                false
+            }
+        });
 
-            if had_mapping {
-                // Guard against underflow (defense-in-depth).
-                if region.ref_count.load(Ordering::Relaxed) == 0 {
-                    continue;
-                }
-                let old_ref = region.ref_count.fetch_sub(1, Ordering::Relaxed);
-                if old_ref == 1 {
-                    // Last reference — collect for freeing.
-                    to_free[free_count] = (region.base_phys, region.order);
-                    free_count += 1;
-                    *slot = None;
-                }
+        if had_mapping {
+            // Guard against underflow (defense-in-depth).
+            if region.ref_count.load(Ordering::Relaxed) == 0 {
+                continue;
+            }
+            let old_ref = region.ref_count.fetch_sub(1, Ordering::Relaxed);
+            if old_ref == 1 {
+                // Last reference — collect for freeing, and free the slot,
+                // advancing its generation.
+                to_free[free_count] = (region.base_phys, region.order);
+                free_count += 1;
+                let id = region.id;
+                slot.free(id);
             }
         }
     }
@@ -712,6 +787,7 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
             // slot, by the id it stores. An empty slot is EPIPE, as for a
             // destroyed region.
             let stored = SHARED_REGION_TABLE.lock()[region_idx]
+                .region
                 .as_ref()
                 .map(|r| r.id);
             let Some(region_id) = stored else {
@@ -758,21 +834,21 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
 /// Get the direct-map virtual address of a shared region's backing memory.
 ///
 /// For Phase 3 kernel threads, this is how processes access shared memory
-/// (no user address space to map into).
+/// (no user address space to map into). `None` for a malformed, empty or
+/// stale id (another generation's region in the slot).
 pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
-    let idx = region_id.index()?;
-    let table = SHARED_REGION_TABLE.lock();
-    table[idx]
-        .as_ref()
+    let mut table = SHARED_REGION_TABLE.lock();
+    region_mut(&mut table, region_id)
+        .ok()
         .map(|r| crate::arch::aarch64::mmu::DIRECT_MAP_BASE + r.base_phys)
 }
 
-/// Get the size in bytes of a shared region.
+/// Get the size in bytes of a shared region. `None` for a malformed, empty
+/// or stale id.
 #[allow(dead_code)]
 pub fn region_size(region_id: SharedMemoryId) -> Option<usize> {
-    let idx = region_id.index()?;
-    let table = SHARED_REGION_TABLE.lock();
-    table[idx].as_ref().map(|r| r.size_bytes)
+    let mut table = SHARED_REGION_TABLE.lock();
+    region_mut(&mut table, region_id).ok().map(|r| r.size_bytes)
 }
 
 // ---------------------------------------------------------------------------

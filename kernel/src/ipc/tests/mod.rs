@@ -7,6 +7,7 @@
 mod bad_pid;
 mod kit_errors;
 mod select_cap;
+mod stale_id;
 mod syscall_args;
 mod timeout_args;
 
@@ -14,11 +15,11 @@ use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::process::ProcessId;
 use crate::task::ThreadId;
-use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, ID_GEN_FIRST, MAX_CHANNELS, MAX_MESSAGE_SIZE};
+use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE};
 use spin::Mutex;
 
 use super::channel::{ipc_call, ipc_recv, ipc_reply, ipc_send};
-use super::{channel_create, channel_destroy, channel_set_peer, CHANNEL_TABLE};
+use super::{channel_create, channel_create_unchecked, channel_destroy, channel_set_peer};
 
 // ---------------------------------------------------------------------------
 // IPC test initialization
@@ -303,26 +304,6 @@ pub fn init() {
     );
 }
 
-/// Create a channel without capability checks (for init-time setup).
-/// Used when threads don't exist yet so owner_pid lookup would fail: the
-/// caller names the process that owns endpoint A.
-pub(crate) fn channel_create_unchecked(owner: ProcessId) -> ChannelId {
-    let mut table = CHANNEL_TABLE.lock();
-    let idx = table
-        .iter()
-        .position(|s| s.is_none())
-        .expect("channel table full");
-    let id = ChannelId::new(idx, ID_GEN_FIRST);
-    table[idx] = Some(super::Channel::new(id, owner));
-    crate::kinfo!(
-        Ipc,
-        "Channel {} created (unchecked) for pid {}",
-        id,
-        owner.0
-    );
-    id
-}
-
 // ---------------------------------------------------------------------------
 // IPC test thread entry points
 // ---------------------------------------------------------------------------
@@ -455,8 +436,10 @@ fn ipc_caller_entry() -> ! {
 /// check (`select_cap_test`), EINVAL for hostile syscall arguments,
 /// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
 /// (`syscall_args_test`, whose bad-buffer checks use `select_cap_test`'s
-/// `owned_a`), and the IPC Kit's error variants through `KernelIpc`
-/// (`kit_errors_test`, on all three of `select_cap_test`'s channels).
+/// `owned_a`), the IPC Kit's error variants through `KernelIpc`
+/// (`kit_errors_test`, on all three of `select_cap_test`'s channels), and
+/// EPIPE for stale channel and region ids whose slot was reused
+/// (`stale_id_test`).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -546,6 +529,7 @@ fn ipc_timeout_entry() -> ! {
     let select_channels = select_cap::select_cap_test(caller_tid);
     syscall_args::syscall_args_test(caller_tid, select_channels.map(|c| c.owned_a));
     kit_errors::kit_errors_test(caller_tid, select_channels);
+    stale_id::stale_id_test(caller_tid);
 
     loop {
         sched::thread_yield();

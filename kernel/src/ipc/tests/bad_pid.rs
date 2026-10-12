@@ -24,7 +24,7 @@ use super::TEST_PID;
 /// anything. It revokes the exact SharedMemoryCreate token it granted, right
 /// after the create call. It revokes the region's SharedMemoryAccess tokens
 /// (the creator grant and the self-share) before the unmap that frees the
-/// region, because region ids are reused.
+/// region, so no token outlives it.
 pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     let pid = match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => p,

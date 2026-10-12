@@ -115,7 +115,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
     let gone = crate::ipc::CHANNEL_TABLE
         .lock()
         .iter()
-        .rposition(Option::is_none)
+        .rposition(|slot| slot.channel.is_none())
         .map(|i| ChannelId::new(i, ID_GEN_FIRST));
     checks[19] = gone
         .is_some_and(|id| kit.reply(id, &msg).err() == Some(IpcKitError::InvalidChannel { id }));
@@ -240,12 +240,11 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
             });
     checks[5] = mapped && kit.shmem_unmap(region).is_ok();
     // The region is freed: EPIPE, a SharedMemoryError, not the table's
-    // ObjectGone. (Another process may reuse the slot in between, which makes
-    // it EPERM, "not mapped": a SharedMemoryError too.)
+    // ObjectGone.
     checks[6] = checks[5]
-        && matches!(
-            kit.shmem_unmap(region),
-            Err(IpcKitError::SharedMemoryError { .. })
-        );
+        && kit.shmem_unmap(region).err()
+            == Some(IpcKitError::SharedMemoryError {
+                reason: "region not found",
+            });
     checks
 }
