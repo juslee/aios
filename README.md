@@ -126,8 +126,8 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just tools` | Build the host tools binary `aios` and install it, with a provenance stamp, at `target/tools/installed/aios`, which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
-| `just brief` | Orient a session: git state, open PRs and their merge-ready verdicts, CI, soak results, handoff, next step and docs drift (`aios brief`, run through the main checkout's shim; `--no-fetch` skips the fetch) |
-| `just checkpoint` | Commit the work in progress and push the `claude/*` branch; `--handoff saved` records that a handoff was written (`aios checkpoint`, run through the main checkout's shim; it refuses to run a stale binary and exits 3) |
+| `just brief` | Orient a session: git state, open PRs and their merge-ready verdicts, CI, soak results, handoff, next step and docs drift (`aios brief`, run through the checkout's shim, which runs the main checkout's build; `--no-fetch` skips the fetch) |
+| `just checkpoint` | Commit the work in progress and push the `claude/*` branch; `--handoff saved` records that a handoff was written (`aios checkpoint`, run through the checkout's shim, which runs the main checkout's build; the shim rebuilds a stale binary first and exits 3 only if that rebuild fails) |
 
 ---
 

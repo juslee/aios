@@ -104,6 +104,9 @@ fn run_awk(command: &str, number: u32, report: &[u8]) -> String {
 
 #[test]
 fn merge_and_cleanup_awk_reads_every_pr_verdict() {
+    if agent::skip_brief_in_release("merge_and_cleanup_awk_reads_every_pr_verdict") {
+        return;
+    }
     let command = merge_awk_command(&merge_skill());
 
     // Every PR of `prs_every_blocker`, one verdict each: the first `merge-ready:` line

@@ -983,9 +983,9 @@ Every R3 and "both" gap of the three critics (journal `wf_fc95b75d-ac8`) and of 
   - Precompact is retired by #234, so it is out of R3.
 - **Revision 4 (2026-10-11):** one merged contract amendment set, A1-A12 (Coordination): R3's A1-A9 with A1 (`FAKE_CLAUDE_TOOLS` = R2's 8, `jail::SH_WORDS`, one tool-change rule), A4 (the `startswith` pre-check in both plans) and A7 (one marker scheme, `bash-bg`, the verdict in `run-probe.sh`) reconciled, plus R2's evals/cases exclusion (A10), docs gate (A11) and own rows (A12). The contract carries it as §14 before either branch commits the contract; R2 v2 already uses this numbering, so R2's plan is not renumbered. It supersedes revision 3's A1-A9 and R2 v2's A1-A7.
 - **Oracle pins:** `CHECKPOINT_ORACLE = faf6d20295136489d6ccdfa5a253480a9f757fcc`; `BRIEF_ORACLE = <filled in at Task 0b>`.
-- **Settings base:** `SETTINGS_BASE = <filled in at Task 10e>` (A8; re-pinned on recovery).
-- **Guard expectation (0c):** `EXPECTED_GUARD = <table filled in at Task 0c>`.
-- **Permission probe (0e):** `<CLI version, the 24 rows and any added ask rules, filled in at Task 0e; harness at $R/probe/, A7 scheme>`.
+- **Settings base:** `SETTINGS_BASE = 0e7b4437de8e6718242eafafb526fef99be1f2e9` (A8; re-pinned on recovery). The owner settings commit is `7ced3e9` ("owner-approved settings: aios checkpoint asks"), recorded under Task 0 results.
+- **Guard expectation (0c):** `EXPECTED_GUARD`: see Task 0 results under Decisions Made (0c).
+- **Permission probe (0e):** see Task 0 results under Decisions Made (0e).
 - **API freeze:** `R3_API_FREEZE = <filled in at Task 5c>`.
 - **Merge-order gate:** `GATE = <issue number, filled in at Task 1i>`.
 
@@ -998,6 +998,7 @@ Every R3 and "both" gap of the three critics (journal `wf_fc95b75d-ac8`) and of 
     - The first counted run (kept as `probes-run1-inconclusive.tsv`) failed. Three spellings ran: `sh .claude/hooks/aios checkpoint` (r15), `cargo r -q -p aios-tools -- checkpoint` (r17) and, once the prompt was fixed, `just 'checkpoint'` (r07). r07 and r08 were inconclusive: inline in the prompt, `just 'checkpoint'` reads as English, and the model ran a bare `checkpoint`. The harness fix puts the command in a fenced block, to be run verbatim. The harness was re-saved and re-checksummed, and every row re-run.
     - `asks.txt`, and so Task 10e's owner ask delta, gains five rules: `Bash(just 'checkpoint'*)`, `Bash(just "checkpoint"*)`, `Bash(cargo r *checkpoint*)`, `Bash(sh .claude/hooks/aios checkpoint*)` and `Bash(sh */.claude/hooks/aios checkpoint*)`. It now holds 12 asks, among them the contract §11 four.
     - Known limit (no stop): settings patterns match the command text, so no rule set covers every shell quoting of the recipe name (`just che'ck'point`). Decision 4 makes the asks a control against accidents by cooperative agents, not a guard deny, so this is recorded, not fixed. The Monitor, background-Bash and background-agent rows are all refused, so every probed kind is covered by settings.
+- **Owner settings commit (Task 10e):** `7ced3e9` ("owner-approved settings: aios checkpoint asks"), made on `SETTINGS_BASE = 0e7b4437de8e6718242eafafb526fef99be1f2e9`.
 - **R3_API_FREEZE = 3296e1d2fb8f7538c2fe292ca6d80699cd001068** (2026-10-12): Task 1 (ecef063), its lead review fix (59afd73: fake gh ordinals follow contract §5) and Task 5 (5c24fab), merged with origin/main 5f97b57 (#256 Cargo.lock, #259 nightly-2026-10-12). Task 1h passed on PR #257's CI (Tools (host) on ubuntu-26.04; jail_covers_every_script_command and oracle_smoke_brief_and_checkpoint ran and passed). R2 vendors gh.rs, git.rs, merge_ready.rs, tests/common/fake_gh.rs and tests/common/jail.rs from this sha.
 
 ## Lessons Learned

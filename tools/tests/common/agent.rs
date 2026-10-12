@@ -287,6 +287,20 @@ pub fn oracle_runs_here(scenario: &str) -> bool {
     }
 }
 
+/// Whether a test that runs `aios brief` with the fake docs-check child must be skipped
+/// on this build. `AIOS_BRIEF_DOCS_CHECK` (the variable that points the brief at
+/// `aios-fake-docs`) is honoured only with debug assertions, so a release build would run
+/// the real docs-check over the fixture. It then prints one line saying so.
+pub fn skip_brief_in_release(test: &str) -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+    println!(
+        "{test}: skipped in release builds: the docs-check override (AIOS_BRIEF_DOCS_CHECK) is debug-only"
+    );
+    true
+}
+
 /// Which script a scenario exercises.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sub {

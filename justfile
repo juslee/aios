@@ -347,12 +347,12 @@ docs-check *args:
 docs-check-all:
     .claude/hooks/aios docs-check --all
 
-# Orient a session: git, PRs, CI, soak, handoff, next step (aios brief, through the main checkout's shim)
+# Orient a session: git, PRs, CI, soak, handoff, next step (aios brief, through the checkout's shim, which runs the main checkout's build)
 [positional-arguments]
 brief *args:
     {{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} brief "$@"
 
-# Commit the work in progress and push the claude/* branch (aios checkpoint, through the main checkout's shim)
+# Commit the work in progress and push the claude/* branch (aios checkpoint, through the checkout's shim, which runs the main checkout's build)
 [positional-arguments]
 checkpoint *args:
     {{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} checkpoint "$@"

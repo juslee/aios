@@ -996,6 +996,9 @@ fn case_named(name: &str) -> &'static Case {
 /// brief_parity <name>`, one scenario at a time, reviewed by hand); the 74 differential
 /// goldens are recorded from the oracle only, so a bless run leaves them.
 fn aios_matches_golden(name: &str) {
+    if agent::skip_brief_in_release(name) {
+        return;
+    }
     let case = case_named(name);
     let scenario = (case.build)(case.name);
     let outcome = agent::run_aios(&scenario, "brief", case.args);
@@ -1027,6 +1030,9 @@ fn aios_matches_golden(name: &str) {
 /// environment), the docs-check calls, the marker and the remote refs.
 #[test]
 fn brief_differential_against_oracle() {
+    if agent::skip_brief_in_release("brief_differential_against_oracle") {
+        return;
+    }
     assert_table_is_sound();
     let cases = differential_cases();
     assert_eq!(cases.len(), 74, "the non-divergent scenarios");

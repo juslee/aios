@@ -665,6 +665,11 @@ fn put(root: &Path, rel: &str, text: &str, stamp: &str) {
 
 #[test]
 fn brief_lists_an_interleaved_run_once_and_never_as_main_soak() {
+    if common::agent::skip_brief_in_release(
+        "brief_lists_an_interleaved_run_once_and_never_as_main_soak",
+    ) {
+        return;
+    }
     let repo = TestRepo::with_files("brief-soak", &[("README", "x\n")]);
     let root = repo.path();
     git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
