@@ -713,7 +713,7 @@ Conventions for every task:
       - appends every line of `$R/probe/asks.txt` to `ask`: the seven rules of 0e, plus every rule the 0e probe added.
 
       No guard deny.
-    - **Owner commit.** The owner runs the script in `<BW>` and commits the result separately as "owner-approved settings: aios checkpoint asks" (the R4 precedent, 65b80cb), before Task 11.
+    - **Owner commit.** The owner runs the script in `<BW>` and commits the result separately as "owner-approved settings: aios checkpoint asks" (the R4 precedent, 65b80cb), before Task 11. A second owner commit followed audit round 1: `2a66639` ("owner-approved settings: aios checkpoint ask for any binary path", base blob `4c8fbb0e53b247ce5d4a06431789830eacc11e7e`) adds `Bash(*/aios checkpoint*)`, and the settings file now holds 13 checkpoint asks (Decisions Made, "Owner settings commits").
     - **Recovery (A8).** If `origin/main`'s `settings.json` changes after the owner commit (a worker's merge of main aborts on it), the owner reverts the owner commit. A worker then merges `origin/main`, the lead re-pins `SETTINGS_BASE`, and the owner re-runs the script and commits again.
     - R2's settings delta comes only after R2's convergence (contract §11).
     - Verify: `while read -r a; do jq -e --arg a "$a" '.permissions.ask | index($a)' <BW>/.claude/settings.json >/dev/null || echo "MISSING $a"; done < $R/probe/asks.txt` prints nothing; `jq -e '[.permissions.allow[] | select(test("scripts/agent/(brief|checkpoint)"))] | length == 0' <BW>/.claude/settings.json`; `git -C <BW> log -1 --format=%an -- .claude/settings.json` names the owner.
@@ -770,7 +770,7 @@ Conventions for every task:
       - `git -C <BW> diff -U0 origin/main...HEAD -- tools/Cargo.toml | grep -cE '^[-+][^-+]'` = 2;
       - `git -C <BW> grep -n 'GhCli\|run_program' -- tools/src` lists only `gh.rs`, `cmd/brief/mod.rs`, `cmd/brief/github.rs` and `cmd/checkpoint/mod.rs` (Review focus 6);
       - `git -C <BW> grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only `tools/src/cmd/checkpoint/` files;
-      - every contract item has a non-test caller: `for f in GhCli GhEnv::INHERIT first_stderr_line git::command git::out git::text git::ok git::output git::worktrees git::branch merge_ready::pr_lines merge_ready::PR_FIELDS merge_ready::NEEDS_HUMAN_ISSUES_ARGS; do git -C <BW> grep -qF "$f" -- tools/src/cmd || echo "unused $f"; done` prints nothing;
+      - every contract item has a non-test caller: `for f in GhCli GhEnv::INHERIT first_stderr_line git::command git::out git::text git::ok git::output git::worktrees merge_ready::pr_lines PR_FIELDS NEEDS_HUMAN_ISSUES_ARGS; do git -C <BW> grep -qF "$f" -- tools/src/cmd || echo "unused $f"; done` prints nothing. `git::branch` is not in the loop: it has no non-test caller in R3 or R2 (Issues Encountered, audit round 2);
       - the contract §10 token grep over `tools scripts/agent .claude` prints nothing;
       - `git -C <BW> diff --name-only --diff-filter=A origin/main...HEAD | grep -iE '<contract §10 SECRET_PATH basename regex>'` prints nothing (A5).
   - [ ] 12e: The PR (the draft from 1h).
@@ -896,6 +896,11 @@ All of R3's earlier questions are decided (see Decisions Made). Two items are st
   - **main's `tools/tests/common/mod.rs`** has `#![allow(dead_code)]`, `isolated()` and `unique_dir()`, so the five frozen files can build on it alone (A3, checked in 5c).
   - **#234's head moved** from b47c756 to 8a28365, then to 8253f0d, and merged as 2d4a9f7 on 8fa4c24. Task 0a re-read every anchor there: most brief.sh, shim, spec, guard and `.claude/CLAUDE.md` anchors moved, and this plan and the contract cite the 2d4a9f7 lines (A9).
   - **`.remember/` is gitignored on main and on 8a28365**, so 12c's handoff file leaves `<BW>` clean.
+- **Audit round 2 (2026-10-12): `git::branch` has no non-test caller.** The 12d caller loop printed `unused git::branch`. The other two hits (`merge_ready::PR_FIELDS`, `merge_ready::NEEDS_HUMAN_ISSUES_ARGS`) were false alarms: `cmd/brief/github.rs` imports them bare, so the loop now probes the bare names. No call site that runs `symbolic-ref` by hand is exactly equivalent to `git::branch` (`symbolic-ref --short -q HEAD` into `Option<String>`):
+  - brief `branch_or_detached` and `unpushed_desc` (`cmd/brief/git_section.rs`), checkpoint `run` (`cmd/checkpoint/mod.rs`) and checkpoint `others::list` (`cmd/checkpoint/others.rs`) all run `symbolic-ref --quiet --short HEAD`, a different argv;
+  - all four keep the result as bytes (`Vec<u8>`), so a branch name that is not UTF-8 survives into the output as the scripts printed it, whereas `git::branch` returns `None` for it, which those callers would print as `(detached)` or `detached HEAD`.
+
+  So `git::branch` has no current caller in R3 or R2 (R2's plan names none). It is frozen API (`R3_API_FREEZE`), so removing it needs a contract amendment, and R3 makes no code change; it is dropped from the 12d loop.
 - **Found while revising (not in the critic results):**
   - Under D9, an unborn HEAD would fail every first checkpoint on a new branch (`git log HEAD` fails). So the port skips the two `log` calls when HEAD does not resolve, pinned by `unborn_head`.
   - The D5 hint names main's justfile, which has no `checkpoint` recipe until R3 merges, so the hint cannot be exercised in the real repository before the merge. 12b exercises it in a scratch clone of `<BW>`.
@@ -982,12 +987,13 @@ Every R3 and "both" gap of the three critics (journal `wf_fc95b75d-ac8`) and of 
   - Tools crate rules (rule 01): the deps are clap, anyhow, serde, serde_json, regex and signal-hook; `time` only when first used; `#![forbid(unsafe_code)]`.
   - Precompact is retired by #234, so it is out of R3.
 - **Revision 4 (2026-10-11):** one merged contract amendment set, A1-A12 (Coordination): R3's A1-A9 with A1 (`FAKE_CLAUDE_TOOLS` = R2's 8, `jail::SH_WORDS`, one tool-change rule), A4 (the `startswith` pre-check in both plans) and A7 (one marker scheme, `bash-bg`, the verdict in `run-probe.sh`) reconciled, plus R2's evals/cases exclusion (A10), docs gate (A11) and own rows (A12). The contract carries it as §14 before either branch commits the contract; R2 v2 already uses this numbering, so R2's plan is not renumbered. It supersedes revision 3's A1-A9 and R2 v2's A1-A7.
-- **Oracle pins:** `CHECKPOINT_ORACLE = faf6d20295136489d6ccdfa5a253480a9f757fcc`; `BRIEF_ORACLE = <filled in at Task 0b>`.
-- **Settings base:** `SETTINGS_BASE = 0e7b4437de8e6718242eafafb526fef99be1f2e9` (A8; re-pinned on recovery). The owner settings commit is `7ced3e9` ("owner-approved settings: aios checkpoint asks"), recorded under Task 0 results.
+- **Oracle pins:** `CHECKPOINT_ORACLE = faf6d20295136489d6ccdfa5a253480a9f757fcc`; `BRIEF_ORACLE = 2d4a9f72ebb8cd98a6659d8c75ebec91be23658f` (Task 0b).
+- **Settings base:** `SETTINGS_BASE = 0e7b4437de8e6718242eafafb526fef99be1f2e9` (A8; re-pinned on recovery). The owner settings commits are `7ced3e9` ("owner-approved settings: aios checkpoint asks") and `2a66639` (the audit round 1 follow-up), recorded under "Owner settings commits" below.
 - **Guard expectation (0c):** `EXPECTED_GUARD`: see Task 0 results under Decisions Made (0c).
 - **Permission probe (0e):** see Task 0 results under Decisions Made (0e).
-- **API freeze:** `R3_API_FREEZE = <filled in at Task 5c>`.
+- **API freeze:** `R3_API_FREEZE = 3296e1d2fb8f7538c2fe292ca6d80699cd001068` (Task 5c).
 - **Merge-order gate:** `GATE = <issue number, filled in at Task 1i>`.
+- **Provenance wording (owner, 2026-10-12; audit round 2):** the form `former scripts/agent/<x>.sh (blob at <sha>)` stays as contract §3 defines it, and Task 10f's grep exempts it. `<sha>` is the commit whose tree holds the script's blob (`git show <sha>:scripts/agent/<x>.sh`). Rewording it to "at commit" would amend the contract R2 commits unchanged, for no behavioural gain.
 
 - **Task 0 results (2026-10-11, team-build lead, main checkout):**
   - 0a: `<BW>` created from `origin/main` 2d4a9f7; its three verifies pass. Every anchor of this plan and the contract was re-read on 2d4a9f7 and corrected (A9).
@@ -996,9 +1002,11 @@ Every R3 and "both" gap of the three critics (journal `wf_fc95b75d-ac8`) and of 
   - 0d: nine raw gh responses in `$R/gh-capture/`, listed in `SHA256SUMS`.
   - 0e (2026-10-12, claude 2.1.296, the owner's auto-mode user settings plus the probe settings): **pass**. All 23 non-control rows are `refused`, the control is `ran`, and `SHA256SUMS` lists the harness, `probe/claude-version.txt` and `probes.tsv`.
     - The first counted run (kept as `probes-run1-inconclusive.tsv`) failed. Three spellings ran: `sh .claude/hooks/aios checkpoint` (r15), `cargo r -q -p aios-tools -- checkpoint` (r17) and, once the prompt was fixed, `just 'checkpoint'` (r07). r07 and r08 were inconclusive: inline in the prompt, `just 'checkpoint'` reads as English, and the model ran a bare `checkpoint`. The harness fix puts the command in a fenced block, to be run verbatim. The harness was re-saved and re-checksummed, and every row re-run.
-    - `asks.txt`, and so Task 10e's owner ask delta, gains five rules: `Bash(just 'checkpoint'*)`, `Bash(just "checkpoint"*)`, `Bash(cargo r *checkpoint*)`, `Bash(sh .claude/hooks/aios checkpoint*)` and `Bash(sh */.claude/hooks/aios checkpoint*)`. It now holds 12 asks, among them the contract §11 four.
+    - `asks.txt`, and so Task 10e's owner ask delta, gains five rules: `Bash(just 'checkpoint'*)`, `Bash(just "checkpoint"*)`, `Bash(cargo r *checkpoint*)`, `Bash(sh .claude/hooks/aios checkpoint*)` and `Bash(sh */.claude/hooks/aios checkpoint*)`. `asks.txt` now holds 12 asks, among them the contract §11 four. The settings file holds 13 checkpoint asks after the second owner commit (Decisions Made, "Owner settings commit").
     - Known limit (no stop): settings patterns match the command text, so no rule set covers every shell quoting of the recipe name (`just che'ck'point`). Decision 4 makes the asks a control against accidents by cooperative agents, not a guard deny, so this is recorded, not fixed. The Monitor, background-Bash and background-agent rows are all refused, so every probed kind is covered by settings.
-- **Owner settings commit (Task 10e):** `7ced3e9` ("owner-approved settings: aios checkpoint asks"), made on `SETTINGS_BASE = 0e7b4437de8e6718242eafafb526fef99be1f2e9`.
+- **Owner settings commits (Task 10e):** two.
+  - `7ced3e9` ("owner-approved settings: aios checkpoint asks"), made on `SETTINGS_BASE = 0e7b4437de8e6718242eafafb526fef99be1f2e9`.
+  - `2a66639` ("owner-approved settings: aios checkpoint ask for any binary path"), made on the tree after `7ced3e9` (base blob `4c8fbb0e53b247ce5d4a06431789830eacc11e7e`). It adds `Bash(*/aios checkpoint*)`, so `.claude/settings.json` now holds 13 checkpoint asks. It closes audit round 1's finding that `bash .claude/hooks/aios checkpoint`, `target/debug/aios checkpoint` and `target/release/aios checkpoint` ran with no prompt: the lead's probe (port inputs `probes-audit1-before.tsv` and `probes-audit1-after.tsv`, spellings `probe/spellings-r3-audit1.tsv`) showed 4 of 5 spellings ran before and 5 of 5 were refused after.
 - **R3_API_FREEZE = 3296e1d2fb8f7538c2fe292ca6d80699cd001068** (2026-10-12): Task 1 (ecef063), its lead review fix (59afd73: fake gh ordinals follow contract §5) and Task 5 (5c24fab), merged with origin/main 5f97b57 (#256 Cargo.lock, #259 nightly-2026-10-12). Task 1h passed on PR #257's CI (Tools (host) on ubuntu-26.04; jail_covers_every_script_command and oracle_smoke_brief_and_checkpoint ran and passed). R2 vendors gh.rs, git.rs, merge_ready.rs, tests/common/fake_gh.rs and tests/common/jail.rs from this sha.
 
 ## Lessons Learned

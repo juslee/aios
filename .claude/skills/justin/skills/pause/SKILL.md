@@ -60,7 +60,7 @@ Checkpoint the session so the user can `/clear` (context limit) or stop (usage l
    - Exit status 0: add nothing.
    - Exit status 1: uncommitted files or commits not on origin remain, in this checkout (the `wip:` and `pushed:` fields say why) or in the other worktrees it lists. Do not work around it, and do not checkpoint another team's worktree. For this team's `claude/*` worktrees, run the `checkpoint it:` command printed under each.
    - Exit status 3 has two meanings. Tell them apart by where the text is:
-     - Empty stdout and an `aios: ` line on stderr: the shim refused to run a stale binary (`aios checkpoint never commits or pushes with a stale binary`). Report the stderr line and tell the user to run `just tools`, then pause again. Never pass `--allow`: nothing was scanned.
+     - Empty stdout and an `aios: ` line on stderr: the shim tried to rebuild a stale binary, the rebuild failed, and so it refused to run the stale one (`aios checkpoint never commits or pushes with a stale binary`). Report the stderr line and tell the user to run `just tools`, then pause again. Never pass `--allow`: nothing was scanned.
      - A `Stopped before committing` block on stdout: the secret stop, described next.
    - The secret stop (exit status 3, `Stopped before committing` on stdout): it stopped on a possible secret and listed each path. Do not delete, gitignore or commit those files yourself. Ask the user one question: which of the listed paths are safe to publish (the repository is public)? For the paths the user confirms by name, rerun the same command with `--allow <path>` once per path, copied exactly as listed. Never pass `--allow` for a path the user did not confirm, and never on a first run. If the user confirms none, stop there.
 
