@@ -38,7 +38,7 @@ Owner decisions, 2026-09-22:
 | Scope | All of it: docs-check, the push guard, brief, checkpoint, soak, and the new PR loop, which is written in Rust from the start |
 | Build model | A prebuilt binary called through a checking shim that fails closed |
 | Dependencies | An ergonomic set: clap, anyhow, serde + serde_json, regex, time |
-| Order | Infrastructure via the docs-check port first (R1), then the soak port (R4) so the crash fix can start, then the loop (R2), the scripts (R3), and the guard last in shadow mode (R5, R5b). The owner moved the soak port to second on 2026-09-22 |
+| Order | Infrastructure via the docs-check port first (R1), then the soak port (R4) so the crash fix can start, then the scripts (R3), the loop (R2), and the guard last in shadow mode (R5, R5b). The owner moved the soak port to second on 2026-09-22, and R3 ahead of R2 on 2026-10-11 (R2 builds on R3's shared modules) |
 | Location | `tools/` at the repository root, with the guard and loop sources protected by permission ask rules. On 2026-09-28 the owner made R2's changed-paths gate the guarantee, because the ask rules cover `Edit` and `Write` only and an allowed Bash command can bypass them (§1 Protection) |
 | Soak vs crash fix | The soak port (R4) lands before crash-fix step 1a, so the harness is not changed twice |
 
@@ -68,20 +68,20 @@ Owner decisions, 2026-09-22:
 | --- | --- |
 | `aios docs-check [--all\|--json\|--markdown\|--list-checks\|--check X\|--update-baseline]` | `scripts/docs/check.py` |
 | `aios loop review\|merge\|sweep\|eval …`, `aios retro` | the planned Python `pr_loop` / `retro` |
-| `aios brief [--no-fetch]` | `scripts/agent/brief.sh` |
-| `aios checkpoint [--handoff saved] [--allow PATH]…` | `scripts/agent/checkpoint.sh` |
+| `aios brief [--no-fetch]` | the former `scripts/agent/brief.sh` (blob at `2d4a9f72ebb8cd98a6659d8c75ebec91be23658f`) |
+| `aios checkpoint [--handoff saved] [--allow PATH]…` | the former `scripts/agent/checkpoint.sh` (blob at `faf6d20295136489d6ccdfa5a253480a9f757fcc`) |
 | `aios soak …`, `aios soak --classify LOG…` | `scripts/soak-qemu.sh` |
 | `aios guard` (PreToolUse hook: JSON on stdin) | `.claude/hooks/git-push-guard.py` |
 | `aios hook` (repeat-error, path-guard, route-shadow, route-outcome) | added by #220 (model routing); `path-guard --agent-type` by the two-team harness PR |
 
 **Source layout:**
 
-- Shared modules in `tools/src/`: `gh`, `git`, `proc` (subprocess, timeout, process groups), `json`, `config`, `paths`, `pystr` (Python `str` semantics for ports: whitespace, `splitlines`, `isdigit`/`int`, text decoding, `unquote`; added in R1), `pyre` (compiles a Python `str` pattern so that `\d` and `\s` match exactly what CPython 3.14's `re` matches, Unicode 16.0; added in #205).
+- Shared modules in `tools/src/`: `gh`, `git` (the inherited environment, unchanged: no `LC_ALL`, no replace-refs or grafts switch, as the scripts ran git), `merge_ready` (the one merge-ready verdict: brief, `/justin:start`, `/merge-and-cleanup` and the loop), `proc` (subprocess, timeout, process groups), `json`, `config`, `paths`, `pystr` (Python `str` semantics for ports: whitespace, `splitlines`, `isdigit`/`int`, text decoding, `unquote`; added in R1), `pyre` (compiles a Python `str` pattern so that `\d` and `\s` match exactly what CPython 3.14's `re` matches, Unicode 16.0; added in #205).
   - **Exact classes (#205, owner decision 2026-09-29).** R1 first ported `\d` as `[0-9]` and used the `regex` crate's plain `\s`, which lacks U+001C..U+001F; those two choices produced about half of R1's listed divergences. Every docs-check regex now compiles through `pyre::compile` and is check.py's pattern with these changes, none of which alters what a `\d` or `\s` matches: the five patterns that use lookaround (L171, L518, L534, L882, L951) are rewritten as code, and the `\s` in L171's lookahead is `pystr::is_space`, Python's class; three more (L302 `[^\w\- ]` in `gh_slug`, L791 `#\[test\]` and L1171 `[^a-z0-9 ]` in `norm_section`) are plain character or substring code with no regex; the seven path patterns (L94, L467, L1126, L1135, L1139, L1147 and L1278, the last two ported as the one `AGENT_FILE_RE`) end `\n?$` where check.py ends `$`, because Python's non-MULTILINE `$` also matches before a final newline; `re.match` and `re.fullmatch` become `^` and `$` anchors, and `re.M`, `re.I` and `re.S` arguments become inline flags; and some literal characters are escaped differently (`regex::escape` for `re.escape`, `"` for Python's `\"`, and `\^`, `\{`, `\}` and `\-` inside three classes, L166, L317 and L1344). The crate's Unicode `\d` is `\p{Nd}`, Python's `\d`, and `\s`/`\S` become `[\s\x1c-\x1f]`/`[^\s\x1c-\x1f]`. Both match CPython 3.14 (Unicode 16.0); CPython 3.12 and 3.13 (Unicode 15.x) lack 80 of the 760 `\d` code points, so the check.py differential oracle (§3, retired 2026-10-11) accepted only a 3.14 interpreter. `pystr`'s digit helpers take any Unicode decimal digit, as `int()` does. R2-R5 compile their ported patterns the same way. The class and integer divergences that remain are `\w`/`\b` word classes, `(?i)` folding of `ı`/`İ`, `str.isdigit()` on non-decimal digits such as `²`, integers beyond `u64`, and the 4300-digit `int()` limit; the module docs list them along with R1's other accepted divergences.
 - One directory per subcommand in `tools/src/cmd/<name>/`.
 - Tests in `tools/tests/`.
 - Golden files in `tools/tests/golden/`.
-- Fake `gh` and `claude` executables for tests, built as test-only binaries.
+- Fake `gh` and `claude` are `#!/bin/sh` scripts on PATH (R4 precedent), not test binaries.
 
 **Protection.** `.claude/settings.json` gets ask rules for `Edit` and `Write` on `tools/src/cmd/guard/**` and `tools/src/cmd/loop/**`.
 
@@ -141,14 +141,14 @@ The stamp does not replace the mtime test, because HEAD's tree entries do not se
 | --- | --- | --- | --- |
 | Fresh | Runs the binary as a child. Its own exit 0 (decision on stdout) and 2 (block) pass through; any other exit, its own included, becomes an ask | runs | runs a hard link to the binary as a child; its stdout only on exit 0, else the fallback |
 | Dirty | **Fails closed**: asks, and starts no build (a rebuild would stamp it dirty again: the input files must be reverted or removed, any that are needed merged through a PR first; the main checkout must be reset onto `origin/main` once its input commits have merged, or if they are not wanted, since a squash merge never puts those commits themselves on `origin/main`; with no `origin/main`, it must be fetched; the ask names the cause the shim finds now). Once the cause is gone the binary is stale (next row) | runs | the fallback; no build |
-| Stale (e.g. just after a pull, or a replaced binary) | **Fails closed**: asks, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`; a lock left by a killed build is taken over after a minute or two, `find -mmin +1`, when no recipe holds `target/tools/.install.lock`). The reason says whether the build started, one was already running, or none could start (no `just` on `PATH`, neither `flock(1)` nor `lockf(1)`, which the recipe needs, or no lock directory) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary | the fallback, and one background `just tools` |
+| Stale (e.g. just after a pull, or a replaced binary) | **Fails closed**: asks, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`; a lock left by a killed build is taken over after a minute or two, `find -mmin +1`, when no recipe holds `target/tools/.install.lock`). The reason says whether the build started, one was already running, or none could start (no `just` on `PATH`, neither `flock(1)` nor `lockf(1)`, which the recipe needs, or no lock directory) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary with `AIOS_SHIM_STALE=1` exported (`aios brief` prints its stale note from it), except `aios checkpoint`, which exits 3 instead (`aios checkpoint never commits or pushes with a stale binary`). Every other path clears `AIOS_SHIM_STALE` | the fallback, and one background `just tools` |
 | Missing (not a non-empty regular executable file) | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Builds in the foreground (a full release build), then runs; exits 3 naming `just tools` if the build fails | the fallback, and one background `just tools` |
 
 The `hook` fallback prints nothing, except `path-guard`'s PreToolUse deny for the agent types its `--agent-type` names (every caller when it names none or a value is empty) and for a payload with an `agent_id` but no `agent_type`.
 
 Every `aios guard` path that runs neither a fresh binary nor a runnable `AIOS_TOOLS_BIN` override (which gets no stamp or freshness test) prints an ask and exits 0: the states above, an `AIOS_TOOLS_BIN` that is not a runnable file, and a shim that cannot find its own directory or the main checkout. Each of these paths has its own `permissionDecisionReason`. The stale state has one reason for each outcome of the background build (started, already running, could not start), each covering every cause of a stale binary (a newer input, a missing or mismatched stamp, git failing), the dirty state has one reason for each cause (uncommitted, untracked or gitignored input files; input files that assume-unchanged or skip-worktree flags hide from `git status`; input commits `origin/main` lacks; no `origin/main`), and a guard binary that exits other than 0 or 2 gets one reason for the main checkout's build and another for an `AIOS_TOOLS_BIN` override.
 
-**R1 deviation (Missing, other subcommands).** The original design exited non-zero, naming `just tools`, without a build. R1's shim builds instead, which the final review accepted because it is friendlier. The cost: a caller such as `scripts/agent/brief.sh` blocks on a full release build on a fresh checkout. SessionStart's `aios --prebuild` (below) is the mitigation.
+**R1 deviation (Missing, other subcommands).** The original design exited non-zero, naming `just tools`, without a build. R1's shim builds instead, which the final review accepted because it is friendlier. The cost: a caller such as `aios brief` blocks on a full release build on a fresh checkout. SessionStart's `aios --prebuild` (below) is the mitigation.
 
 **R4 deviation (`just soak`).** `just soak` does not go through the shim: it depends on `just tools` and runs the checkout's own `target/tools/installed/aios` (the copy `just tools` installs, never cargo's `release/aios`, which a concurrent build can be rewriting), so from a PR worktree the harness that classifies the boots comes from the same commit as the kernel, and the commit in `summary.md` names both. (Since crash-fix step 1a this holds for a single soak; with `--arm` the boots of every arm are classified by the invoking checkout's build, named in the top-level `summary.md`'s Harness row, while each `arm-X/summary.md` names only the arm's kernel commit.) A failed tools build stops the soak. Every other recipe, hook and skill still goes through the shim.
 
@@ -173,12 +173,24 @@ Each port proves parity, records the old tool's output as golden files, switches
 | --- | --- | --- | --- |
 | R1 | docs-check | Byte-identical stdout, exit code and written `baseline.json` against `check.py` in every mode. Test inputs: (a) the real repository, (b) a fixture repository with one injected drift per check (15), (c) a pure line-shift case | `just docs-check` calls `aios`; `check.py` is deleted; the baseline format is unchanged |
 | R2 | PR loop | New code: the loop spec's tests with fake `gh`/`claude`, plus the eval suites | — |
-| R3 | brief, checkpoint | The 15 checkpoint scenarios in temporary repos with a bare remote; a golden brief from recorded `gh` responses (the exact line format the skills parse) | Skills call `aios`; the scripts are deleted |
+| R3 | brief, checkpoint | 52 checkpoint scenarios in temporary repos with a bare remote (49 differential against the history oracle); 76 brief scenarios on a fake `gh` (74 differential), whose goldens pin the exact line format the skills parse | Skills call `aios` through `just brief` and `just checkpoint`; the scripts are deleted |
 | R4 | soak | Classifier parity on committed fixtures: the 63 synthetic cases plus a curated set of real logs. Checked fields: class, markers, first fatal line, and the `summary.tsv`/`summary.md` formats. Process handling (timeout, kill-after, process group) is tested with a fake QEMU, then one real 2-boot soak | `soak-qemu.sh` is deleted; there is no external `timeout` dependency, and the CI baseline is re-measured on the new image |
 | R5 | guard | The 55 unit tests ported as table tests. A committed adversarial corpus whose decisions must equal the Python guard's. The 3,502-command history replay is local-only, because raw transcript commands can contain secrets. The guard's rule 11 rules (QEMU starts through the lock wrapper, pattern kills and toolchain changes, spawn shape, agent placement: no EnterWorktree from agents or leads, `git reset --hard` only in an agent's own temporary worktree, no agent commits in the main checkout) are ported with their unit tests | **Shadow mode:** Python decides, Rust runs in parallel, and disagreements go to `.git/aios-agent/guard-shadow.jsonl` |
 | R5b | guard switch | 1,000 real calls with 0 disagreements | The Rust guard decides; the Python guard and its tests are deleted |
 
 R4 as built: 108 synthetic cases (real logs are verified locally, not committed); the oracle is the script's blob at `212df62`, read from git history, so the differentials outlive the deletion.
+
+R3 as built: `aios brief` and `aios checkpoint` are ports of the former scripts, with the oracles read from git history: `scripts/agent/brief.sh` at `2d4a9f72ebb8cd98a6659d8c75ebec91be23658f` and `scripts/agent/checkpoint.sh` at `faf6d20295136489d6ccdfa5a253480a9f757fcc`, so the differentials outlive the deletion (owner decision 7). There are 52 checkpoint scenarios (49 differential) and 76 brief scenarios (74 differential), each pinned by a golden. The differentials also run checkpoint under macOS's `/bin/bash` 3.2 and handle the host-tool-dependent scenarios (`PLATFORM_SCENARIOS`). The fixtures are synthesised and copy the shapes of real `gh` responses (nine were captured read-only for that); no recorded response is committed. Each accepted divergence is pinned by a named scenario and listed in the module docs:
+- **D1:** messages start `brief:` and `checkpoint:`, and `--help` is new text.
+- **D2:** unreachable branches are removed (the jq-missing and shim-unavailable messages, the docs-error preference for the shim's `aios: ` line).
+- **D3:** collation is bytewise, as `LC_ALL=C` (`sort -u`, the `ls -t` name tie, the soak directory order).
+- **D4:** a jq `tonumber` beyond 2^53 is parsed exactly, as `u64`.
+- **D5:** the `checkpoint it:` hint is `(cd '<wt>' && just --justfile '<main>/justfile' --working-directory . checkpoint)`, so it works in a worktree branched before R3 and runs main's shim.
+- **D6:** brief's stale note comes from `AIOS_SHIM_STALE=1`, which the shim exports on a failed stale rebuild, instead of a grep of docs-check's stderr.
+- **D7:** equal-mtime soak runs resolve in bytewise path order, and across worktrees to the earlier one in porcelain order (a D3 corollary).
+- **D8:** the secret path regex folds case ASCII-only, as grep in the C locale.
+- **D9:** a git failure inside checkpoint's secret scan fails closed: the index is restored, nothing is committed or pushed, `Safe to /clear` is never printed, and the exit is 1.
+- **D10:** `merge_ready` adds the blocker `labelled needs-human` in position 4, so a PR the loop labelled is held in brief, `/justin:start` and `/merge-and-cleanup`.
 
 **Porting inputs.** The fixtures and corpora are preserved outside the repository in `$(git rev-parse --git-common-dir)/aios-agent/port-inputs/`:
 
@@ -191,7 +203,7 @@ Each port PR commits the curated subset it needs.
 
 ### 4. Sequence, related changes, interactions
 
-**Order:** R1 → R4 → R2 → R3 → R5 → R5b, one PR each. The owner moved the soak port to second on 2026-09-22. Crash-fix step 1a (ADR #174) waits for R4, so its harness changes are made once, in Rust, and the crash fix can start after two tooling PRs.
+**Order:** R1 → R4 → R3 → R2 → R5 → R5b, one PR each. The owner moved the soak port to second on 2026-09-22, and R3 ahead of R2 on 2026-10-11. Crash-fix step 1a (ADR #174) waits for R4, so its harness changes are made once, in Rust, and the crash fix can start after two tooling PRs.
 
 **Loop spec amendments** (made in R2's first commit):
 

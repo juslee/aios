@@ -1174,7 +1174,7 @@ fn record_brief_goldens() {
 /// (a clone whose `origin` is a local path has no repository `gh` can resolve).
 const REPO: &str = "juslee/aios";
 
-/// brief.sh's review-threads query (the oracle's L177-186), with literal variables.
+/// The brief oracle's review-threads query (its L177-186), with literal variables.
 const THREADS_QUERY: &str = "
         query($owner: String!, $name: String!) {
           repository(owner: $owner, name: $name) {
@@ -1199,7 +1199,7 @@ const SUITES_QUERY: &str = "
             }
           }
         }";
-/// checkpoint.sh's `pr list --head` selection (its L219-220).
+/// The checkpoint oracle's `pr list --head` selection (its L219-220).
 const HEAD_JQ: &str = r##".[] | select(.isDraft | not) | "#\(.number)""##;
 
 /// Objects' keys by `__typename` (`""` for an object without one), at any depth.
@@ -1241,7 +1241,7 @@ fn json_type(value: &serde_json::Value) -> &'static str {
     }
 }
 
-/// Read-only `gh` against the real repository: one response per call of brief.sh, written
+/// Read-only `gh` against the real repository: one response per call of `aios brief`, written
 /// to `target/r3-gh-capture/` (uncommitted), and each committed fixture's shape checked
 /// against it. A `--jq` call (rate-limit, the threads map, the queue counts) is compared
 /// by JSON type. The other calls' fixtures must use only keys the real response has,

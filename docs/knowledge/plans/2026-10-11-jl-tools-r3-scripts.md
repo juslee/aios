@@ -666,7 +666,7 @@ Conventions for every task:
     - `.claude/skills/justin/skills/start/SKILL.md`, L19 only: "computed by `aios brief`"; never propose merging a PR "gated by or named in a `needs-human` issue, or labelled `needs-human`".
     - `.claude/CLAUDE.md` Skills table rows `/justin:brief` and `/justin:pause` (W234 L287, L289, re-read in 0a at 2d4a9f7) become `aios brief` / `aios checkpoint`. These rows name the scripts, so they cannot wait for the ship pass: 10f's `.claude` grep would fail.
     - Verify: `git grep -hc 'just checkpoint --handoff saved' -- .claude/skills/justin/skills/pause/SKILL.md` prints a number ≥ 1; `git grep -hcF 'just brief --no-fetch | awk' -- .claude/skills/merge-and-cleanup/SKILL.md` prints `1`; `git grep -hc 'labelled `needs-human`' -- .claude/skills/justin/skills/start/SKILL.md` prints `1`; DG; G.
-  - [ ] 10b: Rules and docs.
+  - [x] 10b: Rules and docs.
     - `.claude/rules/03-git-workflow.md` L22 is replaced by the contract §8 general Guard Rails bullet:
       - compiled `aios` subcommands that commit, push or write to GitHub; today that is `aios checkpoint`;
       - their controls: code and tests, the Option-A gate, and an owner settings ask on each invocation spelling (A6: `just checkpoint`, the `--justfile` fallback, the shim, the installed binary, `cargo run … checkpoint`), so every run prompts once and `-p` and background runs are refused;

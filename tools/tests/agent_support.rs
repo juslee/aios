@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// brief.sh's functions at `BRIEF_ORACLE`: mtime L68, fmt_epoch L70, section L74,
+/// The brief oracle's functions at `BRIEF_ORACLE`: mtime L68, fmt_epoch L70, section L74,
 /// rel_path L76, unpushed_desc L84, gh_unavailable L161, soak_commit L323,
 /// soak_relation L328, print_soak L358, print_interleaved L387.
 const BRIEF_FUNCTIONS: &[&str] = &[
@@ -30,7 +30,7 @@ const BRIEF_FUNCTIONS: &[&str] = &[
     "print_interleaved",
 ];
 
-/// checkpoint.sh's functions at `CHECKPOINT_ORACLE`: in_progress L91, added_lines
+/// The checkpoint oracle's functions at `CHECKPOINT_ORACLE`: in_progress L91, added_lines
 /// L107, secret_scan L116, split_allowed L127, describe_paths L133, other_worktrees
 /// L137, count_dirty L154, count_unpushed L155.
 const CHECKPOINT_FUNCTIONS: &[&str] = &[
@@ -687,7 +687,7 @@ fn oracles_load_from_history() {
     // The brief oracle holds #234's and #246's sections.
     let brief = agent::oracle_text(Which::Brief);
     for needle in ["handoff-", "Routing log", "print_interleaved", "PANIC-LOCK"] {
-        assert!(brief.contains(needle), "brief.sh lacks {needle}");
+        assert!(brief.contains(needle), "the brief oracle lacks {needle}");
     }
     assert!(agent::oracle_text(Which::Checkpoint).contains("secret_scan"));
     assert!(agent::oracle_text(Which::QemuLock).contains("stop_tree"));
