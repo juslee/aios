@@ -81,6 +81,108 @@ fn report(test: &str, failure: Option<(&str, &str)>) {
     }
 }
 
+/// Log `<test> test: as expected`, or `<test> test: <failure>`, for a test
+/// of one case.
+fn report_one(test: &str, failure: Option<&str>) {
+    match failure {
+        None => crate::kinfo!(Ipc, "{} test: as expected", test),
+        Some(what) => crate::kwarn!(Ipc, "{} test: {}", test, what),
+    }
+}
+
+/// Run `wait`, a wait of `me` that times out after [`LOOP_TICKS`] and
+/// publishes a notification deadline, with a stale wake at +5
+/// (`Command::Stale` without `clear_timeout`). `wait` returns whether it
+/// timed out (ETIMEDOUT). The failure, if any: not ETIMEDOUT, returned
+/// before its deadline, or the stale wake's ([`wake_helper::stale_failure`]).
+fn stale_then_timeout(me: ThreadId, wait: impl FnOnce() -> bool) -> Option<&'static str> {
+    let stale = Command::Stale {
+        target: me,
+        clear_timeout: false,
+    };
+    if !wake_helper::post(stale, DUE_TICKS) {
+        return Some("helper busy");
+    }
+    // The wait's own deadline is at or after this one.
+    let deadline = now().saturating_add(LOOP_TICKS);
+    let timed_out = wait();
+    let returned = now();
+    let helper = wake_helper::finish();
+    if !timed_out {
+        return Some("not ETIMEDOUT");
+    }
+    if returned < deadline {
+        return Some("early");
+    }
+    wake_helper::stale_failure(helper, false)
+}
+
+/// How a wait run by [`backstopped`] ended.
+struct Backstopped<R> {
+    /// What the wait returned.
+    result: R,
+    /// Whether it returned before its own deadline.
+    early: bool,
+    /// Whether the backstop fired first: the wait's own entry was lost.
+    backstop_fired: bool,
+    /// The stale wake's outcome, from [`wake_helper::finish`].
+    helper: Option<wake_helper::Outcome>,
+}
+
+/// Run `wait`, a wait of `me` that times out after [`LOOP_TICKS`] through
+/// its TIMEOUT_QUEUE entry, with a stale wake at +5 that first removes that
+/// entry (`Command::Stale` with `clear_timeout`), so only the wait's
+/// re-insert of its entry can end it on time.
+///
+/// A backstop deadline (`arm_deadline`), [`BACKSTOP_TICKS`] after the
+/// wait's, is published first: an independent wake source, so a wait whose
+/// entry was lost returns instead of hanging. It fired if
+/// `NOTIFY_DEADLINES[me]` no longer holds it when the wait returns. It is
+/// cleared afterwards; one that fired has already woken the wait. `Err`
+/// names a setup failure.
+fn backstopped<R>(me: ThreadId, wait: impl FnOnce() -> R) -> Result<Backstopped<R>, &'static str> {
+    // The wait's own deadline is at or after this one.
+    let deadline = now().saturating_add(LOOP_TICKS);
+    let backstop = deadline.saturating_add(BACKSTOP_TICKS);
+    if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
+        return Err("backstop expired");
+    }
+    let stale = Command::Stale {
+        target: me,
+        clear_timeout: true,
+    };
+    if !wake_helper::post(stale, DUE_TICKS) {
+        clear_deadline(me);
+        return Err("helper busy");
+    }
+    let result = wait();
+    let early = now() < deadline;
+    let backstop_fired = deadline_of(me) != backstop;
+    clear_deadline(me);
+    let helper = wake_helper::finish();
+    Ok(Backstopped {
+        result,
+        early,
+        backstop_fired,
+        helper,
+    })
+}
+
+/// Run `case` on a channel from `channel_create` in pid 1 (minting pid 1's
+/// `ChannelAccess`), then destroy the channel and revoke the minted token.
+fn on_new_channel(
+    me: ThreadId,
+    case: fn(ThreadId, ChannelId) -> Option<&'static str>,
+) -> Option<&'static str> {
+    let Ok((ch, _access)) = channel_create(me) else {
+        return Some("create failed");
+    };
+    let failure = case(me, ch);
+    let _ = channel_destroy(ch);
+    super::stale_id::revoke_all(TEST_PID, Capability::ChannelAccess(ch));
+    failure
+}
+
 /// `Notify-loop test`, two cases on one notification:
 ///
 /// - (a) `notification_wait(n, MASK, 2000)` with a stale wake at +5
@@ -110,25 +212,10 @@ pub(super) fn notify_loop_test(me: ThreadId) {
 
 /// Notify-loop case (a): a stale wake, then the deadline.
 fn notify_case_a(me: ThreadId, n: NotificationId) -> Option<&'static str> {
-    let stale = Command::Stale {
-        target: me,
-        clear_timeout: false,
-    };
-    if !wake_helper::post(stale, DUE_TICKS) {
-        return Some("helper busy");
-    }
-    // The wait's own deadline is at or after this one.
-    let deadline = now().saturating_add(LOOP_TICKS);
-    let result = notification_wait(n, MASK, LOOP_TICKS);
-    let returned = now();
-    let helper = wake_helper::finish();
-    if result != Err(IpcError::Etimedout as i64) {
-        return Some("not ETIMEDOUT");
-    }
-    if returned < deadline {
-        return Some("early");
-    }
-    wake_helper::stale_failure(helper, false).or_else(|| leftover(me))
+    stale_then_timeout(me, || {
+        notification_wait(n, MASK, LOOP_TICKS) == Err(IpcError::Etimedout as i64)
+    })
+    .or_else(|| leftover(me))
 }
 
 /// Notify-loop case (b): a signal inside the wait.
@@ -230,24 +317,10 @@ pub(super) fn select_loop_test(me: ThreadId) {
 
 /// Select-loop case (a): a stale wake, then the deadline.
 fn select_case_a(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
-    let stale = Command::Stale {
-        target: me,
-        clear_timeout: false,
-    };
-    if !wake_helper::post(stale, DUE_TICKS) {
-        return Some("helper busy");
-    }
-    let deadline = now().saturating_add(LOOP_TICKS);
-    let result = ipc_select(&set.pair(), LOOP_TICKS);
-    let returned = now();
-    let helper = wake_helper::finish();
-    if result != Err(IpcError::Etimedout as i64) {
-        return Some("not ETIMEDOUT");
-    }
-    if returned < deadline {
-        return Some("early");
-    }
-    wake_helper::stale_failure(helper, false).or_else(|| set.leftover(me))
+    stale_then_timeout(me, || {
+        ipc_select(&set.pair(), LOOP_TICKS) == Err(IpcError::Etimedout as i64)
+    })
+    .or_else(|| set.leftover(me))
 }
 
 /// Select-loop case (b): a signal of n1 inside the select.
@@ -342,206 +415,123 @@ fn select_case_d(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
     leftover(me)
 }
 
-/// `Sleep-loop test`: `sleep_ticks(2000)` with a stale wake at +5 that first
-/// removes the sleep's TIMEOUT_QUEUE entry (`Command::Stale` with
-/// `clear_timeout`: a stale reply that clears the sleeper's entry and wakes
-/// it), so only the sleep's re-insert of its entry can end it on time.
+/// `Sleep-loop test`: `sleep_ticks(2000)` run [`backstopped`], whose stale
+/// wake is a stale reply that clears the sleeper's entry and wakes it.
 ///
-/// A backstop deadline (`arm_deadline`), 2000 ticks after the sleep's, is
-/// published first: an independent wake source, so a sleep whose entry was
-/// lost returns instead of hanging. Pass: the sleep returned with the
-/// backstop not fired (`NOTIFY_DEADLINES[me]` still holds it), so the sleep's
-/// own re-inserted entry ended it; at or past its deadline; the helper
-/// removed an entry; and no TIMEOUT_QUEUE entry is left. Logs
-/// `Sleep-loop test: as expected`, or `Sleep-loop test: entry lost` (the
-/// backstop fired first), `Sleep-loop test: early` (returned before its
-/// deadline) or a line naming the helper's or the leftover's failure. The
-/// backstop is cleared afterwards; one that fired has already woken the
-/// sleep.
+/// Pass: the sleep returned with the backstop not fired, so the sleep's own
+/// re-inserted entry ended it; at or past its deadline; the helper removed
+/// an entry; and no TIMEOUT_QUEUE entry is left. Logs `Sleep-loop test: as
+/// expected`, or `Sleep-loop test: entry lost` (the backstop fired first),
+/// `Sleep-loop test: early` (returned before its deadline) or a line naming
+/// the helper's or the leftover's failure.
 pub(super) fn sleep_loop_test(me: ThreadId) {
     let failure = sleep_case(me);
     wake_helper::reclaim();
-    match failure {
-        None => crate::kinfo!(Ipc, "Sleep-loop test: as expected"),
-        Some(what) => crate::kwarn!(Ipc, "Sleep-loop test: {}", what),
-    }
+    report_one("Sleep-loop", failure);
 }
 
 /// The Sleep-loop case: the failure, if any.
 fn sleep_case(me: ThreadId) -> Option<&'static str> {
-    // The sleep's own deadline is at or after this one.
-    let deadline = now().saturating_add(LOOP_TICKS);
-    let backstop = deadline.saturating_add(BACKSTOP_TICKS);
-    if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
-        return Some("backstop expired");
-    }
-    let stale = Command::Stale {
-        target: me,
-        clear_timeout: true,
+    let end = match backstopped(me, || sleep_ticks(LOOP_TICKS)) {
+        Ok(end) => end,
+        Err(failure) => return Some(failure),
     };
-    if !wake_helper::post(stale, DUE_TICKS) {
-        clear_deadline(me);
-        return Some("helper busy");
-    }
-    sleep_ticks(LOOP_TICKS);
-    let returned = now();
-    let backstop_fired = deadline_of(me) != backstop;
-    clear_deadline(me);
-    let helper = wake_helper::finish();
-    if backstop_fired {
+    if end.backstop_fired {
         return Some("entry lost");
     }
-    if returned < deadline {
+    if end.early {
         return Some("early");
     }
-    wake_helper::stale_failure(helper, true)
+    wake_helper::stale_failure(end.helper, true)
         .or_else(|| has_timeout_entry(me).then_some("entry left"))
 }
 
-/// `Recv-loop test`: `ipc_recv(ch, 2000)` on a pid-1 channel with no sender,
-/// with a stale wake at +5 that first removes the receive's TIMEOUT_QUEUE
-/// entry (`Command::Stale` with `clear_timeout`: a stale sender that clears
-/// the receiver's entry and wakes it), so only the receive's re-insert of
-/// its entry can end it on time. The channel comes from `channel_create` in
-/// pid 1 (minting pid 1's `ChannelAccess`); it is destroyed afterwards and
-/// the minted token revoked.
+/// `Recv-loop test`: `ipc_recv(ch, 2000)` on a pid-1 channel with no sender
+/// ([`on_new_channel`]), run [`backstopped`], whose stale wake is a stale
+/// sender that clears the receiver's entry and wakes it.
 ///
-/// A backstop deadline (`arm_deadline`), 2000 ticks after the receive's, is
-/// published first, as in `Sleep-loop`. Pass: ETIMEDOUT with the backstop
-/// not fired (the receive's own re-inserted entry ended it), at or past its
-/// deadline; the helper removed an entry; and afterwards the channel's
-/// `waiting_receiver` is `None` and no TIMEOUT_QUEUE entry is left. Logs
-/// `Recv-loop test: as expected`, or `Recv-loop test: entry lost` (the
-/// backstop fired first), `Recv-loop test: early` (returned before its
-/// deadline), the wrong result by name, or a line naming the helper's or
-/// the leftover's failure.
+/// Pass: ETIMEDOUT with the backstop not fired (the receive's own
+/// re-inserted entry ended it), at or past its deadline; the helper removed
+/// an entry; and afterwards the channel's `waiting_receiver` is `None` and no
+/// TIMEOUT_QUEUE entry is left. Logs `Recv-loop test: as expected`, or
+/// `Recv-loop test: entry lost` (the backstop fired first), `Recv-loop test:
+/// early` (returned before its deadline), the wrong result by name, or a line
+/// naming the helper's or the leftover's failure.
 pub(super) fn recv_loop_test(me: ThreadId) {
-    let failure = match channel_create(me) {
-        Ok((ch, _access)) => {
-            let failure = recv_case(me, ch);
-            let _ = channel_destroy(ch);
-            super::stale_id::revoke_all(TEST_PID, Capability::ChannelAccess(ch));
-            failure
-        }
-        Err(_) => Some("create failed"),
-    };
+    let failure = on_new_channel(me, recv_case);
     // A case that failed with the helper still in its command: the receive
     // it waited for has returned, so the command is abandoned.
     wake_helper::reclaim();
-    match failure {
-        None => crate::kinfo!(Ipc, "Recv-loop test: as expected"),
-        Some(what) => crate::kwarn!(Ipc, "Recv-loop test: {}", what),
-    }
+    report_one("Recv-loop", failure);
 }
 
 /// The Recv-loop case on channel `ch`: the failure, if any.
 fn recv_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
-    // The receive's own deadline is at or after this one.
-    let deadline = now().saturating_add(LOOP_TICKS);
-    let backstop = deadline.saturating_add(BACKSTOP_TICKS);
-    if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
-        return Some("backstop expired");
-    }
-    let stale = Command::Stale {
-        target: me,
-        clear_timeout: true,
+    let receive = || {
+        let mut buf = [0u8; MAX_MESSAGE_SIZE];
+        ipc_recv(ch, &mut buf, LOOP_TICKS)
     };
-    if !wake_helper::post(stale, DUE_TICKS) {
-        clear_deadline(me);
-        return Some("helper busy");
-    }
-    let mut buf = [0u8; MAX_MESSAGE_SIZE];
-    let result = ipc_recv(ch, &mut buf, LOOP_TICKS);
-    let returned = now();
-    let backstop_fired = deadline_of(me) != backstop;
-    clear_deadline(me);
-    let helper = wake_helper::finish();
-    if backstop_fired {
+    let end = match backstopped(me, receive) {
+        Ok(end) => end,
+        Err(failure) => return Some(failure),
+    };
+    if end.backstop_fired {
         return Some("entry lost");
     }
-    match result {
+    match end.result {
         Err(e) if e == IpcError::Etimedout as i64 => {}
         Ok(_) => return Some("Ok"),
         Err(e) if e == IpcError::Eagain as i64 => return Some("EAGAIN"),
         Err(e) if e == IpcError::Epipe as i64 => return Some("EPIPE"),
         Err(_) => return Some("wrong error"),
     }
-    if returned < deadline {
+    if end.early {
         return Some("early");
     }
-    wake_helper::stale_failure(helper, true)
+    wake_helper::stale_failure(end.helper, true)
         .or_else(|| (!receiver_is(ch, None)).then_some("receiver left"))
         .or_else(|| has_timeout_entry(me).then_some("entry left"))
 }
 
 /// `Call-loop test`: `ipc_call(ch, …, 2000)` on a pid-1 channel with no
-/// server, with a stale wake at +5 that first removes the call's
-/// TIMEOUT_QUEUE entry (`Command::Stale` with `clear_timeout`: a stale
-/// replier that clears the caller's entry and wakes it), so only the call's
-/// re-insert of its entry can end it on time. The channel comes from
-/// `channel_create` in pid 1 (minting pid 1's `ChannelAccess`); it is
-/// destroyed afterwards and the minted token revoked.
+/// server ([`on_new_channel`]), run [`backstopped`], whose stale wake is a
+/// stale replier that clears the caller's entry and wakes it.
 ///
-/// A backstop deadline (`arm_deadline`), 2000 ticks after the call's, is
-/// published first, as in `Sleep-loop`. Pass: ETIMEDOUT with the backstop
-/// not fired (the call's own re-inserted entry ended it), at or past its
-/// deadline (before the loop, the stale wake returned 0 bytes); the helper
-/// removed an entry; and afterwards the channel's `pending_caller` and this
-/// thread's reply slot are `None` and no TIMEOUT_QUEUE entry is left. The
-/// request no server took is drained with `ipc_recv(ch, 0)`. Logs
-/// `Call-loop test: as expected`, or `Call-loop test: entry lost` (the
-/// backstop fired first), `Call-loop test: early` (returned before its
-/// deadline), the wrong result by name, or a line naming the helper's, the
-/// leftover's or the drain's failure.
+/// Pass: ETIMEDOUT with the backstop not fired (the call's own re-inserted
+/// entry ended it), at or past its deadline (before the loop, the stale wake
+/// returned 0 bytes); the helper removed an entry; and afterwards the
+/// channel's `pending_caller` and this thread's reply slot are `None` and no
+/// TIMEOUT_QUEUE entry is left. The request no server took is drained with
+/// `ipc_recv(ch, 0)`. Logs `Call-loop test: as expected`, or `Call-loop
+/// test: entry lost` (the backstop fired first), `Call-loop test: early`
+/// (returned before its deadline), the wrong result by name, or a line
+/// naming the helper's, the leftover's or the drain's failure.
 pub(super) fn call_loop_test(me: ThreadId) {
-    let failure = match channel_create(me) {
-        Ok((ch, _access)) => {
-            let failure = call_case(me, ch);
-            let _ = channel_destroy(ch);
-            super::stale_id::revoke_all(TEST_PID, Capability::ChannelAccess(ch));
-            failure
-        }
-        Err(_) => Some("create failed"),
-    };
+    let failure = on_new_channel(me, call_case);
     // A case that failed with the helper still in its command: the call it
     // waited for has returned, so the command is abandoned.
     wake_helper::reclaim();
-    match failure {
-        None => crate::kinfo!(Ipc, "Call-loop test: as expected"),
-        Some(what) => crate::kwarn!(Ipc, "Call-loop test: {}", what),
-    }
+    report_one("Call-loop", failure);
 }
 
 /// The Call-loop case on channel `ch`: the failure, if any.
 fn call_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
-    // The call's own deadline is at or after this one.
-    let deadline = now().saturating_add(LOOP_TICKS);
-    let backstop = deadline.saturating_add(BACKSTOP_TICKS);
-    if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
-        return Some("backstop expired");
-    }
-    let stale = Command::Stale {
-        target: me,
-        clear_timeout: true,
+    let call = || {
+        let mut reply = [0u8; MAX_MESSAGE_SIZE];
+        ipc_call(ch, b"CALL-LOOP", &mut reply, LOOP_TICKS)
     };
-    if !wake_helper::post(stale, DUE_TICKS) {
-        clear_deadline(me);
-        return Some("helper busy");
-    }
-    let mut reply = [0u8; MAX_MESSAGE_SIZE];
-    let result = ipc_call(ch, b"CALL-LOOP", &mut reply, LOOP_TICKS);
-    let returned = now();
-    let backstop_fired = deadline_of(me) != backstop;
-    clear_deadline(me);
-    let helper = wake_helper::finish();
+    let end = match backstopped(me, call) {
+        Ok(end) => end,
+        Err(failure) => return Some(failure),
+    };
     // The request is still queued: no server took it. The poll pops it
     // before any arm, so the drain takes no WAKEUP_ERRORS code.
     let mut buf = [0u8; MAX_MESSAGE_SIZE];
     let drained = ipc_recv(ch, &mut buf, 0).is_ok();
-    if backstop_fired {
+    if end.backstop_fired {
         return Some("entry lost");
     }
-    match result {
+    match end.result {
         e if e == IpcError::Etimedout as i64 => {}
         n if n >= 0 => return Some("Ok"),
         e if e == IpcError::Eagain as i64 => return Some("EAGAIN"),
@@ -549,10 +539,10 @@ fn call_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
         e if e == IpcError::Ecanceled as i64 => return Some("ECANCELED"),
         _ => return Some("wrong error"),
     }
-    if returned < deadline {
+    if end.early {
         return Some("early");
     }
-    wake_helper::stale_failure(helper, true)
+    wake_helper::stale_failure(end.helper, true)
         .or_else(|| (!caller_is(ch, None)).then_some("caller left"))
         .or_else(|| has_reply_slot(me).then_some("reply slot left"))
         .or_else(|| has_timeout_entry(me).then_some("entry left"))
