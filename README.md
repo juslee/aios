@@ -84,7 +84,7 @@ aios/
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
 ├── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
-└── tools/                # Host tools crate: the aios binary (docs-check, hook, soak), built with just tools
+└── tools/                # Host tools crate: the aios binary (docs-check, hook, soak, brief, checkpoint), built with just tools
 ```
 
 ---
@@ -126,6 +126,8 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just tools` | Build the host tools binary `aios` and install it, with a provenance stamp, at `target/tools/installed/aios`, which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
+| `just brief` | Orient a session: git state, open PRs and their merge-ready verdicts, CI, soak results, handoff, next step and docs drift (`aios brief`, run through the main checkout's shim; `--no-fetch` skips the fetch) |
+| `just checkpoint` | Commit the work in progress and push the `claude/*` branch; `--handoff saved` records that a handoff was written (`aios checkpoint`, run through the main checkout's shim; it refuses to run a stale binary and exits 3) |
 
 ---
 

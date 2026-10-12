@@ -635,11 +635,11 @@ Conventions for every task:
     - Verify: T(`--test shim aios_shim_stale`) = 2; T(`--test shim checkpoint_`) = 3; T(`--test shim brief_on_a_stale`) = 1.
   - [x] 8d: Verify: `cargo test -p aios-tools --test shim` passes; `git grep -n 'brief\.sh' -- tools/tests/shim.rs` prints nothing; G.
 
-- [ ] **Task 9: Recipes and build tables** (worker, background)
-  - [ ] 9a: `justfile`: directly after `docs-check-all` (main L347-348), add `[positional-arguments]` recipes `brief *args:` and `checkpoint *args:`. Each runs `{{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} <sub> "$@"` (the soak recipe's idiom, justfile L153), with a one-line comment. So `just --justfile <main>/justfile --working-directory . …` from any worktree runs **main's** shim. This is the only justfile hunk.
+- [x] **Task 9: Recipes and build tables** (worker, background)
+  - [x] 9a: `justfile`: directly after `docs-check-all` (main L347-348), add `[positional-arguments]` recipes `brief *args:` and `checkpoint *args:`. Each runs `{{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} <sub> "$@"` (the soak recipe's idiom, justfile L153), with a one-line comment. So `just --justfile <main>/justfile --working-directory . …` from any worktree runs **main's** shim. This is the only justfile hunk.
     - The same commit appends to `tools/tests/shim.rs` the test `justfile_recipes_run_mains_shim_from_another_directory`. For each of `brief` and `checkpoint`, it runs `just --justfile <repo>/justfile --working-directory <dir> --dry-run <recipe>` as a child process (`<repo>` = `env!("CARGO_MANIFEST_DIR")/..`, canonicalised; `<dir>` a fresh directory under `std::env::temp_dir()`, outside every checkout). It asserts that the dry-run output (stderr) names `<repo>/.claude/hooks/aios` as an absolute path, quoted, followed by the subcommand. CI's "Tools (host)" job has `just` (`extractions/setup-just`), as the existing shim tests already need.
     - Verify (no `just -` command line, Progress writer rules): `grep -cE '^(brief|checkpoint) \*args:' justfile` = 2; T(`--test shim justfile_recipes_`) = 1.
-  - [ ] 9b: README Build Commands (next to L127-128) and its tools line (L87), and developer-guide §5.1 (`docs/project/developer-guide.md` L1546, rows near L1573): both rows. The `just-recipes` check (`tools/src/cmd/docs_check/checks/just_recipes.rs`) requires them.
+  - [x] 9b: README Build Commands (next to L127-128) and its tools line (L87), and developer-guide §5.1 (`docs/project/developer-guide.md` L1546, rows near L1573): both rows. The `just-recipes` check (`tools/src/cmd/docs_check/checks/just_recipes.rs`) requires them.
     - Verify: DG; `cargo test -p aios-tools --test shim` passes; G.
 
 - [ ] **Task 10: Switch-over, contract test and deletion** (workers, background or foreground per commit; the owner applies settings; the lead verifies)

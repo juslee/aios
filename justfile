@@ -346,3 +346,13 @@ docs-check *args:
 # List every docs drift finding, baselined and new
 docs-check-all:
     .claude/hooks/aios docs-check --all
+
+# Orient a session: git, PRs, CI, soak, handoff, next step (aios brief, through the main checkout's shim)
+[positional-arguments]
+brief *args:
+    {{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} brief "$@"
+
+# Commit the work in progress and push the claude/* branch (aios checkpoint, through the main checkout's shim)
+[positional-arguments]
+checkpoint *args:
+    {{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} checkpoint "$@"

@@ -2399,3 +2399,38 @@ fn brief_on_a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
         stderr(&out)
     );
 }
+
+/// The `brief` and `checkpoint` recipes run the shim of the justfile's own
+/// checkout, by an absolute quoted path, whatever directory `just` is run from:
+/// `just --justfile <main>/justfile --working-directory . …` from a worktree
+/// runs main's shim, as the skills' fallback spells it.
+#[test]
+fn justfile_recipes_run_mains_shim_from_another_directory() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .canonicalize()
+        .expect("canonicalise the repository root");
+    let dir = std::env::temp_dir().join(format!("aios-shim-recipes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the working directory");
+    let want_shim = format!("'{}/.claude/hooks/aios'", repo.display());
+    for recipe in ["brief", "checkpoint"] {
+        let mut cmd = Command::new("just");
+        isolated(&mut cmd)
+            .arg("--justfile")
+            .arg(repo.join("justfile"))
+            .arg("--working-directory")
+            .arg(&dir)
+            .arg("--dry-run")
+            .arg(recipe);
+        let out = cmd.output().expect("run just --dry-run");
+        let err = stderr(&out);
+        assert_eq!(code(&out), 0, "{recipe}: {err}");
+        assert!(
+            err.lines()
+                .any(|line| line == format!("{want_shim} {recipe} \"$@\"")),
+            "{recipe}: the dry run does not name {want_shim} {recipe}: {err}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("remove the working directory");
+}
