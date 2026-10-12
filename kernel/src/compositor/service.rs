@@ -538,8 +538,8 @@ pub static COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// Lock ordering (M25 chain — extends the M24 invariant with the
 /// window-manager mutexes):
 /// `PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE >
-/// CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > WINDOW_Z_ORDER >
-/// DRAG_STATE > SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`.
+/// CHANNEL_TABLE > BLOCK_ENGINE > WINDOW_Z_ORDER > DRAG_STATE >
+/// SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`.
 /// `FOCUS_MANAGER`, `CURSOR_POS`, and `TITLE_FONT` are leaf-independent
 /// (alongside `INPUT_QUEUE` / `PENDING_POINTER`) — never co-held with
 /// `SURFACE_TABLE` or any of the chain rungs above. Each declaration

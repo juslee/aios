@@ -248,8 +248,8 @@ fn is_victim(victims: u64, tid: ThreadId) -> bool {
 ///   collect the threads blocked on them, and collect every channel `pid`
 ///   created (`creator == Some(pid)`). After the release, wake the collected
 ///   threads with EPIPE and destroy the collected channels. Then, per
-///   victim, each lock alone: its timeout, reply slot, select registration,
-///   notification deadline and notification waiter records
+///   victim, each lock alone: its timeout, reply slot, notification deadline
+///   and notification waiter records, a wait's or a select's
 ///   (`ipc::forget_thread`). A `pending_caller` that names a victim stays
 ///   until the server replies.
 /// - **D**: remove `pid`'s mappings of other creators' regions, then tell the

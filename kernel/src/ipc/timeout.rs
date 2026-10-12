@@ -87,10 +87,17 @@ pub(super) fn irq_lock_words(f: &mut impl FnMut(u64)) {
 
 /// Check for expired IPC timeouts. Called every tick from timer_tick_handler.
 ///
-/// Scans the timeout queue (MAX_THREADS entries) and wakes any thread
+/// First expires notification and select deadlines
+/// (`notify::check_notification_timeouts`), whatever the state of
+/// TIMEOUT_QUEUE, so a busy TIMEOUT_QUEUE skips only the IPC timeout scan.
+/// Then scans the timeout queue (MAX_THREADS entries) and wakes any thread
 /// whose deadline has passed. O(n) where n = MAX_THREADS = 64.
 pub fn check_timeouts() {
     let now = TICK_COUNT.load(Ordering::Relaxed);
+
+    // Notification and select deadlines: a separate table, try-locked alone
+    // and released before any unblock.
+    super::notify::check_notification_timeouts(now);
 
     // Use try_lock() because this is called from IRQ context.
     // If the lock is held (e.g., ipc_call is registering a timeout on this
@@ -123,9 +130,6 @@ pub fn check_timeouts() {
     for &(tid, error) in expired[..count].iter() {
         wake_with_error(tid, error, WakeSource::To);
     }
-
-    // Also check notification/select deadlines (separate table).
-    super::notify::check_notification_timeouts(now);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +215,17 @@ pub(super) fn clear_timeout_blocking(tid: ThreadId) -> bool {
             .get_mut(tid.0 as usize)
             .and_then(Option::take)
             .is_some()
+    })
+}
+
+/// Whether `tid` has a TIMEOUT_QUEUE entry, read with IRQs masked (an
+/// IRQ-class lock that this CPU's tick try-locks). For self-tests.
+pub(super) fn has_timeout_entry(tid: ThreadId) -> bool {
+    daif::with_irqs_masked(|| {
+        TIMEOUT_QUEUE
+            .lock()
+            .get(tid.0 as usize)
+            .is_some_and(Option::is_some)
     })
 }
 

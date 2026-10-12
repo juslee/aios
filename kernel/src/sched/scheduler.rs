@@ -652,6 +652,21 @@ pub fn current_thread_and_pid() -> Option<(ThreadId, ProcessId)> {
     })
 }
 
+/// The calling thread's tid: `CURRENT_THREAD[core_id()]`, read in one
+/// IRQ-masked section, so the thread cannot migrate between the CPU read and
+/// the `CURRENT_THREAD` read (crash-fix N4) and the hold cannot meet this
+/// CPU's tick. The tid is therefore the caller's own, as
+/// `wake::prepare_block` requires (the own-tid rule, ADR §8): every converted
+/// wait reads `me` here once per wait, except SVC 25, which uses
+/// [`current_thread_and_pid`]. Not the instrumentation-only
+/// `tripwire::current_tid(cpu)`. `None` when the CPU has no current thread.
+pub fn current_tid() -> Option<ThreadId> {
+    daif::with_irqs_masked(|| {
+        let cpu = exceptions::core_id() as usize;
+        *CURRENT_THREAD[cpu].lock()
+    })
+}
+
 /// What [`thread_probe`] read about a thread.
 #[derive(Clone, Copy, Debug)]
 pub struct ThreadProbe {

@@ -78,7 +78,7 @@ These monitors have zero ML inference cost — they use counters that the kernel
 
 #### 7.2.3 Learned Lock-Order Prediction
 
-Train a small decision tree on observed lock acquisition sequences from `TraceRing` data. The model learns the documented lock order (PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK) and predicts whether a lock acquisition will violate the ordering.
+Train a small decision tree on observed lock acquisition sequences from `TraceRing` data. The model learns the documented lock order (PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > BLOCK_ENGINE > VIRTIO_BLK) and predicts whether a lock acquisition will violate the ordering.
 
 **Deployment model:**
 

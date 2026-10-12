@@ -9,14 +9,11 @@
 //!   (`chan_ref`);
 //! - TIMEOUT_QUEUE: each registered IPC timeout or sleep (`timeout`);
 //! - NOTIFY_DEADLINES: each notification or select deadline (`ndl`);
-//! - NOTIFICATION_TABLE: each notification's waiters (`notif_ref`), only when
+//! - NOTIFICATION_TABLE: each notification's waiter records, a
+//!   `notification_wait`'s and an `ipc_select`'s (`notif_ref`), only when
 //!   scan A saw a thread blocked on a notification or in a select;
 //! - PROCESS_WAITERS: each child's registered waiter (`proc_waiter`), only when
 //!   scan A saw a thread in `BlockedProcessWait`.
-//!
-//! SELECT_WAITERS is not a waker (a signal or message reaches a select waiter
-//! through the notification's waiter list or the channel's receiver slot), so
-//! it is not read.
 //!
 //! CPU 0's timer IRQ only. Every lock is a try-lock that counts nothing: the
 //! IRQ-class tables use `try_lock_quiet`, and CHANNEL_TABLE and

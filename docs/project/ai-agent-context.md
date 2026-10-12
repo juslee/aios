@@ -391,7 +391,7 @@ pub fn ipc_select(
 **Lock ordering**:
 
 ```text
-CHANNEL_TABLE → TIMEOUT_QUEUE → SELECT_WAITERS → sched::RUN_QUEUES
+CHANNEL_TABLE → TIMEOUT_QUEUE → sched::RUN_QUEUES
 ```
 
 Drop CHANNEL_TABLE before calling `sched::unblock()` to prevent circular wait with the scheduler.

@@ -70,9 +70,9 @@
 //! and they are `#[inline(never)]`, so a disassembly attributes their
 //! instructions to them. The dispatch and IRQ-context functions follow the
 //! same rules: `schedule()` and `irq_handler_el1` call them in the timer IRQ.
-//! So do [`note_unblock`], [`note_unblock_target`], [`mark_wake_pending`] and
-//! [`clear_wake_pending`], which the timeout scans reach from the timer IRQ,
-//! and [`check_restore`], which `schedule()` calls. The scan functions
+//! So do [`note_unblock`], [`note_unblock_target`] and [`mark_wake_pending`],
+//! which the timeout scans reach from the timer IRQ, and [`check_restore`],
+//! which `schedule()` calls. The scan functions
 //! ([`scan_note_queued`], [`scan_note_slot`], [`scan_note_waker`] and the
 //! private scan drivers) run in CPU 0's timer IRQ too; their masks are
 //! static accumulators, and the thread counts use `count_tids`, never
@@ -945,9 +945,8 @@ static LAST_RUN: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_TH
 
 /// Per thread slot: a waker has taken the thread's last waiter reference and
 /// has not yet run `unblock` (the source's `WakeSource::marker`), or 0.
-/// Set by [`mark_wake_pending`]; cleared by `unblock` ([`note_unblock`]), by
-/// a dispatch of the thread, and where a marked wake is abandoned
-/// ([`clear_wake_pending`]).
+/// Set by [`mark_wake_pending`]; cleared by `unblock` ([`note_unblock`]) and
+/// by a dispatch of the thread. Every marked wake reaches `unblock`.
 static WAKE_PENDING: [AtomicU8; MAX_THREADS] = [const { AtomicU8::new(0) }; MAX_THREADS];
 
 /// Per thread slot: `TICK_COUNT` when `WAKE_PENDING` was last set.
@@ -1331,17 +1330,6 @@ pub fn mark_wake_pending(tid: ThreadId, src: WakeSource) {
             pending.store(src.marker(), Ordering::Release);
         }
         _ => bump(Key::Badtid, 0),
-    }
-}
-
-/// The wake marked by [`mark_wake_pending`] was abandoned without an
-/// `unblock` (the notification deadline scan gave it up): clear
-/// `WAKE_PENDING[tid]`, so that the thread does not look as if a wake were
-/// in flight forever. Any context.
-#[inline(never)]
-pub fn clear_wake_pending(tid: ThreadId) {
-    if let Some(pending) = WAKE_PENDING.get(tid.0 as usize) {
-        pending.store(0, Ordering::Release);
     }
 }
 

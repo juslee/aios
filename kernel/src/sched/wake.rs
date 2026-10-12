@@ -22,7 +22,8 @@
 //!
 //! 1. **A waker sees Armed.** A waker finds its waiter only through the
 //!    lock that publishes the waiter's record (`CHANNEL_TABLE`,
-//!    `TIMEOUT_QUEUE`, a notification's lock, `PROCESS_WAITERS`). The arm
+//!    `TIMEOUT_QUEUE`, `NOTIFICATION_TABLE`, `NOTIFY_DEADLINES`,
+//!    `PROCESS_WAITERS`). The arm
 //!    is sequenced before the waiter's release of that lock, and the waker
 //!    reads the word after its acquire of it, so the lock's
 //!    release/acquire pair orders the arm before the read.
@@ -72,13 +73,13 @@ fn decode(raw: u8) -> WaitState {
 /// or Runnable leaves the token instead of skipping it.
 ///
 /// `tid` must be the calling thread's own tid (the own-tid rule, ADR §8).
-/// It comes from `sched::current_tid()` (step 11), from
-/// `current_thread_and_pid()` (step 10, for SVC 25) or from a thread pinned
-/// to one CPU. It never comes from `current_thread_id()` on an unpinned
-/// thread, whose CPU read and `CURRENT_THREAD` read happen with IRQs on, so a
-/// migration between them names another CPU's thread (crash-fix N4), and
-/// never from the instrumentation-only `tripwire::current_tid(cpu)`. Arming
-/// another thread's word would leave that thread a token it never asked for.
+/// It comes from `sched::current_tid()`, from `current_thread_and_pid()`
+/// (for SVC 25) or from a thread pinned to one CPU. It never comes from
+/// `current_thread_id()` on an unpinned thread, whose CPU read and
+/// `CURRENT_THREAD` read happen with IRQs on, so a migration between them
+/// names another CPU's thread (crash-fix N4), and never from the
+/// instrumentation-only `tripwire::current_tid(cpu)`. Arming another
+/// thread's word would leave that thread a token it never asked for.
 ///
 /// The rules for a waiting site:
 ///

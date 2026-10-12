@@ -33,10 +33,10 @@
 //! only its own [`CpuCounters`] row, with IRQs masked, and only CPU 0 writes
 //! the scan state, so no read-modify-write is needed.
 //!
-//! # The line (schema `v=1`)
+//! # The line (schema `v=2`)
 //!
 //! ```text
-//! [tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 ... twmax=94000 n=14
+//! [tripwire] v=2 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 ... twmax=94000 n=14
 //! ```
 //!
 //! - After `[tripwire]`, every token is `key=value`. The prefix `v`, `src`,
@@ -57,6 +57,21 @@
 //! Most keys count events and only grow, but gauges ([`Key::is_gauge`]) are
 //! levels or maxima, and the `*_now` gauges fall. A parser that keeps the last
 //! value seen per key across lines is wrong for them.
+//!
+//! **Versions.** The per-source and per-lock keys are positional, so the
+//! index sets are part of the schema. Appending a key to [`Key::ALL`], or an
+//! index at the end of a set, changes no earlier value's meaning (a missing
+//! key or trailing index reads 0) and needs no bump. Deleting or reordering a
+//! set entry shifts every later index and bumps [`SCHEMA_VERSION`]. `v=1`
+//! (crash-fix step 1b to capability-lifetime step 10): [`WakeSource`] was 16
+//! wide (`call`, `reply`, `send`, `selcall`, `selsend`, `selsig`, `sig`,
+//! `ndestroy`, `nto`, `nsto`, `pwait`, `to`, `chdestroy`, `pexit`, `cancel`,
+//! `selftest`) and [`LockClass`] 9 wide (the per-thread select table's
+//! lock between `NOTIFICATION_TABLE` and `BOOT_LOG`). `v=2`
+//! (capability-lifetime step 11) deletes the select wake path, with its
+//! sources `selcall`, `selsend`, `selsig` and `nsto` and that table's lock
+//! class, giving 12 and 8. A parser decodes each line with the catalogue of
+//! its own version.
 
 #![deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 
@@ -70,7 +85,7 @@ use crate::sched::{wake_action, SchedulerClass, ThreadState, WaitState, WakeActi
 // ---------------------------------------------------------------------------
 
 /// The schema version, printed as `v=`.
-pub const SCHEMA_VERSION: u64 = 1;
+pub const SCHEMA_VERSION: u64 = 2;
 
 /// The first token of every tripwire line.
 pub const LINE_PREFIX: &str = "[tripwire]";
@@ -142,34 +157,30 @@ const _: () = assert!(SchedulerClass::RealTime as usize + 1 == CLASS_COUNT);
 // Index sets: wake sources, N2 kinds, badchan sites
 // ---------------------------------------------------------------------------
 
-/// The caller of `unblock`, `wake_with_error` or `try_wake_select`.
+/// The caller of `unblock` or `wake_with_error`.
 ///
-/// The order is the index order of the 16-wide per-source keys. New sources
+/// The order is the index order of the 12-wide per-source keys. New sources
 /// are appended at the end, so an older line, which lacks the trailing
-/// indices, still decodes: a missing index reads 0.
+/// indices, still decodes: a missing index reads 0. A deletion shifts the
+/// later indices and bumps [`SCHEMA_VERSION`] (the module docs, "Versions").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum WakeSource {
-    /// `ipc_call` wakes the waiting receiver.
+    /// `ipc_call` wakes the waiting receiver (an `ipc_recv` or an
+    /// `ipc_select`), after a failed direct switch.
     Call,
     /// `ipc_reply` wakes the caller (fallback after a failed reply switch).
     Reply,
-    /// `ipc_send` wakes the waiting receiver.
+    /// `ipc_send` wakes the waiting receiver (an `ipc_recv` or an
+    /// `ipc_select`).
     Send,
-    /// `try_wake_select` from `ipc_call`.
-    SelCall,
-    /// `try_wake_select` from `ipc_send`.
-    SelSend,
-    /// `try_wake_select` from `notification_signal`.
-    SelSig,
-    /// `notification_signal` wakes a waiter.
+    /// `notification_signal` wakes a waiter (a `notification_wait` or an
+    /// `ipc_select`).
     Sig,
     /// `notification_destroy` wakes its waiters.
     NDestroy,
-    /// A notification wait deadline expired.
+    /// A notification or select wait deadline expired.
     Nto,
-    /// A select wait deadline expired (notification timeout scan).
-    Nsto,
     /// A process exit wakes a thread in `process_wait`.
     PWait,
     /// `wake_with_error` from `check_timeouts` (an IPC or sleep timeout).
@@ -187,20 +198,16 @@ pub enum WakeSource {
 
 impl WakeSource {
     /// Number of wake sources.
-    pub const COUNT: usize = 16;
+    pub const COUNT: usize = 12;
 
     /// Every source, in index order.
     pub const ALL: [WakeSource; Self::COUNT] = [
         WakeSource::Call,
         WakeSource::Reply,
         WakeSource::Send,
-        WakeSource::SelCall,
-        WakeSource::SelSend,
-        WakeSource::SelSig,
         WakeSource::Sig,
         WakeSource::NDestroy,
         WakeSource::Nto,
-        WakeSource::Nsto,
         WakeSource::PWait,
         WakeSource::To,
         WakeSource::ChDestroy,
@@ -209,7 +216,7 @@ impl WakeSource {
         WakeSource::SelfTest,
     ];
 
-    /// Index into 16-wide per-source values.
+    /// Index into 12-wide per-source values.
     #[inline]
     pub const fn index(self) -> usize {
         self as usize
@@ -221,13 +228,9 @@ impl WakeSource {
             WakeSource::Call => "call",
             WakeSource::Reply => "reply",
             WakeSource::Send => "send",
-            WakeSource::SelCall => "selcall",
-            WakeSource::SelSend => "selsend",
-            WakeSource::SelSig => "selsig",
             WakeSource::Sig => "sig",
             WakeSource::NDestroy => "ndestroy",
             WakeSource::Nto => "nto",
-            WakeSource::Nsto => "nsto",
             WakeSource::PWait => "pwait",
             WakeSource::To => "to",
             WakeSource::ChDestroy => "chdestroy",
@@ -348,9 +351,9 @@ pub enum Width {
     Cpu,
     /// A single value.
     One,
-    /// One per [`WakeSource`] (16).
+    /// One per [`WakeSource`] (12).
     Source,
-    /// One per [`LockClass`] (9).
+    /// One per [`LockClass`] (8).
     Lock,
     /// One per scheduler class (4), indexed by `SchedulerClass as usize`.
     Class,
@@ -2442,8 +2445,8 @@ mod tests {
         assert_eq!(Width::Cpu.slots(), 1);
         assert_eq!(Width::Cpu.values(4), 4);
         assert_eq!(Width::One.values(4), 1);
-        assert_eq!(Width::Source.slots(), 16);
-        assert_eq!(Width::Lock.slots(), 9);
+        assert_eq!(Width::Source.slots(), 12);
+        assert_eq!(Width::Lock.slots(), 8);
         assert_eq!(Width::Class.slots(), 4);
         assert_eq!(Width::N2.slots(), 4);
         assert_eq!(Width::Badchan.slots(), 3);
@@ -2462,16 +2465,21 @@ mod tests {
             next += slots;
         }
         assert_eq!(next, SLOTS);
-        // ... + the closing 3, then the appended ubtok and ubpend (16 each)
+        // ... + the closing 3, then the appended ubtok and ubpend (12 each)
         // and bw.
         assert_eq!(
             SLOTS,
-            10 + 12 + 4 + 5 * 16 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3 + 2 * 16 + 1
+            10 + 12 + 4 + 5 * 12 + 8 * 8 + 13 + 4 + 5 + 2 + 3 + 3 + 2 * 12 + 1
         );
     }
 
     #[test]
     fn index_sets_have_fixed_names_and_order() {
+        // Schema v=2 (capability-lifetime step 11): the select wake path's
+        // sources and lock class are gone; v=1 lines carry 16 and 9.
+        assert_eq!(SCHEMA_VERSION, 2);
+        assert_eq!(WakeSource::COUNT, 12);
+        assert_eq!(LockClass::COUNT, 8);
         let sources: Vec<&str> = WakeSource::ALL.iter().map(|s| s.name()).collect();
         assert_eq!(
             sources,
@@ -2479,13 +2487,9 @@ mod tests {
                 "call",
                 "reply",
                 "send",
-                "selcall",
-                "selsend",
-                "selsig",
                 "sig",
                 "ndestroy",
                 "nto",
-                "nsto",
                 "pwait",
                 "to",
                 "chdestroy",
@@ -2500,8 +2504,8 @@ mod tests {
             assert_eq!(WakeSource::from_marker(s.marker()), Some(*s));
         }
         assert_eq!(WakeSource::from_marker(0), None);
-        assert_eq!(WakeSource::from_marker(16), Some(WakeSource::SelfTest));
-        assert_eq!(WakeSource::from_marker(17), None);
+        assert_eq!(WakeSource::from_marker(12), Some(WakeSource::SelfTest));
+        assert_eq!(WakeSource::from_marker(13), None);
         assert_eq!(WakeSource::from_marker(u8::MAX), None);
 
         let n2: Vec<&str> = N2Kind::ALL.iter().map(|k| k.name()).collect();
@@ -2582,31 +2586,31 @@ mod tests {
     // -- The line ------------------------------------------------------------
 
     const GOLDEN_FULL: &str =
-        "[tripwire] v=1 src=g1 cpu=0 t=12000 ncpu=4 tick=100,101,102,103 irqsw=200,201,202,203 \
+        "[tripwire] v=2 src=g1 cpu=0 t=12000 ncpu=4 tick=100,101,102,103 irqsw=200,201,202,203 \
          irqsw0=300,301,302,303 nest=400,401,402,403 elrmm=500,501,502,503 spsrmm=600,601,602,603 \
          n4=700,701,702,703 insched=800,801,802,803 rsthold=900,901,902,903 \
          tpidrbad=1000,1001,1002,1003 xdir=1100 xrep=1200 xnever=1300 n1=1400 pcnull=1500 \
          pcphys=1600 pcother=1700 spbad=1800 latereply=1900 misrep=2000 ctbusy=2100 badtid=2200 \
          n2=2300,2301,2302,2303 \
-         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411,2412,2413,2414,2415 \
-         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511,2512,2513,2514,2515 \
-         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614,2615 \
-         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711,2712,2713,2714,2715 \
-         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811,2812,2813,2814,2815 \
-         lkph=2900,2901,2902,2903,2904,2905,2906,2907,2908 \
-         lkpho=3000,3001,3002,3003,3004,3005,3006,3007,3008 \
-         lkphrun=3100,3101,3102,3103,3104,3105,3106,3107,3108 \
-         lkoxp=3200,3201,3202,3203,3204,3205,3206,3207,3208 \
-         lkself=3300,3301,3302,3303,3304,3305,3306,3307,3308 \
-         lktry=3400,3401,3402,3403,3404,3405,3406,3407,3408 \
-         lktph=3500,3501,3502,3503,3504,3505,3506,3507,3508 \
-         lkstk=3600,3601,3602,3603,3604,3605,3606,3607,3608 scana=3700 skipa=3800 skipaself=3900 \
+         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411 \
+         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511 \
+         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611 \
+         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711 \
+         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811 \
+         lkph=2900,2901,2902,2903,2904,2905,2906,2907 \
+         lkpho=3000,3001,3002,3003,3004,3005,3006,3007 \
+         lkphrun=3100,3101,3102,3103,3104,3105,3106,3107 \
+         lkoxp=3200,3201,3202,3203,3204,3205,3206,3207 \
+         lkself=3300,3301,3302,3303,3304,3305,3306,3307 \
+         lktry=3400,3401,3402,3403,3404,3405,3406,3407 \
+         lktph=3500,3501,3502,3503,3504,3505,3506,3507 \
+         lkstk=3600,3601,3602,3603,3604,3605,3606,3607 scana=3700 skipa=3800 skipaself=3900 \
          scanb=4000 skipb=4100 scanstall=4200 hbdefer=4300 orphan=4400 nowaker=4500 wakefl=4600 \
          starved=4700,4701,4702,4703 dupcur=4800 dupq=4900 qbad=5000 orphan_now=5100 \
          nowaker_now=5200 wakefl_now=5300 scanhold1=5400 scanhold2=5500 lb=5600 enqfull=5700 \
          badchan=5800,5801,5802 twc=5900 twn=6000 twmax=6100 \
-         ubtok=6200,6201,6202,6203,6204,6205,6206,6207,6208,6209,6210,6211,6212,6213,6214,6215 \
-         ubpend=6300,6301,6302,6303,6304,6305,6306,6307,6308,6309,6310,6311,6312,6313,6314,6315 \
+         ubtok=6200,6201,6202,6203,6204,6205,6206,6207,6208,6209,6210,6211 \
+         ubpend=6300,6301,6302,6303,6304,6305,6306,6307,6308,6309,6310,6311 \
          bw=6400 n=69\n";
 
     #[test]
@@ -2628,7 +2632,7 @@ mod tests {
         assert_eq!(
             prefix,
             [
-                ("v", "1"),
+                ("v", "2"),
                 ("src", "g1"),
                 ("cpu", "0"),
                 ("t", "12000"),
@@ -2646,8 +2650,8 @@ mod tests {
     }
 
     const GOLDEN_NONZERO: &str =
-        "[tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 \
-         irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0,0 \
+        "[tripwire] v=2 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 \
+         irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0 \
          starved=1,0,0,0 badchan=4,0,6 twc=812345 twn=12 twmax=94000 n=14\n";
 
     fn nonzero_value(key: Key, idx: usize) -> u64 {
@@ -2685,7 +2689,7 @@ mod tests {
         let line = render(LineSrc::Hb, LineMode::NonZero, 2, 0, 4, |_, _| 0);
         assert_eq!(
             line,
-            "[tripwire] v=1 src=hb cpu=2 t=0 ncpu=4 twc=0 twn=0 twmax=0 n=8\n"
+            "[tripwire] v=2 src=hb cpu=2 t=0 ncpu=4 twc=0 twn=0 twmax=0 n=8\n"
         );
         parse(&line);
     }
@@ -2731,7 +2735,10 @@ mod tests {
         // Values are digits, so a hazard could only come from the fixed text:
         // the prefix, the names and the separators.
         for src in LineSrc::ALL {
-            assert_no_hazards(&format!("{LINE_PREFIX} v=1 src={} ", src.name()));
+            assert_no_hazards(&format!(
+                "{LINE_PREFIX} v={SCHEMA_VERSION} src={} ",
+                src.name()
+            ));
         }
         for key in Key::ALL {
             assert_no_hazards(&format!(" {}=", key.name()));

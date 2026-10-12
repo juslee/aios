@@ -1,10 +1,10 @@
 //! `IrqSpinLock`: the detect-only spinlock of the IRQ-shared statics
 //! (crash-fix step 1b).
 //!
-//! The timer IRQ path shares 9 lock statics with thread code
+//! The timer IRQ path shares 8 lock statics with thread code
 //! ([`LockClass`]: THREAD_TABLE, CURRENT_THREAD[cpu], RUN_QUEUES[cpu],
-//! WAKEUP_ERRORS, TIMEOUT_QUEUE, NOTIFY_DEADLINES, NOTIFICATION_TABLE,
-//! SELECT_WAITERS and BOOT_LOG). They use [`IrqSpinLock`] instead of
+//! WAKEUP_ERRORS, TIMEOUT_QUEUE, NOTIFY_DEADLINES, NOTIFICATION_TABLE and
+//! BOOT_LOG). They use [`IrqSpinLock`] instead of
 //! `spin::Mutex`. It excludes exactly as `spin::Mutex` does: one CAS takes
 //! the word from 0, `store(0, Release)` frees it, a waiter spins on a plain
 //! load between attempts, and there is no fairness. What it adds is
@@ -16,7 +16,7 @@
 //!   ([`shared::tripwire::write_reentry_msg`]) where `spin::Mutex` would spin
 //!   forever. It does so in every context; the message labels the context.
 //! - Other contention is classified once per `lock()` call and counted in the
-//!   9-wide per-lock tripwire keys: `lkph`/`lkpho` (a holder switched out on
+//!   8-wide per-lock tripwire keys: `lkph`/`lkpho` (a holder switched out on
 //!   this CPU, IRQs masked/on), `lkphrun` (that holder is current on another
 //!   CPU), `lkoxp` (another CPU's holder that CPU has switched out since),
 //!   `lkself` (the holder is the waiter's own thread), `lkstk` (a wait of
@@ -805,9 +805,9 @@ fn reentry_panic(
 // Run-time check of rule (b)
 // ---------------------------------------------------------------------------
 
-/// Visit the words of the 23 IRQ-class locks: THREAD_TABLE, the 8
+/// Visit the words of the 22 IRQ-class locks: THREAD_TABLE, the 8
 /// CURRENT_THREAD and 8 RUN_QUEUES entries, WAKEUP_ERRORS, TIMEOUT_QUEUE,
-/// NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS and BOOT_LOG.
+/// NOTIFY_DEADLINES, NOTIFICATION_TABLE and BOOT_LOG.
 ///
 /// The statics are only dereferenced, never compared or published, so this
 /// is correct at physical-alias PCs too.

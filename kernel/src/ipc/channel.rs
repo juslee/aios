@@ -13,7 +13,7 @@ use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
 use shared::tripwire::WakeSource;
-use shared::{deadline_after, ChannelId, EndpointState, RawMessage, SelectKind, MAX_MESSAGE_SIZE};
+use shared::{deadline_after, ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
     clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, TimeoutEntry, REPLY_SLOTS,
@@ -153,12 +153,11 @@ pub fn ipc_call(
             // Don't unblock via scheduler; direct switch is faster.
             // Clear the receiver's timeout first (they're being woken by message delivery).
             // The result stays with this wake until its unblock fallback
-            // classifies it (tripwire N2 counters).
+            // classifies it (tripwire N2 counters). A receiver in ipc_select
+            // took its own slot and re-scans when woken: it finds the queued
+            // request ready.
             let recv_clear = clear_timeout(recv_tid);
             tripwire::note_clear(recv_clear);
-            // If the receiver is select-blocked, set the ready metadata so it knows
-            // which source fired when it resumes from ipc_select.
-            super::select::set_select_ready(recv_tid, SelectKind::Channel(channel), 0);
             drop(table);
 
             // Register reply buffer BEFORE direct switch (we'll be blocked).
@@ -184,17 +183,11 @@ pub fn ipc_call(
                 // We've been restored after the reply. Continue below
                 // to check result (same as scheduler-woken path).
             } else {
-                // Direct switch failed — fall back to scheduler path.
-                // If select-blocked, wake via select path instead.
-                if !super::select::try_wake_select(
-                    recv_tid,
-                    SelectKind::Channel(channel),
-                    0,
-                    WakeSource::SelCall,
-                ) {
-                    let outcome = sched::unblock(recv_tid, WakeSource::Call);
-                    tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
-                }
+                // Direct switch failed (the receiver is not blocked in
+                // ipc_recv, a select included) — fall back to the scheduler
+                // path.
+                let outcome = sched::unblock(recv_tid, WakeSource::Call);
+                tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
                 sched::block_current(ThreadState::BlockedIpc {
                     channel: u64::from(channel.raw()),
                 });
@@ -515,7 +508,9 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         return IpcError::Eagain as i64;
     }
 
-    // Wake receiver if waiting — clear their timeout first.
+    // Wake receiver if waiting — clear their timeout first. A receiver in
+    // ipc_select took its own slot and re-scans when woken: it finds the
+    // message ready.
     if let Some(recv_tid) = ch.waiting_receiver.take() {
         // The receiver's wake is in flight until the unblock below lands.
         tripwire::mark_wake_pending(recv_tid, WakeSource::Send);
@@ -524,16 +519,8 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         // classifies it (tripwire N2 counters).
         let clear = clear_timeout(recv_tid);
         tripwire::note_clear(clear);
-        // If the receiver is select-blocked, wake via select path (sets ready_index).
-        if !super::select::try_wake_select(
-            recv_tid,
-            SelectKind::Channel(channel),
-            0,
-            WakeSource::SelSend,
-        ) {
-            let outcome = sched::unblock(recv_tid, WakeSource::Send);
-            tripwire::note_send_wake(outcome, u64::from(channel.raw()), clear);
-        }
+        let outcome = sched::unblock(recv_tid, WakeSource::Send);
+        tripwire::note_send_wake(outcome, u64::from(channel.raw()), clear);
     }
 
     #[cfg(feature = "kernel-metrics")]

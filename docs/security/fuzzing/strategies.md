@@ -135,5 +135,5 @@ Traditional fuzzing explores input space but not scheduling space — the same s
 
 - Priority inheritance chains: verify that inheritance bounded to `MAX_INHERITANCE_DEPTH=8` terminates correctly under all interleavings
 - IPC direct switch: verify that the scheduler bypass path (sender → receiver context switch without entering `schedule()`) does not violate run-queue invariants
-- Lock ordering: verify that the documented lock order (PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK) is respected under concurrent access patterns
+- Lock ordering: verify that the documented lock order (PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > BLOCK_ENGINE > VIRTIO_BLK) is respected under concurrent access patterns
 - Load balancer: verify that thread migration between per-CPU run queues does not lose or duplicate threads

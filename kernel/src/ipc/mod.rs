@@ -36,12 +36,23 @@ pub(crate) use timeout::wake_with_error;
 pub use timeout::{check_timeouts, current_thread_id, sleep_ticks};
 
 /// Visit the lock words of the IPC's IRQ-class locks (TIMEOUT_QUEUE,
-/// WAKEUP_ERRORS, NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS), for
+/// WAKEUP_ERRORS, NOTIFY_DEADLINES, NOTIFICATION_TABLE), for
 /// `sync::held_by_stream`.
 pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
     timeout::irq_lock_words(f);
     notify::irq_lock_words(f);
-    f(select::SELECT_WAITERS.owner_word());
+}
+
+/// What arming a wait's deadline found (`notify::arm_deadline`): the deadline
+/// is published, or it has already passed (`TICK_COUNT >= deadline`, read in
+/// the publishing hold), so the wait must not block and its result is
+/// ETIMEDOUT unless its condition was met first.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DeadlineArm {
+    /// Published (or the wait has no deadline): the wait may block.
+    Armed,
+    /// The deadline has passed; nothing was published.
+    Expired,
 }
 
 // ---------------------------------------------------------------------------
@@ -381,13 +392,13 @@ pub(crate) fn channel_endpoint_states(
 /// Process exit step C's per-victim cleanup of thread `tid`, which the exit
 /// marked Dead (or which is the exiting caller): its timeout entry (a
 /// blocking clear, so no entry fires later at the dead slot), its reply
-/// slot, its select registration, its notification deadline and its
-/// notification waiter records. Each lock is taken alone; the IRQ-class ones
-/// with IRQs masked.
+/// slot, its notification deadline and its notification waiter records, a
+/// `notification_wait`'s and an `ipc_select`'s alike (a select's channel
+/// registrations are `waiting_receiver` records, which step C's channel walk
+/// clears). Each lock is taken alone; the IRQ-class ones with IRQs masked.
 pub(crate) fn forget_thread(tid: ThreadId) {
     timeout::clear_timeout_blocking(tid);
     timeout::clear_reply_slot(tid);
-    select::forget_waiter(tid);
     notify::forget_waiter(tid);
 }
 

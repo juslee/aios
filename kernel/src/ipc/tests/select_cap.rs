@@ -1,7 +1,8 @@
 //! IpcSelect capability self-test, run from the ipc-timeout thread.
 
 use crate::ipc::channel::{ipc_recv, ipc_send};
-use crate::ipc::select::{ipc_select, SELECT_WAITERS};
+use crate::ipc::notify::has_waiter_record;
+use crate::ipc::select::ipc_select;
 use crate::ipc::{channel_create_unchecked, channel_mut, CHANNEL_TABLE};
 use crate::syscall::IpcError;
 use crate::task::ThreadId;
@@ -123,7 +124,8 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<SelectCapChannels> {
 
     // A mixed set with nothing ready. The accessible channel comes first, so
     // a check made while registering would already have claimed its
-    // waiting_receiver slot (or the SELECT_WAITERS entry) before failing.
+    // waiting_receiver slot before failing. No registration may be left: no
+    // waiting_receiver on either channel and no Select waiter record.
     let mixed = ipc_select(&[chan(owned_a), chan(denied)], SELECT_TIMEOUT_TICKS);
     let on_channel = {
         let mut table = CHANNEL_TABLE.lock();
@@ -131,11 +133,7 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<SelectCapChannels> {
             .into_iter()
             .any(|id| channel_mut(&mut table, id).is_ok_and(|ch| ch.waiting_receiver.is_some()))
     };
-    let in_waiters = SELECT_WAITERS
-        .lock()
-        .get(my_tid.0 as usize)
-        .is_some_and(Option::is_some);
-    let waiter_left = on_channel || in_waiters;
+    let waiter_left = on_channel || has_waiter_record(my_tid);
     if mixed != eperm || waiter_left {
         passed = false;
         crate::kwarn!(

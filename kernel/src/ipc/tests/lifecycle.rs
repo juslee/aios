@@ -429,9 +429,13 @@ fn window_case(me: ThreadId) {
     let eexist = Err(IpcError::Eexist as i64);
     let other = super::dead_thread::helper_tid();
     let armed = wait_step(me, TEST_PID, WINDOW_PID) == Ok(None);
-    let refused_before = other.is_some_and(|o| wait_step(o, TEST_PID, WINDOW_PID) == eexist);
+    // Another thread's wait_step only once this thread registered: then it
+    // is refused before any arm, so it never arms the other thread's word.
+    let refused_before =
+        armed && other.is_some_and(|o| wait_step(o, TEST_PID, WINDOW_PID) == eexist);
     let exited = process_exit(WINDOW_PID, i32::MIN).is_ok();
-    let refused_after = other.is_some_and(|o| wait_step(o, TEST_PID, WINDOW_PID) == eexist);
+    let refused_after =
+        armed && other.is_some_and(|o| wait_step(o, TEST_PID, WINDOW_PID) == eexist);
 
     // Block only on an armed wait (rule 2: an armed wait ends in
     // block_current or cancel_block).

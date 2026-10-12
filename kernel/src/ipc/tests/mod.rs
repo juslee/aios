@@ -14,6 +14,8 @@ mod share;
 mod stale_id;
 mod syscall_args;
 mod timeout_args;
+mod wait_loops;
+mod wake_helper;
 mod wake_token;
 
 use crate::sched;
@@ -208,6 +210,10 @@ pub fn init() {
     // Lifecycle test: processes 14 and 17, and pid 14's thread (pinned to
     // CPU 2), which exits its own process when the test starts it.
     lifecycle::init();
+
+    // Wake helper of the loop tests (process 1, pinned to CPU 2): acts on
+    // the ipc-timeout thread's waits while they wait.
+    wake_helper::init();
 
     // --- Priority inheritance test threads ---
     {
@@ -443,7 +449,11 @@ fn ipc_caller_entry() -> ! {
 /// tid, which the pin to CPU 2 makes safe to read), and the process
 /// lifecycle: exit, wait and reap, the exit cascade, one waiter per child,
 /// the token on the wait path, and the exit walk over channel endpoints
-/// (`lifecycle_test`, on pids 12-18). Last, it calls IpcCall on a channel
+/// (`lifecycle_test`, on pids 12-18), and that `notification_wait` and
+/// `ipc_select` return on their own condition, failure or deadline whatever
+/// wakes them (`notify_loop_test`, `select_loop_test`, with the wake helper
+/// pinned to CPU 2; their timed-out cases take about 2 s each, so the lines
+/// after them print after the bench). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
 /// wake can hide only that line.
@@ -520,6 +530,8 @@ fn ipc_timeout_entry() -> ! {
     dead_thread::dead_thread_test();
     wake_token::wake_token_test(caller_tid);
     lifecycle::lifecycle_test(caller_tid);
+    wait_loops::notify_loop_test(caller_tid);
+    wait_loops::select_loop_test(caller_tid);
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

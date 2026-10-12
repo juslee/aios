@@ -1137,6 +1137,641 @@ mod tests {
             .any(|w| w.reset_armed && w.blocked_ran && w.idle_dead_block));
     }
 
+    // ── Wake token: the loop model (capability-lifetime step 11) ────────
+
+    /// An exhaustive model of a converted waiting site against its wakers,
+    /// explored over every interleaving of their atomic steps, with the
+    /// decisions taken from [`wake_action`] and [`block_action`], as the
+    /// kernel's `notify.rs` and `select.rs` take them.
+    ///
+    /// - [`Site::Notify`] is `notification_wait`: a fast path (no arm), then
+    ///   passes that each, in one NOTIFICATION_TABLE critical section, take
+    ///   a fired record's bits, or consume bits in the word, or arm and
+    ///   insert the waiter's record; then publish the deadline after the
+    ///   arm (Expired: remove the record, its fired bits or ETIMEDOUT), and
+    ///   block. The signaller, under the same lock, sets the bit and moves
+    ///   it into an unfired record's `fired`, then calls `unblock`.
+    /// - [`Site::Select`] is a two-source `ipc_select` (a notification entry
+    ///   and a channel entry): a fast scan (no arm), then passes that arm,
+    ///   then check and register each source in one critical section per
+    ///   source, then publish the deadline and block. Every exit removes the
+    ///   registrations, clears the deadline and cancels the arm. The
+    ///   signaller claims (removes) the select record and leaves the bit;
+    ///   the sender queues the message and takes the receiver slot. Each
+    ///   calls `unblock` if it found a registration.
+    /// - The timeout fires once the clock has passed the deadline and the
+    ///   entry is published (`check_notification_timeouts`), then calls
+    ///   `unblock`. A stale `unblock` (the wake helper's) can land anywhere,
+    ///   and one tick can preempt the waiter.
+    mod loop_model {
+        extern crate std;
+
+        use super::super::{
+            block_action, wake_action, BlockAction, ThreadState, WaitState, WakeAction,
+        };
+        use std::collections::HashSet;
+        use std::vec::Vec;
+
+        /// The waiter's scheduler state.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        enum Th {
+            Running,
+            Runnable,
+            Blocked,
+        }
+
+        impl Th {
+            fn state(self) -> ThreadState {
+                match self {
+                    Th::Running => ThreadState::Running,
+                    Th::Runnable => ThreadState::Runnable,
+                    Th::Blocked => ThreadState::BlockedSelect,
+                }
+            }
+        }
+
+        /// The waiting site.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) enum Site {
+            Notify,
+            Select,
+        }
+
+        /// The event waker: none, a notification signal, or a channel send
+        /// (Select only).
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) enum Event {
+            None,
+            Signal,
+            Send,
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub(super) struct Config {
+            pub(super) site: Site,
+            pub(super) event: Event,
+            /// The wait has a deadline, which the clock may pass.
+            pub(super) deadline: bool,
+            /// A stale `unblock` may land at any point.
+            pub(super) stale: bool,
+            /// The waiter arms (negative control: `false`).
+            pub(super) arm: bool,
+            /// Notify only, negative control: the old signal path, which
+            /// removes the record and consumes the bits under the lock but
+            /// writes the result into a per-thread slot after the release.
+            pub(super) old_signal: bool,
+            /// Select only, negative control: each source is checked in one
+            /// critical section and registered in a later one.
+            pub(super) split: bool,
+        }
+
+        /// The wait's result.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub(super) enum Res {
+            /// The notification's bits (Notify), or the notification entry
+            /// ready (Select).
+            Bits,
+            /// The channel entry ready (Select).
+            Msg,
+            Timedout,
+        }
+
+        // Waiter program counters.
+        const FAST: u8 = 0;
+        const PASS: u8 = 1;
+        const PASS_C: u8 = 2;
+        const REG_N: u8 = 3;
+        const REG_C: u8 = 4;
+        const DEADLINE: u8 = 5;
+        const EXPIRE: u8 = 6;
+        const BLOCK: u8 = 7;
+        const EXIT_UNREG: u8 = 8;
+        const EXIT_CLEAR: u8 = 9;
+        const EXIT_CANCEL: u8 = 10;
+        const DONE: u8 = 11;
+
+        /// The waiter's record on the notification.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        enum Rec {
+            None,
+            /// Registered and not fired (a select record is never fired).
+            Armed,
+            /// A wait record the signaller moved the bits into.
+            Fired,
+        }
+
+        /// One state of the model, with the history flags the checks read.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub(super) struct World {
+            th: Th,
+            on_cpu: bool,
+            queued: bool,
+            word: WaitState,
+            pc: u8,
+            /// This pass armed (its exit cancels).
+            armed: bool,
+            /// The notification's bit is set in the word.
+            bit: bool,
+            rec: Rec,
+            /// The old signal path's per-thread result slot.
+            slot: bool,
+            /// Select: a message is queued on the channel.
+            msg: bool,
+            /// Select: the channel's `waiting_receiver` is the waiter.
+            recv: bool,
+            /// The deadline entry is published.
+            entry: bool,
+            /// The clock has passed the deadline.
+            past: bool,
+            /// Event waker: 0 = not run, 1 = owes an `unblock`, 2 = done; 3 =
+            /// the old path owes its result write.
+            ev: u8,
+            /// Timeout: 0 = idle, 1 = owes an `unblock`.
+            timer: u8,
+            stale_done: bool,
+            preempted: bool,
+            /// The signaller consumed the bit for the waiter (into a record
+            /// or the old result slot).
+            consumed: bool,
+            pub(super) res: Option<Res>,
+            /// The clock had passed the deadline when the wait returned.
+            past_at_return: bool,
+            pub(super) consumed_token: bool,
+            /// A block to a live state found an Idle word in an armed model.
+            assert_hit: bool,
+            /// `prepare_block` found a word that was not Idle.
+            prepare_bad: bool,
+        }
+
+        impl World {
+            fn start(cfg: Config) -> World {
+                World {
+                    th: Th::Running,
+                    on_cpu: true,
+                    queued: false,
+                    word: WaitState::Idle,
+                    pc: FAST,
+                    armed: false,
+                    bit: false,
+                    rec: Rec::None,
+                    slot: false,
+                    msg: false,
+                    recv: false,
+                    entry: false,
+                    past: false,
+                    ev: if cfg.event == Event::None { 2 } else { 0 },
+                    timer: 0,
+                    stale_done: !cfg.stale,
+                    preempted: false,
+                    consumed: false,
+                    res: None,
+                    past_at_return: false,
+                    consumed_token: false,
+                    assert_hit: false,
+                    prepare_bad: false,
+                }
+            }
+
+            /// The waiter is blocked for good with its condition set, or
+            /// with its deadline passed: a lost wake.
+            pub(super) fn lost_wake(&self) -> bool {
+                let cond = self.bit || self.msg || self.rec == Rec::Fired || self.slot;
+                self.th == Th::Blocked && !self.queued && (cond || self.past)
+            }
+
+            /// The signaller consumed bits for the waiter, and the waiter
+            /// returned without them.
+            pub(super) fn lost_bits(&self) -> bool {
+                self.consumed && self.res.is_some() && self.res != Some(Res::Bits)
+            }
+
+            /// ETIMEDOUT before the deadline passed.
+            pub(super) fn early_timeout(&self) -> bool {
+                self.res == Some(Res::Timedout) && !self.past_at_return
+            }
+
+            /// Token hygiene: no arm found a word that was not Idle, no block
+            /// of an armed model found an Idle word, and the word is Idle
+            /// once the wait has returned.
+            pub(super) fn token_ok(&self) -> bool {
+                !self.prepare_bad
+                    && !self.assert_hit
+                    && (self.res.is_none() || self.word == WaitState::Idle)
+            }
+
+            /// No registration or deadline left once the wait has returned.
+            pub(super) fn clean(&self) -> bool {
+                self.res.is_none() || (!self.recv && !self.entry && self.rec != Rec::Armed)
+            }
+
+            fn unblock(&mut self) {
+                let state = self.th.state();
+                match wake_action(&state, self.word) {
+                    WakeAction::LeaveToken => self.word = WaitState::Woken,
+                    WakeAction::Enqueue => {
+                        self.th = Th::Runnable;
+                        self.queued = true;
+                    }
+                    WakeAction::Dead | WakeAction::Skip | WakeAction::TokenPending => {}
+                }
+            }
+
+            fn prepare(&mut self, cfg: Config) {
+                if !cfg.arm {
+                    return;
+                }
+                if self.word != WaitState::Idle {
+                    self.prepare_bad = true;
+                }
+                self.word = WaitState::Armed;
+                self.armed = true;
+            }
+
+            fn ret(&mut self, res: Res, cfg: Config) {
+                self.res = Some(res);
+                self.past_at_return = self.past;
+                self.pc = if cfg.site == Site::Select {
+                    EXIT_UNREG
+                } else {
+                    EXIT_CLEAR
+                };
+            }
+
+            /// The notify pass, one NOTIFICATION_TABLE critical section.
+            fn notify_pass(&mut self, cfg: Config) {
+                let fired = if cfg.old_signal {
+                    self.slot
+                } else {
+                    self.rec == Rec::Fired
+                };
+                if fired {
+                    self.slot = false;
+                    self.rec = Rec::None;
+                    self.ret(Res::Bits, cfg);
+                } else if self.bit {
+                    self.bit = false;
+                    self.rec = Rec::None;
+                    self.ret(Res::Bits, cfg);
+                } else {
+                    self.prepare(cfg);
+                    if self.rec == Rec::None {
+                        self.rec = Rec::Armed;
+                    }
+                    self.pc = DEADLINE;
+                }
+            }
+
+            fn step_waiter(mut self, cfg: Config) -> Option<World> {
+                if !self.on_cpu || self.pc == DONE {
+                    return None;
+                }
+                match self.pc {
+                    FAST => {
+                        if self.bit {
+                            self.bit = false;
+                            self.res = Some(Res::Bits);
+                            self.pc = DONE;
+                        } else if cfg.site == Site::Select && self.msg {
+                            self.res = Some(Res::Msg);
+                            self.pc = DONE;
+                        } else {
+                            self.pc = PASS;
+                        }
+                    }
+                    PASS if cfg.site == Site::Notify => self.notify_pass(cfg),
+                    PASS => {
+                        // Select: arm, then the notification entry.
+                        self.prepare(cfg);
+                        if self.bit {
+                            self.bit = false;
+                            self.ret(Res::Bits, cfg);
+                        } else {
+                            if !cfg.split {
+                                self.rec = Rec::Armed;
+                            }
+                            self.pc = PASS_C;
+                        }
+                    }
+                    PASS_C => {
+                        if self.msg {
+                            self.ret(Res::Msg, cfg);
+                        } else if cfg.split {
+                            self.pc = REG_N;
+                        } else {
+                            self.recv = true;
+                            self.pc = DEADLINE;
+                        }
+                    }
+                    REG_N => {
+                        self.rec = Rec::Armed;
+                        self.pc = REG_C;
+                    }
+                    REG_C => {
+                        self.recv = true;
+                        self.pc = DEADLINE;
+                    }
+                    DEADLINE => {
+                        if cfg.deadline && self.past {
+                            if cfg.site == Site::Notify {
+                                self.pc = EXPIRE;
+                            } else {
+                                self.ret(Res::Timedout, cfg);
+                            }
+                        } else {
+                            self.entry = cfg.deadline;
+                            self.pc = BLOCK;
+                        }
+                    }
+                    EXPIRE => {
+                        // Notify: remove the record under the lock; its
+                        // fired bits win over the deadline.
+                        let fired = if cfg.old_signal {
+                            self.slot
+                        } else {
+                            self.rec == Rec::Fired
+                        };
+                        self.rec = Rec::None;
+                        self.slot = false;
+                        let res = if fired { Res::Bits } else { Res::Timedout };
+                        self.ret(res, cfg);
+                    }
+                    BLOCK => {
+                        let old = self.word;
+                        self.word = WaitState::Idle;
+                        let next = ThreadState::BlockedSelect;
+                        let action = block_action(&self.th.state(), old, &next);
+                        if cfg.arm && old == WaitState::Idle {
+                            self.assert_hit = true;
+                        }
+                        self.armed = false;
+                        self.pc = PASS;
+                        match action {
+                            BlockAction::ConsumeToken => self.consumed_token = true,
+                            BlockAction::Sleep => {
+                                self.th = Th::Blocked;
+                                self.on_cpu = false;
+                            }
+                            BlockAction::AlreadyDead | BlockAction::Exit => {
+                                panic!("the waiter is never Dead")
+                            }
+                        }
+                    }
+                    EXIT_UNREG => {
+                        self.rec = Rec::None;
+                        self.recv = false;
+                        self.pc = EXIT_CLEAR;
+                    }
+                    EXIT_CLEAR => {
+                        self.entry = false;
+                        self.pc = EXIT_CANCEL;
+                    }
+                    _ => {
+                        if self.armed {
+                            self.word = WaitState::Idle;
+                            self.armed = false;
+                        }
+                        self.pc = DONE;
+                    }
+                }
+                Some(self)
+            }
+
+            /// The event waker's next step.
+            fn step_event(mut self, cfg: Config) -> Option<World> {
+                match self.ev {
+                    0 => {
+                        let found = match (cfg.event, cfg.site) {
+                            (Event::Send, _) => {
+                                self.msg = true;
+                                core::mem::take(&mut self.recv)
+                            }
+                            (_, Site::Select) => {
+                                // The claim: remove the record, keep the bit.
+                                self.bit = true;
+                                core::mem::replace(&mut self.rec, Rec::None) == Rec::Armed
+                            }
+                            (_, Site::Notify) if self.rec == Rec::Armed => {
+                                self.consumed = true;
+                                if cfg.old_signal {
+                                    self.rec = Rec::None;
+                                    self.ev = 3;
+                                    return Some(self);
+                                }
+                                self.rec = Rec::Fired;
+                                true
+                            }
+                            (_, Site::Notify) => {
+                                self.bit = true;
+                                false
+                            }
+                        };
+                        self.ev = if found { 1 } else { 2 };
+                    }
+                    3 => {
+                        // The old path's result write, after the release.
+                        self.slot = true;
+                        self.ev = 1;
+                    }
+                    1 => {
+                        self.unblock();
+                        self.ev = 2;
+                    }
+                    _ => return None,
+                }
+                Some(self)
+            }
+
+            fn step_clock(mut self, cfg: Config) -> Option<World> {
+                if !cfg.deadline || self.past {
+                    return None;
+                }
+                self.past = true;
+                Some(self)
+            }
+
+            fn step_timer(mut self) -> Option<World> {
+                match self.timer {
+                    0 if self.entry && self.past => {
+                        self.entry = false;
+                        self.timer = 1;
+                    }
+                    1 => {
+                        self.unblock();
+                        self.timer = 0;
+                    }
+                    _ => return None,
+                }
+                Some(self)
+            }
+
+            fn step_stale(mut self) -> Option<World> {
+                if self.stale_done {
+                    return None;
+                }
+                self.unblock();
+                self.stale_done = true;
+                Some(self)
+            }
+
+            fn step_preempt(mut self) -> Option<World> {
+                if !self.on_cpu || self.th != Th::Running || self.preempted || self.pc == DONE {
+                    return None;
+                }
+                self.th = Th::Runnable;
+                self.queued = true;
+                self.on_cpu = false;
+                self.preempted = true;
+                Some(self)
+            }
+
+            fn step_resume(mut self) -> Option<World> {
+                if self.on_cpu || !self.queued || self.th != Th::Runnable {
+                    return None;
+                }
+                self.th = Th::Running;
+                self.queued = false;
+                self.on_cpu = true;
+                Some(self)
+            }
+        }
+
+        /// Every final state (no step can run) reachable from the start.
+        pub(super) fn explore(cfg: Config) -> Vec<World> {
+            let mut seen = HashSet::new();
+            let mut finals = Vec::new();
+            let mut stack = Vec::from([World::start(cfg)]);
+            while let Some(w) = stack.pop() {
+                if !seen.insert(w) {
+                    continue;
+                }
+                let next = [
+                    w.step_waiter(cfg),
+                    w.step_event(cfg),
+                    w.step_clock(cfg),
+                    w.step_timer(),
+                    w.step_stale(),
+                    w.step_preempt(),
+                    w.step_resume(),
+                ];
+                let mut any = false;
+                for n in next.into_iter().flatten() {
+                    any = true;
+                    stack.push(n);
+                }
+                if !any {
+                    finals.push(w);
+                }
+            }
+            finals
+        }
+    }
+
+    use loop_model::{Event, Res, Site};
+
+    /// The converted site with the real wakers: every final state passes
+    /// every check, and the model reaches the token path.
+    fn check_loop_site(site: Site, event: Event, deadline: bool) {
+        let finals = loop_model::explore(loop_model::Config {
+            site,
+            event,
+            deadline,
+            stale: true,
+            arm: true,
+            old_signal: false,
+            split: false,
+        });
+        assert!(!finals.is_empty());
+        for w in &finals {
+            assert!(!w.lost_wake(), "lost wake: {w:?}");
+            assert!(!w.lost_bits(), "lost bits: {w:?}");
+            assert!(!w.early_timeout(), "early ETIMEDOUT: {w:?}");
+            assert!(w.token_ok(), "token: {w:?}");
+            assert!(w.clean(), "left behind: {w:?}");
+        }
+        assert!(
+            finals.iter().any(|w| w.consumed_token),
+            "{site:?} {event:?}"
+        );
+        if event != Event::None {
+            assert!(finals
+                .iter()
+                .any(|w| w.res.is_some_and(|r| r != Res::Timedout)));
+        }
+        if deadline {
+            assert!(finals.iter().any(|w| w.res == Some(Res::Timedout)));
+        }
+    }
+
+    #[test]
+    fn loop_model_notification_wait_never_loses_a_wake() {
+        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
+        for &deadline in deadlines {
+            check_loop_site(Site::Notify, Event::Signal, deadline);
+        }
+        check_loop_site(Site::Notify, Event::None, true);
+    }
+
+    #[test]
+    fn loop_model_select_never_loses_a_wake() {
+        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
+        for &deadline in deadlines {
+            for event in [Event::Signal, Event::Send] {
+                check_loop_site(Site::Select, event, deadline);
+            }
+        }
+        check_loop_site(Site::Select, Event::None, true);
+    }
+
+    #[test]
+    fn loop_model_old_signal_path_loses_bits() {
+        // Negative control: the result written after the table lock is
+        // released, while the timed-out waiter removes its own record.
+        let finals = loop_model::explore(loop_model::Config {
+            site: Site::Notify,
+            event: Event::Signal,
+            deadline: true,
+            stale: false,
+            arm: true,
+            old_signal: true,
+            split: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_bits()));
+    }
+
+    #[test]
+    fn loop_model_deadline_without_the_arm_loses_the_wake() {
+        // Negative control: the deadline published after the waiter record,
+        // with no arm, fires into a waiter that has not blocked yet.
+        let finals = loop_model::explore(loop_model::Config {
+            site: Site::Notify,
+            event: Event::None,
+            deadline: true,
+            stale: false,
+            arm: false,
+            old_signal: false,
+            split: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_wake()));
+    }
+
+    #[test]
+    fn loop_model_split_scan_and_registration_loses_the_event() {
+        // Negative control: an event between a source's check and its
+        // registration finds no registration to wake.
+        for event in [Event::Signal, Event::Send] {
+            let finals = loop_model::explore(loop_model::Config {
+                site: Site::Select,
+                event,
+                deadline: false,
+                stale: false,
+                arm: true,
+                old_signal: false,
+                split: true,
+            });
+            assert!(finals.iter().any(|w| w.lost_wake()), "{event:?}");
+        }
+    }
+
     // ── Process lifecycle ───────────────────────────────────────────────
 
     /// One value of every `ProcessState`, with two published codes.
