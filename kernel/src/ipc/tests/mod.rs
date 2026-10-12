@@ -443,8 +443,9 @@ fn ipc_caller_entry() -> ! {
 /// (`syscall_args_test`, whose bad-buffer checks use `select_cap_test`'s
 /// `owned_a`), the IPC Kit's error variants through `KernelIpc`
 /// (`kit_errors_test`, on all three of `select_cap_test`'s channels), EPIPE
-/// for stale channel and region ids whose slot was reused (`stale_id_test`),
-/// and the x0/x1 return of ChannelCreate and SharedMemoryCreate with their
+/// for stale channel and region ids whose slot was reused, and the region
+/// cascade of a SharedMemoryCreate revoke with a kernel borrow held
+/// (`stale_id_test`), and the x0/x1 return of ChannelCreate and SharedMemoryCreate with their
 /// minted tokens (`create_abi_test`). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout

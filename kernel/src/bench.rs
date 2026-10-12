@@ -293,19 +293,34 @@ fn bench_shmem_throughput() -> (u64, u64) {
         return (0, 0);
     }
 
-    // Phase 3: kernel threads access shared memory via the direct map.
-    let dmap_va = match crate::ipc::shmem::region_dmap_addr(region) {
-        Some(va) => va,
-        None => {
+    // Phase 3: kernel threads access shared memory via the direct map, and
+    // only under a borrow, which keeps the frames allocated even if the
+    // region is destroyed during the loops.
+    let borrow = match crate::ipc::shmem::region_borrow(pid, region) {
+        Ok(b) if b.len() >= SHM_SIZE => b,
+        Ok(b) => {
+            crate::ipc::shmem::region_release(b);
+            let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
+            return (0, 0);
+        }
+        Err(_) => {
             let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
             return (0, 0);
         }
     };
+    let dmap_va = borrow.addr();
 
     // Write benchmark.
     let start = timer::read_counter();
-    // SAFETY: dmap_va points to the shared region's backing pages via the
-    // kernel direct map. The region is at least SHM_SIZE bytes.
+    // SAFETY: dmap_va is the direct-map address of the region's frames, and
+    // `borrow` (from region_borrow, released only after both loops) keeps
+    // those frames allocated: a region destroyed while borrowed drains
+    // instead of being freed. The borrow's len is at least SHM_SIZE (checked
+    // above), and the direct map covers all RAM read-write.
+    // region_borrow/region_release maintain the borrow count under
+    // SHARED_REGION_TABLE; kmap.rs maintains the direct map.
+    // Without the borrow, a cascade during the loops could free the frames
+    // and these writes would corrupt pages handed to another owner.
     unsafe {
         let ptr = dmap_va as *mut u8;
         for i in 0..SHM_SIZE {
@@ -317,7 +332,12 @@ fn bench_shmem_throughput() -> (u64, u64) {
 
     // Read benchmark.
     let start = timer::read_counter();
-    // SAFETY: Same direct-map VA, just reading.
+    // SAFETY: the same borrowed range as the write loop: `borrow` is still
+    // held, so the region's frames stay allocated, and the range is at least
+    // SHM_SIZE bytes.
+    // region_borrow/region_release maintain the borrow count under
+    // SHARED_REGION_TABLE; kmap.rs maintains the direct map.
+    // Reading freed frames would return another owner's data.
     unsafe {
         let ptr = dmap_va as *const u8;
         let mut sum: u64 = 0;
@@ -330,7 +350,8 @@ fn bench_shmem_throughput() -> (u64, u64) {
     let end = timer::read_counter();
     let read_ns = ticks_to_ns(end.wrapping_sub(start));
 
-    // Clean up.
+    // Clean up: release the borrow, then unmap, which frees the region.
+    crate::ipc::shmem::region_release(borrow);
     let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
 
     // Calculate MB/s: size_bytes / time_ns * 1000 = MB/s

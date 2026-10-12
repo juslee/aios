@@ -1,6 +1,9 @@
 //! Stale-id self-tests (#185), run from the ipc-timeout thread: an id whose
 //! slot now holds a newer channel or region fails with EPIPE and never
-//! reaches the new object.
+//! reaches the new object. The Shm-cascade case: revoking a
+//! SharedMemoryCreate token destroys the regions created under it, and a
+//! kernel borrow keeps a destroyed region's frames, and its slot, until its
+//! release.
 
 use crate::cap::revoke_in_process;
 use crate::ipc::channel::{ipc_recv, ipc_reply, ipc_send};
@@ -10,17 +13,21 @@ use crate::mm::pgtable::VmFlags;
 use crate::syscall::IpcError;
 use crate::task::process::{process_ref, ProcessId, PROCESS_TABLE};
 use crate::task::ThreadId;
-use shared::{Capability, CapabilityHandle, ChannelId, SelectEntry, SelectKind, SharedMemoryId};
+use shared::{
+    Capability, CapabilityHandle, CapabilityTokenId, ChannelId, SelectEntry, SelectKind,
+    SharedMemoryId,
+};
 
+use super::bad_pid::{creation_cap, holds_live, token_id};
 use super::TEST_PID;
 
 /// Creates of the second object (B, R2) a case tries before it gives up on
 /// getting the freed slot back.
 const ATTEMPTS: usize = 8;
 
-/// Run the channel case and then the shared memory case in the ipc-timeout
-/// thread `my_tid`, which must belong to process 1: both grant and revoke
-/// capabilities there.
+/// Run the channel case, the shared memory case and the Shm-cascade case in
+/// the ipc-timeout thread `my_tid`, which must belong to process 1: each
+/// grants and revokes capabilities there.
 ///
 /// Allocation is lowest-free-slot first, so a free followed by a create in
 /// one thread usually gets the same slot back, at the next generation. On SMP
@@ -29,11 +36,11 @@ const ATTEMPTS: usize = 8;
 /// if none lands in the freed slot it logs `slot moved` instead of its result
 /// line.
 ///
-/// Both cases leave no capability behind: every token they grant, and every
-/// access token a create mints, is revoked through `revoke_in_process`, after
-/// the objects are gone. Neither logs a capability denial: each stale call is
-/// made while the stale token is still held, so it passes the capability
-/// check and reaches the identity check.
+/// The cases leave no capability behind: every token they grant, and every
+/// access token a create mints, is revoked through `revoke_in_process`. None
+/// logs a capability denial: each stale call is made while the stale token is
+/// still held, so it passes the capability check and reaches the identity
+/// check.
 pub(super) fn stale_id_test(my_tid: ThreadId) {
     let pid = match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => p,
@@ -44,6 +51,7 @@ pub(super) fn stale_id_test(my_tid: ThreadId) {
     };
     stale_channel_case(pid, my_tid);
     stale_shm_case(pid);
+    shm_cascade_case(pid);
 }
 
 /// Channel case, run by thread `tid` of process `pid`. Checked creates under
@@ -223,6 +231,89 @@ fn stale_shm_case(pid: ProcessId) {
     }
 }
 
+/// Shm-cascade case (capability-lifetime ADR §5). On entry process 1 must
+/// hold no live SharedMemoryCreate (otherwise it logs `holds
+/// SharedMemoryCreate` and stops). Grant a temporary SharedMemoryCreate T,
+/// create R, map it and borrow it as `b`. `revoke_in_process(T)` destroys R
+/// while it is mapped and borrowed: R's frames drain (`shm: region S.G
+/// draining (1 borrows)`), the unmap of R returns EPIPE and `b.is_live()` is
+/// false. Grant T2 and create R2, which cannot land in R's draining slot, on
+/// SMP too, because no allocator takes a draining slot. Releasing `b` frees
+/// R's frames (`shm: region S.G drained`), and revoking T2 destroys the
+/// never-mapped R2. Each of the two revokes logs `shm_cascade: pid=1
+/// destroyed 1 regions`.
+///
+/// Checks (bit n of the failure mask is check n): 0, R records T as its
+/// `creation_cap`; 1, R mapped; 2, T revoked; 3, unmap of R is EPIPE; 4, `b`
+/// no longer live; 5, R2 records T2; 6, R2 is in another slot. The cleanup
+/// bit is T2's revoke. No lock is held across any call.
+fn shm_cascade_case(pid: ProcessId) {
+    if holds_live(pid, &Capability::SharedMemoryCreate) {
+        crate::kwarn!(Ipc, "Shm-cascade test: holds SharedMemoryCreate");
+        return;
+    }
+    let Some(t) = grant_shm_create(pid) else {
+        crate::kwarn!(Ipc, "Shm-cascade test: grant failed");
+        return;
+    };
+    let r = match shmem::shared_memory_create(pid, 4096, SHM_FLAGS) {
+        Ok((r, _access)) => r,
+        Err(_) => {
+            let _ = revoke_in_process(pid, t);
+            crate::kwarn!(Ipc, "Shm-cascade test: shm_create failed");
+            return;
+        }
+    };
+    let r_recorded = creation_cap(r) == Some(t);
+    let mapped = shmem::shared_memory_map(pid, r, SHM_FLAGS).is_ok();
+    let b = match shmem::region_borrow(pid, r) {
+        Ok(b) => b,
+        Err(e) => {
+            // Revoking T destroys R, mapped or not.
+            let _ = revoke_in_process(pid, t);
+            crate::kwarn!(Ipc, "Shm-cascade test: borrow failed {}", e);
+            return;
+        }
+    };
+
+    let revoked = revoke_in_process(pid, t).is_ok();
+    let unmap_epipe = shmem::shared_memory_unmap(pid, r) == Err(IpcError::Epipe as i64);
+    let gone = !b.is_live();
+
+    let t2 = grant_shm_create(pid);
+    let r2 = t2
+        .and_then(|_| shmem::shared_memory_create(pid, 4096, SHM_FLAGS).ok())
+        .map(|(r2, _access)| r2);
+    let r2_recorded = r2.is_some_and(|r2| creation_cap(r2) == t2);
+    let other_slot = r2.is_some_and(|r2| r2.index() != r.index());
+
+    // The last borrow of R's draining frames: frees them.
+    shmem::region_release(b);
+    // Destroys R2, never mapped, with its minted SharedMemoryAccess.
+    let cleaned_up = t2.is_some_and(|t2| revoke_in_process(pid, t2).is_ok());
+
+    report(
+        "Shm-cascade",
+        &[
+            r_recorded,
+            mapped,
+            revoked,
+            unmap_epipe,
+            gone,
+            r2_recorded,
+            other_slot,
+        ],
+        cleaned_up,
+    );
+}
+
+/// Grant `pid` a parentless SharedMemoryCreate and return its token id.
+fn grant_shm_create(pid: ProcessId) -> Option<CapabilityTokenId> {
+    crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
+        .ok()
+        .and_then(|handle| token_id(pid, handle))
+}
+
 /// Flags of the shared memory case's regions and mappings.
 const SHM_FLAGS: VmFlags = VmFlags::READ.union(VmFlags::WRITE);
 
@@ -250,13 +341,6 @@ fn report(name: &str, checks: &[bool], cleaned_up: bool) {
     } else {
         crate::kwarn!(Ipc, "{} test: failed {:#x}", name, failed);
     }
-}
-
-/// Whether `pid` holds a live token for `cap`.
-fn holds_live(pid: ProcessId, cap: &Capability) -> bool {
-    let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-    let table = PROCESS_TABLE.lock();
-    process_ref(&table, pid).is_ok_and(|proc| proc.cap_table.has_capability(cap, now))
 }
 
 /// Revoke, through `revoke_in_process`, every unrevoked token for exactly

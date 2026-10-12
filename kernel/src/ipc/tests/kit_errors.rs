@@ -9,7 +9,9 @@ use shared::{
     MAX_CHANNELS, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, RING_CAPACITY,
 };
 
-use super::bad_pid::{revoke_region_access, revoke_token, token_id};
+use crate::cap::revoke_in_process;
+
+use super::bad_pid::{creation_cap, holds_live, revoke_region_access, token_id};
 use super::select_cap::SelectCapChannels;
 use super::TEST_PID;
 
@@ -37,10 +39,14 @@ const USER_BIT: u64 = 0b1000;
 /// channel and grants no ChannelAccess. `open` (`owned_a`) is accessible and
 /// empty; every message sent to it is received again, so it is left empty.
 /// `owned_b` is accessible too and only named in a lookup. `denied` is not
-/// accessible. The shared memory checks revoke the region's minted
-/// SharedMemoryAccess before the unmap that frees it, and the
-/// SharedMemoryCreate token they grant last, after that unmap (the minted
-/// token is its child, so revoking it earlier would revoke the access too).
+/// accessible. The shared memory checks start only if process 1 holds no
+/// live SharedMemoryCreate (otherwise they log `holds SharedMemoryCreate`),
+/// check that the region records the token they grant as its
+/// `creation_cap` (otherwise they log `creation_cap mismatch`), revoke the
+/// region's minted SharedMemoryAccess before the unmap that frees it, and
+/// revoke the SharedMemoryCreate token they grant last, through
+/// `revoke_in_process`, after that unmap (the minted token is its child, so
+/// revoking it earlier would revoke the access too).
 ///
 /// The five `denied` channel cases log the kernel's usual `denied
 /// ChannelAccess` warnings, and the shared memory cases its denied
@@ -191,6 +197,13 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
 /// of `kit_errors_test`, all false from the first one that cannot run.
 fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     let mut checks = [false; 7];
+    // A create records the first live SharedMemoryCreate as its region's
+    // creation_cap, so one left live by an earlier test would be recorded
+    // instead of the grant below.
+    if holds_live(pid, &Capability::SharedMemoryCreate) {
+        crate::kwarn!(Ipc, "Kit-error test: holds SharedMemoryCreate");
+        return checks;
+    }
 
     // Without SharedMemoryCreate: CapabilityDenied naming it. An undefined
     // flag bit is the wrapper's own decode error, before the capability
@@ -211,14 +224,20 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     let Some(create_token) = create_token else {
         return checks;
     };
-    // The create token is revoked at the end, after the last unmap:
-    // revoking it here would also revoke the region's minted
-    // SharedMemoryAccess, its child, which the map needs.
+    // The create token is revoked at the end, after the last unmap, through
+    // revoke_in_process: revoking it here would also revoke the region's
+    // minted SharedMemoryAccess, its child, which the map needs, and would
+    // destroy the region that checks 5 and 6 unmap.
     let created = kit.shmem_create(PAGE, READ);
     let Ok((region, _access)) = created else {
-        revoke_token(pid, create_token);
+        let _ = revoke_in_process(pid, create_token);
         return checks;
     };
+    if creation_cap(region) != Some(create_token) {
+        crate::kwarn!(Ipc, "Kit-error test: creation_cap mismatch");
+        let _ = revoke_in_process(pid, create_token);
+        return checks;
+    }
 
     // shared_memory_unmap checks no capability: its EPERM is "not mapped",
     // a SharedMemoryError, never CapabilityDenied.
@@ -250,6 +269,9 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
             == Some(IpcKitError::SharedMemoryError {
                 reason: "region not found",
             });
-    revoke_token(pid, create_token);
+    // The region is already freed (check 5), so the cascade destroys
+    // nothing and logs no `shm_cascade` line; if the unmap failed, it
+    // destroys the region instead.
+    let _ = revoke_in_process(pid, create_token);
     checks
 }

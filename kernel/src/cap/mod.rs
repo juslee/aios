@@ -4,7 +4,7 @@
 //! check capabilities before proceeding. A checked create mints the creator's
 //! access token as a child of the authorising create token
 //! (`create_with_access`). Revocation cascades to child tokens and destroys
-//! the channels the process created under a revoked token.
+//! the regions and channels the process created under a revoked token.
 //!
 //! Per model/layers.md §2.2, model/capabilities.md §3.1–3.5, ipc.md §8.1–8.3.
 
@@ -243,23 +243,29 @@ pub fn grant_to_process(
 }
 
 /// Revoke a capability token in a process, with its same-table descendants,
-/// and destroy every channel the process created under a token that is now
-/// revoked.
+/// and destroy every region and channel the process created under a token
+/// that is now revoked.
 ///
 /// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES` and `Err(EPERM)` for a
 /// pid whose slot holds no process, before revoking or destroying anything.
 ///
-/// Locks: `PROCESS_TABLE`, with `CHANNEL_TABLE` nested for the channel
-/// collection (an allowed edge); the channels are destroyed after both are
-/// released, because a destroy wakes the threads blocked on them.
+/// Locks, in order: `PROCESS_TABLE`; under it, `SHARED_REGION_TABLE` nested
+/// for the region cascade (`shmem::revoke_regions_for_cap`), released; then
+/// `CHANNEL_TABLE` nested for the channel collection, released; then
+/// `PROCESS_TABLE` released. With no lock held it then frees the detached
+/// regions' frames (`shmem::finish_region_cascade`), destroys the collected
+/// channels, because a destroy wakes the threads blocked on them, and logs.
 pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) -> Result<(), i64> {
+    let mut regions = crate::ipc::shmem::FreeList::new();
     let mut doomed = [None; crate::ipc::MAX_CHANNELS];
     let count = {
         let mut table = PROCESS_TABLE.lock();
         let proc = process_mut(&mut table, pid)?;
         proc.cap_table.revoke(token_id);
+        crate::ipc::shmem::revoke_regions_for_cap(pid, &proc.cap_table, &mut regions);
         collect_revoked_channels(pid, &proc.cap_table, &mut doomed)
     };
+    crate::ipc::shmem::finish_region_cascade(pid, regions);
     destroy_channels(&doomed[..count]);
 
     crate::kinfo!(Cap, "pid={}: revoked token {}", pid.0, token_id.0);
@@ -430,11 +436,15 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         };
 
         proc.cap_table.revoke(token_id);
-        // The channel cascade, as in `revoke_in_process`: collect under this
-        // hold, destroy after it.
+        // Both cascades, in `revoke_in_process`'s lock sequence: detach the
+        // regions and collect the channels under this hold, each table nested
+        // and released in turn; free and destroy after it.
+        let mut regions = crate::ipc::shmem::FreeList::new();
+        crate::ipc::shmem::revoke_regions_for_cap(holder, &proc.cap_table, &mut regions);
         let mut doomed = [None; crate::ipc::MAX_CHANNELS];
         let count = collect_revoked_channels(holder, &proc.cap_table, &mut doomed);
         drop(table);
+        crate::ipc::shmem::finish_region_cascade(holder, regions);
         destroy_channels(&doomed[..count]);
         Ok(())
     }

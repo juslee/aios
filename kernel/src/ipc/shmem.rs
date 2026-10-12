@@ -5,9 +5,19 @@
 //! Regions are reference-counted and capability-gated. W^X is enforced at both
 //! creation and mapping time.
 //!
+//! A region leaves its slot only through `region_detach`: at its last unmap,
+//! at process-exit cleanup, or in the cascade when its creator revokes the
+//! `SharedMemoryCreate` token it was created under (capability-lifetime ADR
+//! §5). Kernel code reads region memory through the direct map only between
+//! `region_borrow` and `region_release`; a region detached while borrowed
+//! keeps its frames draining, and its slot out of use, until the last
+//! release. Frames are always freed with no table lock held.
+//!
 //! Per ipc.md §4.4–4.7, memory/virtual.md §7.
 //!
-//! Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE.
+//! Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE. The
+//! borrow API, the last unmap and exit cleanup take SHARED_REGION_TABLE
+//! alone; the cascade nests it under the revoking PROCESS_TABLE hold.
 //!
 //! Errno policy (ipc.md §3.2): EINVAL for a request that no caller could
 //! make (an out-of-range id, WRITE | EXECUTE, flags beyond the region's
@@ -94,6 +104,11 @@ pub struct SharedMemoryRegion {
     pub creation_cap: shared::CapabilityTokenId,
     /// Active mappings (one per process that has mapped this region).
     pub mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
+    /// Live kernel borrows (`region_borrow` calls not yet matched by a
+    /// `region_release`). While it is above 0, a detach leaves the frames
+    /// draining instead of freeing them, because a kernel thread may still
+    /// read them through the direct map.
+    kernel_borrows: u32,
 }
 
 // SAFETY: SharedMemoryRegion is only accessed under the SHARED_REGION_TABLE mutex.
@@ -104,19 +119,36 @@ unsafe impl Send for SharedMemoryRegion {}
 // Global shared region table
 // ---------------------------------------------------------------------------
 
-/// One `SHARED_REGION_TABLE` slot: its region, if any, and the generation
+/// One `SHARED_REGION_TABLE` slot: its region, if any; the frames of a
+/// detached region that kernel borrows still hold, if any; and the generation
 /// that the slot's region carries, or that its next region will carry.
 ///
 /// A region in the slot always has the id `SharedMemoryId::new(slot,
-/// generation)`. `free` is the only way a region leaves its slot: it advances
-/// the generation in the same `SHARED_REGION_TABLE` hold, so an id issued
-/// before the free never matches the slot again. A slot freed at
-/// `ID_GEN_MAX` is retired (`ID_GEN_RETIRED`) and never allocated again.
-/// Both fields are private to this module; other code reaches a region only
-/// through `region_mut`.
+/// generation)`. `region_detach` is the only way a region leaves its slot: it
+/// advances the generation in the same `SHARED_REGION_TABLE` hold, so an id
+/// issued before the detach never matches the slot again. A slot freed at
+/// `ID_GEN_MAX` is retired (`ID_GEN_RETIRED`) and never allocated again. A
+/// draining slot is not allocated until its last `region_release`, so a
+/// release never meets a newer region. All fields are private to this
+/// module; other code reaches a region only through `region_mut`, which
+/// treats a draining slot as empty.
 pub struct RegionSlot {
     generation: u32,
     region: Option<SharedMemoryRegion>,
+    draining: Option<DrainingFrames>,
+}
+
+/// The frames of a detached region that kernel borrows still hold. The last
+/// `region_release` frees them and empties the record.
+struct DrainingFrames {
+    /// Id of the detached region: only its borrows are released here.
+    id: SharedMemoryId,
+    /// Base physical address of the backing pages.
+    base_phys: usize,
+    /// Buddy order the pages were allocated with.
+    order: usize,
+    /// Borrows not yet released; above 0 while the record exists.
+    borrows: u32,
 }
 
 impl RegionSlot {
@@ -124,24 +156,134 @@ impl RegionSlot {
     const EMPTY: Self = Self {
         generation: shared::ID_GEN_FIRST,
         region: None,
+        draining: None,
     };
 
-    /// Whether `shared_memory_create` may put a new region here: empty and
-    /// not retired.
+    /// Whether `shared_memory_create` may put a new region here: empty, not
+    /// draining and not retired.
     fn is_free(&self) -> bool {
-        self.region.is_none() && self.generation != shared::ID_GEN_RETIRED
+        self.region.is_none()
+            && self.draining.is_none()
+            && self.generation != shared::ID_GEN_RETIRED
+    }
+}
+
+/// What `region_detach` did with a region's frames, for its caller to finish
+/// with no table lock held (`Detached::finish`). Neither `Clone` nor `Copy`:
+/// each detach yields one value, and finishing consumes it, so a block is
+/// freed once.
+enum Detached {
+    /// No kernel borrow: the frames go back to Pool::User.
+    Free {
+        base_phys: usize,
+        /// Buddy order, at most `MAX_ORDER` (10).
+        order: u32,
+    },
+    /// Kernel borrows remain: the slot drains, and the last `region_release`
+    /// frees the frames.
+    Draining { id: SharedMemoryId, borrows: u32 },
+}
+
+// 16 bytes, so a FreeList of MAX_SHARED_REGIONS entries is 1 KiB plus its
+// count.
+const _: () = assert!(core::mem::size_of::<Option<Detached>>() == 16);
+
+/// Detach the region `id` names from `slot`, which a locked
+/// `SHARED_REGION_TABLE` holds: the only way a region leaves its slot.
+///
+/// Drops the region together with its `mappings`, which force-unmaps every
+/// mapper at once (no mapping writes a page table yet: `shared_memory_map`
+/// only records it), and advances the slot's generation (retiring it at
+/// `ID_GEN_MAX`). With no kernel borrow the caller gets the frames to free;
+/// otherwise the slot keeps them as `DrainingFrames` until the last
+/// `region_release`. Returns `None`, changing nothing, when the slot is
+/// empty, draining or holds another generation's region.
+///
+/// Frees, logs and wakes nothing: the caller acts on the result after it has
+/// released every table lock.
+fn region_detach(slot: &mut RegionSlot, id: SharedMemoryId) -> Option<Detached> {
+    if slot.region.as_ref()?.id != id {
+        return None;
+    }
+    let region = slot.region.take()?;
+    slot.generation = shared::next_generation(slot.generation);
+    if region.kernel_borrows == 0 {
+        return Some(Detached::Free {
+            base_phys: region.base_phys,
+            // shared_memory_create bounds a region's order by MAX_ORDER (10),
+            // so the cast keeps every bit.
+            order: region.order as u32,
+        });
+    }
+    slot.draining = Some(DrainingFrames {
+        id,
+        base_phys: region.base_phys,
+        order: region.order,
+        borrows: region.kernel_borrows,
+    });
+    Some(Detached::Draining {
+        id,
+        borrows: region.kernel_borrows,
+    })
+}
+
+/// The regions one `SHARED_REGION_TABLE` pass detached: `MAX_SHARED_REGIONS`
+/// entries plus a count, 1 KiB. A pass detaches at most one region per slot,
+/// so the list never fills. Its owner finishes it (`finish`) after releasing
+/// every table lock, so a region free never nests `FRAME_ALLOC` under a table.
+pub(crate) struct FreeList {
+    entries: [Option<Detached>; MAX_SHARED_REGIONS],
+    count: usize,
+}
+
+impl FreeList {
+    /// An empty list.
+    pub(crate) const fn new() -> Self {
+        Self {
+            entries: [const { None }; MAX_SHARED_REGIONS],
+            count: 0,
+        }
     }
 
-    /// Take the region out of the slot if it is the one `id` names, and
-    /// advance the slot's generation (retiring it at `ID_GEN_MAX`). Returns
-    /// `None`, changing nothing, when the slot is empty or holds another
-    /// generation's region.
-    fn free(&mut self, id: SharedMemoryId) -> Option<SharedMemoryRegion> {
-        if self.region.as_ref()?.id != id {
-            return None;
+    /// Record one detach. At most one detach per slot per pass, and the list
+    /// has one entry per slot, so `count` stays in bounds.
+    fn push(&mut self, detached: Detached) {
+        self.entries[self.count] = Some(detached);
+        self.count += 1;
+    }
+
+    /// With no lock held: finish every detach (`Detached::finish`). Returns
+    /// how many regions the pass detached, freed and draining.
+    fn finish(self) -> usize {
+        for detached in self.entries.into_iter().take(self.count).flatten() {
+            detached.finish();
         }
-        self.generation = shared::next_generation(self.generation);
-        self.region.take()
+        self.count
+    }
+}
+
+impl Detached {
+    /// With no lock held: free the frames of a region that had no kernel
+    /// borrow, or log a region left draining.
+    fn finish(self) {
+        match self {
+            Detached::Free { base_phys, order } => {
+                // SAFETY: region_detach took this region out of its slot
+                // under SHARED_REGION_TABLE with no kernel borrow, so no
+                // table entry, mapping or borrow refers to its block, and
+                // this value, which finish consumes, is the block's only
+                // owner (each detach produces one, and Detached is not Copy).
+                // shared_memory_create allocated the block with
+                // alloc_user_pages at this order, and region_detach is the
+                // only way a region leaves its slot.
+                // A second free would corrupt the buddy free lists and hand
+                // out pages still in use.
+                unsafe { crate::mm::frame::free_user_pages(base_phys, order as usize) };
+            }
+            Detached::Draining { id, borrows } => {
+                crate::kinfo!(Mm, "shm: region {} draining ({} borrows)", id, borrows);
+            }
+        }
     }
 }
 
@@ -265,6 +407,7 @@ pub fn shared_memory_create(
                 max_flags: flags,
                 creation_cap: auth,
                 mappings: [const { None }; MAX_SHARED_MAPPINGS],
+                kernel_borrows: 0,
             });
             Ok((id, shared::Capability::SharedMemoryAccess(id)))
         });
@@ -417,11 +560,13 @@ pub fn shared_memory_map(
 
 /// Unmap a shared memory region from a process.
 ///
-/// Decrements the reference count. If ref_count reaches 0, frees the
-/// backing pages.
+/// Decrements the reference count. If ref_count reaches 0, the region is
+/// detached (`region_detach`): its frames are freed after the lock is
+/// released, or, while kernel borrows hold them, at the last
+/// `region_release`.
 ///
 /// Errors: EINVAL for an out-of-range id (or a ref_count already 0); EPIPE
-/// if the region does not exist or `region_id` is stale; EPERM if `pid` has
+/// if the region does not exist, is draining or `region_id` is stale; EPERM if `pid` has
 /// no mapping of it, a right the caller lacks, like a missing capability. No
 /// capability is checked: holding the mapping is the authority to remove it.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
@@ -467,15 +612,15 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
         return Err(IpcError::Einval as i64);
     }
     let old_ref = region.ref_count.fetch_sub(1, Ordering::Relaxed);
-    let base_phys = region.base_phys;
-    let order = region.order;
     let size_bytes = region.size_bytes;
 
-    // If last reference, free the region and advance its slot's generation.
-    let should_free = old_ref == 1;
-    if should_free {
-        table[idx].free(region_id);
-    }
+    // If last reference, detach the region, advancing its slot's generation;
+    // its frames are freed (or left draining) after the lock is released.
+    let detached = if old_ref == 1 {
+        region_detach(&mut table[idx], region_id)
+    } else {
+        None
+    };
 
     drop(table);
 
@@ -484,17 +629,19 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
     // Phase 4+ will unmap pages from the process's user page tables here.
     let _ = mapping_info;
 
-    if should_free {
-        // SAFETY: base_phys was allocated via alloc_user_pages with the given order.
-        // ref_count was 1 (now 0), so no other process has the pages mapped.
-        unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
-        crate::kinfo!(
-            Mm,
-            "shm_unmap: region={} freed ({} pages) last_ref by pid={}",
-            region_id,
-            size_bytes / PAGE_SIZE,
-            pid.0
-        );
+    if let Some(detached) = detached {
+        let freed = matches!(detached, Detached::Free { .. });
+        // Frees the frames, or logs the region as draining.
+        detached.finish();
+        if freed {
+            crate::kinfo!(
+                Mm,
+                "shm_unmap: region={} freed ({} pages) last_ref by pid={}",
+                region_id,
+                size_bytes / PAGE_SIZE,
+                pid.0
+            );
+        }
     } else {
         crate::kinfo!(
             Mm,
@@ -588,13 +735,15 @@ pub fn shared_memory_share(
 // Process cleanup
 // ---------------------------------------------------------------------------
 
-/// Clean up all shared memory mappings for a process (called on process exit).
+/// Clean up all shared memory mappings for a process (called on process
+/// exit). A region whose last mapping goes is detached (`region_detach`); its
+/// frames are freed after `SHARED_REGION_TABLE` is released, or, while
+/// kernel borrows hold them, at the last `region_release`.
 pub fn process_cleanup_shared_memory(pid: ProcessId) {
     let mut table = SHARED_REGION_TABLE.lock();
 
-    // Collect regions to potentially free (to avoid double-borrow issues).
-    let mut to_free: [(usize, usize); MAX_SHARED_REGIONS] = [(0, 0); MAX_SHARED_REGIONS];
-    let mut free_count = 0;
+    // The regions detached here, finished after the lock is released.
+    let mut detached = FreeList::new();
 
     for slot in table.iter_mut() {
         let Some(region) = &mut slot.region else {
@@ -617,23 +766,21 @@ pub fn process_cleanup_shared_memory(pid: ProcessId) {
             }
             let old_ref = region.ref_count.fetch_sub(1, Ordering::Relaxed);
             if old_ref == 1 {
-                // Last reference — collect for freeing, and free the slot,
-                // advancing its generation.
-                to_free[free_count] = (region.base_phys, region.order);
-                free_count += 1;
+                // Last reference: detach the region, advancing its slot's
+                // generation.
                 let id = region.id;
-                slot.free(id);
+                if let Some(d) = region_detach(slot, id) {
+                    detached.push(d);
+                }
             }
         }
     }
 
     drop(table);
 
-    // Free collected pages outside the lock.
-    for &(phys, order) in &to_free[..free_count] {
-        // SAFETY: phys was allocated via alloc_user_pages with the given order.
-        unsafe { crate::mm::frame::free_user_pages(phys, order) };
-    }
+    // Free the detached regions' frames (or log them draining) outside the
+    // lock.
+    let free_count = detached.finish();
 
     if free_count > 0 {
         crate::kinfo!(
@@ -841,27 +988,198 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
 }
 
 // ---------------------------------------------------------------------------
-// Read region via direct map (for kernel threads)
+// Region cascade (revocation of a SharedMemoryCreate token)
 // ---------------------------------------------------------------------------
 
-/// Get the direct-map virtual address of a shared region's backing memory.
+/// The region half of a revoke's cascade, run inside the revoking
+/// `PROCESS_TABLE` hold (capability-lifetime ADR §5): detach every region
+/// that `pid` created and whose `creation_cap` is revoked in `caps`, `pid`'s
+/// capability table, recording each detach in `out`.
 ///
-/// For Phase 3 kernel threads, this is how processes access shared memory
-/// (no user address space to map into). `None` for a malformed, empty or
-/// stale id (another generation's region in the slot).
-pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
+/// It reads the table, not one token id, so a revoke of an ancestor reaches
+/// regions created under any of its descendants, and a `creation_cap` that no
+/// slot holds counts as revoked (`is_revoked` fails closed). Other creators'
+/// regions and draining slots are left alone. Takes `SHARED_REGION_TABLE`
+/// nested under the caller's `PROCESS_TABLE` (an allowed edge) and releases
+/// it before returning; frees and logs nothing. The caller finishes `out`
+/// with `finish_region_cascade` once every lock is released.
+pub(crate) fn revoke_regions_for_cap(
+    pid: ProcessId,
+    caps: &shared::CapabilityTable,
+    out: &mut FreeList,
+) {
     let mut table = SHARED_REGION_TABLE.lock();
-    region_mut(&mut table, region_id)
-        .ok()
-        .map(|r| crate::arch::aarch64::mmu::DIRECT_MAP_BASE + r.base_phys)
+    for slot in table.iter_mut() {
+        let doomed = slot
+            .region
+            .as_ref()
+            .filter(|r| r.creator == pid && caps.is_revoked(r.creation_cap))
+            .map(|r| r.id);
+        if let Some(id) = doomed {
+            if let Some(d) = region_detach(slot, id) {
+                out.push(d);
+            }
+        }
+    }
 }
 
-/// Get the size in bytes of a shared region. `None` for a malformed, empty
-/// or stale id.
-#[allow(dead_code)]
-pub fn region_size(region_id: SharedMemoryId) -> Option<usize> {
+/// Finish a region cascade of process `pid` with no lock held: free the
+/// frames of every detached region that had no kernel borrow, log each one
+/// left draining, and log `shm_cascade: pid=N destroyed K regions` when the
+/// cascade detached any.
+pub(crate) fn finish_region_cascade(pid: ProcessId, detached: FreeList) {
+    let destroyed = detached.finish();
+    if destroyed > 0 {
+        crate::kinfo!(
+            Mm,
+            "shm_cascade: pid={} destroyed {} regions",
+            pid.0,
+            destroyed
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kernel borrows (EL1 access through the direct map)
+// ---------------------------------------------------------------------------
+
+/// A kernel thread's borrow of a region's frames, from `region_borrow` to
+/// `region_release`. EL1 reaches region memory through the direct map, which
+/// no force-unmap removes, so kernel code dereferences a region's address
+/// only while it holds a borrow: a region destroyed meanwhile keeps its
+/// frames draining until the last release.
+///
+/// Neither `Clone` nor `Copy`, and released explicitly, not on `Drop`: an
+/// implicit release inside a `SHARED_REGION_TABLE` hold would self-deadlock.
+/// A borrow never released leaks the region's frames and keeps its slot out
+/// of use for the boot; that is a leak, not a use-after-free.
+#[must_use]
+pub struct RegionBorrow {
+    id: SharedMemoryId,
+    addr: usize,
+    len: usize,
+}
+
+impl RegionBorrow {
+    /// Direct-map virtual address of the region's first byte.
+    pub fn addr(&self) -> usize {
+        self.addr
+    }
+
+    /// Size of the region in bytes; `[addr, addr + len)` stays valid until
+    /// the borrow is released.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the borrowed region is still live: its slot holds the region
+    /// `id` names. False once it is destroyed, while its frames drain.
+    pub fn is_live(&self) -> bool {
+        let mut table = SHARED_REGION_TABLE.lock();
+        region_mut(&mut table, self.id).is_ok()
+    }
+}
+
+/// Borrow region `id` for kernel access through the direct map, on behalf of
+/// process `pid`, which must map it.
+///
+/// Errors: EINVAL for a malformed slot; EPIPE if the region does not exist,
+/// is draining or `id` is stale; EPERM if `pid` has no mapping of it; ENOSPC
+/// if the borrow count would overflow.
+///
+/// Takes `SHARED_REGION_TABLE` alone. Never called from IRQ context or under
+/// a lock ranked below `SHARED_REGION_TABLE`.
+pub fn region_borrow(pid: ProcessId, id: SharedMemoryId) -> Result<RegionBorrow, i64> {
     let mut table = SHARED_REGION_TABLE.lock();
-    region_mut(&mut table, region_id).ok().map(|r| r.size_bytes)
+    let region = region_mut(&mut table, id)?;
+    if !region
+        .mappings
+        .iter()
+        .any(|m| m.is_some_and(|m| m.pid == pid))
+    {
+        return Err(IpcError::Eperm as i64);
+    }
+    region.kernel_borrows = region
+        .kernel_borrows
+        .checked_add(1)
+        .ok_or(IpcError::Enospc as i64)?;
+    Ok(RegionBorrow {
+        id,
+        addr: crate::arch::aarch64::mmu::DIRECT_MAP_BASE + region.base_phys,
+        len: region.size_bytes,
+    })
+}
+
+/// Release a borrow from `region_borrow`. If its region was destroyed while
+/// borrowed and this is the last borrow of its draining frames, the frames
+/// are freed after `SHARED_REGION_TABLE` is released and `shm: region S.G
+/// drained` is logged.
+///
+/// Takes `SHARED_REGION_TABLE` alone, never under `PROCESS_TABLE`.
+///
+/// # Panics
+///
+/// If the borrow's slot holds neither its live region with a borrow
+/// outstanding nor its draining frames: a borrow released twice. Only
+/// `region_borrow` makes a `RegionBorrow` and this function consumes it, so
+/// that is a kernel bug. The panic comes after the lock is released.
+pub fn region_release(b: RegionBorrow) {
+    /// What the release found, acted on after the lock.
+    enum Outcome {
+        /// The live region's count went down.
+        Released,
+        /// The last borrow of draining frames: free them.
+        Drained { base_phys: usize, order: usize },
+        /// No borrow of `b.id` to release.
+        Mismatch,
+    }
+
+    // A borrow's id came from region_mut, so its slot is in range.
+    let outcome = b.id.index().map_or(Outcome::Mismatch, |idx| {
+        let mut table = SHARED_REGION_TABLE.lock();
+        let slot = &mut table[idx];
+        if let Some(region) = slot
+            .region
+            .as_mut()
+            .filter(|r| r.id == b.id && r.kernel_borrows > 0)
+        {
+            region.kernel_borrows -= 1;
+            return Outcome::Released;
+        }
+        let Some(d) = slot.draining.as_mut().filter(|d| d.id == b.id) else {
+            return Outcome::Mismatch;
+        };
+        // A draining record exists only while its count is above 0.
+        d.borrows -= 1;
+        if d.borrows > 0 {
+            return Outcome::Released;
+        }
+        let drained = Outcome::Drained {
+            base_phys: d.base_phys,
+            order: d.order,
+        };
+        slot.draining = None;
+        drained
+    });
+
+    match outcome {
+        Outcome::Released => {}
+        Outcome::Drained { base_phys, order } => {
+            // SAFETY: the draining record held the last reference to this
+            // block: region_detach moved the region's frames there when it
+            // left its slot, and the record has just been taken out of the
+            // slot under SHARED_REGION_TABLE with its last borrow released,
+            // so no table entry or borrow refers to the block.
+            // shared_memory_create allocated it with alloc_user_pages at this
+            // order; region_detach and this function are the only code that
+            // writes `draining`.
+            // A second free would corrupt the buddy free lists and hand out
+            // pages still in use.
+            unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
+            crate::kinfo!(Mm, "shm: region {} drained", b.id);
+        }
+        Outcome::Mismatch => panic!("region_release: no borrow of region {}", b.id),
+    }
 }
 
 // ---------------------------------------------------------------------------

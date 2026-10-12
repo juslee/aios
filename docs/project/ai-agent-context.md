@@ -89,7 +89,7 @@ When implementing kernel code, use these established patterns:
 | VirtIO-blk I/O | `read_sector(sector, buf)` / `write_sector(sector, buf)` polled | `drivers/virtio_blk.rs:112-132` |
 | Crash-safe block write | WAL append → data write → WAL commit | `storage/block_engine.rs:1-6` (module doc) |
 | Direct-map phys→virt | Add `DIRECT_MAP_BASE + phys` after TTBR1 enabled | `mm/slab.rs` (`convert_to_direct_map`) |
-| Cascade revocation | Drop PROCESS_TABLE lock *before* walking CHANNEL_TABLE | `cap/mod.rs:193-212` |
+| Cascade revocation | Under PROCESS_TABLE, nest SHARED_REGION_TABLE then CHANNEL_TABLE one after the other; free frames and destroy channels after releasing all three | `cap/mod.rs:258-274` |
 
 -----
 
@@ -441,21 +441,23 @@ pub fn grant_to_process(
 ) -> Result<CapabilityHandle, i64>       // cap/mod.rs:221
 
 // Revoke a token (and all children) from a process.
-// Cascades: destroys the channels the process created under the revoked
-// token or one of its descendants.
+// Cascades: destroys the regions and channels the process created under the
+// revoked token or one of its descendants.
 // EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot, before anything
 // is revoked.
 pub fn revoke_in_process(
     pid: ProcessId,
     token_id: CapabilityTokenId,
-) -> Result<(), i64>                     // cap/mod.rs:255
+) -> Result<(), i64>                     // cap/mod.rs:258
 ```
 
 **Gotchas**:
 
 - **Token expiry** (cap/mod.rs:71, 99): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
 
-- **Cascade revocation lock ordering** (cap/mod.rs:255-268): `revoke_in_process()` locks PROCESS_TABLE, revokes the token and its descendants, and, with CHANNEL_TABLE nested (PROCESS_TABLE > CHANNEL_TABLE), collects every channel the process created under a token that is now revoked. It destroys them only after releasing both locks, because a destroy wakes the threads blocked on them.
+- **Cascade revocation lock ordering** (cap/mod.rs:258-274): `revoke_in_process()` locks PROCESS_TABLE and revokes the token and its descendants. Still under PROCESS_TABLE, it takes SHARED_REGION_TABLE nested to detach every region the process created under a token that is now revoked (`shmem::revoke_regions_for_cap`) and releases it, then takes CHANNEL_TABLE nested to collect every such channel and releases it; the two tables are never held together. With no lock held it then frees the detached regions' frames (`shmem::finish_region_cascade`; a region a kernel `RegionBorrow` still holds drains until its last `region_release`) and destroys the channels, because a destroy wakes the threads blocked on them. The Capability Kit's `revoke` runs the same sequence.
+
+- **Kernel access to region memory** (ipc/shmem.rs): EL1 reads a region through the direct map only between `region_borrow(pid, id)` (the caller's process must map it) and `region_release(borrow)`. A region destroyed meanwhile keeps its frames, and its slot, draining until the last release; a double release panics. Release explicitly, never under PROCESS_TABLE.
 
 - **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints Dead on every channel with an endpoint owned by the process (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
 

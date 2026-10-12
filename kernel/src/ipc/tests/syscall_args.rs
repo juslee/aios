@@ -14,7 +14,9 @@ use shared::{
     MAX_NOTIFICATIONS, RING_CAPACITY, USER_VA_MIN,
 };
 
-use super::bad_pid::{revoke_region_access, revoke_token, token_id};
+use crate::cap::revoke_in_process;
+
+use super::bad_pid::{creation_cap, holds_live, revoke_region_access, token_id};
 use super::TEST_PID;
 
 const PAGE: u64 = 4096;
@@ -278,12 +280,25 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS
 ///
 /// Returns `[beyond_max, mapped, denied, oversize, high_bits,
 /// undefined_bit]`, one flag per check, all false if the grant fails and
-/// all but `oversize` false if the region could not be created. It revokes
-/// every SharedMemoryAccess token of the region (the creator's, minted as a
-/// child of the create token) before the unmap that frees it, and the
-/// SharedMemoryCreate token it granted last, after the unmap: revoking the
-/// create token earlier would also revoke the minted access the maps need.
+/// all but `oversize` false if the region could not be created. On entry
+/// process 1 must hold no live SharedMemoryCreate (otherwise it logs `holds
+/// SharedMemoryCreate` and returns all false), and the region must record the
+/// granted token as its `creation_cap` (otherwise it logs `creation_cap
+/// mismatch`). It revokes every SharedMemoryAccess token of the region (the
+/// creator's, minted as a child of the create token) before the unmap that
+/// frees it, and the SharedMemoryCreate token it granted last, after the
+/// unmap, through `revoke_in_process`: revoking the create token earlier
+/// would also revoke the minted access the maps need. By then the region is
+/// freed, so the cascade destroys nothing; if no map succeeded, it destroys
+/// the region instead.
 fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
+    // A create records the first live SharedMemoryCreate as its region's
+    // creation_cap, so one left live by an earlier test would be recorded
+    // instead of the grant below.
+    if holds_live(pid, &Capability::SharedMemoryCreate) {
+        crate::kwarn!(Ipc, "Syscall-arg test: holds SharedMemoryCreate");
+        return [false; 6];
+    }
     let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
         .ok()
         .and_then(|handle| token_id(pid, handle));
@@ -298,9 +313,14 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // syscall's flag decode can reject it.
     let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ | VmFlags::USER);
     let Ok((region, _access)) = created else {
-        revoke_token(pid, create_token);
+        let _ = revoke_in_process(pid, create_token);
         return [false, false, false, oversize, false, false];
     };
+    if creation_cap(region) != Some(create_token) {
+        crate::kwarn!(Ipc, "Syscall-arg test: creation_cap mismatch");
+        let _ = revoke_in_process(pid, create_token);
+        return [false, false, false, oversize, false, false];
+    }
 
     let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[u64::from(region.raw()), flags]);
     // The region's limit, not the caller's rights: EINVAL.
@@ -324,7 +344,7 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     if mapped || probe_mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
-    revoke_token(pid, create_token);
+    let _ = revoke_in_process(pid, create_token);
     [
         beyond_max,
         mapped,
