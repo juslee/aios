@@ -77,7 +77,7 @@ pub fn service_register(name: &[u8], pid: ProcessId, channel: ChannelId) -> Resu
         "Service '{}' registered (pid={}, ch={})",
         name_str,
         pid.0,
-        channel.0
+        channel
     );
     Ok(())
 }
@@ -273,7 +273,7 @@ fn echo_server_entry() -> ! {
         }
         sched::thread_yield();
     };
-    crate::kinfo!(Ipc, "Echo server: started, channel={}", ch.0);
+    crate::kinfo!(Ipc, "Echo server: started, channel={}", ch);
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
@@ -392,7 +392,7 @@ fn exit_walk_probe() {
             crate::kwarn!(
                 Ipc,
                 "Echo client: probe channel {} destroy failed: {}",
-                probe.0,
+                probe,
                 e
             );
         }
@@ -424,7 +424,7 @@ fn echo_client_entry() -> ! {
         Ipc,
         "Echo client: found service (pid={}, ch={})",
         svc_pid.0,
-        svc_ch.0
+        svc_ch
     );
 
     // Send "hello" and expect "ECHO:hello" back.

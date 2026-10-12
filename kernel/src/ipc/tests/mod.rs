@@ -14,7 +14,7 @@ use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::process::ProcessId;
 use crate::task::ThreadId;
-use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE};
+use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, ID_GEN_FIRST, MAX_CHANNELS, MAX_MESSAGE_SIZE};
 use spin::Mutex;
 
 use super::channel::{ipc_call, ipc_recv, ipc_reply, ipc_send};
@@ -312,12 +312,12 @@ pub(crate) fn channel_create_unchecked(owner: ProcessId) -> ChannelId {
         .iter()
         .position(|s| s.is_none())
         .expect("channel table full");
-    let id = ChannelId(idx as u32);
+    let id = ChannelId::new(idx, ID_GEN_FIRST);
     table[idx] = Some(super::Channel::new(id, owner));
     crate::kinfo!(
         Ipc,
         "Channel {} created (unchecked) for pid {}",
-        idx,
+        id,
         owner.0
     );
     id
@@ -347,7 +347,7 @@ fn ipc_server_entry() -> ! {
         }
         sched::thread_yield();
     };
-    crate::kinfo!(Ipc, "Server: started, channel={}", ch.0);
+    crate::kinfo!(Ipc, "Server: started, channel={}", ch);
 
     let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
 
@@ -527,9 +527,9 @@ fn ipc_timeout_entry() -> ! {
     // A log message keeps at most 96 bytes (two ring entries); longer text
     // is cut and marked with `~`, so keep these lines short.
     let einval = IpcError::Einval as i64;
-    let recv_result = ipc_recv(ChannelId(MAX_CHANNELS as u32), &mut buf, 0);
-    let send_result = ipc_send(ChannelId(MAX_CHANNELS as u32), b"BAD_ID");
-    let reply_result = ipc_reply(ChannelId(u32::MAX), b"BAD_ID");
+    let recv_result = ipc_recv(ChannelId::from_raw(MAX_CHANNELS as u32), &mut buf, 0);
+    let send_result = ipc_send(ChannelId::from_raw(MAX_CHANNELS as u32), b"BAD_ID");
+    let reply_result = ipc_reply(ChannelId::from_raw(u32::MAX), b"BAD_ID");
     if recv_result == Err(einval) && send_result == einval && reply_result == einval {
         crate::kinfo!(Ipc, "Bad-id test: EINVAL as expected");
     } else {
@@ -578,7 +578,7 @@ fn pi_server_entry() -> ! {
         }
         sched::thread_yield();
     };
-    crate::kinfo!(Ipc, "PI-Server: started (Normal class), channel={}", ch.0);
+    crate::kinfo!(Ipc, "PI-Server: started (Normal class), channel={}", ch);
 
     let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
 
@@ -693,7 +693,7 @@ fn cap_denied_entry() -> ! {
             crate::kwarn!(
                 Cap,
                 "UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
-                ch.0
+                ch
             );
         }
         Err(e) if e == crate::syscall::IpcError::Eperm as i64 => {

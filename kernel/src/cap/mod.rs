@@ -91,8 +91,9 @@ pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
 
 /// Check that a process holds ChannelAccess(channel_id) capability.
 ///
-/// Returns `Err(EINVAL)` for a channel id `>= MAX_CHANNELS` before touching
-/// any table. No channel can exist at such an id, and callers go on to look
+/// Returns `Err(EINVAL)` for a channel id whose slot is `>= MAX_CHANNELS`
+/// (`index()` is `None`) before touching any table, at any generation. No
+/// channel can exist at such an id, and callers go on to look
 /// the id up in CHANNEL_TABLE.
 pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Result<(), i64> {
     if channel.index().is_none() {
@@ -115,7 +116,7 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
     } else {
         #[cfg(feature = "kernel-metrics")]
         METRICS.ipc_cap_denied.inc();
-        crate::kwarn!(Cap, "pid={}: denied ChannelAccess({})", pid.0, channel.0);
+        crate::kwarn!(Cap, "pid={}: denied ChannelAccess({})", pid.0, channel);
         Err(IpcError::Eperm as i64)
     }
 }
@@ -141,7 +142,10 @@ pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i
 }
 
 /// Check that a process holds SharedMemoryAccess(region_id) capability.
-pub fn check_shared_memory_access(pid: ProcessId, region_id: u32) -> Result<(), i64> {
+pub fn check_shared_memory_access(
+    pid: ProcessId,
+    region_id: shared::SharedMemoryId,
+) -> Result<(), i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
     let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
@@ -383,12 +387,11 @@ fn revoke_channels_for_cap(token_id: CapabilityTokenId) {
 
     {
         let table = crate::ipc::CHANNEL_TABLE.lock();
-        for (i, slot) in table.iter().enumerate() {
-            if let Some(ch) = slot {
-                if ch.creation_cap == Some(token_id) && count < channels_to_destroy.len() {
-                    channels_to_destroy[count] = Some(shared::ChannelId(i as u32));
-                    count += 1;
-                }
+        for ch in table.iter().flatten() {
+            if ch.creation_cap == Some(token_id) && count < channels_to_destroy.len() {
+                // The stored id, generation included.
+                channels_to_destroy[count] = Some(ch.id);
+                count += 1;
             }
         }
     }

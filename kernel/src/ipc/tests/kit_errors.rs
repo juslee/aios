@@ -5,8 +5,8 @@ use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use shared::kits::ipc::{ChannelOps, IpcKitError, NotificationOps, SelectOps, SharedMemoryOps};
 use shared::{
-    Capability, ChannelId, NotificationId, RawMessage, SelectEntry, SelectKind, MAX_CHANNELS,
-    MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, RING_CAPACITY,
+    Capability, ChannelId, NotificationId, RawMessage, SelectEntry, SelectKind, ID_GEN_FIRST,
+    MAX_CHANNELS, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, RING_CAPACITY,
 };
 
 use super::bad_pid::{revoke_region_access, revoke_token, token_id};
@@ -78,7 +78,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
             required: Capability::ChannelAccess(id),
         })
     };
-    let bad_id = ChannelId(MAX_CHANNELS as u32);
+    let bad_id = ChannelId::from_raw(MAX_CHANNELS as u32);
 
     let mut checks = [false; 24];
 
@@ -116,7 +116,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
         .lock()
         .iter()
         .rposition(Option::is_none)
-        .map(|i| ChannelId(i as u32));
+        .map(|i| ChannelId::new(i, ID_GEN_FIRST));
     checks[19] = gone
         .is_some_and(|id| kit.reply(id, &msg).err() == Some(IpcKitError::InvalidChannel { id }));
     // A `len` past the inline buffer is the wrapper's MessageTooLarge, found
@@ -236,7 +236,7 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     checks[4] = mapped
         && kit.shmem_map(region, 0, READ).err()
             == Some(IpcKitError::CapabilityDenied {
-                required: Capability::SharedMemoryAccess(region.0),
+                required: Capability::SharedMemoryAccess(region),
             });
     checks[5] = mapped && kit.shmem_unmap(region).is_ok();
     // The region is freed: EPIPE, a SharedMemoryError, not the table's

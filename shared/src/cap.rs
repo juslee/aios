@@ -4,7 +4,7 @@
 //! the `permits()` matching logic, and the CapabilityTable data structure.
 //! Per model/layers.md §2.2, model/capabilities.md §3.1–3.5.
 
-use crate::ipc::ChannelId;
+use crate::ipc::{ChannelId, SharedMemoryId};
 use crate::sched::ProcessId;
 use crate::syscall::IpcError;
 
@@ -44,7 +44,7 @@ pub enum Capability {
     /// Permission to create shared memory regions (placeholder for Phase 4+).
     SharedMemoryCreate,
     /// Permission to access a specific shared memory region (placeholder).
-    SharedMemoryAccess(u32),
+    SharedMemoryAccess(SharedMemoryId),
     /// Permission to spawn new agents/processes.
     SpawnAgent,
     /// Permission to use the DebugPrint syscall.
@@ -72,13 +72,12 @@ impl Capability {
     /// Check if this capability grants access for the requested `action`.
     ///
     /// Exact-match for simple capabilities. For parameterized capabilities
-    /// (ChannelAccess, SharedMemoryAccess), the resource ID must match.
+    /// (ChannelAccess, SharedMemoryAccess), the full resource id (slot and
+    /// generation) must match.
     pub fn permits(&self, action: &Capability) -> bool {
         match (self, action) {
             (Capability::ChannelCreate, Capability::ChannelCreate) => true,
-            (Capability::ChannelAccess(held), Capability::ChannelAccess(needed)) => {
-                held.0 == needed.0
-            }
+            (Capability::ChannelAccess(held), Capability::ChannelAccess(needed)) => held == needed,
             (Capability::SharedMemoryCreate, Capability::SharedMemoryCreate) => true,
             (Capability::SharedMemoryAccess(held), Capability::SharedMemoryAccess(needed)) => {
                 held == needed
@@ -333,6 +332,7 @@ impl CapabilityTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::ID_GEN_FIRST;
 
     // --- Identity type tests ---
 
@@ -376,21 +376,22 @@ mod tests {
 
     #[test]
     fn permits_channel_access_same() {
-        let cap = Capability::ChannelAccess(ChannelId(5));
-        assert!(cap.permits(&Capability::ChannelAccess(ChannelId(5))));
+        let cap = Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST));
+        assert!(cap.permits(&Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST))));
     }
 
     #[test]
     fn denies_channel_access_different() {
-        let cap = Capability::ChannelAccess(ChannelId(5));
-        assert!(!cap.permits(&Capability::ChannelAccess(ChannelId(6))));
+        let cap = Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST));
+        assert!(!cap.permits(&Capability::ChannelAccess(ChannelId::new(6, ID_GEN_FIRST))));
     }
 
     #[test]
     fn denies_cross_variant() {
         assert!(!Capability::ChannelCreate.permits(&Capability::DebugPrint));
         assert!(!Capability::DebugPrint.permits(&Capability::ChannelCreate));
-        assert!(!Capability::ChannelCreate.permits(&Capability::ChannelAccess(ChannelId(0))));
+        assert!(!Capability::ChannelCreate
+            .permits(&Capability::ChannelAccess(ChannelId::new(0, ID_GEN_FIRST))));
         assert!(!Capability::SpawnAgent.permits(&Capability::SharedMemoryCreate));
     }
 
@@ -401,14 +402,24 @@ mod tests {
 
     #[test]
     fn permits_shared_memory_access_same() {
-        let cap = Capability::SharedMemoryAccess(42);
-        assert!(cap.permits(&Capability::SharedMemoryAccess(42)));
+        let cap = Capability::SharedMemoryAccess(SharedMemoryId::new(42, ID_GEN_FIRST));
+        assert!(
+            cap.permits(&Capability::SharedMemoryAccess(SharedMemoryId::new(
+                42,
+                ID_GEN_FIRST
+            )))
+        );
     }
 
     #[test]
     fn denies_shared_memory_access_different() {
-        let cap = Capability::SharedMemoryAccess(42);
-        assert!(!cap.permits(&Capability::SharedMemoryAccess(43)));
+        let cap = Capability::SharedMemoryAccess(SharedMemoryId::new(42, ID_GEN_FIRST));
+        assert!(
+            !cap.permits(&Capability::SharedMemoryAccess(SharedMemoryId::new(
+                43,
+                ID_GEN_FIRST
+            )))
+        );
     }
 
     #[test]
@@ -425,31 +436,34 @@ mod tests {
 
     #[test]
     fn attenuate_channel_create_to_access() {
-        assert!(
-            Capability::ChannelCreate.can_attenuate_to(&Capability::ChannelAccess(ChannelId(5)))
-        );
+        assert!(Capability::ChannelCreate
+            .can_attenuate_to(&Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST))));
     }
 
     #[test]
     fn attenuate_shm_create_to_access() {
-        assert!(Capability::SharedMemoryCreate.can_attenuate_to(&Capability::SharedMemoryAccess(1)));
+        assert!(
+            Capability::SharedMemoryCreate.can_attenuate_to(&Capability::SharedMemoryAccess(
+                SharedMemoryId::new(1, ID_GEN_FIRST)
+            ))
+        );
     }
 
     #[test]
     fn attenuate_identity() {
         assert!(Capability::DebugPrint.can_attenuate_to(&Capability::DebugPrint));
-        assert!(Capability::ChannelAccess(ChannelId(3))
-            .can_attenuate_to(&Capability::ChannelAccess(ChannelId(3))));
+        assert!(Capability::ChannelAccess(ChannelId::new(3, ID_GEN_FIRST))
+            .can_attenuate_to(&Capability::ChannelAccess(ChannelId::new(3, ID_GEN_FIRST))));
     }
 
     #[test]
     fn attenuate_denies_broadening() {
         // Cannot broaden from access to create.
+        assert!(!Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST))
+            .can_attenuate_to(&Capability::ChannelCreate));
         assert!(
-            !Capability::ChannelAccess(ChannelId(5)).can_attenuate_to(&Capability::ChannelCreate)
-        );
-        assert!(
-            !Capability::SharedMemoryAccess(1).can_attenuate_to(&Capability::SharedMemoryCreate)
+            !Capability::SharedMemoryAccess(SharedMemoryId::new(1, ID_GEN_FIRST))
+                .can_attenuate_to(&Capability::SharedMemoryCreate)
         );
     }
 
@@ -707,7 +721,7 @@ mod tests {
         table
             .grant(make_child_token(
                 2,
-                Capability::ChannelAccess(ChannelId(5)),
+                Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
                 1,
                 1,
             ))
@@ -718,7 +732,10 @@ mod tests {
         table.revoke(CapabilityTokenId(1));
         assert_eq!(table.count(), 0);
         assert!(!table.has_capability(&Capability::ChannelCreate, 0));
-        assert!(!table.has_capability(&Capability::ChannelAccess(ChannelId(5)), 0));
+        assert!(!table.has_capability(
+            &Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
+            0
+        ));
     }
 
     #[test]
@@ -731,7 +748,7 @@ mod tests {
         table
             .grant(make_child_token(
                 2,
-                Capability::ChannelAccess(ChannelId(5)),
+                Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
                 1,
                 1,
             ))
@@ -739,7 +756,7 @@ mod tests {
         table
             .grant(make_child_token(
                 3,
-                Capability::ChannelAccess(ChannelId(5)),
+                Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
                 1,
                 2,
             ))
@@ -760,7 +777,7 @@ mod tests {
         table
             .grant(make_child_token(
                 2,
-                Capability::ChannelAccess(ChannelId(5)),
+                Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
                 1,
                 1,
             ))
@@ -796,7 +813,7 @@ mod tests {
         let child_h = table
             .attenuate(
                 h,
-                Capability::ChannelAccess(ChannelId(7)),
+                Capability::ChannelAccess(ChannelId::new(7, ID_GEN_FIRST)),
                 None,
                 ProcessId(1),
                 CapabilityTokenId(2),
@@ -805,7 +822,10 @@ mod tests {
 
         let child = table.get(child_h).unwrap();
         assert_eq!(child.id, CapabilityTokenId(2));
-        assert_eq!(child.capability, Capability::ChannelAccess(ChannelId(7)));
+        assert_eq!(
+            child.capability,
+            Capability::ChannelAccess(ChannelId::new(7, ID_GEN_FIRST))
+        );
         assert_eq!(child.parent_token, Some(CapabilityTokenId(1)));
         assert_eq!(table.count(), 2);
     }
@@ -814,7 +834,11 @@ mod tests {
     fn table_attenuate_denies_broadening() {
         let mut table = CapabilityTable::new();
         let h = table
-            .grant(make_token(1, Capability::ChannelAccess(ChannelId(5)), 1))
+            .grant(make_token(
+                1,
+                Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
+                1,
+            ))
             .unwrap();
         let result = table.attenuate(
             h,
@@ -848,7 +872,7 @@ mod tests {
         let child_h = table
             .attenuate(
                 h,
-                Capability::ChannelAccess(ChannelId(3)),
+                Capability::ChannelAccess(ChannelId::new(3, ID_GEN_FIRST)),
                 Some(500),
                 ProcessId(1),
                 CapabilityTokenId(2),
@@ -869,7 +893,7 @@ mod tests {
         // get() returns None for revoked → attenuate returns Eperm.
         let result = table.attenuate(
             h,
-            Capability::ChannelAccess(ChannelId(5)),
+            Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
             None,
             ProcessId(1),
             CapabilityTokenId(2),
@@ -1046,9 +1070,8 @@ mod tests {
 
     #[test]
     fn attenuate_gpu_denies_cross_domain() {
-        assert!(
-            !Capability::GpuBufferCreate.can_attenuate_to(&Capability::ChannelAccess(ChannelId(0)))
-        );
+        assert!(!Capability::GpuBufferCreate
+            .can_attenuate_to(&Capability::ChannelAccess(ChannelId::new(0, ID_GEN_FIRST))));
         assert!(!Capability::ChannelCreate.can_attenuate_to(&Capability::GpuBufferAccess(1)));
     }
 
@@ -1111,7 +1134,7 @@ mod tests {
         assert!(!Capability::CompositorCreateSurface
             .can_attenuate_to(&Capability::CompositorFullscreen));
         assert!(!Capability::CompositorCreateSurface
-            .can_attenuate_to(&Capability::ChannelAccess(ChannelId(0))));
+            .can_attenuate_to(&Capability::ChannelAccess(ChannelId::new(0, ID_GEN_FIRST))));
         assert!(!Capability::ChannelCreate.can_attenuate_to(&Capability::CompositorCreateSurface));
     }
 }

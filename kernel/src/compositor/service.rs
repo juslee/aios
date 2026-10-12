@@ -123,7 +123,7 @@ fn compositor_loop() -> ! {
         crate::sched::thread_yield();
     };
 
-    crate::kinfo!(Compositor, "Compositor: started, channel={}", ch.0);
+    crate::kinfo!(Compositor, "Compositor: started, channel={}", ch);
 
     let display = virtio_gpu::display_info().unwrap_or_else(DisplayInfo::default);
     let mut state = CompositorState::new(ch, display);
@@ -631,7 +631,7 @@ pub fn init_compositor() {
     crate::kinfo!(
         Compositor,
         "Compositor service initialized (pid=10, ch={})",
-        ch.0
+        ch
     );
 }
 
@@ -794,7 +794,7 @@ fn handle_create_surface(
 fn handle_attach_buffer(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
     let id = SurfaceId(req.surface_id);
     let damage = req.decode_damage();
-    let shmem = SharedMemoryId(req.shmem_id);
+    let shmem = SharedMemoryId::from_raw(req.shmem_id);
     match surface::surface_attach_buffer(id, shmem, damage, owner_pid) {
         Ok(()) => CompositorEvent::buffer_released(id, shmem),
         Err(e) => {

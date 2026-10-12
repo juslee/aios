@@ -109,7 +109,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
     let msg = *b"TEST";
     let kernel_msg = msg.as_ptr() as u64;
     let entry = RawSelectEntry::from(SelectEntry {
-        kind: SelectKind::Channel(ChannelId(0)),
+        kind: SelectKind::Channel(ChannelId::from_raw(0)),
     });
     let kernel_entries = &entry as *const RawSelectEntry as u64;
     let mut kernel_ids = [0u64; 4];
@@ -219,7 +219,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
 /// whatever the results.
 fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS]) {
     let einval = IpcError::Einval as i64;
-    let channel = open.0 as u64;
+    let channel = u64::from(open.raw());
     let mut buf = [0u8; 4];
 
     let queued = crate::ipc::ipc_send(open, b"TEST") == 0;
@@ -301,7 +301,7 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
         return [false, false, false, oversize, false, false];
     };
 
-    let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[region.0 as u64, flags]);
+    let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[u64::from(region.raw()), flags]);
     // The region's limit, not the caller's rights: EINVAL.
     let beyond_max = map(READ_WRITE) == IpcError::Einval as i64;
     // Undefined bits are EINVAL even with the right held: bit 32 above READ,

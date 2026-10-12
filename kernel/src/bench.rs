@@ -175,7 +175,7 @@ fn bench_server_entry() -> ! {
     let ch = loop {
         let val = BENCH_CHANNEL.load(Ordering::Acquire);
         if val != u32::MAX {
-            break ChannelId(val);
+            break ChannelId::from_raw(val);
         }
         sched::thread_yield();
     };
@@ -379,12 +379,12 @@ pub fn bench_main_entry() -> ! {
     // Set peer for the channel.
     let _ = ipc::channel_set_peer(bench_ch, ProcessId(8));
 
-    BENCH_CHANNEL.store(bench_ch.0, Ordering::Release);
+    BENCH_CHANNEL.store(bench_ch.raw(), Ordering::Release);
 
     crate::kinfo!(
         Ipc,
         "Bench main: channel {} created, waiting for server",
-        bench_ch.0
+        bench_ch
     );
 
     // Wait for server ready (yield to let server thread run).

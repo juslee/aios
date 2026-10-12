@@ -61,7 +61,7 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
             spsr_el1: 0,
         };
         tf.x[8] = shared::Syscall::SharedMemoryShare as u64;
-        tf.x[0] = region.0 as u64;
+        tf.x[0] = u64::from(region.raw());
         tf.x[1] = target_pid;
         crate::syscall::syscall_dispatch(&mut tf);
         tf.x[0] as i64
@@ -81,7 +81,7 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     // The original panic site, called directly.
     let grant = match crate::cap::grant_to_process(
         ProcessId(MAX_PROCESSES as u32),
-        Capability::SharedMemoryAccess(region.0),
+        Capability::SharedMemoryAccess(region),
         false,
     ) {
         Ok(_) => 0,
@@ -142,7 +142,7 @@ pub(super) fn revoke_token(pid: ProcessId, token_id: CapabilityTokenId) {
 /// table. Process 1 holds no other shared memory capability and `region` was
 /// created by the calling test, so every such token was granted during it.
 pub(super) fn revoke_region_access(pid: ProcessId, region: SharedMemoryId) {
-    let access = Capability::SharedMemoryAccess(region.0);
+    let access = Capability::SharedMemoryAccess(region);
     let mut table = PROCESS_TABLE.lock();
     if let Ok(proc) = process_mut(&mut table, pid) {
         while let Some(token_id) = proc

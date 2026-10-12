@@ -162,7 +162,7 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<SelectCapChannels> {
 
     // An out-of-range id is EINVAL, whether the rest of the set is
     // accessible or not: the range check runs before any capability check.
-    let bad_id = ChannelId(MAX_CHANNELS as u32);
+    let bad_id = ChannelId::from_raw(MAX_CHANNELS as u32);
     let bad_owned = ipc_select(&[chan(owned_a), chan(bad_id)], SELECT_TIMEOUT_TICKS);
     let bad_denied = ipc_select(&[chan(denied), chan(bad_id)], SELECT_TIMEOUT_TICKS);
     if bad_owned != einval || bad_denied != einval {

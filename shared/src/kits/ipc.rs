@@ -305,6 +305,7 @@ pub trait SharedMemoryOps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::ID_GEN_FIRST;
     use alloc::format;
 
     // -- IpcKitError --
@@ -312,9 +313,11 @@ mod tests {
     /// One value of every variant.
     fn all_variants() -> [IpcKitError; 14] {
         [
-            IpcKitError::InvalidChannel { id: ChannelId(0) },
+            IpcKitError::InvalidChannel {
+                id: ChannelId::new(0, ID_GEN_FIRST),
+            },
             IpcKitError::ChannelFull {
-                id: ChannelId(1),
+                id: ChannelId::new(1, ID_GEN_FIRST),
                 capacity: 16,
             },
             IpcKitError::Timeout { elapsed_ticks: 100 },
@@ -360,13 +363,15 @@ mod tests {
     #[test]
     fn ipc_kit_error_to_ipc_error() {
         assert_eq!(
-            IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(5) }),
+            IpcError::from(IpcKitError::InvalidChannel {
+                id: ChannelId::new(5, ID_GEN_FIRST)
+            }),
             IpcError::Epipe
         );
         assert_eq!(IpcError::from(IpcKitError::ObjectGone), IpcError::Epipe);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
-                id: ChannelId(0),
+                id: ChannelId::new(0, ID_GEN_FIRST),
                 capacity: 16
             }),
             IpcError::Eagain
@@ -538,12 +543,14 @@ mod tests {
         // is what the errno decodes to. A wrapper with context restores them.
         let back = |v: IpcKitError| IpcKitError::from(IpcError::from(v));
         assert_eq!(
-            back(IpcKitError::InvalidChannel { id: ChannelId(42) }),
+            back(IpcKitError::InvalidChannel {
+                id: ChannelId::new(42, ID_GEN_FIRST)
+            }),
             IpcKitError::ObjectGone
         );
         assert!(matches!(
             back(IpcKitError::ChannelFull {
-                id: ChannelId(7),
+                id: ChannelId::new(7, ID_GEN_FIRST),
                 capacity: 16
             }),
             IpcKitError::WouldBlock
@@ -599,13 +606,15 @@ mod tests {
     #[test]
     fn ipc_kit_error_to_i64_via_ipc_error() {
         assert_eq!(
-            IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(0) }) as i64,
+            IpcError::from(IpcKitError::InvalidChannel {
+                id: ChannelId::new(0, ID_GEN_FIRST)
+            }) as i64,
             -2
         );
         assert_eq!(IpcError::from(IpcKitError::ObjectGone) as i64, -2);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
-                id: ChannelId(0),
+                id: ChannelId::new(0, ID_GEN_FIRST),
                 capacity: 16
             }) as i64,
             -3
@@ -638,7 +647,7 @@ mod tests {
     #[test]
     fn backward_compat_ipc_types() {
         // Verify types used in trait signatures are the same as shared::ipc types.
-        let ch = ChannelId(42);
+        let ch = ChannelId::new(42, ID_GEN_FIRST);
         let ch2: crate::ipc::ChannelId = ch;
         assert_eq!(ch, ch2);
 
@@ -646,7 +655,7 @@ mod tests {
         let nid2: crate::ipc::NotificationId = nid;
         assert_eq!(nid, nid2);
 
-        let sid = SharedMemoryId(3);
+        let sid = SharedMemoryId::new(3, ID_GEN_FIRST);
         let sid2: crate::ipc::SharedMemoryId = sid;
         assert_eq!(sid, sid2);
     }

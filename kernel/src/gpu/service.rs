@@ -117,7 +117,7 @@ fn gpu_service_loop() -> ! {
         crate::sched::thread_yield();
     };
 
-    crate::kinfo!(Gpu, "GPU Service: started, channel={}", ch.0);
+    crate::kinfo!(Gpu, "GPU Service: started, channel={}", ch);
 
     let mut state = GpuServiceState::new(display, ch);
 
@@ -624,5 +624,5 @@ pub fn init_gpu_service() {
         crate::sched::enqueue_on_cpu(0, ThreadId(idx as u32), SchedulerClass::Interactive);
     }
 
-    crate::kinfo!(Gpu, "GPU Service initialized (pid=9, ch={})", ch.0);
+    crate::kinfo!(Gpu, "GPU Service initialized (pid=9, ch={})", ch);
 }

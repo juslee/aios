@@ -1085,7 +1085,7 @@ impl CompositorEvent {
         let mut e = Self::zeroed();
         e.tag = CompositorEventTag::BufferReleased as u32;
         e.surface_id = surface.0;
-        e.shmem_id = shmem_id.0;
+        e.shmem_id = shmem_id.raw();
         e
     }
 

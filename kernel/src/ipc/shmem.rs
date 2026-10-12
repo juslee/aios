@@ -74,7 +74,7 @@ pub struct SharedMapping {
 /// A shared memory region backed by physically contiguous pages.
 #[allow(dead_code)]
 pub struct SharedMemoryRegion {
-    /// Region identifier (index into SHARED_REGION_TABLE).
+    /// Region identifier: its SHARED_REGION_TABLE slot and generation.
     pub id: SharedMemoryId,
     /// Base physical address of the backing pages.
     pub base_phys: usize,
@@ -176,7 +176,7 @@ pub fn shared_memory_create(
         IpcError::Enospc as i64
     })?;
 
-    let id = SharedMemoryId(idx as u32);
+    let id = SharedMemoryId::new(idx, shared::ID_GEN_FIRST);
     table[idx] = Some(SharedMemoryRegion {
         id,
         base_phys,
@@ -196,7 +196,7 @@ pub fn shared_memory_create(
     // Auto-grant SharedMemoryAccess to the creator so they can map their own region.
     if let Err(e) = crate::cap::grant_to_process(
         pid,
-        shared::Capability::SharedMemoryAccess(idx as u32),
+        shared::Capability::SharedMemoryAccess(id),
         true, // delegatable — creator can share with others
     ) {
         crate::kwarn!(
@@ -213,7 +213,7 @@ pub fn shared_memory_create(
     crate::kinfo!(
         Mm,
         "shm_create: id={} size={:#x} order={} phys={:#x} pid={}",
-        idx,
+        id,
         size_pages * PAGE_SIZE,
         order,
         base_phys,
@@ -241,9 +241,9 @@ pub fn shared_memory_map(
     region_id: SharedMemoryId,
     flags: VmFlags,
 ) -> Result<usize, i64> {
-    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+    let Some(idx) = region_id.index() else {
         return Err(IpcError::Einval as i64);
-    }
+    };
 
     // W^X enforcement (EINVAL, as in shared_memory_create).
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
@@ -251,12 +251,10 @@ pub fn shared_memory_map(
     }
 
     // Capability check (SharedMemoryAccess).
-    crate::cap::check_shared_memory_access(pid, region_id.0)?;
+    crate::cap::check_shared_memory_access(pid, region_id)?;
 
     let mut table = SHARED_REGION_TABLE.lock();
-    let region = table[region_id.0 as usize]
-        .as_mut()
-        .ok_or(IpcError::Epipe as i64)?;
+    let region = table[idx].as_mut().ok_or(IpcError::Epipe as i64)?;
 
     // Verify flags are a subset of max_flags. The limit belongs to the
     // region, not to the caller, so asking for more is EINVAL for everyone.
@@ -265,7 +263,7 @@ pub fn shared_memory_map(
             Mm,
             "shm_map: flags not subset of max_flags (pid={}, region={})",
             pid.0,
-            region_id.0
+            region_id
         );
         return Err(IpcError::Einval as i64);
     }
@@ -280,7 +278,7 @@ pub fn shared_memory_map(
             Mm,
             "shm_map: already mapped (pid={}, region={})",
             pid.0,
-            region_id.0
+            region_id
         );
         return Err(IpcError::Eexist as i64);
     }
@@ -291,12 +289,12 @@ pub fn shared_memory_map(
         .iter()
         .position(|m| m.is_none())
         .ok_or_else(|| {
-            crate::kwarn!(Mm, "shm_map: max mappings reached (region={})", region_id.0);
+            crate::kwarn!(Mm, "shm_map: max mappings reached (region={})", region_id);
             IpcError::Enospc as i64
         })?;
 
     // Compute VA for this mapping: base + region_id * stride.
-    let va = SHM_VA_BASE + (region_id.0 as usize) * SHM_VA_STRIDE;
+    let va = SHM_VA_BASE + idx * SHM_VA_STRIDE;
     let base_phys = region.base_phys;
     let size_bytes = region.size_bytes;
     let map_flags = flags | VmFlags::USER;
@@ -323,7 +321,7 @@ pub fn shared_memory_map(
     crate::kinfo!(
         Mm,
         "shm_map: region={} va={:#x} pages={} pid={}",
-        region_id.0,
+        region_id,
         va,
         size_bytes / PAGE_SIZE,
         pid.0
@@ -346,14 +344,12 @@ pub fn shared_memory_map(
 /// right the caller lacks, like a missing capability. No capability is
 /// checked: holding the mapping is the authority to remove it.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
-    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+    let Some(idx) = region_id.index() else {
         return Err(IpcError::Einval as i64);
-    }
+    };
 
     let mut table = SHARED_REGION_TABLE.lock();
-    let region = table[region_id.0 as usize]
-        .as_mut()
-        .ok_or(IpcError::Epipe as i64)?;
+    let region = table[idx].as_mut().ok_or(IpcError::Epipe as i64)?;
 
     // Find and remove the mapping for this pid.
     let mapping = region
@@ -372,7 +368,7 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
                 Mm,
                 "shm_unmap: not mapped (pid={}, region={})",
                 pid.0,
-                region_id.0
+                region_id
             );
             return Err(IpcError::Eperm as i64);
         }
@@ -385,7 +381,7 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
         crate::kwarn!(
             Mm,
             "shm_unmap: ref_count already 0 (region={}), skipping",
-            region_id.0
+            region_id
         );
         return Err(IpcError::Einval as i64);
     }
@@ -397,7 +393,7 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
     // If last reference, free the region.
     let should_free = old_ref == 1;
     if should_free {
-        table[region_id.0 as usize] = None;
+        table[idx] = None;
     }
 
     drop(table);
@@ -414,7 +410,7 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
         crate::kinfo!(
             Mm,
             "shm_unmap: region={} freed ({} pages) last_ref by pid={}",
-            region_id.0,
+            region_id,
             size_bytes / PAGE_SIZE,
             pid.0
         );
@@ -422,7 +418,7 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
         crate::kinfo!(
             Mm,
             "shm_unmap: region={} unmapped for pid={} (refs={})",
-            region_id.0,
+            region_id,
             pid.0,
             old_ref - 1
         );
@@ -444,8 +440,8 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 /// The caller must own the region (be the creator). The recipient receives
 /// a capability that lets them call `shared_memory_map`.
 ///
-/// Returns `Err(EINVAL)` for a region id `>= MAX_SHARED_REGIONS` or a
-/// `target_pid >= MAX_PROCESSES`, before taking any lock; EPIPE if the
+/// Returns `Err(EINVAL)` for a region id whose slot is `>= MAX_SHARED_REGIONS`
+/// or a `target_pid >= MAX_PROCESSES`, before taking any lock; EPIPE if the
 /// region does not exist; EPERM if `pid` is not the region's creator (a
 /// right the caller lacks) or the target process does not exist. The
 /// second EPERM is not a missing right: it is the empty-slot code of the
@@ -457,9 +453,9 @@ pub fn shared_memory_share(
     region_id: SharedMemoryId,
     target_pid: ProcessId,
 ) -> Result<(), i64> {
-    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+    let Some(idx) = region_id.index() else {
         return Err(IpcError::Einval as i64);
-    }
+    };
     // target_pid comes straight from the SharedMemoryShare syscall. Reject an
     // out-of-range pid here, before SHARED_REGION_TABLE or PROCESS_TABLE is
     // locked; grant_to_process would also return EINVAL for it.
@@ -470,16 +466,14 @@ pub fn shared_memory_share(
     // Verify the caller owns the region.
     {
         let table = SHARED_REGION_TABLE.lock();
-        let region = table[region_id.0 as usize]
-            .as_ref()
-            .ok_or(IpcError::Epipe as i64)?;
+        let region = table[idx].as_ref().ok_or(IpcError::Epipe as i64)?;
 
         if region.creator != pid {
             crate::kwarn!(
                 Mm,
                 "shm_share: not creator (pid={}, region={}, creator={})",
                 pid.0,
-                region_id.0,
+                region_id,
                 region.creator.0
             );
             return Err(IpcError::Eperm as i64);
@@ -490,14 +484,14 @@ pub fn shared_memory_share(
     // Grant SharedMemoryAccess capability to the target process.
     crate::cap::grant_to_process(
         target_pid,
-        shared::Capability::SharedMemoryAccess(region_id.0),
+        shared::Capability::SharedMemoryAccess(region_id),
         false,
     )?;
 
     crate::kinfo!(
         Mm,
         "shm_share: region={} shared from pid={} to pid={}",
-        region_id.0,
+        region_id,
         pid.0,
         target_pid.0
     );
@@ -695,7 +689,8 @@ fn private_slot(va: usize) -> Option<usize> {
 
 /// MemoryUnmap: release memory that process `pid` mapped.
 ///
-/// An address in the shared memory window unmaps that region through
+/// An address in the shared memory window unmaps the region in that slot, by
+/// the id the slot stores (EPIPE for an empty slot), through
 /// `shared_memory_unmap`; `size` is not used there.
 ///
 /// Any other address must be exactly an address MemoryMap returned to `pid`,
@@ -713,7 +708,16 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
     if (SHM_VA_BASE..SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE).contains(&va) {
         let region_idx = (va - SHM_VA_BASE) / SHM_VA_STRIDE;
         if region_idx < MAX_SHARED_REGIONS {
-            return shared_memory_unmap(pid, SharedMemoryId(region_idx as u32));
+            // The VA names a slot, not an id: unmap the region now in that
+            // slot, by the id it stores. An empty slot is EPIPE, as for a
+            // destroyed region.
+            let stored = SHARED_REGION_TABLE.lock()[region_idx]
+                .as_ref()
+                .map(|r| r.id);
+            let Some(region_id) = stored else {
+                return Err(IpcError::Epipe as i64);
+            };
+            return shared_memory_unmap(pid, region_id);
         }
     }
 
@@ -756,11 +760,9 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
 /// For Phase 3 kernel threads, this is how processes access shared memory
 /// (no user address space to map into).
 pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
-    if region_id.0 as usize >= MAX_SHARED_REGIONS {
-        return None;
-    }
+    let idx = region_id.index()?;
     let table = SHARED_REGION_TABLE.lock();
-    table[region_id.0 as usize]
+    table[idx]
         .as_ref()
         .map(|r| crate::arch::aarch64::mmu::DIRECT_MAP_BASE + r.base_phys)
 }
@@ -768,11 +770,9 @@ pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
 /// Get the size in bytes of a shared region.
 #[allow(dead_code)]
 pub fn region_size(region_id: SharedMemoryId) -> Option<usize> {
-    if region_id.0 as usize >= MAX_SHARED_REGIONS {
-        return None;
-    }
+    let idx = region_id.index()?;
     let table = SHARED_REGION_TABLE.lock();
-    table[region_id.0 as usize].as_ref().map(|r| r.size_bytes)
+    table[idx].as_ref().map(|r| r.size_bytes)
 }
 
 // ---------------------------------------------------------------------------

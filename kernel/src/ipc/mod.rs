@@ -104,7 +104,7 @@ impl MessageRing {
 /// For synchronous IPC, the ring holds the request; the reply is
 /// delivered directly to the blocked caller's reply buffer.
 pub(crate) struct Channel {
-    #[allow(dead_code)]
+    /// The channel's full id (slot and generation), as issued at creation.
     pub(crate) id: ChannelId,
     pub(crate) state_a: EndpointState,
     pub(crate) state_b: EndpointState,
@@ -211,11 +211,11 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
         None => return Err(IpcError::Enospc as i64),
     };
 
-    let id = ChannelId(idx as u32);
+    let id = ChannelId::new(idx, shared::ID_GEN_FIRST);
     let mut ch = Channel::new(id, pid);
     ch.creation_cap = Some(auth_token);
     table[idx] = Some(ch);
-    crate::kinfo!(Ipc, "Channel {} created by thread {}", idx, creator.0);
+    crate::kinfo!(Ipc, "Channel {} created by thread {}", id, creator.0);
     Ok(id)
 }
 
@@ -262,7 +262,7 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
         timeout::wake_with_error(caller_tid, IpcError::Epipe as i64, WakeSource::ChDestroy);
     }
 
-    crate::kinfo!(Ipc, "Channel {} destroyed", channel.0);
+    crate::kinfo!(Ipc, "Channel {} destroyed", channel);
     Ok(())
 }
 
@@ -543,7 +543,7 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         flags: u64,
     ) -> Result<(), IpcKitError> {
         // shared_memory_map checks SharedMemoryAccess(id).
-        let required = Capability::SharedMemoryAccess(id.0);
+        let required = Capability::SharedMemoryAccess(id);
         let pid =
             crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied { required })?;
         let vm_flags = crate::mm::pgtable::VmFlags::from_caller_bits(flags).map_err(|_| {
@@ -568,12 +568,11 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         // No dedicated kernel destroy function exists. Walk the region's
         // mappings and unmap each one. The last unmap frees backing pages.
         let pids_to_unmap: alloc::vec::Vec<crate::task::process::ProcessId> = {
-            let idx = id.0 as usize;
-            if idx >= shared::MAX_SHARED_REGIONS {
+            let Some(idx) = id.index() else {
                 return Err(IpcKitError::SharedMemoryError {
                     reason: "invalid region id",
                 });
-            }
+            };
             let table = shmem::SHARED_REGION_TABLE.lock();
             match &table[idx] {
                 Some(region) => region

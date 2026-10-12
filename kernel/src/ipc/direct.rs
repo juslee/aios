@@ -273,7 +273,7 @@ pub fn try_reply_switch(
 
     // The switch will happen: classify the reply's wake of the caller (the
     // caller is blocked, so its call phase is stable under THREAD_TABLE).
-    tripwire::note_reply_switch(caller_tid, u64::from(channel.0), clear);
+    tripwire::note_reply_switch(caller_tid, u64::from(channel.raw()), clear);
 
     // --- Restore replier's original priority (undo inheritance) ---
     {

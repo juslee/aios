@@ -165,7 +165,7 @@ fn sys_time_sleep(tf: &TrapFrame) -> i64 {
 /// pointer in `REPLY_SLOTS`, so that pointer must be a kernel address.
 fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let send_ptr = tf.x[1] as usize;
@@ -207,7 +207,7 @@ fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
 /// IpcSend (nr=1): x0=channel, x1=send_ptr, x2=send_len.
 fn sys_ipc_send(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let send_ptr = tf.x[1] as usize;
@@ -234,7 +234,7 @@ fn sys_ipc_send(tf: &TrapFrame) -> i64 {
 /// `CHANNEL_TABLE`.
 fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let recv_ptr = tf.x[1] as usize;
@@ -264,7 +264,7 @@ fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
 /// IpcReply (nr=3): x0=channel, x1=reply_ptr, x2=reply_len.
 fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let reply_ptr = tf.x[1] as usize;
@@ -285,7 +285,7 @@ fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
 /// IpcCancel (nr=4): x0=channel.
 fn sys_ipc_cancel(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     crate::ipc::ipc_cancel(channel)
@@ -298,7 +298,7 @@ fn sys_channel_create(_tf: &TrapFrame) -> i64 {
         None => return IpcError::Eperm as i64,
     };
     match crate::ipc::channel_create(tid) {
-        Ok(ch) => ch.0 as i64,
+        Ok(ch) => i64::from(ch.raw()),
         Err(e) => e,
     }
 }
@@ -306,7 +306,7 @@ fn sys_channel_create(_tf: &TrapFrame) -> i64 {
 /// ChannelDestroy (nr=7): x0=channel_id.
 fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     match crate::ipc::channel_destroy(channel) {
@@ -354,12 +354,12 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     let new_cap = match new_cap_type {
         0 => shared::Capability::ChannelCreate,
         1 => match id_arg(tf.x[3]) {
-            Ok(id) => shared::Capability::ChannelAccess(shared::ChannelId(id)),
+            Ok(id) => shared::Capability::ChannelAccess(shared::ChannelId::from_raw(id)),
             Err(e) => return e,
         },
         2 => shared::Capability::SharedMemoryCreate,
         3 => match id_arg(tf.x[3]) {
-            Ok(id) => shared::Capability::SharedMemoryAccess(id),
+            Ok(id) => shared::Capability::SharedMemoryAccess(shared::SharedMemoryId::from_raw(id)),
             Err(e) => return e,
         },
         4 => shared::Capability::SpawnAgent,
@@ -536,7 +536,7 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
     };
 
     match crate::ipc::shmem::shared_memory_create(pid, size, flags) {
-        Ok(id) => id.0 as i64,
+        Ok(id) => i64::from(id.raw()),
         Err(e) => e,
     }
 }
@@ -548,7 +548,7 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
 /// EINVAL for any other bit (USER included).
 fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
     let region_id = match id_arg(tf.x[0]) {
-        Ok(id) => shared::SharedMemoryId(id),
+        Ok(id) => shared::SharedMemoryId::from_raw(id),
         Err(e) => return e,
     };
     let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
@@ -572,7 +572,7 @@ fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
 /// Share a region with another process by granting capability.
 fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
     let region_id = match id_arg(tf.x[0]) {
-        Ok(id) => shared::SharedMemoryId(id),
+        Ok(id) => shared::SharedMemoryId::from_raw(id),
         Err(e) => return e,
     };
     let target_pid = match id_arg(tf.x[1]) {
@@ -676,7 +676,7 @@ fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
     }
 
     let mut entries = [SelectEntry {
-        kind: SelectKind::Channel(shared::ChannelId(0)),
+        kind: SelectKind::Channel(shared::ChannelId::from_raw(0)),
     }; MAX_SELECT_ENTRIES];
     // wire_len is a whole number of entries, so there is no remainder.
     let (chunks, _) = wire[..wire_len].as_chunks::<{ RawSelectEntry::SIZE }>();

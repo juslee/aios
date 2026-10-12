@@ -147,7 +147,7 @@ pub fn register_service() {
     if let Err(e) = crate::service::service_register(b"space-storage", ProcessId(0), ch) {
         crate::kerror!(Storage, "space-storage register failed: {}", e);
     } else {
-        crate::kinfo!(Storage, "Registered 'space-storage' service (ch={})", ch.0);
+        crate::kinfo!(Storage, "Registered 'space-storage' service (ch={})", ch);
     }
 }
 

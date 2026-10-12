@@ -39,11 +39,12 @@ pub use cap::{
 };
 pub use collections::{FixedQueue, RingBuffer};
 pub use ipc::{
-    deadline_after, validate_user_va, ChannelId, EndpointState, NotificationId, RawMessage,
-    RawSelectEntry, SelectEntry, SelectKind, ServiceName, ServiceState, SharedMemoryId,
-    DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE,
-    MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES, MAX_SERVICES, MAX_SERVICE_NAME_LEN, MAX_SHARED_MAPPINGS,
-    MAX_SHARED_REGIONS, MAX_WAITERS_PER_NOTIFICATION, RING_CAPACITY, USER_VA_LIMIT, USER_VA_MIN,
+    deadline_after, next_generation, validate_user_va, ChannelId, EndpointState, NotificationId,
+    RawMessage, RawSelectEntry, SelectEntry, SelectKind, ServiceName, ServiceState, SharedMemoryId,
+    DEFAULT_TIMEOUT_TICKS, ID_GEN_FIRST, ID_GEN_MAX, ID_GEN_RETIRED, ID_SLOT_BITS, ID_SLOT_MASK,
+    MAX_CHANNELS, MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES,
+    MAX_SERVICES, MAX_SERVICE_NAME_LEN, MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS,
+    MAX_WAITERS_PER_NOTIFICATION, RING_CAPACITY, USER_VA_LIMIT, USER_VA_MIN,
 };
 pub use kaslr::{compute_slide_from_entropy, KaslrConfig};
 pub use memory::{

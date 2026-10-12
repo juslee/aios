@@ -320,7 +320,7 @@ pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64, src: W
     for i in 0..sw.entry_count {
         if let Some(entry) = &sw.entries[i] {
             let matches = match (&entry.kind, &source_kind) {
-                (SelectKind::Channel(a), SelectKind::Channel(b)) => a.0 == b.0,
+                (SelectKind::Channel(a), SelectKind::Channel(b)) => a == b,
                 (SelectKind::Notification(a, _), SelectKind::Notification(b, _)) => a.0 == b.0,
                 _ => false,
             };
@@ -350,7 +350,7 @@ pub fn set_select_ready(tid: ThreadId, source_kind: SelectKind, bits: u64) {
     for i in 0..sw.entry_count {
         if let Some(entry) = &sw.entries[i] {
             let matches = match (&entry.kind, &source_kind) {
-                (SelectKind::Channel(a), SelectKind::Channel(b)) => a.0 == b.0,
+                (SelectKind::Channel(a), SelectKind::Channel(b)) => a == b,
                 (SelectKind::Notification(a, _), SelectKind::Notification(b, _)) => a.0 == b.0,
                 _ => false,
             };

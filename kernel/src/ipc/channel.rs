@@ -138,7 +138,7 @@ pub fn ipc_call(
         tripwire::wait_published(
             WaitSide::Call,
             caller_tid,
-            u64::from(channel.0),
+            u64::from(channel.raw()),
             deadline.is_some(),
         );
 
@@ -193,10 +193,10 @@ pub fn ipc_call(
                     WakeSource::SelCall,
                 ) {
                     let outcome = sched::unblock(recv_tid, WakeSource::Call);
-                    tripwire::note_send_wake(outcome, u64::from(channel.0), recv_clear);
+                    tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
                 }
                 sched::block_current(ThreadState::BlockedIpc {
-                    channel: channel.0 as u64,
+                    channel: u64::from(channel.raw()),
                 });
             }
         } else {
@@ -222,7 +222,7 @@ pub fn ipc_call(
 
             // Block until reply or timeout.
             sched::block_current(ThreadState::BlockedIpc {
-                channel: channel.0 as u64,
+                channel: u64::from(channel.raw()),
             });
         }
     }
@@ -331,7 +331,7 @@ pub fn ipc_recv(
         tripwire::wait_published(
             WaitSide::Recv,
             receiver_tid,
-            u64::from(channel.0),
+            u64::from(channel.raw()),
             deadline.is_some(),
         );
         deadline
@@ -343,7 +343,7 @@ pub fn ipc_recv(
 
     // Block until message arrives or timeout.
     sched::block_current(ThreadState::BlockedIpc {
-        channel: channel.0 as u64,
+        channel: u64::from(channel.raw()),
     });
 
     // Woken up. The receive's tripwire N2 phase ends here.
@@ -464,7 +464,7 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
 
     // Fallback: unblock via scheduler (caller on different CPU, etc.)
     let outcome = sched::unblock(caller_tid, WakeSource::Reply);
-    tripwire::note_reply_wake(outcome, u64::from(channel.0), clear);
+    tripwire::note_reply_wake(outcome, u64::from(channel.raw()), clear);
 
     0
 }
@@ -532,7 +532,7 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
             WakeSource::SelSend,
         ) {
             let outcome = sched::unblock(recv_tid, WakeSource::Send);
-            tripwire::note_send_wake(outcome, u64::from(channel.0), clear);
+            tripwire::note_send_wake(outcome, u64::from(channel.raw()), clear);
         }
     }
 
