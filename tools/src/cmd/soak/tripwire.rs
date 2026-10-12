@@ -285,9 +285,9 @@ mod tests {
     fn the_full_golden_parses_complete_with_every_key_in_catalogue_order() {
         let golden = shared_golden("GOLDEN_FULL");
         let tokens = pairs(&golden);
-        // n=66: the 5 prefix tokens and the 61 keys.
-        assert_eq!(tokens.last(), Some(&("n".to_string(), "66".to_string())));
-        assert_eq!(PREFIX_TOKENS + Key::COUNT, 66);
+        // n=69: the 5 prefix tokens and the 64 keys.
+        assert_eq!(tokens.last(), Some(&("n".to_string(), "69".to_string())));
+        assert_eq!(PREFIX_TOKENS + Key::COUNT, 69);
         let names: Vec<&str> = tokens[PREFIX_TOKENS..tokens.len() - 1]
             .iter()
             .map(|(k, _)| k.as_str())

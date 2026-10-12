@@ -977,7 +977,8 @@ mod tests {
              reentry_ctx\treentry_holder_irqs\tev_ph\tev_self\tev_self_irq\tev_stuck\ttw_v\ttw_src\t\
              tw_cpu\ttw_t\ttw_ncpu\ttw_tick\ttw_irqsw\t"
         ));
-        assert!(header.ends_with("\ttw_twmax\tg1_elrmm\tg1_line\ttw_line\n"));
+        assert!(header
+            .ends_with("\ttw_twmax\ttw_ubtok\ttw_ubpend\ttw_bw\tg1_elrmm\tg1_line\ttw_line\n"));
 
         let row = text(tsv_row("07", "text", &c(WEDGE), &timing(), "run-07.log"));
         let without_tripwire = "-\t".repeat(5 + Key::COUNT + 3);
