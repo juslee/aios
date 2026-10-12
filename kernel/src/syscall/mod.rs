@@ -396,9 +396,12 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
 
 /// CapabilityRevoke (nr=16): x0=cap_handle.
 ///
-/// Revoke a capability and cascade to all children. Destroys the channels
-/// the caller created under the revoked token or one of its descendants
-/// (`cap::revoke_in_process`).
+/// Revoke a capability and its same-table descendants, then destroy every
+/// shared memory region and channel the caller created under a token that
+/// is now revoked (`cap::revoke_in_process`: the region cascade, then the
+/// channel cascade). A destroyed channel's blocked threads are woken with
+/// EPIPE; a destroyed region is unmapped from every process that maps it,
+/// and a later map or unmap of it fails with EPIPE.
 ///
 /// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, a slot no process
 /// has; EPERM for an in-range handle whose slot is empty or revoked.

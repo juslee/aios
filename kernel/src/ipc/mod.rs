@@ -461,7 +461,8 @@ fn channel_kit_err(id: ChannelId, code: i64) -> IpcKitError {
 ///
 /// `checked` is the capability the kernel checks for the operation, or
 /// `None` for `shared_memory_unmap`, which checks none: there EPERM means the
-/// caller has no mapping of the region. EPIPE means the region does not
+/// caller has no mapping of the region. (`shmem_destroy` also passes `None`,
+/// after mapping its own EINVAL and EPERM.) EPIPE means the region does not
 /// exist, not a channel.
 fn shm_kit_err(code: i64, checked: Option<Capability>) -> IpcKitError {
     match IpcError::try_from(code) {
