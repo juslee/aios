@@ -650,7 +650,7 @@ Conventions for every task:
     4. **10d** (worker, background), last, alone: the deletion, with nothing that needs a prompt.
     5. **10e** (owner): the settings commit.
     6. **10f** (lead, read-only): the switch-over verify.
-  - [ ] 10h: `tools/tests/soak_interleave.rs` (main L25, L739-749; contract §3). `brief_lists_an_interleaved_run_once_and_never_as_main_soak` runs `env!("CARGO_BIN_EXE_aios") brief --no-fetch` with the same fake gh and PATH. It also sets `AIOS_BRIEF_DOCS_CHECK` to a `#!/bin/sh` stub in its bin dir, so no real docs-check runs over the fixture. The module doc (L25) names `aios brief`.
+  - [x] 10h: `tools/tests/soak_interleave.rs` (main L25, L739-749; contract §3). `brief_lists_an_interleaved_run_once_and_never_as_main_soak` runs `env!("CARGO_BIN_EXE_aios") brief --no-fetch` with the same fake gh and PATH. It also sets `AIOS_BRIEF_DOCS_CHECK` to a `#!/bin/sh` stub in its bin dir, so no real docs-check runs over the fixture. The module doc (L25) names `aios brief`.
     - Verify: T(`--test soak_interleave brief_lists`) = 1; `git grep -c 'brief\.sh' -- tools/tests/soak_interleave.rs` prints 0 or nothing; G.
   - [ ] 10a: Skills. Fallbacks use `just` forms only.
     - `.claude/skills/justin/skills/brief/SKILL.md` (W234 L4, L18-30): run `just brief`. When the current checkout's justfile has no `brief` recipe (a branch older than R3), the fallback is `just --justfile "<main checkout>/justfile" --working-directory . brief`. It still reports on the current checkout, since the binary resolves the toplevel itself, and it asks once (settings `Bash(just -*)`, W234 L326). Update the description and the side-effects text: it is the binary now, not a script.
