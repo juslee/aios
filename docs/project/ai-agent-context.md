@@ -264,30 +264,48 @@ Comprehensive per-subsystem guide for agents working on Phase 3+ code. For each 
 
 ### 6.1 Scheduler
 
-**Files**: `kernel/src/sched/scheduler.rs`, `kernel/src/sched/init.rs`, `kernel/src/sched/mod.rs`
+**Files**: `kernel/src/sched/scheduler.rs`, `kernel/src/sched/wake.rs` (the wake token), `kernel/src/sched/init.rs`, `kernel/src/sched/mod.rs`
 
 **Key APIs**:
 
 ```rust
 // Enter the scheduler loop on a CPU (never returns).
 // Called from kernel_main (boot CPU) and secondary_main.
-pub fn enter_scheduler() -> !            // scheduler.rs:47
+pub fn enter_scheduler() -> !            // scheduler.rs:51
 
 // Core scheduling function. Must be called with IRQs masked.
 // Picks next thread from run queue and context-switches to it.
-pub fn schedule()                        // scheduler.rs:153
+pub fn schedule(origin: Origin)          // scheduler.rs:184
+
+// Arm the calling thread's wait word (sched/wake.rs). Every waiting site
+// calls it before it publishes the first record a waker can find it by.
+// `tid` is the caller's own, read with IRQs masked (current_tid(), or
+// current_thread_and_pid() for SVC 25). Takes no lock.
+pub fn prepare_block(tid: ThreadId)      // wake.rs:101
+
+// End an armed wait without blocking (condition met, deadline passed,
+// failure). Returns whether a wake token was pending.
+pub fn cancel_block(tid: ThreadId) -> bool    // wake.rs:119
 
 // Block the current thread with the given new state.
-// Masks IRQs internally, updates state, calls schedule().
-pub fn block_current(new_state: ThreadState)  // scheduler.rs:327
+// Masks IRQs internally, consumes a pending token (returns at once) or
+// updates state and calls schedule(). Asserts the thread armed first.
+pub fn block_current(new_state: ThreadState)  // scheduler.rs:440
 
 // Unblock a thread by ID. Safe to call from IRQ context.
-// Saves/restores DAIF to work from any context.
-pub fn unblock(tid: ThreadId)            // scheduler.rs:358
+// Saves/restores DAIF to work from any context. Leaves a token for an
+// Armed Running/Runnable target. `src` names the caller for the counters.
+pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome  // scheduler.rs:520
+
+// End the calling thread: block_current(Dead). Never returns.
+pub fn exit_current() -> !               // scheduler.rs:604
+
+// The caller's own tid, read in one IRQ-masked section.
+pub fn current_tid() -> Option<ThreadId>      // scheduler.rs:680
 
 // Timer tick handler (called from IRQ at 1 kHz).
 // Uses try_lock to avoid deadlock from same-core re-entrancy.
-pub fn timer_tick(cpu: usize)            // scheduler.rs:114
+pub fn timer_tick(cpu: usize)            // scheduler.rs:133
 ```
 
 **Gotchas**:
@@ -298,7 +316,11 @@ pub fn timer_tick(cpu: usize)            // scheduler.rs:114
 
 - **Lock release before restore_context** (scheduler.rs:247): The THREAD_TABLE lock MUST be dropped before calling `restore_context()`. If the lock is held during restore, a timer IRQ on the newly-running thread will deadlock trying to reacquire.
 
-- **timer_tick() uses try_lock** (scheduler.rs:114-141): Because timer_tick() runs from IRQ context, it cannot block. It uses `try_lock()` on CURRENT_THREAD[cpu] first -- if held, it returns immediately (skipping the entire tick). Then it uses `try_lock()` on THREAD_TABLE -- if held, it skips the time slice decrement but does not return early (metrics may still update). RUN_QUEUES is only try_locked for optional metrics collection (`#[cfg(feature = "kernel-metrics")]`), not for core logic.
+- **Arm before you publish, then block or cancel** (wake.rs, capability-lifetime ADR §8): a waiting site calls `prepare_block(tid)` inside, or before, the critical section that publishes the first waker record (a `TIMEOUT_QUEUE` entry or notification deadline included), then `block_current` or `cancel_block`, and after `block_current` returns re-checks its condition under its own lock and loops, re-arming before each re-publish. `block_current` asserts the arm in a debug build. A waker that finds an Armed thread Running or Runnable (not yet blocked) leaves a token; `block_current` consumes it and returns at once, so a wake in the publish-to-block window is not lost. Dead threads never take or consume a token.
+
+- **Dead is terminal** (scheduler.rs, `exit_current`): `block_current(Dead)` switches away and `schedule()` never re-enqueues or dispatches a Dead thread, so it never runs again. A self-exit ends with `exit_current()`, which cannot return (it panics if it does). `kill_process_threads` marks the other threads of a process Dead and resets their wait words (exit step B).
+
+- **timer_tick() uses try_lock** (scheduler.rs:133): Because timer_tick() runs from IRQ context, it cannot block. It uses `try_lock()` on CURRENT_THREAD[cpu] first -- if held, it returns immediately (skipping the entire tick). Then it uses `try_lock()` on THREAD_TABLE -- if held, it skips the time slice decrement but does not return early (metrics may still update). RUN_QUEUES is only try_locked for optional metrics collection (`#[cfg(feature = "kernel-metrics")]`), not for core logic.
 
 **Lock ordering**:
 
@@ -323,6 +345,9 @@ RIGHT: Re-read core_id() after save_context returns (you might be on a different
 
 WRONG: Holding THREAD_TABLE lock while calling restore_context()
 RIGHT: Drop the lock, then call restore_context()
+
+WRONG: Publishing a waker record (timeout entry, waiter record), then block_current() with no prepare_block()
+RIGHT: prepare_block(tid) first, with tid from current_tid(), then publish, then block_current() or cancel_block()
 ```
 
 ### 6.2 IPC
@@ -339,7 +364,7 @@ pub fn ipc_call(
     send_buf: &[u8],
     recv_buf: &mut [u8],
     timeout_ticks: u64,
-) -> i64                                 // channel.rs:33
+) -> i64                                 // channel.rs:99
 
 // Receive a message from a channel. Blocks if no message pending.
 // Returns (bytes_received, sender_tid) on success.
@@ -347,31 +372,31 @@ pub fn ipc_recv(
     channel: ChannelId,
     recv_buf: &mut [u8],
     timeout_ticks: u64,
-) -> Result<(usize, ThreadId), i64>     // channel.rs:232
+) -> Result<(usize, ThreadId), i64>     // channel.rs:401
 
 // Reply to a pending caller. No capability check required (spec §9.1).
 pub fn ipc_reply(
     channel: ChannelId,
     reply_buf: &[u8],
-) -> i64                                 // channel.rs:349
+) -> i64                                 // channel.rs:551
 
 // Non-blocking send (fire and forget).
 pub fn ipc_send(
     channel: ChannelId,
     send_buf: &[u8],
-) -> i64                                 // channel.rs:415
+) -> i64                                 // channel.rs:655
 
 // Create a new IPC channel. Requires ChannelCreate capability; returns the
 // id and the handle of the creator's minted ChannelAccess(id).
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<(ChannelId, CapabilityHandle), i64>   // ipc/mod.rs:285
+) -> Result<(ChannelId, CapabilityHandle), i64>   // ipc/mod.rs:312
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
     entries: &[SelectEntry],
     timeout_ticks: u64,
-) -> Result<(usize, u64), i64>          // select.rs:52
+) -> Result<(usize, u64), i64>          // select.rs:70
 ```
 
 **Gotchas**:

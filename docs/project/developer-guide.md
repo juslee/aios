@@ -606,13 +606,15 @@ AIOS uses three distinct error handling patterns, each suited to a different sit
 **Pattern 1: Syscall results** -- `Result<T, i64>` with numeric error code
 
 ```rust
-pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
-    let mut table = CHANNEL_TABLE.lock();
-    // Find free slot...
-    match free_slot {
-        Some(id) => Ok(ChannelId(id as u32)),
-        None => Err(IpcError::Enomem as i64),
-    }
+pub fn channel_create(creator: ThreadId) -> Result<(ChannelId, CapabilityHandle), i64> {
+    let pid = crate::cap::process_of_thread(creator).ok_or(IpcError::Eperm as i64)?;
+    // One PROCESS_TABLE hold: check ChannelCreate, publish the channel
+    // (`channel_alloc` returns ChannelId::new(slot, generation) or ENOSPC)
+    // and mint ChannelAccess(id) as a child of the authorising token.
+    crate::cap::create_with_access(pid, Capability::ChannelCreate, |auth| {
+        let id = channel_alloc(pid, Some(auth))?;
+        Ok((id, Capability::ChannelAccess(id)))
+    })
 }
 ```
 
@@ -1815,7 +1817,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Wedge or cut short.** A boot that misses rule 1 or 2 is a `WEDGE-STUCK`, and one that misses rule 3 a `WEDGE-ALIVE`, only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE-ALIVE`, since they only matter once the bench has completed. The harness warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
-**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess(S.G)`, 8 per boot, where `S.G` is the slot and generation of the channel id, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
 **Re-classifying saved logs.** `just soak --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE-STUCK` or `WEDGE-ALIVE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge. With `--out DIR` (`out=DIR`; new or empty, as for a soak), it also writes `summary.tsv` and `summary.md` for those logs through the soak's own report code: the boots are numbered in the order given, the `log` column holds each path as given, the timing columns come from each log's `[soak] meta` line (`-` without one), and the settings a set of logs cannot tell (commit, QEMU, firmware, host, load before and after) read `-`. Over the logs of a soak that finished, given in boot order by their bare `run-NN.log` names from the soak's directory (the `log` column copies the path as given, and a soak writes the bare name), it reproduces that soak's `summary.tsv` row for row when the soak's `runs` value had no leading zeros: a soak numbers its boots to the width of `runs` as typed (`runs=010` gives `001`…`010`), `--classify --out` to the width of the number of logs given (`01`…`10`).
 
@@ -2084,8 +2086,9 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Thread blocks and never wakes | Notification waiter not registered before signal | Ensure register-then-block ordering with table lock held across both |
-| IPC timeout never fires | `NOTIFY_DEADLINES` lock contention in timer IRQ | Use `try_lock()` in IRQ context, never blocking lock |
+| Thread blocks and never wakes | A wake landed between the waiter's publish and its block, or the site did not arm | Three rules for a waiting site: (1) `sched::prepare_block(tid)` inside, or before, the critical section that publishes the first record any waker can find the thread by (timeout entry, notification deadline, `pending_caller`, `waiting_receiver`, notification or select waiter record, `PROCESS_WAITERS` entry), with `tid` the caller's own, read with IRQs masked (`current_tid()`, or `current_thread_and_pid()` for SVC 25); (2) once armed, call `block_current` or `cancel_block`; (3) after `block_current` returns, re-check the condition under its own lock and loop, re-arming before each re-publish |
+| IPC timeout never fires | `NOTIFY_DEADLINES` lock contention in timer IRQ | Use `try_lock()` in IRQ context, never blocking lock; call `unblock` only after releasing the lock |
+| Use-after-free of region memory | A kernel thread read a shared region through the direct map after the region was destroyed | Read region memory only between `region_borrow` and `region_release`, never release under `PROCESS_TABLE` |
 | Double context switch corruption | `IN_SCHEDULER` guard not set | Set per-CPU `IN_SCHEDULER` AtomicBool before schedule(), clear after |
 | Direct switch to wrong thread | CURRENT_THREAD stale after save_context return | Re-read core ID from hardware (`MPIDR_EL1`) after save_context |
 

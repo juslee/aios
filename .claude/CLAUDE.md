@@ -134,16 +134,44 @@ swap) HANGS on Non-Cacheable Normal memory.
 Size classes: 5 (64, 128, 256, 512, 4096B); smaller rounds up to 64. Backed by frame allocator (kernel pool).
 
 # Concurrency / kernel correctness
-Lock ordering (full, M25):    PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE >
-                              SELECT_WAITERS > BLOCK_ENGINE > WINDOW_Z_ORDER > DRAG_STATE >
-                              SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} >
+Lock ordering (full, M25):    PROCESS_TABLE > PROCESS_WAITERS (leaf) > SHARED_REGION_TABLE >
+                              NOTIFICATION_TABLE > CHANNEL_TABLE > BLOCK_ENGINE > WINDOW_Z_ORDER >
+                              DRAG_STATE > SURFACE_TABLE >
+                              {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} >
                               {INPUT_QUEUE, PENDING_POINTER, FOCUS_MANAGER, CURSOR_POS,
                                TITLE_FONT (leaf, independent)}
-Capability enforcement:       channel_create → ChannelCreate;
+PROCESS_TABLE nesting:        PROCESS_TABLE → CHANNEL_TABLE (create, channel cascade) and
+                              PROCESS_TABLE → SHARED_REGION_TABLE (create, map, share, Kit
+                              destroy, region cascade, exit A) are both allowed edges. They are
+                              taken one after the other under one PROCESS_TABLE hold, never
+                              nested in each other.
+Capability enforcement:       channel_create → ChannelCreate, which mints ChannelAccess(new) as
+                              a child; shared_memory_create likewise (SharedMemoryCreate →
+                              SharedMemoryAccess(new));
                               ipc_call/send/recv/cancel, channel_destroy → ChannelAccess;
                               ipc_select → ChannelAccess (every channel entry; notification
                                entries unchecked);
+                              shared_memory_share → a live SharedMemoryAccess(full id),
+                               delegatable unless the target is the caller;
                               ipc_reply → NONE (spec §9.1).
+                              Revoking ChannelCreate or SharedMemoryCreate destroys the channels
+                              or regions created under it or a same-table descendant; the
+                              creator's exit destroys both.
+Id layout (cap-lifetime):     ChannelId and SharedMemoryId: slot bits 0-7, generation bits 8-31,
+                              first generation 1, 0 = retired (never issued). Logs print S.G.
+                              Process slots are never reused (a reaped pid is never installed
+                              again). Dead is terminal for a thread.
+Waiting sites (cap-lifetime): every wait arms with sched::prepare_block before it publishes any
+                              waker record (timeout entries and deadlines included), passes its
+                              own tid read with IRQs masked (current_tid(), or
+                              current_thread_and_pid() for SVC 25), and block_current asserts
+                              the arm. unblock of an Armed Running/Runnable thread leaves a
+                              token, which block_current consumes; Dead threads never take or
+                              consume one. Call unblock only after releasing the lock.
+Region memory (cap-lifetime): EL1 code reads region memory only between region_borrow and
+                              region_release, and never releases under PROCESS_TABLE.
+IPC call seq (step 14):       a reply or cancel binds to its call by a per-call seq
+                              (ReplySlot.seq, PendingCall); a mismatch is dropped (latereply).
 Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op returns a
                               FocusChange so the caller drops it before issuing IPC.
                               WINDOW_Z_ORDER and DRAG_STATE rank above SURFACE_TABLE
@@ -158,12 +186,15 @@ Dispatch bookkeeping (1b):    tripwire::note_dispatch runs at the 4 CURRENT_THRE
                               CURRENT_TID is written only there, under THREAD_TABLE, so it
                               equals CURRENT_THREAD while THREAD_TABLE is held.
 IRQ-class locks (1b):         THREAD_TABLE, CURRENT_THREAD[N], RUN_QUEUES[N], WAKEUP_ERRORS,
-                              TIMEOUT_QUEUE, NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS
-                              and BOOT_LOG are sync::IrqSpinLock (detect-only): spin::Mutex
+                              TIMEOUT_QUEUE, NOTIFY_DEADLINES, NOTIFICATION_TABLE and BOOT_LOG
+                              (8 statics) are sync::IrqSpinLock (detect-only): spin::Mutex
                               exclusion, word = owner stamp (cpu, SWITCH_GEN). A lock() by the
                               holder's own stream panics "lock re-entry:" (in main it would spin
                               forever); other contention only counts (tripwire lk* keys).
-                              Positions in deadlock-prevention.md §3.3 are unchanged.
+                              PROCESS_WAITERS stays a plain spin::Mutex outside the set; the
+                              heartbeat scan only try_locks it, alone. In
+                              deadlock-prevention.md §3.3 PROCESS_WAITERS is position 2, so every
+                              position below PROCESS_TABLE moved down by one (3-13).
 ```
 
 ---
