@@ -1,5 +1,5 @@
-//! `aios`: AIOS host tooling: `aios docs-check` (R1), `aios hook` (model
-//! routing) and `aios soak` (R4); later PRs add subcommands.
+//! `aios`: AIOS host tooling: `aios checkpoint` (R3), `aios docs-check` (R1),
+//! `aios hook` (model routing) and `aios soak` (R4); later PRs add subcommands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -17,6 +17,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Commit and push the work in progress of a claude/* branch, for /justin:pause (see `aios checkpoint --help`)
+    #[command(name = "checkpoint", disable_help_flag = true)]
+    Checkpoint(aios_tools::cmd::checkpoint::Args),
     /// Deterministic docs drift check against scripts/docs/baseline.json (exit 1 on new drift)
     #[command(name = "docs-check", infer_long_args = true, args_override_self = true)]
     DocsCheck(aios_tools::cmd::docs_check::Args),
@@ -65,7 +68,38 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::Checkpoint(_) => checkpoint(),
         Command::Soak(_) => soak(),
+    }
+}
+
+/// `aios checkpoint`. The raw arguments after `checkpoint` are parsed in argv order
+/// by the command itself (the soak pattern); clap only has to accept them.
+fn checkpoint() -> ExitCode {
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("checkpoint: cannot read the current directory: {err}");
+            return ExitCode::from(2);
+        }
+    };
+    let raw: Vec<OsString> = std::env::args_os().skip(2).collect();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
+    let result = aios_tools::cmd::checkpoint::run(&raw, &cwd, &mut out, &mut err);
+    let flushed = out.flush();
+    match (result, flushed) {
+        (Ok(code), Ok(())) => ExitCode::from(code),
+        (Ok(_), Err(e)) => {
+            let _ = writeln!(err, "checkpoint: cannot write output: {e}");
+            ExitCode::from(2)
+        }
+        (Err(e), _) => {
+            let _ = writeln!(err, "checkpoint: {e:#}");
+            ExitCode::from(2)
+        }
     }
 }
 

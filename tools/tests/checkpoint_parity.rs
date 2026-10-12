@@ -1,4 +1,4 @@
-//! `aios checkpoint` parity with the former `scripts/agent/checkpoint.sh` (R3, Task 2).
+//! `aios checkpoint` parity with the former script of `/justin:pause` (R3, Tasks 2 and 3).
 //!
 //! The oracle is the script's blob at `agent::CHECKPOINT_ORACLE` (#166), read from git
 //! history and run as `<bash> <script>` in a twin repository under the PATH jail. The
@@ -7,9 +7,18 @@
 //! macOS (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test checkpoint_parity --
 //! --ignored record_checkpoint_goldens`), through `agent::oracle_renames()` (the
 //! documented D1 and D5 renames) and `agent::normalize()`. 49 scenarios are
-//! differential and have a golden now; `cli_help`, `scan_git_failure_fails_closed` and
-//! `scan_git_failure_on_clean_tree` (`agent::DIVERGENT_SCENARIOS`) are aios-only and
-//! get theirs when the port lands. There is no port code yet, so only the oracle runs.
+//! differential. `cli_help`, `scan_git_failure_fails_closed` and
+//! `scan_git_failure_on_clean_tree` (`agent::DIVERGENT_SCENARIOS`) are aios-only: their
+//! goldens were blessed from the port, one scenario at a time, and reviewed by hand.
+//!
+//! The tests:
+//!
+//! - one `#[test]` per scenario, named after it: the aios binary against its golden;
+//! - `oracle_reproduces_checkpoint_goldens`: the oracle against the 49 goldens;
+//! - `checkpoint_differential_against_oracle` and, where `/bin/bash` is 3.2 (macOS),
+//!   `checkpoint_differential_under_bin_bash_3_2`: the oracle and aios in twin
+//!   repositories over the 49 differential scenarios, comparing everything a golden
+//!   holds plus the HEAD sha and its author and committer.
 //!
 //! A golden holds these sections, in order: `exit`, `stdout`, `stderr`, `origin refs`
 //! (`git for-each-ref` of the bare origin), `HEAD message`, `index` (`git write-tree`
@@ -18,12 +27,12 @@
 //! scan's `<path>\t<reason>` lines through stdout and never the matched text.
 //!
 //! Every scenario also runs `assert_not_vacuous`, `assert_origin_invariants` and the
-//! fake gh's `CHECKPOINT_GH_ALLOW` allowlist (the one shared runner, [`run_case`]).
+//! fake gh's `CHECKPOINT_GH_ALLOW` allowlist (the one shared checks, [`check_outcome`]).
 //! Test data builds token-shaped strings from fragments (contract §10).
 
 mod common;
 
-use common::agent::{self, Outcome, Scenario, Sub, DIVERGENT_SCENARIOS};
+use common::agent::{self, Outcome, Scenario, Sub, Twin, DIVERGENT_SCENARIOS};
 use common::{isolated, parallel_map};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -38,7 +47,8 @@ struct Case {
 }
 
 /// The scenario table. Each `scenario!(<name>, [<args>], <builder>[, <check>])` at
-/// column 0 declares one entry; the builder takes the scenario's name.
+/// column 0 declares one entry (the builder takes the scenario's name) and one
+/// `#[test]` of the same name, which runs aios on it against its golden.
 macro_rules! scenarios {
     (@check) => {
         None
@@ -53,6 +63,13 @@ macro_rules! scenarios {
             build: $build,
             check: scenarios!(@check $($check)?),
         }),*];
+
+        $(
+            #[test]
+            fn $name() {
+                aios_matches_golden(stringify!($name));
+            }
+        )*
     };
 }
 
@@ -73,28 +90,24 @@ fn pem_header() -> String {
     format!("{}{}", "-----BEGIN RSA", " PRIVATE KEY-----")
 }
 
-/// Where a scenario file lands in the fake root's `bin`: the first directory of the
-/// PATH `jail::hermetic` builds. The twin root is `<base>/root` and the fake root is
-/// `<base>/fake`.
-const FAKE_BIN_GIT: &str = "../fake/bin/git";
-
 /// A `git` wrapper in front of the jail's: the call whose space-joined argv matches the
 /// shell `case` pattern prints one stderr line and exits 128; every other call runs the
-/// real git, which the wrapper finds as `<base>/jail/bin/git` from its own path.
+/// real git, which the wrapper finds through `agent::REAL_BIN_ENV`
+/// (`AIOS_TEST_REAL_BIN`, the jail's `bin` directory).
 fn git_fails(scenario: Scenario, pattern: &str) -> Scenario {
     let script = format!(
         "#!/bin/sh\n\
          # Fails the git call matching the case pattern; every other call runs the real git.\n\
-         real=$(cd \"$(dirname \"$0\")/../..\" && pwd -P)/jail/bin/git\n\
          case \" $* \" in\n\
          {pattern})\n\
          \x20   echo \"fatal: injected git failure\" >&2\n\
          \x20   exit 128\n\
          \x20   ;;\n\
          esac\n\
-         exec \"$real\" \"$@\"\n"
+         exec \"${}/git\" \"$@\"\n",
+        agent::REAL_BIN_ENV
     );
-    scenario.file_mode(FAKE_BIN_GIT, script, 0o755)
+    scenario.fake_tool("git", &script)
 }
 
 /// `git <args>` at the root in setup, tolerating a non-zero exit: a conflicted merge,
@@ -147,6 +160,42 @@ fn index_restored(outcome: &Outcome) {
             "no {line:?} in:\n{status}"
         );
     }
+}
+
+/// D9: a git failure inside the secret scan fails closed. The exit is 1 and stdout never
+/// says `Safe to /clear`, whatever else is clean; the index is as it was, nothing was
+/// committed, and origin did not move (not even for an unpushed non-wip commit). These
+/// asserts stay in Rust, so a re-bless of the golden cannot weaken them.
+fn failed_closed(outcome: &Outcome) {
+    let stdout = outcome.stdout_str();
+    assert_eq!(outcome.code, 1, "stdout:\n{stdout}");
+    assert!(
+        !stdout.lines().any(|l| l.starts_with("Safe to /clear")),
+        "a failed scan must never say Safe to /clear:\n{stdout}"
+    );
+    let first = stdout.lines().next().unwrap_or_default();
+    assert!(
+        first.contains(
+            "| wip: not committed (secret scan failed: fatal: injected git failure) \
+             | pushed: no (secret scan failed) |"
+        ),
+        "the first line:\n{first}"
+    );
+    let state = &outcome.repo_state;
+    assert!(state.index_tree_before.is_some());
+    assert_eq!(
+        state.index_tree_before, state.index_tree_after,
+        "the index is as it was"
+    );
+    assert_eq!(state.head_before, state.head_after, "nothing was committed");
+    assert_eq!(
+        state.origin_refs_before, state.origin_refs_after,
+        "nothing was pushed"
+    );
+    assert!(
+        stdout.contains("/clear keeps all of it on disk; run /justin:start after."),
+        "{stdout}"
+    );
 }
 
 /// Run from `docs/`, the commit holds the file at the root as well as the one in
@@ -388,9 +437,11 @@ scenario!(scan_git_failure_fails_closed, [],
             .file("feature.txt", "a feature\n")
             .commit("add feature")
             .file("notes.txt", "work in progress\n"),
-        "*\" log \"*\" -p \"*"));
+        "*\" log -p \"*"),
+    failed_closed);
 scenario!(scan_git_failure_on_clean_tree, [],
-    |n| git_fails(on_x(n), "*\" diff --cached --name-only --no-renames \"*"));
+    |n| git_fails(on_x(n), "*\" diff --cached --name-only --no-renames \"*"),
+    failed_closed);
 }
 
 /// Whether the scenario's golden is aios-only (no oracle run records it).
@@ -434,8 +485,16 @@ fn tree_line(tree: &Option<String>) -> &str {
     tree.as_deref().unwrap_or("none")
 }
 
-/// The golden text of one oracle run.
-fn render_golden(outcome: &Outcome) -> Vec<u8> {
+/// The golden text of one run. An oracle run goes through `agent::oracle_renames()`
+/// (the documented D1 and D5 renames); an aios run is recorded as it is.
+fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
+    let rename = |text: &[u8]| {
+        if oracle {
+            agent::oracle_renames(text, outcome)
+        } else {
+            text.to_vec()
+        }
+    };
     let state = &outcome.repo_state;
     let twin = outcome.twin();
     let ceiling = twin.root().parent().expect("the twin root has a parent");
@@ -473,16 +532,8 @@ fn render_golden(outcome: &Outcome) -> Vec<u8> {
         "exit",
         format!("{}\n", outcome.code).as_bytes(),
     );
-    section(
-        &mut golden,
-        "stdout",
-        &agent::oracle_renames(&outcome.stdout, outcome),
-    );
-    section(
-        &mut golden,
-        "stderr",
-        &agent::oracle_renames(&outcome.stderr, outcome),
-    );
+    section(&mut golden, "stdout", &rename(&outcome.stdout));
+    section(&mut golden, "stderr", &rename(&outcome.stderr));
     section(&mut golden, "origin refs", origin_refs.as_bytes());
     section(
         &mut golden,
@@ -508,18 +559,23 @@ fn render_golden(outcome: &Outcome) -> Vec<u8> {
     agent::normalize(&golden, outcome)
 }
 
-/// Run `case`'s oracle in its twin and apply the invariants every scenario shares.
-fn run_case(case: &Case) -> Outcome {
-    let scenario = (case.build)(case.name);
-    let outcome = agent::run_oracle(&scenario, case.args);
-    agent::assert_not_vacuous(&outcome);
-    agent::assert_origin_invariants(&outcome);
+/// The invariants every scenario shares, and the scenario's own check.
+fn check_outcome(case: &Case, outcome: &Outcome) {
+    agent::assert_not_vacuous(outcome);
+    agent::assert_origin_invariants(outcome);
     if let Some(gh) = outcome.twin().fake_gh() {
         gh.assert_calls_match(agent::CHECKPOINT_GH_ALLOW);
     }
     if let Some(check) = case.check {
-        check(&outcome);
+        check(outcome);
     }
+}
+
+/// Run `case`'s oracle in its twin and apply the invariants every scenario shares.
+fn run_case(case: &Case) -> Outcome {
+    let scenario = (case.build)(case.name);
+    let outcome = agent::run_oracle(&scenario, case.args);
+    check_outcome(case, &outcome);
     outcome
 }
 
@@ -596,7 +652,7 @@ fn oracle_reproduces_checkpoint_goldens() {
         if !agent::oracle_runs_here(case.name) {
             return None;
         }
-        let got = String::from_utf8_lossy(&render_golden(&run_case(case))).into_owned();
+        let got = String::from_utf8_lossy(&render_golden(&run_case(case), true)).into_owned();
         let path = dir.join(format!("{}.golden", case.name));
         let want = std::fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!(
@@ -617,6 +673,112 @@ fn oracle_reproduces_checkpoint_goldens() {
     );
 }
 
+fn case_named(name: &str) -> &'static Case {
+    CASES
+        .iter()
+        .find(|case| case.name == name)
+        .unwrap_or_else(|| panic!("no scenario named {name}"))
+}
+
+/// aios on scenario `name` against its golden. The goldens of the three aios-only
+/// scenarios are blessed from this run (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools
+/// --test checkpoint_parity <name>`, one scenario at a time, reviewed by hand); the 49
+/// differential goldens are recorded from the oracle only, so a bless run leaves them.
+fn aios_matches_golden(name: &str) {
+    let case = case_named(name);
+    let scenario = (case.build)(case.name);
+    let outcome = agent::run_aios(&scenario, "checkpoint", case.args);
+    check_outcome(case, &outcome);
+    let got = String::from_utf8_lossy(&render_golden(&outcome, false)).into_owned();
+    let path = golden_dir().join(format!("{name}.golden"));
+    if is_divergent(name) && common::soak::bless() {
+        std::fs::create_dir_all(golden_dir()).expect("create the golden directory");
+        std::fs::write(&path, &got).expect("write an aios-only golden");
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e} (an aios-only golden is blessed with AIOS_BLESS_GOLDENS=1 cargo test -p \
+             aios-tools --test checkpoint_parity {name})",
+            path.display()
+        )
+    });
+    assert!(
+        want == got,
+        "{name}: aios no longer matches its golden: {}\n--- stdout\n{}\n--- stderr\n{}",
+        first_difference(&want, &got),
+        outcome.stdout_str(),
+        outcome.stderr_str()
+    );
+}
+
+/// Everything a golden holds, plus the HEAD sha and its author and committer (the
+/// pinned `aios-test` identity of the `wip` commit).
+fn observed(outcome: &Outcome, oracle: bool) -> String {
+    let twin = outcome.twin();
+    let ceiling = twin.root().parent().expect("the twin root has a parent");
+    let head = probe(
+        twin.run_dir(),
+        ceiling,
+        &["log", "-1", "--format=%H|%an <%ae>|%cn <%ce>"],
+    );
+    format!(
+        "{}== HEAD ==\n{}\n",
+        String::from_utf8_lossy(&render_golden(outcome, oracle)),
+        head.as_deref().unwrap_or("(none)")
+    )
+}
+
+/// The oracle (run by `bash`) and aios, in twin repositories, over the 49 differential
+/// scenarios.
+fn differential(bash: &Path) {
+    assert_table_is_sound();
+    let cases = differential_cases();
+    assert_eq!(cases.len(), 49, "the non-divergent scenarios");
+    let failures: Vec<String> = parallel_map(&cases, |case| {
+        if !agent::oracle_runs_here(case.name) {
+            return None;
+        }
+        let scenario = (case.build)(case.name);
+        let oracle = agent::run_oracle_with(&scenario, Twin::Oracle, bash, case.args);
+        check_outcome(case, &oracle);
+        let aios = agent::run_aios(&scenario, "checkpoint", case.args);
+        check_outcome(case, &aios);
+        let (want, got) = (observed(&oracle, true), observed(&aios, false));
+        (want != got).then(|| format!("{}: {}", case.name, first_difference(&want, &got)))
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(
+        failures.is_empty(),
+        "aios differs from the oracle in these scenarios:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn checkpoint_differential_against_oracle() {
+    differential(&agent::require_tools().bash);
+}
+
+/// The same with the oracle run by macOS's `/bin/bash` 3.2, which the script supports.
+#[test]
+fn checkpoint_differential_under_bin_bash_3_2() {
+    let bash = Path::new("/bin/bash");
+    let version = Command::new(bash).arg("--version").output();
+    let is_3_2 = version.as_ref().is_ok_and(|out| {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains("version 3.2"))
+    });
+    if !is_3_2 {
+        println!("no /bin/bash 3.2 here");
+        return;
+    }
+    differential(bash);
+}
+
 /// Record the 49 differential goldens from the oracle. Review the diff.
 #[test]
 #[ignore = "rewrites the goldens from the oracle: AIOS_BLESS_GOLDENS=1 ... -- --ignored record_checkpoint_goldens"]
@@ -629,7 +791,7 @@ fn record_checkpoint_goldens() {
     let dir = golden_dir();
     std::fs::create_dir_all(&dir).expect("create the golden directory");
     let cases = differential_cases();
-    let goldens = parallel_map(&cases, |case| render_golden(&run_case(case)));
+    let goldens = parallel_map(&cases, |case| render_golden(&run_case(case), true));
     for (case, golden) in cases.iter().zip(goldens) {
         std::fs::write(dir.join(format!("{}.golden", case.name)), golden).expect("write a golden");
     }

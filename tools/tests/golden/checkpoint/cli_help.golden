@@ -1,0 +1,52 @@
+== exit ==
+0
+== stdout ==
+aios checkpoint - deterministic work-in-progress checkpoint for /justin:pause
+
+Usage: aios checkpoint [--handoff saved|not-saved] [--allow <path>]...
+
+Commits and pushes only in the current checkout (a linked worktree is fine):
+ 1. Commits only on a claude/* branch, never on main or a detached HEAD, and not
+    while a merge, cherry-pick, revert, rebase or bisect is in progress, or paths
+    are unmerged.
+ 2. Stages everything that is not gitignored, except .remember/ and __pycache__/.
+    Before any commit it scans the staged changes and the local commits not yet on
+    origin: a path new to the repo that looks like a secret (.env, *.pem, *.key,
+    id_rsa*, *credential*, *secret*, ...) or an added line that looks like a
+    private key or access token stops the checkpoint, and so does a git failure
+    inside the scan. On a stop the index is restored exactly and nothing is
+    committed or pushed. --allow <path> (repeatable, exact repo-relative path as
+    listed) lets a flagged path through; pass it only for paths the user confirmed
+    are safe to publish.
+ 3. Commits "wip: checkpoint <branch>" when anything is staged.
+ 4. Pushes the branch under its own name when it has commits that are not on
+    origin, also when the tree was already clean. Never forced, never with
+    --no-verify. Wip commits stay local while the branch has an open PR that is
+    ready for review (each push to it starts CI and the Claude review), and also
+    when gh cannot tell whether such a PR exists.
+ 5. Lists every other worktree that has uncommitted files or commits not on
+    origin. It never commits there: a background agent may be working in it.
+ 6. Prints one checkpoint line, then "Safe to /clear" only when no worktree holds
+    work that is not on origin.
+
+Options:
+  --handoff saved|not-saved   record in the checkpoint line whether the handoff
+                              file was written (default: not recorded)
+  --allow <path>              let one flagged repo-relative path through
+  -h, --help                  print this text
+
+Exit status: 0 no worktree holds work that is not on origin; 1 uncommitted files or
+commits not on origin remain here or in another worktree (the output says where and
+why), or the secret scan failed; 3 stopped on a possible secret; 2 usage error.
+== stderr ==
+== origin refs ==
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+Initial
+== index ==
+before 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+after 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+== upstream ==
+refs/heads/main
+== gh calls ==
+(none)

@@ -424,8 +424,8 @@ Conventions for every task:
     - After placement and push, the lead checks `gh run view <run-id> --log | grep -c 'test oracle_reproduces_checkpoint_goldens ... ok'` = 1 (ubuntu-26.04). A failure there adds the scenario to `PLATFORM_SCENARIOS`, with its tool and oracle line, in a follow-up worker commit.
     - An identity or sha mismatch (a failed `wip` commit, an author other than `aios-test`, or a commit sha that differs between twins or between macOS and CI) is never a `PLATFORM_SCENARIOS` case: it is a harness bug in `twin_command`'s identity env or date pinning (Task 1e), fixed there in a follow-up worker commit.
 
-- [ ] **Task 3: `aios checkpoint` (port)** (worker, background)
-  - [ ] 3a: `tools/src/cmd/checkpoint/mod.rs`: `pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -> anyhow::Result<u8>`.
+- [x] **Task 3: `aios checkpoint` (port)** (worker, background)
+  - [x] 3a: `tools/src/cmd/checkpoint/mod.rs`: `pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Write) -> anyhow::Result<u8>`.
     - **Parser.** A hand parser takes the arguments in argv order, as the script does:
       - `--allow`: empty or `-*` → exit 2; strip one `./`;
       - `--handoff saved|not-saved`: the last one wins;
@@ -449,7 +449,7 @@ Conventions for every task:
       - The rejection-reason extraction is the script's.
     - **Output.** The recount, the line formats, the unused allows, the exit-3 block, and the other worktrees with the D5 hint (`<main>` = the first porcelain worktree), then the final lines.
     - Verify: T(`--lib checkpoint::tests::`) ≥ 1 (the parser table).
-  - [ ] 3b: `tools/src/cmd/checkpoint/scan.rs`.
+  - [x] 3b: `tools/src/cmd/checkpoint/scan.rs`.
     - `SECRET_PATH_RE` and `SECRET_TEXT_RE` as `regex::bytes`, copied verbatim from the oracle; the path regex uses `(?i-u)` (D8). `EXCLUDES`.
     - `new_paths()`, with `-c core.quotePath=false --no-renames --diff-filter=A` (staged changes plus `log HEAD --not --remotes=origin`).
     - `added_lines(patch: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)>`, a line-for-line port of the awk.
@@ -459,22 +459,22 @@ Conventions for every task:
     - Unit tables: a hit and a near-miss for each regex alternative; `+++ /dev/null`; a quoted path; invalid-UTF-8 path bytes; `ſecret` and `K` (Kelvin) not folded; token-shaped inputs built from fragments.
     - `scan_fails_closed_on_each_git_call`: a table over a fake `run` (synthetic `Output`s, with `ExitStatusExt::from_raw`, no process spawned) in which call k (k = 1..4) exits 128 with one stderr line and the others succeed. Each row expects `Err(ScanError { call: k, .. })` with that line; a fifth row fails the spawn of call 1 (`io::Error`); a sixth row has `rev-parse` fail and asserts that calls 2 and 4 are never issued and the result is `Ok`.
     - Verify: T(`--lib checkpoint::scan::`) ≥ 7; T(`--lib scan_fails_closed_on_each_git_call`) = 1.
-  - [ ] 3c: `tools/src/cmd/checkpoint/others.rs`.
+  - [x] 3c: `tools/src/cmd/checkpoint/others.rs`.
     - Other worktrees come from `git::worktrees` and are compared with `canonicalize`; missing directories are skipped.
     - Each is checked with `--no-optional-locks status --porcelain --untracked-files=all -- . <EXCLUDES>` and `rev-list --count HEAD --not --remotes=origin`.
     - Verify: T(`--lib checkpoint::others::`) ≥ 1 (a unit test: a missing worktree directory is skipped, and the current one is excluded).
-  - [ ] 3d: Wire it up.
+  - [x] 3d: Wire it up.
     - `tools/src/main.rs`: `Command::Checkpoint`, before `DocsCheck` (variants are alphabetical; R2 adds `Loop` between `Hook` and `Soak`). It uses `disable_help_flag` and raw `std::env::args_os().skip(2)`, the soak pattern (main.rs L26 and L82). `Err` → `checkpoint: <err:#>`, exit 2.
     - `tools/src/cmd/mod.rs`: `pub mod checkpoint;`.
     - Update the `lib.rs` crate doc and the `tools/Cargo.toml` description (L7) to `… (checkpoint, docs-check, hook, soak; agent-loop commands in later PRs)`. Task 6f adds `brief, `, so the final line is the contract's `AIOS host tooling: the aios binary (brief, checkpoint, docs-check, hook, soak; agent-loop commands in later PRs)`.
     - Verify (run after 3e is written, in the same commit): T(`--test checkpoint_parity cli_unknown`) = 1; `git diff -U0 origin/main...HEAD -- tools/Cargo.toml | grep -cE '^[-+][^-+]'` = 2 (A5; run after the commit).
-  - [ ] 3e: Tests added in this commit:
+  - [x] 3e: Tests added in this commit:
     - the 52 per-scenario `#[test]`s: the `scenario!` arm of 2a, aios only, against the golden; they need no bash or jq.
     - The three aios-only goldens, blessed from aios one scenario at a time (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test checkpoint_parity cli_help`, then the same with `scan_git_failure_fails_closed`, then with `scan_git_failure_on_clean_tree`), and reviewed by hand in the commit against the D9 output in Code Structure Decisions. Besides the golden, both D9 scenarios assert in Rust that stdout has no `Safe to /clear` line and that the exit is 1, so a re-bless cannot weaken them.
     - `checkpoint_differential_against_oracle`: twin repos, over the 49 non-divergent scenarios, comparing normalised stdout, exit, origin refs, HEAD message, HEAD sha and author/committer (`aios-test`, Task 1e's identity env), index, upstream and gh calls, run with `parallel_map`.
     - `checkpoint_differential_under_bin_bash_3_2`: the same differential with the oracle run by `/bin/bash`, only where `/bin/bash --version` reports 3.2 (macOS). Elsewhere it prints "no /bin/bash 3.2 here" and returns.
     - Verify: `ls tools/tests/golden/checkpoint/*.golden | wc -l` = 52; T(`--test checkpoint_parity scan_git_failure_`) = 2.
-  - [ ] 3f: Mutation checks. These are uncommitted, in the writer's worktree; afterwards run `git checkout -- tools/src`.
+  - [x] 3f: Mutation checks. These are uncommitted, in the writer's worktree; afterwards run `git checkout -- tools/src`.
     - Remove `--diff-filter=A` → `modified_tracked_creds_not_flagged` fails.
     - Drop the `wip:` hold → `ready_pr_holds_wip`, `gh_fails_holds_wip` and `gh_missing_holds_wip` fail.
     - Build the refspec as `HEAD:refs/heads/<b>` → `tracking_origin_main_pushes_branch_only` fails.
@@ -483,7 +483,7 @@ Conventions for every task:
     - Keep `cwd` instead of the toplevel → `run_from_subdirectory` fails.
     - On a scan failure, fall through to the script's final-line logic (print `Safe to /clear` and exit 0 when nothing is dirty or unpushed) → `scan_git_failure_on_clean_tree` fails.
     - Verify: under each mutation, `cargo test -p aios-tools --test checkpoint_parity <one named test>` exits non-zero; afterwards `git status --porcelain -- tools/src` prints nothing. The writer lists the seven results in its report.
-  - [ ] 3g: Verify: T(`--test checkpoint_parity`) = 55 (52 per-scenario tests + `oracle_reproduces_checkpoint_goldens` + 2 differentials); T(`--lib checkpoint::`) ≥ 9; `git grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only files under `tools/src/cmd/checkpoint/`; G.
+  - [x] 3g: Verify: T(`--test checkpoint_parity`) = 55 (52 per-scenario tests + `oracle_reproduces_checkpoint_goldens` + 2 differentials); T(`--lib checkpoint::`) ≥ 9; `git grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only files under `tools/src/cmd/checkpoint/`; G.
 
 - [ ] **Task 4: Brief scenarios, gh fixtures and goldens recorded from the oracle (no port code)** (worker, background; 4e partly lead)
   - [ ] 4a: Fixtures under `tools/tests/fixtures/brief/<scenario>/`:

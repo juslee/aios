@@ -402,6 +402,7 @@ pub struct Scenario {
     docs_stale: bool,
     env: Vec<(String, String)>,
     aios_env: Vec<(String, String)>,
+    fake_tools: Vec<(String, String)>,
     expect: Expect,
     start: OnceLock<StartState>,
 }
@@ -423,6 +424,7 @@ impl Scenario {
             docs_stale: false,
             env: Vec::new(),
             aios_env: Vec::new(),
+            fake_tools: Vec::new(),
             expect: Expect {
                 sub,
                 gh: sub == Sub::Brief,
@@ -561,6 +563,23 @@ impl Scenario {
     /// The same, for the aios run only.
     pub fn aios_env(mut self, key: &str, value: &str) -> Scenario {
         self.aios_env.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    /// A fake tool `name` in front of the jail's: `script` is written as an executable
+    /// file in the twin's fake bin directory, the first entry of the jail PATH. This is
+    /// the one way a scenario puts a fake tool there; it does not depend on the twin's
+    /// directory layout.
+    ///
+    /// A fake that calls through to the real tool finds the jail's `bin` directory in
+    /// the variable [`REAL_BIN_ENV`] (`exec "$AIOS_TEST_REAL_BIN/git" "$@"`). The runner
+    /// sets it for the oracle and the aios run alike.
+    pub fn fake_tool(mut self, name: &str, script: &str) -> Scenario {
+        assert!(
+            !name.is_empty() && !name.contains('/') && name != "gh" && name != "aios-fake-docs",
+            "fake_tool: {name:?} is not a plain tool name (gh and aios-fake-docs have their own fakes)"
+        );
+        self.fake_tools.push((name.to_string(), script.to_string()));
         self
     }
 
@@ -755,6 +774,11 @@ impl TwinDir {
     }
 }
 
+/// The variable holding the jail's `bin` directory (the real tools) for a fake tool
+/// installed with [`Scenario::fake_tool`]. `twin_command` sets it after `hermetic`,
+/// which strips every `AIOS_*` variable it inherits, so no allow list changes.
+pub const REAL_BIN_ENV: &str = "AIOS_TEST_REAL_BIN";
+
 /// 2026-01-01T00:00:00Z.
 const EPOCH_BASE: u64 = 1_767_225_600;
 /// The commit date `n` seconds after it that a run (a checkpoint `wip` commit) uses.
@@ -867,6 +891,9 @@ impl Scenario {
             FAKE_DOCS.as_bytes(),
             0o755,
         );
+        for (name, script) in &self.fake_tools {
+            write_file(&fake.join("bin").join(name), script.as_bytes(), 0o755);
+        }
         if let Some((out, err, rc)) = &self.docs {
             write_file(&fake.join("docs/out"), out, 0o644);
             write_file(&fake.join("docs/err"), err, 0o644);
@@ -1047,6 +1074,7 @@ impl Scenario {
         let mut cmd = Command::new(program);
         jail::hermetic(&mut cmd, &twin.fake_bin(), &twin.jail_bin);
         pin_identity(&mut cmd, RUN_DATE);
+        cmd.env(REAL_BIN_ENV, &twin.jail_bin);
         let root = twin.root.to_str().expect("a UTF-8 root path");
         let vars = self
             .env
@@ -1121,10 +1149,17 @@ pub fn run_oracle(scenario: &Scenario, args: &[&str]) -> Outcome {
 /// Run the oracle script in either twin (the identity test runs it in both).
 pub fn run_oracle_in(scenario: &Scenario, twin: Twin, args: &[&str]) -> Outcome {
     let tools = require_tools();
+    run_oracle_with(scenario, twin, &tools.bash, args)
+}
+
+/// The same with an explicit `bash` (the 3.2 differential runs the oracle under
+/// `/bin/bash`).
+pub fn run_oracle_with(scenario: &Scenario, twin: Twin, bash: &Path, args: &[&str]) -> Outcome {
+    require_tools();
     let dir = scenario.prepare(twin);
     let mut full = vec![oracle_script(scenario.sub.oracle()).into_os_string()];
     full.extend(args.iter().map(OsString::from));
-    execute(scenario, dir, twin, tools.bash.as_os_str(), &full, false)
+    execute(scenario, dir, twin, bash.as_os_str(), &full, false)
 }
 
 /// Run the aios binary under test in the aios twin: `aios <sub> args`.
