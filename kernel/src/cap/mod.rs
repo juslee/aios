@@ -1,8 +1,10 @@
 //! Capability system — per-process capability tables and enforcement.
 //!
 //! Each process holds a `CapabilityTable` of up to 256 tokens. IPC operations
-//! check capabilities before proceeding. Revocation cascades to child tokens
-//! and destroys channels created under the revoked capability.
+//! check capabilities before proceeding. A checked create mints the creator's
+//! access token as a child of the authorising create token
+//! (`create_with_access`). Revocation cascades to child tokens and destroys
+//! the channels the process created under a revoked token.
 //!
 //! Per model/layers.md §2.2, model/capabilities.md §3.1–3.5, ipc.md §8.1–8.3.
 
@@ -10,7 +12,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::observability::metrics::METRICS;
 use crate::syscall::IpcError;
-use crate::task::process::{process_mut, process_ref, process_slot_mut, ProcessId, PROCESS_TABLE};
+use crate::task::process::{process_mut, process_ref, ProcessId, PROCESS_TABLE};
 use crate::task::{ThreadId, CURRENT_THREAD, THREAD_TABLE};
 
 // Re-export shared types for ergonomic kernel-side imports.
@@ -54,39 +56,74 @@ pub fn current_process_id() -> Option<ProcessId> {
     process_of_thread(current?)
 }
 
-/// Error for a `check_*` function whose `process_ref` lookup failed.
+/// Error for a `check_*` function or `create_with_access` whose process
+/// lookup failed.
 ///
-/// The pid a `check_*` function checks is never a syscall argument. It is the
-/// calling thread's `owner_pid` (via `current_process_id` or
-/// `process_of_thread`), or the pid a kernel caller passes to
-/// `shared_memory_create` / `shared_memory_map`. An out-of-range pid is
-/// therefore handled like a pid with no process: a denial, EPERM, counted in
-/// `ipc_cap_denied`. Neither case logs a warning.
+/// The pid they check is never a syscall argument. It is the calling
+/// thread's `owner_pid` (via `current_process_id` or `process_of_thread`),
+/// or the pid a kernel caller passes to `shared_memory_create` /
+/// `shared_memory_map`. An out-of-range pid is therefore handled like a pid
+/// with no process: a denial, EPERM, counted in `ipc_cap_denied`. Neither
+/// case logs a warning.
 fn deny_missing_process(_lookup_err: i64) -> i64 {
     #[cfg(feature = "kernel-metrics")]
     METRICS.ipc_cap_denied.inc();
     IpcError::Eperm as i64
 }
 
-/// Check that a process holds ChannelCreate capability.
-/// Returns the authorizing token ID on success (for recording in Channel.creation_cap).
-pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
+/// Create an object under `pid`'s `create` capability and mint the creator's
+/// access token for it, in one `PROCESS_TABLE` hold (capability-lifetime ADR
+/// §2).
+///
+/// In order, under the hold:
+/// 1. `pid`'s process must exist (EPERM otherwise, as `deny_missing_process`).
+/// 2. A live token must authorise `create`; on a miss, log the usual
+///    `denied <create>` warning and return EPERM.
+/// 3. The process's table needs a free slot for the minted token, else
+///    ENOSPC. Nothing has been published yet.
+/// 4. `publish(auth)` puts the object in its table with `auth` as its
+///    `creation_cap` and returns the object and the access capability for its
+///    full id. It nests `CHANNEL_TABLE` or `SHARED_REGION_TABLE` under
+///    `PROCESS_TABLE` (both allowed edges), never takes `PROCESS_TABLE`,
+///    never wakes a thread and never frees memory: its error (a full object
+///    table) is returned as it is, and the caller cleans up after the hold.
+/// 5. The access capability is minted as a child of `auth`
+///    (`CapabilityTable::mint_child`), so revoking `auth` revokes it.
+///
+/// A concurrent revoke of `auth` therefore runs wholly before step 2 or
+/// wholly after step 5, and an object never outlives a revoke of the token it
+/// records. Returns the object and the minted token's handle.
+///
+/// # Panics
+///
+/// If the mint fails after step 3 checked the slot and step 2 the parent:
+/// both hold under the same `PROCESS_TABLE` hold, so a failure is a kernel
+/// bug.
+pub fn create_with_access<T>(
+    pid: ProcessId,
+    create: Capability,
+    publish: impl FnOnce(CapabilityTokenId) -> Result<(T, Capability), i64>,
+) -> Result<(T, CapabilityHandle), i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
-    let table = PROCESS_TABLE.lock();
-    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
+    let mut table = PROCESS_TABLE.lock();
+    let proc = process_mut(&mut table, pid).map_err(deny_missing_process)?;
 
-    match proc
-        .cap_table
-        .find_authorizing_token(&Capability::ChannelCreate, now)
-    {
-        Some(token_id) => Ok(token_id),
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            crate::kwarn!(Cap, "pid={}: denied ChannelCreate", pid.0);
-            Err(IpcError::Eperm as i64)
-        }
+    let Some(auth) = proc.cap_table.find_authorizing_token(&create, now) else {
+        #[cfg(feature = "kernel-metrics")]
+        METRICS.ipc_cap_denied.inc();
+        crate::kwarn!(Cap, "pid={}: denied {:?}", pid.0, create);
+        return Err(IpcError::Eperm as i64);
+    };
+    if proc.cap_table.free_slots() == 0 {
+        return Err(IpcError::Enospc as i64);
     }
+
+    let (object, access) = publish(auth)?;
+    let handle = proc
+        .cap_table
+        .mint_child(auth, access, pid, new_token_id(), now)
+        .expect("create_with_access: mint failed under the hold");
+    Ok((object, handle))
 }
 
 /// Check that a process holds ChannelAccess(channel_id) capability.
@@ -168,10 +205,19 @@ pub fn check_shared_memory_access(
     }
 }
 
-/// Grant a capability to a process. Returns the handle.
+/// Grant a capability to a process as a parentless token. Returns the handle.
 ///
 /// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES` and `Err(EPERM)` when
 /// no such process exists.
+///
+/// **Rule** (capability-lifetime ADR §11): at runtime, an object-bound token
+/// (`ChannelAccess`, `SharedMemoryAccess`, `GpuBufferAccess`) comes only from
+/// `create_with_access`, which mints it for the creator, or from
+/// `shared_memory_share`, which delegates it. Ambient grants of one through
+/// this function are allowed only in init code before `enter_scheduler` and
+/// in self-tests: an interim exception to owner decision 1 (#163, never by
+/// ambient grant), with the kernel acting as the Service Manager until
+/// `CapabilityTransfer` exists.
 pub fn grant_to_process(
     pid: ProcessId,
     cap: Capability,
@@ -196,30 +242,70 @@ pub fn grant_to_process(
     proc.cap_table.grant(token)
 }
 
-/// Revoke a capability token in a process and destroy channels created under it.
+/// Revoke a capability token in a process, with its same-table descendants,
+/// and destroy every channel the process created under a token that is now
+/// revoked.
 ///
-/// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES`, before revoking or
-/// destroying anything. For an in-range pid whose slot is empty, the cap-table
-/// step is skipped and the channel cascade still runs.
+/// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES` and `Err(EPERM)` for a
+/// pid whose slot holds no process, before revoking or destroying anything.
+///
+/// Locks: `PROCESS_TABLE`, with `CHANNEL_TABLE` nested for the channel
+/// collection (an allowed edge); the channels are destroyed after both are
+/// released, because a destroy wakes the threads blocked on them.
 pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) -> Result<(), i64> {
-    // Reject an out-of-range pid before taking any lock.
-    if pid.index().is_none() {
-        return Err(IpcError::Einval as i64);
-    }
-
-    // First, revoke in the process's cap table.
-    {
+    let mut doomed = [None; crate::ipc::MAX_CHANNELS];
+    let count = {
         let mut table = PROCESS_TABLE.lock();
-        if let Some(proc) = process_slot_mut(&mut table, pid)? {
-            proc.cap_table.revoke(token_id);
-        }
-    }
-
-    // Walk CHANNEL_TABLE and destroy channels created under this token.
-    revoke_channels_for_cap(token_id);
+        let proc = process_mut(&mut table, pid)?;
+        proc.cap_table.revoke(token_id);
+        collect_revoked_channels(pid, &proc.cap_table, &mut doomed)
+    };
+    destroy_channels(&doomed[..count]);
 
     crate::kinfo!(Cap, "pid={}: revoked token {}", pid.0, token_id.0);
     Ok(())
+}
+
+/// The channel half of a revoke's cascade, run inside the revoking
+/// `PROCESS_TABLE` hold: write into `out` the full id of every channel that
+/// `pid` created (`creator == Some(pid)`) and whose `creation_cap` is revoked
+/// in `caps`, `pid`'s capability table. Returns how many it wrote.
+///
+/// It reads the table, not one token id, so a revoke of an ancestor reaches
+/// channels created under any of its descendants, and a `creation_cap` that
+/// no slot holds counts as revoked (`is_revoked` fails closed). Kernel
+/// channels (`creator: None`) never match. Takes `CHANNEL_TABLE` nested under
+/// the caller's `PROCESS_TABLE` and releases it before returning.
+fn collect_revoked_channels(
+    pid: ProcessId,
+    caps: &CapabilityTable,
+    out: &mut [Option<shared::ChannelId>; crate::ipc::MAX_CHANNELS],
+) -> usize {
+    let table = crate::ipc::CHANNEL_TABLE.lock();
+    let mut count = 0;
+    let doomed = table
+        .iter()
+        .filter_map(|slot| slot.channel.as_ref())
+        .filter(|ch| {
+            ch.creator == Some(pid) && ch.creation_cap.is_some_and(|t| caps.is_revoked(t))
+        });
+    // At most one id per slot, so `out` (MAX_CHANNELS long) never fills.
+    for (entry, ch) in out.iter_mut().zip(doomed) {
+        *entry = Some(ch.id);
+        count += 1;
+    }
+    count
+}
+
+/// Destroy the channels a cascade collected, with no lock held. Each destroy
+/// wakes the channel's blocked threads with EPIPE. The destroy is unchecked:
+/// this is a kernel-initiated teardown, and the full id makes a channel
+/// destroyed since the collection an EPIPE no-op that never reaches the
+/// channel now in its slot.
+fn destroy_channels(ids: &[Option<shared::ChannelId>]) {
+    for &id in ids.iter().flatten() {
+        let _ = crate::ipc::channel_destroy_unchecked(id);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,12 +430,12 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         };
 
         proc.cap_table.revoke(token_id);
-        // Must drop the PROCESS_TABLE lock before touching CHANNEL_TABLE
-        // to respect lock ordering: PROCESS_TABLE > CHANNEL_TABLE.
+        // The channel cascade, as in `revoke_in_process`: collect under this
+        // hold, destroy after it.
+        let mut doomed = [None; crate::ipc::MAX_CHANNELS];
+        let count = collect_revoked_channels(holder, &proc.cap_table, &mut doomed);
         drop(table);
-
-        // Cascade: destroy channels created under this capability token.
-        revoke_channels_for_cap(token_id);
+        destroy_channels(&doomed[..count]);
         Ok(())
     }
 
@@ -393,30 +479,5 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
             }
         }
         result
-    }
-}
-
-/// Walk CHANNEL_TABLE and destroy channels whose creation_cap matches token_id.
-/// Wakes blocked threads with EPIPE.
-fn revoke_channels_for_cap(token_id: CapabilityTokenId) {
-    let mut channels_to_destroy = [None; crate::ipc::MAX_CHANNELS];
-    let mut count = 0;
-
-    {
-        let table = crate::ipc::CHANNEL_TABLE.lock();
-        for ch in table.iter().filter_map(|slot| slot.channel.as_ref()) {
-            if ch.creation_cap == Some(token_id) && count < channels_to_destroy.len() {
-                // The stored id, generation included.
-                channels_to_destroy[count] = Some(ch.id);
-                count += 1;
-            }
-        }
-    }
-
-    // Destroy outside the lock to avoid lock ordering issues.
-    // Use unchecked destroy — this is a kernel-initiated teardown during
-    // cascade revocation, so capability checks must be bypassed.
-    for ch_id in channels_to_destroy[..count].iter().flatten() {
-        let _ = crate::ipc::channel_destroy_unchecked(*ch_id);
     }
 }

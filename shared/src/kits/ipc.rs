@@ -2,7 +2,7 @@
 //!
 //! Architecture reference: `docs/kits/kernel/ipc.md`
 
-use crate::cap::Capability;
+use crate::cap::{Capability, CapabilityHandle};
 use crate::ipc::{ChannelId, NotificationId, RawMessage, SelectEntry, SharedMemoryId};
 use crate::syscall::IpcError;
 use crate::VirtAddr;
@@ -220,8 +220,10 @@ impl From<IpcError> for IpcKitError {
 ///
 /// Covers synchronous call/reply, asynchronous send, and blocking receive.
 pub trait ChannelOps {
-    /// Create a new IPC channel. Returns the channel ID.
-    fn channel_create(&mut self) -> Result<ChannelId, IpcKitError>;
+    /// Create a new IPC channel. Returns the channel ID and the handle of the
+    /// caller's `ChannelAccess(id)` token, minted as a child of the
+    /// authorising `ChannelCreate` token.
+    fn channel_create(&mut self) -> Result<(ChannelId, CapabilityHandle), IpcKitError>;
 
     /// Destroy an IPC channel. Wakes any blocked threads with an error.
     fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError>;
@@ -277,7 +279,15 @@ pub trait SharedMemoryOps {
     /// bit 1 = write, bit 2 = execute (`crate::syscall::MEMORY_FLAGS_MASK`).
     /// Any other bit is an error, including bit 3 (user), which the kernel
     /// sets itself on every user mapping. W^X is enforced.
-    fn shmem_create(&mut self, size: usize, flags: u64) -> Result<SharedMemoryId, IpcKitError>;
+    ///
+    /// Returns the region ID and the handle of the caller's
+    /// `SharedMemoryAccess(id)` token, minted as a child of the authorising
+    /// `SharedMemoryCreate` token.
+    fn shmem_create(
+        &mut self,
+        size: usize,
+        flags: u64,
+    ) -> Result<(SharedMemoryId, CapabilityHandle), IpcKitError>;
 
     /// Map a shared memory region into the caller's address space.
     ///

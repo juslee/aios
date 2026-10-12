@@ -88,8 +88,10 @@ pub struct SharedMemoryRegion {
     pub creator: ProcessId,
     /// Maximum permission flags (W^X enforced at creation).
     pub max_flags: VmFlags,
-    /// Capability token that authorized creation.
-    pub creation_cap: Option<shared::CapabilityTokenId>,
+    /// Token in `creator`'s capability table that authorised the create: the
+    /// one `cap::create_with_access` found under its `PROCESS_TABLE` hold,
+    /// which is also the parent of the creator's minted SharedMemoryAccess.
+    pub creation_cap: shared::CapabilityTokenId,
     /// Active mappings (one per process that has mapped this region).
     pub mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
 }
@@ -179,15 +181,20 @@ pub(crate) fn region_mut(
 /// Allocates physically contiguous pages from Pool::User, enforces W^X on
 /// `flags`, and records the region in the global table.
 ///
-/// Returns the region ID on success. Errors: EINVAL for WRITE | EXECUTE or
-/// a size above `MAX_SHARED_REGION_PAGES` pages (4 MiB); EPERM without
+/// Returns the region ID and the handle of the creator's
+/// `SharedMemoryAccess(id)` token, minted as a child of the authorising
+/// `SharedMemoryCreate` token in the same `PROCESS_TABLE` hold that publishes
+/// the region (`cap::create_with_access`); the region records that token as
+/// its `creation_cap`. Errors: EINVAL for WRITE | EXECUTE or a size above
+/// `MAX_SHARED_REGION_PAGES` pages (4 MiB); EPERM without
 /// `SharedMemoryCreate`; ENOMEM when Pool::User has no block of the needed
-/// order; ENOSPC when the region table is full.
+/// order; ENOSPC when the region table or the creator's capability table is
+/// full.
 pub fn shared_memory_create(
     pid: ProcessId,
     size: usize,
     flags: VmFlags,
-) -> Result<SharedMemoryId, i64> {
+) -> Result<(SharedMemoryId, shared::CapabilityHandle), i64> {
     // W^X enforcement: reject WRITE+EXECUTE. No caller may ask for it, so
     // it is a malformed request (EINVAL), not a permission denial.
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
@@ -204,8 +211,11 @@ pub fn shared_memory_create(
         return Err(IpcError::Einval as i64);
     }
 
-    // Capability check (requires SharedMemoryCreate).
-    let cap_token = crate::cap::check_shared_memory_create(pid)?;
+    // Cheap pre-check (requires SharedMemoryCreate) before pages are
+    // allocated. Its token id is discarded: the region records the token
+    // create_with_access finds under its hold, so a revoke in between cannot
+    // leave a region that outlives its token.
+    crate::cap::check_shared_memory_create(pid)?;
 
     // Compute buddy order: smallest 2^order >= size_pages.
     let order = order_for_pages(size_pages);
@@ -229,49 +239,52 @@ pub fn shared_memory_create(
         core::ptr::write_bytes(dmap_va as *mut u8, 0, (1 << order) * PAGE_SIZE);
     }
 
-    // Find a free slot in the table: the lowest one that is empty and not
-    // retired.
-    let mut table = SHARED_REGION_TABLE.lock();
-    let idx = table.iter().position(RegionSlot::is_free).ok_or_else(|| {
-        // No free slots — free the pages and return error.
-        // SAFETY: base_phys was just allocated with the given order.
-        unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
-        crate::kwarn!(Mm, "shm_create: region table full (pid={})", pid.0);
-        IpcError::Enospc as i64
-    })?;
-
-    let slot = &mut table[idx];
-    // A free slot is not retired, so its generation is one `new` accepts.
-    let id = SharedMemoryId::new(idx, slot.generation);
-    slot.region = Some(SharedMemoryRegion {
-        id,
-        base_phys,
-        order,
-        size_bytes: size_pages * PAGE_SIZE,
-        ref_count: AtomicU32::new(0),
-        creator: pid,
-        max_flags: flags,
-        creation_cap: Some(cap_token),
-        mappings: [const { None }; MAX_SHARED_MAPPINGS],
-    });
-
-    // Release SHARED_REGION_TABLE before granting capability (lock ordering:
-    // PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held).
-    drop(table);
-
-    // Auto-grant SharedMemoryAccess to the creator so they can map their own region.
-    if let Err(e) = crate::cap::grant_to_process(
-        pid,
-        shared::Capability::SharedMemoryAccess(id),
-        true, // delegatable — creator can share with others
-    ) {
-        crate::kwarn!(
-            Mm,
-            "shm_create: failed to auto-grant SharedMemoryAccess to pid={} (err={})",
-            pid.0,
-            e
-        );
-    }
+    // Publish the region and mint the creator's access in one PROCESS_TABLE
+    // hold, with SHARED_REGION_TABLE nested (PROCESS_TABLE >
+    // SHARED_REGION_TABLE). The publish frees nothing: on any error the
+    // pages are freed once, here, after both locks are released.
+    let size_bytes = size_pages * PAGE_SIZE;
+    let published =
+        crate::cap::create_with_access(pid, shared::Capability::SharedMemoryCreate, |auth| {
+            let mut table = SHARED_REGION_TABLE.lock();
+            // The lowest slot that is empty and not retired.
+            let idx = table
+                .iter()
+                .position(RegionSlot::is_free)
+                .ok_or(IpcError::Enospc as i64)?;
+            let slot = &mut table[idx];
+            // A free slot is not retired, so its generation is one `new` accepts.
+            let id = SharedMemoryId::new(idx, slot.generation);
+            slot.region = Some(SharedMemoryRegion {
+                id,
+                base_phys,
+                order,
+                size_bytes,
+                ref_count: AtomicU32::new(0),
+                creator: pid,
+                max_flags: flags,
+                creation_cap: auth,
+                mappings: [const { None }; MAX_SHARED_MAPPINGS],
+            });
+            Ok((id, shared::Capability::SharedMemoryAccess(id)))
+        });
+    let (id, handle) = match published {
+        Ok(created) => created,
+        Err(e) => {
+            // SAFETY: base_phys was allocated above with this order and was
+            // never published (create_with_access returned an error before or
+            // in the publish, which stores it only on success), so this is its
+            // only free.
+            // This function owns the block until a publish stores it.
+            // A second free would corrupt the buddy free lists and hand out
+            // pages still in use.
+            unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
+            if e == IpcError::Enospc as i64 {
+                crate::kwarn!(Mm, "shm_create: region or cap table full (pid={})", pid.0);
+            }
+            return Err(e);
+        }
+    };
 
     #[cfg(feature = "kernel-metrics")]
     METRICS.shm_create.inc();
@@ -280,13 +293,13 @@ pub fn shared_memory_create(
         Mm,
         "shm_create: id={} size={:#x} order={} phys={:#x} pid={}",
         id,
-        size_pages * PAGE_SIZE,
+        size_bytes,
         order,
         base_phys,
         pid.0
     );
 
-    Ok(id)
+    Ok((id, handle))
 }
 
 // ---------------------------------------------------------------------------

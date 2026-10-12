@@ -37,9 +37,10 @@ const USER_BIT: u64 = 0b1000;
 /// channel and grants no ChannelAccess. `open` (`owned_a`) is accessible and
 /// empty; every message sent to it is received again, so it is left empty.
 /// `owned_b` is accessible too and only named in a lookup. `denied` is not
-/// accessible. The shared memory checks revoke the SharedMemoryCreate token
-/// they grant right after the create, and the region's SharedMemoryAccess
-/// tokens before the unmap that frees it.
+/// accessible. The shared memory checks revoke the region's minted
+/// SharedMemoryAccess before the unmap that frees it, and the
+/// SharedMemoryCreate token they grant last, after that unmap (the minted
+/// token is its child, so revoking it earlier would revoke the access too).
 ///
 /// The five `denied` channel cases log the kernel's usual `denied
 /// ChannelAccess` warnings, and the shared memory cases its denied
@@ -210,9 +211,12 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     let Some(create_token) = create_token else {
         return checks;
     };
+    // The create token is revoked at the end, after the last unmap:
+    // revoking it here would also revoke the region's minted
+    // SharedMemoryAccess, its child, which the map needs.
     let created = kit.shmem_create(PAGE, READ);
-    revoke_token(pid, create_token);
-    let Ok(region) = created else {
+    let Ok((region, _access)) = created else {
+        revoke_token(pid, create_token);
         return checks;
     };
 
@@ -223,7 +227,7 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
             reason: "not mapped",
         });
     let mapped = kit.shmem_map(region, 0, READ).is_ok();
-    // The creator's SharedMemoryAccess grant is revoked before the unmap
+    // The creator's minted SharedMemoryAccess is revoked before the unmap
     // that frees the region, as in the other shared memory self-tests. The
     // capability is checked before the duplicate-mapping check, so the
     // repeated map fails for the missing right, naming this region.
@@ -246,5 +250,6 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
             == Some(IpcKitError::SharedMemoryError {
                 reason: "region not found",
             });
+    revoke_token(pid, create_token);
     checks
 }

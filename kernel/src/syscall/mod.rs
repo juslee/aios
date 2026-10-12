@@ -291,14 +291,19 @@ fn sys_ipc_cancel(tf: &TrapFrame) -> i64 {
     crate::ipc::ipc_cancel(channel)
 }
 
-/// ChannelCreate (nr=6): returns channel_id in x0.
-fn sys_channel_create(_tf: &TrapFrame) -> i64 {
+/// ChannelCreate (nr=6): returns the channel id in x0 (a zero-extended
+/// `u32`) and, in x1, the handle of the `ChannelAccess(id)` token minted for
+/// the caller. On error x0 is the errno and x1 is not written.
+fn sys_channel_create(tf: &mut TrapFrame) -> i64 {
     let tid = match crate::ipc::current_thread_id() {
         Some(t) => t,
         None => return IpcError::Eperm as i64,
     };
     match crate::ipc::channel_create(tid) {
-        Ok(ch) => i64::from(ch.raw()),
+        Ok((ch, handle)) => {
+            tf.x[1] = u64::from(handle.0);
+            i64::from(ch.raw())
+        }
         Err(e) => e,
     }
 }
@@ -391,8 +396,9 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
 
 /// CapabilityRevoke (nr=16): x0=cap_handle.
 ///
-/// Revoke a capability and cascade to all children. Destroys channels
-/// created under the revoked capability.
+/// Revoke a capability and cascade to all children. Destroys the channels
+/// the caller created under the revoked token or one of its descendants
+/// (`cap::revoke_in_process`).
 ///
 /// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, a slot no process
 /// has; EPERM for an in-range handle whose slot is empty or revoked.
@@ -527,7 +533,11 @@ fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
 /// EXECUTE only, EINVAL for any other bit (USER included). `size` is passed
 /// through unchanged; `shmem::shared_memory_create` bounds it (EINVAL above
 /// 4 MiB, ipc.md §4.7).
-fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
+///
+/// Returns the region id in x0 and, in x1, the handle of the
+/// `SharedMemoryAccess(id)` token minted for the caller. On error x0 is the
+/// errno and x1 is not written.
+fn sys_shared_memory_create(tf: &mut TrapFrame) -> i64 {
     let size = tf.x[0] as usize;
     let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
         Ok(f) => f,
@@ -540,7 +550,10 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
     };
 
     match crate::ipc::shmem::shared_memory_create(pid, size, flags) {
-        Ok(id) => i64::from(id.raw()),
+        Ok((id, handle)) => {
+            tf.x[1] = u64::from(handle.0);
+            i64::from(id.raw())
+        }
         Err(e) => e,
     }
 }

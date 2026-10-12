@@ -49,10 +49,10 @@ pub(super) fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
 /// no state and grant nothing. Checks 0-20 and 26-42 log no warning; checks
 /// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
-/// warnings. The one MemoryMap allocation is freed by the
-/// test's own exact unmap, the one shared region by its unmap once the
-/// test has revoked every capability it granted, and the one notification by
-/// `notification_destroy`.
+/// warnings. The one MemoryMap allocation is freed by the test's own exact
+/// unmap, the one shared region by its unmap once the test has revoked the
+/// region's SharedMemoryAccess (the SharedMemoryCreate grant is revoked
+/// after that unmap), and the one notification by `notification_destroy`.
 ///
 /// DebugPrint, IpcSelect and CapabilityList get this thread's stack buffers
 /// as kernel addresses. Before #188 IpcSelect accepted them and read them
@@ -278,10 +278,11 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS
 ///
 /// Returns `[beyond_max, mapped, denied, oversize, high_bits,
 /// undefined_bit]`, one flag per check, all false if the grant fails and
-/// all but `oversize` false if the region could not be created. Like
-/// `shm_bad_pid_test`, it revokes the SharedMemoryCreate token it granted
-/// right after the create, and every SharedMemoryAccess token of the region
-/// before the unmap that frees it.
+/// all but `oversize` false if the region could not be created. It revokes
+/// every SharedMemoryAccess token of the region (the creator's, minted as a
+/// child of the create token) before the unmap that frees it, and the
+/// SharedMemoryCreate token it granted last, after the unmap: revoking the
+/// create token earlier would also revoke the minted access the maps need.
 fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
         .ok()
@@ -296,8 +297,8 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // for, so the `max_flags` check passes a READ | USER map and only the
     // syscall's flag decode can reject it.
     let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ | VmFlags::USER);
-    revoke_token(pid, create_token);
-    let Ok(region) = created else {
+    let Ok((region, _access)) = created else {
+        revoke_token(pid, create_token);
         return [false, false, false, oversize, false, false];
     };
 
@@ -323,6 +324,7 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     if mapped || probe_mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
+    revoke_token(pid, create_token);
     [
         beyond_max,
         mapped,

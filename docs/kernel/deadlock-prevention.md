@@ -95,7 +95,7 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 **Code evidence** for the ordering:
 
 - `shmem.rs:10` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
-- `shmem.rs:192-193` (`shared_memory_create`) — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
+- `cap/mod.rs:86-87` (`create_with_access`) — *"It nests `CHANNEL_TABLE` or `SHARED_REGION_TABLE` under `PROCESS_TABLE` (both allowed edges), never takes `PROCESS_TABLE`"*.
 - `shmem.rs:488` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
 - `process.rs:159-160` (`process_exit`) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
@@ -172,7 +172,7 @@ Examples in the codebase:
 
 - **`process_cleanup_shared_memory`** (`ipc/shmem.rs`): Collects shared region IDs under `SHARED_REGION_TABLE`, releases the lock, then cleans up mappings. Similarly, `shared_memory_share` drops `SHARED_REGION_TABLE` before calling `grant_to_process` (which may acquire `PROCESS_TABLE`).
 
-- **`revoke_channels_for_cap`** (`cap/mod.rs`): Collects channel IDs associated with a revoked capability under `CHANNEL_TABLE`, then destroys them after releasing the lock.
+- **The channel cascade of `revoke_in_process` and the Capability Kit's `revoke`** (`cap/mod.rs`): In the revoking `PROCESS_TABLE` hold, with `CHANNEL_TABLE` nested (an allowed edge), collects the IDs of the channels the process created under a token that is now revoked, then destroys them after releasing both locks, because a destroy wakes the threads blocked on them.
 
 This pattern trades strict atomicity for deadlock freedom. The window between collecting and acting is microseconds — acceptable because the kernel is preemptive (§9) and operations are idempotent or guarded by generation counters.
 

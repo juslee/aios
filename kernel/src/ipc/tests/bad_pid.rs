@@ -22,9 +22,10 @@ use super::TEST_PID;
 /// The test changes no capability outside process 1 and leaves none behind.
 /// It checks that `my_tid` belongs to process 1 before it grants or revokes
 /// anything. It revokes the exact SharedMemoryCreate token it granted, right
-/// after the create call. It revokes the region's SharedMemoryAccess tokens
-/// (the creator grant and the self-share) before the unmap that frees the
-/// region, so no token outlives it.
+/// after the create call, which also revokes the region's minted
+/// SharedMemoryAccess, its child. The self-share grants a parentless
+/// SharedMemoryAccess, which authorises the map; it is revoked before the
+/// unmap that frees the region, so no token outlives it.
 pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     let pid = match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => p,
@@ -45,7 +46,7 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     let created = shmem::shared_memory_create(pid, 4096, flags);
     revoke_token(pid, create_token);
     let region = match created {
-        Ok(r) => r,
+        Ok((r, _access)) => r,
         Err(e) => {
             crate::kwarn!(Ipc, "Bad-pid test: shm_create failed {}", e);
             return;

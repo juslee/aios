@@ -281,8 +281,9 @@ fn bench_shmem_throughput() -> (u64, u64) {
     let pid = ProcessId(8);
     let flags = crate::mm::pgtable::VmFlags::READ | crate::mm::pgtable::VmFlags::WRITE;
 
+    // The creator's minted SharedMemoryAccess authorises the map below.
     let region = match crate::ipc::shmem::shared_memory_create(pid, SHM_SIZE, flags) {
-        Ok(id) => id,
+        Ok((id, _access)) => id,
         Err(_) => return (0, 0),
     };
 
@@ -366,15 +367,27 @@ pub fn bench_main_entry() -> ! {
     let _ = writeln!(w, "\n[bench] === Gate 1 Benchmark ===");
 
     // --- Setup: Create bench channel and server ---
-    // Both endpoints belong to process 8 (bench main and the bench server).
-    let bench_ch = ipc::channel_create_unchecked(ProcessId(8));
-
-    // Grant ChannelAccess to process 8 (bench process).
-    let _ = cap::grant_to_process(
-        ProcessId(8),
-        shared::Capability::ChannelAccess(bench_ch),
-        false,
-    );
+    // A checked create from this pid-8 thread, under process 8's
+    // ChannelCreate: it mints ChannelAccess(bench_ch) for process 8, which
+    // covers both endpoints (bench main and the bench server).
+    let created = ipc::current_thread_id()
+        .ok_or(crate::syscall::IpcError::Eperm as i64)
+        .and_then(ipc::channel_create);
+    let bench_ch = match created {
+        Ok((ch, _access)) => ch,
+        Err(e) => {
+            let _ = writeln!(w, "[bench] channel_create failed: {}", e);
+            tripwire::set_console_busy(false);
+            loop {
+                // SAFETY: wfe is a hint instruction: it touches no memory and
+                // no register state, and is always permitted at EL1, where
+                // this kernel thread runs (the scheduler starts every kernel
+                // thread at EL1). The worst case is a wakeup by an event,
+                // after which the loop waits again.
+                unsafe { core::arch::asm!("wfe") };
+            }
+        }
+    };
 
     // Set peer for the channel.
     let _ = ipc::channel_set_peer(bench_ch, ProcessId(8));

@@ -29,11 +29,14 @@ pub(super) struct SelectCapChannels {
 /// in the set, like ipc_recv, and must reject a set with any inaccessible
 /// channel before it observes or registers on any source.
 ///
-/// Runs in the ipc-timeout thread (process 1). The three channels come from
-/// channel_create_unchecked; creating a channel grants no ChannelAccess, so
-/// process 1 is granted ChannelAccess to `owned_a` and `owned_b` only. The
-/// channels stay allocated for the rest of the boot, like the other test
-/// channels, so the grants never point at a reused channel slot.
+/// Runs in the ipc-timeout thread (process 1). The three channels stay on
+/// channel_create_unchecked, which mints no token (a checked create would
+/// mint ChannelAccess for `denied` too), so process 1 is granted
+/// ChannelAccess to `owned_a` and `owned_b` only: ambient self-test grants,
+/// under the interim exception of capability-lifetime ADR §11 (see
+/// `cap::grant_to_process`). The channels and both grants stay live for the
+/// rest of the boot: the Syscall-arg and Kit-error tests use the channels
+/// after this one, and no revocation reaches the grants.
 ///
 /// The denied and mixed cases each pin one ordering regression:
 /// - `denied` first holds a queued message, so a check that ran after the

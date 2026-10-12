@@ -122,8 +122,14 @@ pub(crate) struct Channel {
     /// Thread currently blocked in ipc_call() waiting for a reply.
     /// The receiver uses this to deliver the reply.
     pub(crate) pending_caller: Option<ThreadId>,
-    /// Capability token that authorized this channel's creation.
-    /// Used for cascade revocation: revoking this token destroys the channel.
+    /// Process whose checked `channel_create` made this channel, or `None`
+    /// for a kernel channel (`channel_create_unchecked`). The revoke cascade
+    /// looks up `creation_cap` in this process's capability table. Not
+    /// `owner_a`, which kernel channels also set and `process_exit` matches.
+    pub(crate) creator: Option<ProcessId>,
+    /// Token in `creator`'s table that authorised the create, or `None` for a
+    /// kernel channel. Revoking it, or a same-table ancestor, destroys the
+    /// channel; kernel channels never cascade.
     pub(crate) creation_cap: Option<shared::CapabilityTokenId>,
 }
 
@@ -138,6 +144,7 @@ impl Channel {
             ring: MessageRing::new(),
             waiting_receiver: None,
             pending_caller: None,
+            creator: None,
             creation_cap: None,
         }
     }
@@ -235,15 +242,16 @@ pub(crate) fn channel_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mu
 // ---------------------------------------------------------------------------
 
 /// Put a new channel in the lowest free slot of `CHANNEL_TABLE`, at that
-/// slot's generation. Endpoint A belongs to `owner`; `creation_cap` is the
-/// token the cascade revocation matches, or `None` for a kernel channel.
+/// slot's generation. Endpoint A belongs to `owner`. `checked` is the token
+/// that authorised a checked create, which also makes `owner` the channel's
+/// `creator`; `None` makes a kernel channel, which never cascades.
 ///
 /// Returns `Err(ENOSPC)` when no slot is free (each holds a channel or is
 /// retired). The one allocator of `channel_create` and
 /// `channel_create_unchecked`.
 fn channel_alloc(
     owner: ProcessId,
-    creation_cap: Option<shared::CapabilityTokenId>,
+    checked: Option<shared::CapabilityTokenId>,
 ) -> Result<ChannelId, i64> {
     let mut table = CHANNEL_TABLE.lock();
     let idx = table
@@ -254,33 +262,41 @@ fn channel_alloc(
     // A free slot is not retired, so its generation is one `new` accepts.
     let id = ChannelId::new(idx, slot.generation);
     let mut ch = Channel::new(id, owner);
-    ch.creation_cap = creation_cap;
+    ch.creator = checked.map(|_| owner);
+    ch.creation_cap = checked;
     slot.channel = Some(ch);
     Ok(id)
 }
 
-/// Create a new IPC channel. Returns channel_id.
+/// Create a new IPC channel. Returns its id and the handle of the creator's
+/// `ChannelAccess(id)` token.
 ///
-/// The creator thread's process owns endpoint A. Endpoint B can be assigned
-/// to a process via `channel_set_peer()`.
+/// The creator thread's process owns endpoint A and is the channel's
+/// `creator`. Endpoint B can be assigned to a process via
+/// `channel_set_peer()`.
 ///
-/// Requires `Capability::ChannelCreate` on the creator's process.
-pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
-    // Capability enforcement: check ChannelCreate (fail-closed).
-    // Returns the authorizing token ID for cascade revocation tracking.
+/// Requires `Capability::ChannelCreate` on the creator's process. The
+/// channel is published and its `ChannelAccess` minted as a child of the
+/// authorising token in one `PROCESS_TABLE` hold (`cap::create_with_access`),
+/// so revoking that token revokes the access and destroys the channel.
+/// Errors: EPERM for a thread with no process or a process without a live
+/// `ChannelCreate`; ENOSPC when the process's capability table or the
+/// channel table is full.
+pub fn channel_create(creator: ThreadId) -> Result<(ChannelId, shared::CapabilityHandle), i64> {
     let pid = crate::cap::process_of_thread(creator).ok_or(IpcError::Eperm as i64)?;
-    let auth_token = crate::cap::check_channel_create(pid)?;
-
-    let id = channel_alloc(pid, Some(auth_token))?;
+    let (id, handle) = crate::cap::create_with_access(pid, Capability::ChannelCreate, |auth| {
+        let id = channel_alloc(pid, Some(auth))?;
+        Ok((id, Capability::ChannelAccess(id)))
+    })?;
     crate::kinfo!(Ipc, "Channel {} created by thread {}", id, creator.0);
-    Ok(id)
+    Ok((id, handle))
 }
 
-/// Create a kernel channel without a capability check and with no
-/// `creation_cap`, so no revocation cascades to it. The caller names the
-/// process that owns endpoint A: init code that runs before the owning
-/// threads exist (before `enter_scheduler`), and self-tests (ADR §11's
-/// interim exception).
+/// Create a kernel channel without a capability check, minting no token,
+/// with no `creator` and no `creation_cap`, so no revocation cascades to it.
+/// The caller names the process that owns endpoint A: init code that runs
+/// before the owning threads exist (before `enter_scheduler`), and
+/// self-tests (ADR §11's interim exception).
 ///
 /// # Panics
 ///
@@ -451,7 +467,7 @@ fn first_denied_channel(entries: &[SelectEntry]) -> Option<ChannelId> {
 }
 
 impl ipc_kit::ChannelOps for KernelIpc {
-    fn channel_create(&mut self) -> Result<ChannelId, IpcKitError> {
+    fn channel_create(&mut self) -> Result<(ChannelId, shared::CapabilityHandle), IpcKitError> {
         let tid = current_thread_id().ok_or(IpcKitError::CapabilityDenied {
             required: Capability::ChannelCreate,
         })?;
@@ -459,10 +475,11 @@ impl ipc_kit::ChannelOps for KernelIpc {
             Ok(IpcError::Eperm) => IpcKitError::CapabilityDenied {
                 required: Capability::ChannelCreate,
             },
-            // ENOSPC from channel_create is a full channel table; there is no
-            // channel yet, so ChannelFull (a full ring) does not apply.
+            // ENOSPC from channel_create is a full channel table or a full
+            // capability table; there is no channel yet, so ChannelFull (a
+            // full ring) does not apply.
             Ok(IpcError::Enospc) => IpcKitError::ResourceExhausted {
-                reason: "channel table full",
+                reason: "channel or capability table full",
             },
             _ => IpcKitError::from_code(code),
         })
@@ -608,7 +625,7 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         &mut self,
         size: usize,
         flags: u64,
-    ) -> Result<shared::SharedMemoryId, IpcKitError> {
+    ) -> Result<(shared::SharedMemoryId, shared::CapabilityHandle), IpcKitError> {
         let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
             required: Capability::SharedMemoryCreate,
         })?;

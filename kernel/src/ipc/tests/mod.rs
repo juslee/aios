@@ -5,6 +5,7 @@
 //! Called from main.rs after sched::init() but before enter_scheduler().
 
 mod bad_pid;
+mod create_abi;
 mod kit_errors;
 mod select_cap;
 mod stale_id;
@@ -435,17 +436,19 @@ fn ipc_caller_entry() -> ! {
 }
 
 /// IPC timeout test thread, pinned to CPU 2. It checks EPIPE after channel
-/// destroy, EINVAL for out-of-range channel ids, EINVAL for out-of-range
-/// pids on the
-/// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
-/// check (`select_cap_test`), EINVAL for hostile syscall arguments,
-/// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
+/// destroy, EINVAL for out-of-range channel ids, EINVAL for out-of-range pids
+/// on the SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect
+/// capability check (`select_cap_test`), EINVAL for hostile syscall
+/// arguments, MemoryUnmap ownership and the shared memory EINVAL/EPERM split
 /// (`syscall_args_test`, whose bad-buffer checks use `select_cap_test`'s
 /// `owned_a`), the IPC Kit's error variants through `KernelIpc`
-/// (`kit_errors_test`, on all three of `select_cap_test`'s channels), and
-/// EPIPE for stale channel and region ids whose slot was reused
-/// (`stale_id_test`). Last, it calls IpcCall on a channel with no receiver
-/// (expects ETIMEDOUT), so a late timeout wake can hide only that line.
+/// (`kit_errors_test`, on all three of `select_cap_test`'s channels), EPIPE
+/// for stale channel and region ids whose slot was reused (`stale_id_test`),
+/// and the x0/x1 return of ChannelCreate and SharedMemoryCreate with their
+/// minted tokens (`create_abi_test`). Last, it calls IpcCall on a channel
+/// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
+/// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
+/// wake can hide only that line.
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -466,9 +469,11 @@ fn ipc_timeout_entry() -> ! {
         },
     };
 
-    // Test channel destroy → EPIPE.
+    // Test channel destroy → EPIPE. The minted ChannelAccess(ch2) stays live
+    // after the destroy, so the recv passes the capability check and fails
+    // at the lookup.
     let ch2 = match channel_create(caller_tid) {
-        Ok(c) => c,
+        Ok((c, _access)) => c,
         Err(_) => loop {
             sched::thread_yield();
         },
@@ -512,11 +517,12 @@ fn ipc_timeout_entry() -> ! {
     syscall_args::syscall_args_test(caller_tid, select_channels.map(|c| c.owned_a));
     kit_errors::kit_errors_test(caller_tid, select_channels);
     stale_id::stale_id_test(caller_tid);
+    create_abi::create_abi_test(caller_tid);
 
-    // Timeout test, last. The channel has no server, so a granted call can
-    // only time out.
+    // Timeout test, last. The channel has no server, so the call, authorised
+    // by the minted ChannelAccess, can only time out.
     let ch = match channel_create(caller_tid) {
-        Ok(c) => c,
+        Ok((c, _access)) => c,
         Err(e) => {
             crate::kwarn!(Ipc, "Timeout test: channel_create failed: {}", e);
             loop {
@@ -680,7 +686,7 @@ fn cap_denied_entry() -> ! {
     // Attempt channel_create — should fail with EPERM because process 3
     // does not hold ChannelCreate capability.
     match channel_create(my_tid) {
-        Ok(ch) => {
+        Ok((ch, _access)) => {
             crate::kwarn!(
                 Cap,
                 "UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",

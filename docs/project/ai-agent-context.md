@@ -83,7 +83,7 @@ When implementing kernel code, use these established patterns:
 | Lock ordering enforcement | Acquire in the order of the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
-| Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
+| Capability check before op | `create_with_access(pid, create, publish)` (checked creates) / `check_channel_access(pid, ch)` | `cap/mod.rs:102-153` |
 | Service registration | `service_register(name, pid, channel)` → name uniqueness check | `service/mod.rs:48-83` |
 | Lock-free audit logging | `audit_log(pid, event)` -- AtomicUsize ring head, Mutex ring body | `service/mod.rs:153-171` |
 | VirtIO-blk I/O | `read_sector(sector, buf)` / `write_sector(sector, buf)` polled | `drivers/virtio_blk.rs:112-132` |
@@ -361,10 +361,11 @@ pub fn ipc_send(
     send_buf: &[u8],
 ) -> i64                                 // channel.rs:415
 
-// Create a new IPC channel. Requires ChannelCreate capability.
+// Create a new IPC channel. Requires ChannelCreate capability; returns the
+// id and the handle of the creator's minted ChannelAccess(id).
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs:182
+) -> Result<(ChannelId, CapabilityHandle), i64>   // ipc/mod.rs:285
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
@@ -415,16 +416,21 @@ RIGHT: Use a buffer with lifetime that spans the entire blocking period
 **Key APIs**:
 
 ```rust
-// Check ChannelCreate capability. Returns authorizing token ID.
-pub fn check_channel_create(
+// Checked create: under one PROCESS_TABLE hold, find the token that
+// authorises `create`, publish the object (nesting CHANNEL_TABLE or
+// SHARED_REGION_TABLE), and mint the access capability `publish` returns as a
+// child of that token. Used by channel_create and shared_memory_create.
+pub fn create_with_access<T>(
     pid: ProcessId,
-) -> Result<CapabilityTokenId, i64>      // cap/mod.rs:70
+    create: Capability,
+    publish: impl FnOnce(CapabilityTokenId) -> Result<(T, Capability), i64>,
+) -> Result<(T, CapabilityHandle), i64>  // cap/mod.rs:102
 
 // Check ChannelAccess(channel_id) capability. Fail-closed.
 pub fn check_channel_access(
     pid: ProcessId,
     channel: ChannelId,
-) -> Result<(), i64>                     // cap/mod.rs:94
+) -> Result<(), i64>                     // cap/mod.rs:135
 
 // Grant a capability token to a process.
 // EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot.
@@ -432,22 +438,24 @@ pub fn grant_to_process(
     pid: ProcessId,
     cap: Capability,
     delegatable: bool,
-) -> Result<CapabilityHandle, i64>       // cap/mod.rs:164
+) -> Result<CapabilityHandle, i64>       // cap/mod.rs:221
 
 // Revoke a token (and all children) from a process.
-// Cascades: destroys channels created under the revoked capability.
-// EINVAL for pid >= MAX_PROCESSES, before anything is revoked.
+// Cascades: destroys the channels the process created under the revoked
+// token or one of its descendants.
+// EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot, before anything
+// is revoked.
 pub fn revoke_in_process(
     pid: ProcessId,
     token_id: CapabilityTokenId,
-) -> Result<(), i64>                     // cap/mod.rs:193
+) -> Result<(), i64>                     // cap/mod.rs:255
 ```
 
 **Gotchas**:
 
 - **Token expiry** (cap/mod.rs:71, 99): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
 
-- **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
+- **Cascade revocation lock ordering** (cap/mod.rs:255-268): `revoke_in_process()` locks PROCESS_TABLE, revokes the token and its descendants, and, with CHANNEL_TABLE nested (PROCESS_TABLE > CHANNEL_TABLE), collects every channel the process created under a token that is now revoked. It destroys them only after releasing both locks, because a destroy wakes the threads blocked on them.
 
 - **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints Dead on every channel with an endpoint owned by the process (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
 
