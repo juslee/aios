@@ -370,9 +370,12 @@ fn exit_channels(pid: ProcessId, victims: u64) {
                 // Collect threads to wake outside the lock.
                 // A collected thread's wake is in flight until
                 // wake_with_error reaches unblock.
-                for tid in [ch.waiting_receiver.take(), ch.pending_caller.take()]
-                    .into_iter()
-                    .flatten()
+                for tid in [
+                    ch.waiting_receiver.take(),
+                    ch.pending_caller.take().map(|p| p.tid),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     if epipe_count < epipe_wakeups.len() {
                         epipe_wakeups[epipe_count] = Some(tid);

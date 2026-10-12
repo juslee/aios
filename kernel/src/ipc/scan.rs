@@ -56,8 +56,8 @@ fn scan_channels() -> bool {
         if let Some(tid) = channel.waiting_receiver {
             tripwire::scan_note_waker(ScanWaker::ChanRef, tid.0);
         }
-        if let Some(tid) = channel.pending_caller {
-            tripwire::scan_note_waker(ScanWaker::ChanRef, tid.0);
+        if let Some(p) = channel.pending_caller {
+            tripwire::scan_note_waker(ScanWaker::ChanRef, p.tid.0);
         }
     }
     drop(table);

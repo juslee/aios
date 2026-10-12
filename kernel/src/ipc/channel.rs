@@ -13,13 +13,14 @@ use crate::observability::tripwire::{self, WaitSide};
 use crate::sched::{self, wake};
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
-use shared::tripwire::WakeSource;
+use shared::tripwire::{Key, WakeSource};
 use shared::{deadline_after, ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
-    arm_timeout, clear_own_timeout, clear_timeout, get_wakeup_error, ReplySlot, REPLY_SLOTS,
+    arm_timeout, clear_own_timeout, clear_timeout, get_wakeup_error, next_call_seq, ReplySlot,
+    REPLY_SLOTS,
 };
-use super::{channel_mut, direct, DeadlineArm, CHANNEL_TABLE};
+use super::{channel_mut, direct, DeadlineArm, PendingCall, CHANNEL_TABLE};
 
 // ---------------------------------------------------------------------------
 // Deadline shared by IpcCall and IpcRecv
@@ -71,10 +72,15 @@ enum ReplyRead {
 /// `unblock`, and blocks. A deadline that had already passed at the entry
 /// still wakes the receiver, but cancels the arm and does not block.
 ///
+/// The call's sequence number (`timeout::next_call_seq`) goes into both the
+/// reply slot and the `pending_caller` entry (`PendingCall`), so a replier
+/// or canceller that claimed an earlier call of this thread finds a `seq`
+/// mismatch and leaves this call's slot alone.
+///
 /// Every later pass arms, then reads the reply slot (REPLY_SLOTS): a written
 /// reply ends the call. Then, under CHANNEL_TABLE, a destroyed channel or a
 /// Dead endpoint ends it with EPIPE, and a claimed call (`pending_caller` no
-/// longer this thread) that the slot showed cancelled ends it with
+/// longer this call) that the slot showed cancelled ends it with
 /// ECANCELED; a claimed call that is not cancelled has a reply in flight and
 /// keeps waiting. Then the deadline: ETIMEDOUT once it has passed, otherwise
 /// the timeout entry is re-inserted if a waker removed it, and the pass
@@ -83,9 +89,10 @@ enum ReplyRead {
 /// reads leaves a token and is seen on the next pass. A stale wake costs one
 /// pass, never an early return.
 ///
-/// The exit clears `pending_caller` if it is still this thread, takes the
+/// The exit clears `pending_caller` if it is still this call and takes the
 /// reply slot (a written reply wins over a concurrent timeout, cancel or
-/// destroy), removes the timeout entry, takes and discards the thread's
+/// destroy), both skipped after a pass read the reply, which leaves neither
+/// behind; then it removes the timeout entry, takes and discards the thread's
 /// `WAKEUP_ERRORS` code once (it decides nothing, capability-lifetime ADR
 /// §9), and cancels the arm. The first pass's failures return before the
 /// arm and take nothing.
@@ -117,9 +124,12 @@ pub fn ipc_call(
     msg.data[..send_buf.len()].copy_from_slice(send_buf);
 
     // --- Pass 1 ---
+    // This call's sequence number, carried by its reply slot and its
+    // pending_caller entry.
+    let seq = next_call_seq(me);
     // The reply slot first: a replier that takes pending_caller must find it.
-    post_reply_slot(me, recv_buf);
-    let (deadline, receiver) = match call_publish(me, channel, msg, timeout_ticks) {
+    post_reply_slot(me, seq, recv_buf);
+    let (deadline, receiver) = match call_publish(me, seq, channel, msg, timeout_ticks) {
         Ok(published) => published,
         Err(code) => {
             take_reply_slot(me);
@@ -176,7 +186,7 @@ pub fn ipc_call(
             ReplyRead::Done(len) => break Ok(len),
             ReplyRead::Waiting { cancelled } => cancelled,
         };
-        match call_claimed(me, channel) {
+        match call_claimed(me, seq, channel) {
             None => break Err(IpcError::Epipe as i64),
             Some(true) if cancelled => break Err(IpcError::Ecanceled as i64),
             // Unclaimed, or claimed with a reply in flight: keep waiting.
@@ -197,18 +207,27 @@ pub fn ipc_call(
     // --- Exit: every exit comes from a pass that armed ---
     // The call's tripwire N2 phase ends here.
     tripwire::wait_ended(WaitSide::Call, me);
-    {
-        let mut table = CHANNEL_TABLE.lock();
-        if let Ok(ch) = channel_mut(&mut table, channel) {
-            if ch.pending_caller == Some(me) {
-                ch.pending_caller = None;
+    // A reply read by a pass needs neither hold below: reply_read took the
+    // slot, and the replier that marked it done had taken this call's
+    // pending_caller entry, which only this call's call_publish ever wrote.
+    let result = match result {
+        Ok(len) => Ok(len),
+        Err(code) => {
+            {
+                let mut table = CHANNEL_TABLE.lock();
+                if let Ok(ch) = channel_mut(&mut table, channel) {
+                    if ch.pending_caller == Some(PendingCall { tid: me, seq }) {
+                        ch.pending_caller = None;
+                    }
+                }
+            }
+            // A written reply wins over a concurrent timeout, cancel or
+            // destroy.
+            match take_reply_slot(me) {
+                Some(slot) if slot.done => Ok(slot.bytes_written),
+                _ => Err(code),
             }
         }
-    }
-    // A written reply wins over a concurrent timeout, cancel or destroy.
-    let result = match take_reply_slot(me) {
-        Some(slot) if slot.done => Ok(slot.bytes_written),
-        _ => result,
     };
     clear_own_timeout(me);
     // Taken once per wait and discarded: it decides nothing (ADR §9).
@@ -228,13 +247,14 @@ pub fn ipc_call(
 /// `ipc_call`'s first-pass critical section, under CHANNEL_TABLE: fail on a
 /// lookup error, a Dead endpoint (EPIPE), another pending caller (EAGAIN)
 /// or a full ring (ENOSPC), before any arm. Otherwise queue `msg`, arm
-/// (`wake::prepare_block`, ADR §8 rule 1), publish `me` as the pending
-/// caller and take the waiting receiver, whose wake is then in flight.
-/// Returns the call's deadline, counted from the queued request (`None`: no
-/// timeout, for 0 as for a value whose deadline would reach `u64::MAX`), and
-/// the receiver to wake.
+/// (`wake::prepare_block`, ADR §8 rule 1), publish `me` and the call's `seq`
+/// as the pending call and take the waiting receiver, whose wake is then in
+/// flight. Returns the call's deadline, counted from the queued request
+/// (`None`: no timeout, for 0 as for a value whose deadline would reach
+/// `u64::MAX`), and the receiver to wake.
 fn call_publish(
     me: ThreadId,
+    seq: u32,
     channel: ChannelId,
     msg: RawMessage,
     timeout_ticks: u64,
@@ -258,7 +278,7 @@ fn call_publish(
         deadline_from_now(timeout_ticks)
     };
     wake::prepare_block(me);
-    ch.pending_caller = Some(me);
+    ch.pending_caller = Some(PendingCall { tid: me, seq });
     // Tripwire N2 phase: published, timeout not yet registered.
     tripwire::wait_published(
         WaitSide::Call,
@@ -275,9 +295,9 @@ fn call_publish(
     Ok((deadline, receiver))
 }
 
-/// Write `me`'s reply slot for a call starting now: `recv_buf`, nothing
-/// written, neither done nor cancelled.
-fn post_reply_slot(me: ThreadId, recv_buf: &mut [u8]) {
+/// Write `me`'s reply slot for the call `seq` starting now: `recv_buf`,
+/// nothing written, neither done nor cancelled.
+fn post_reply_slot(me: ThreadId, seq: u32, recv_buf: &mut [u8]) {
     if let Some(entry) = REPLY_SLOTS.lock().get_mut(me.0 as usize) {
         *entry = Some(ReplySlot {
             buf: recv_buf.as_mut_ptr(),
@@ -285,6 +305,7 @@ fn post_reply_slot(me: ThreadId, recv_buf: &mut [u8]) {
             bytes_written: 0,
             done: false,
             cancelled: false,
+            seq,
         });
     }
 }
@@ -322,15 +343,15 @@ fn reply_read(me: ThreadId) -> ReplyRead {
 
 /// A later pass's channel check, under CHANNEL_TABLE: `None` when the
 /// channel is gone (destroyed, or its slot reused) or has a Dead endpoint,
-/// the call's EPIPE; otherwise whether the call has been claimed, that is,
-/// a replier or canceller has taken `pending_caller`.
-fn call_claimed(me: ThreadId, channel: ChannelId) -> Option<bool> {
+/// the call's EPIPE; otherwise whether the call `seq` has been claimed, that
+/// is, a replier or canceller has taken `pending_caller`.
+fn call_claimed(me: ThreadId, seq: u32, channel: ChannelId) -> Option<bool> {
     let mut table = CHANNEL_TABLE.lock();
     let ch = channel_mut(&mut table, channel).ok()?;
     if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
         return None;
     }
-    Some(ch.pending_caller != Some(me))
+    Some(ch.pending_caller != Some(PendingCall { tid: me, seq }))
 }
 
 // ---------------------------------------------------------------------------
@@ -520,57 +541,86 @@ fn recv_pass(
 /// reads, then clears the caller's timeout and wakes it. A caller that is
 /// still armed (not yet blocked) fails the reply switch, and the fallback
 /// `unblock` leaves it the token.
+///
+/// The write needs the slot's `seq` to equal the claimed call's. A slot that
+/// is gone, or carries another `seq` (the caller left the claimed call and
+/// started its next one between the claim and the write), gets nothing: the
+/// late reply counts `latereply`, skips the timeout clear and the reply
+/// switch, wakes the caller with a plain `unblock` (a stale wake costs it at
+/// most one pass), and still returns 0.
 pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
     if reply_buf.len() > MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
 
-    let caller_tid;
     let Some(replier_tid) = sched::current_tid() else {
         return IpcError::Eperm as i64;
     };
 
-    // Find and clear the pending caller.
-    {
+    // Claim the call: take the pending caller and its call's seq.
+    let PendingCall {
+        tid: caller_tid,
+        seq,
+    } = {
         let mut table = CHANNEL_TABLE.lock();
         let ch = match channel_mut(&mut table, channel) {
             Ok(c) => c,
             Err(e) => return e,
         };
 
-        caller_tid = match ch.pending_caller.take() {
-            Some(t) => t,
+        let pending = match ch.pending_caller.take() {
+            Some(p) => p,
             None => return IpcError::Eproto as i64,
         };
         // The caller's wake is in flight until the reply switch or the
         // unblock below lands.
-        tripwire::mark_wake_pending(caller_tid, WakeSource::Reply);
-    }
+        tripwire::mark_wake_pending(pending.tid, WakeSource::Reply);
+        pending
+    };
 
-    // Copy the reply into the caller's reply buffer and mark it done. A
-    // caller that has already left its call (its deadline passed after this
-    // claim) took its slot back, and the reply is dropped.
-    {
+    // Copy the reply into the caller's reply buffer and mark it done, if the
+    // slot is still the claimed call's. A caller that has already left the
+    // call (its deadline passed after this claim) took its slot back, and
+    // may have posted its next call's slot since, with another seq: either
+    // way the reply is dropped.
+    let delivered = {
         let mut slots = REPLY_SLOTS.lock();
-        if let Some(slot) = slots
+        match slots
             .get_mut(caller_tid.0 as usize)
             .and_then(Option::as_mut)
         {
-            let copy_len = reply_buf.len().min(slot.buf_len);
-            // SAFETY: The reply buffer pointer was provided by the caller
-            // thread, which is still inside ipc_call while its slot exists: it
-            // holds the buffer's &mut borrow until its exit takes the slot back
-            // under REPLY_SLOTS, held here, and it never touches the buffer in
-            // between. So the buffer is valid and not concurrently accessed.
-            // copy_len is bounded by both the reply payload size and the
-            // buffer capacity. Writing through a slot whose call had returned
-            // would corrupt a dead stack frame.
-            unsafe {
-                core::ptr::copy_nonoverlapping(reply_buf.as_ptr(), slot.buf, copy_len);
+            Some(slot) if slot.seq == seq => {
+                let copy_len = reply_buf.len().min(slot.buf_len);
+                // SAFETY: The slot is the claimed call's, because its seq
+                // matched, and the reply buffer pointer was provided by the
+                // caller thread, which is still inside that ipc_call while
+                // the slot exists: it holds the buffer's &mut borrow until its
+                // exit takes the slot back under REPLY_SLOTS, held here, and
+                // it never touches the buffer in between. So the buffer is
+                // valid and not concurrently accessed. copy_len is bounded by
+                // both the reply payload size and the buffer capacity.
+                // Writing through a slot whose call had returned would
+                // corrupt a dead stack frame, and writing into another call's
+                // slot would hand that call this reply.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(reply_buf.as_ptr(), slot.buf, copy_len);
+                }
+                slot.bytes_written = copy_len;
+                slot.done = true;
+                true
             }
-            slot.bytes_written = copy_len;
-            slot.done = true;
+            _ => false,
         }
+    };
+
+    if !delivered {
+        // A late reply: the claimed call has ended. The caller's timeout
+        // entry, if any, belongs to its next wait, so it is not cleared, and
+        // the caller is not switched to. The unblock lands the wake marked at
+        // the claim; a stale wake costs the caller at most one pass.
+        tripwire::bump(Key::Latereply, 0);
+        sched::unblock(caller_tid, WakeSource::Reply);
+        return 0;
     }
 
     // Clear the caller's timeout — the reply arrived, so the timeout must
@@ -672,8 +722,10 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
 /// The canceller's tid comes from `sched::current_tid()` (EPERM with no
 /// current thread or no process). It claims the call (takes
 /// `pending_caller`), then, under REPLY_SLOTS, marks the caller's slot
-/// `cancelled` if it is present and not `done`, then wakes the caller with
-/// `unblock`. The result comes from that state (capability-lifetime ADR §9),
+/// `cancelled` if it is present, still the claimed call's (its `seq`
+/// matches; a caller that left the call and started its next one between
+/// the claim and the mark has a slot with another `seq`) and not `done`,
+/// then wakes the caller with `unblock`. The result comes from that state (capability-lifetime ADR §9),
 /// so no error code is written: the caller's next pass reads `cancelled`
 /// before it reads the claim, and a cancel landing between those reads
 /// leaves a token.
@@ -691,31 +743,37 @@ pub fn ipc_cancel(channel: ChannelId) -> i64 {
     }
 
     // Claim the call.
-    let caller_tid = {
+    let PendingCall {
+        tid: caller_tid,
+        seq,
+    } = {
         let mut table = CHANNEL_TABLE.lock();
         let ch = match channel_mut(&mut table, channel) {
             Ok(c) => c,
             Err(e) => return e,
         };
-        let Some(caller_tid) = ch.pending_caller.take() else {
+        let Some(pending) = ch.pending_caller.take() else {
             return 0; // Nothing to cancel.
         };
         // The caller's wake is in flight until the unblock below lands.
-        tripwire::mark_wake_pending(caller_tid, WakeSource::Cancel);
-        caller_tid
+        tripwire::mark_wake_pending(pending.tid, WakeSource::Cancel);
+        pending
     };
 
-    // Mark the call cancelled, after the claim. A written reply wins.
+    // Mark the call cancelled, after the claim, if the slot is still the
+    // claimed call's. A written reply wins.
     if let Some(slot) = REPLY_SLOTS
         .lock()
         .get_mut(caller_tid.0 as usize)
         .and_then(Option::as_mut)
     {
-        if !slot.done {
+        if slot.seq == seq && !slot.done {
             slot.cancelled = true;
         }
     }
 
+    // Also on a late cancel: the unblock lands the wake marked at the claim,
+    // and a stale wake costs the caller at most one pass.
     sched::unblock(caller_tid, WakeSource::Cancel);
     0
 }

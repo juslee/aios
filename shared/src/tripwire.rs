@@ -435,6 +435,9 @@ pub enum Key {
     Spbad,
     /// Reply fallbacks that skipped a caller its timeout wakes: a caller no
     /// longer in that call, or armed with a timeout the reply did not remove.
+    /// Also replies that delivered nothing because the claimed call had
+    /// ended: its reply slot gone, or replaced by the caller's next call's
+    /// (another `seq`).
     Latereply,
     /// Replies that woke a thread not blocked in that call.
     Misrep,

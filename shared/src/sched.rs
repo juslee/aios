@@ -1991,12 +1991,17 @@ mod tests {
     /// - The exit clears `pending_caller` if it is still the caller, takes
     ///   the slot (a written reply wins), removes the entry and cancels the
     ///   arm.
-    /// - The claimer is the real replier (claims `pending_caller`, writes
-    ///   the reply and `done` if the slot is there, removes the entry, then
-    ///   `unblock`) or a canceller (claims, sets `cancelled` if the slot is
-    ///   there and not done, then `unblock`). It claims only once the
-    ///   request is queued, which is the step that publishes
-    ///   `pending_caller`.
+    /// - The claimer is the real replier (claims `pending_caller` with the
+    ///   call's `seq`, writes the reply and `done` if the slot is there
+    ///   with that `seq`, then removes the entry, then `unblock`; with
+    ///   nothing delivered it skips the removal) or a canceller (claims,
+    ///   sets `cancelled` if the slot is there with that `seq` and not
+    ///   done, then `unblock`). It claims only once the request is queued,
+    ///   which is the step that publishes `pending_caller`.
+    /// - With two calls, the caller starts its second call at the slot
+    ///   post once the first has returned, while the claimer, the timer
+    ///   and the stale replier keep their places: a claimer delayed after
+    ///   its claim on the first call can reach the second call's slot.
     /// - The timeout fires once the clock has passed the deadline and the
     ///   entry is published, then calls `unblock`. A stale replier removes
     ///   the entry, then calls `unblock`, at any point; one tick can preempt
@@ -2058,6 +2063,15 @@ mod tests {
             /// The first pass's Expired path cancels its arm (negative
             /// control: `false`).
             pub(super) cancel_expired: bool,
+            /// The caller makes 1 or 2 calls; the second starts at its slot
+            /// post once the first has returned, while the claimer keeps its
+            /// own place.
+            pub(super) calls: u8,
+            /// The claimer writes the slot only if its `seq` is the claimed
+            /// call's, and a replier that delivered nothing skips its
+            /// timeout clear (negative control: `false`, the code before
+            /// the `seq`, which writes whatever slot the caller has).
+            pub(super) seq_check: bool,
         }
 
         /// The call's result.
@@ -2136,6 +2150,27 @@ mod tests {
             assert_hit: bool,
             /// `prepare_block` found a word that was not Idle.
             pub(super) prepare_bad: bool,
+            /// The current call's sequence number (1 or 2).
+            seq: u8,
+            /// The slot's `seq`, set by its post.
+            slot_seq: u8,
+            /// The `seq` the claimer took with `pending_caller`.
+            claim_seq: u8,
+            /// The `seq` of the call whose claim wrote the reply.
+            written_seq: u8,
+            /// The `seq` of the call whose claim set `cancelled`.
+            cancel_seq: u8,
+            /// The first call's result, once the second has started.
+            pub(super) first_res: Option<Res>,
+            /// The first call's result was wrong (`wrong_result` at its
+            /// return).
+            first_wrong: bool,
+            /// The claimer wrote a slot whose `seq` was not the one it
+            /// claimed.
+            pub(super) stale_write: bool,
+            /// The claimer found a slot with another `seq` and wrote
+            /// nothing.
+            pub(super) late_dropped: bool,
         }
 
         impl World {
@@ -2171,6 +2206,15 @@ mod tests {
                     consumed_token: false,
                     assert_hit: false,
                     prepare_bad: false,
+                    seq: 1,
+                    slot_seq: 0,
+                    claim_seq: 0,
+                    written_seq: 0,
+                    cancel_seq: 0,
+                    first_res: None,
+                    first_wrong: false,
+                    stale_write: false,
+                    late_dropped: false,
                 }
             }
 
@@ -2179,17 +2223,22 @@ mod tests {
                 self.res.is_none()
             }
 
-            /// The result does not match the state that decides it: a
-            /// written reply lost to another result, a reply or a cancel
-            /// returned that never happened, or ETIMEDOUT before the
-            /// deadline.
+            /// The result of the current call, or of the first call of
+            /// two, does not match the state that decides it: a reply
+            /// written for this call lost to another result, a reply or a
+            /// cancel returned that never happened to this call (one
+            /// claimed from the other call counts as never happened), or
+            /// ETIMEDOUT before the deadline.
             pub(super) fn wrong_result(&self) -> bool {
-                match self.res {
-                    None => false,
-                    Some(Res::Replied) => !self.written,
-                    Some(Res::Canceled) => self.written || !self.cancel_set,
-                    Some(Res::Timedout) => self.written || !self.past_at_return,
-                }
+                let written = self.written && self.written_seq == self.seq;
+                let cancelled = self.cancel_set && self.cancel_seq == self.seq;
+                self.first_wrong
+                    || match self.res {
+                        None => false,
+                        Some(Res::Replied) => !written,
+                        Some(Res::Canceled) => written || !cancelled,
+                        Some(Res::Timedout) => written || !self.past_at_return,
+                    }
             }
 
             /// Token hygiene: no arm found a word that was not Idle, no
@@ -2229,6 +2278,25 @@ mod tests {
                 self.slot = true;
                 self.done = false;
                 self.cancelled = false;
+                self.slot_seq = self.seq;
+            }
+
+            /// The first call of two has returned: record its result and
+            /// start the second at its slot post, with fresh per-call
+            /// state. The claimer, the timer and the stale replier keep
+            /// their places, so a write or wake owed to the first call can
+            /// land in the second.
+            fn next_call(&mut self) {
+                self.first_wrong = self.wrong_result();
+                self.first_res = self.res;
+                self.res = None;
+                self.past = false;
+                self.expired_first = false;
+                self.inserted = false;
+                self.preempted = false;
+                self.seen_cancelled = false;
+                self.seq = 2;
+                self.pc = P1_SLOT;
             }
 
             fn ret(&mut self, res: Res) {
@@ -2363,7 +2431,11 @@ mod tests {
                     }
                     _ => {
                         self.word = WaitState::Idle;
-                        self.pc = DONE;
+                        if self.seq < cfg.calls {
+                            self.next_call();
+                        } else {
+                            self.pc = DONE;
+                        }
                     }
                 }
                 Some(self)
@@ -2375,23 +2447,39 @@ mod tests {
                     // pending_caller.
                     CL_CLAIM if self.pending => {
                         self.pending = false;
+                        self.claim_seq = self.seq;
                         self.claimer = CL_SLOT;
                     }
                     CL_SLOT => {
+                        let mut delivered = false;
                         if self.slot && !self.done {
-                            if cfg.claimer == Claimer::Reply {
-                                self.done = true;
-                                self.written = true;
+                            if !cfg.seq_check || self.slot_seq == self.claim_seq {
+                                if self.slot_seq != self.claim_seq {
+                                    self.stale_write = true;
+                                }
+                                delivered = true;
+                                if cfg.claimer == Claimer::Reply {
+                                    self.done = true;
+                                    self.written = true;
+                                    self.written_seq = self.claim_seq;
+                                } else {
+                                    self.cancelled = true;
+                                    self.cancel_set = true;
+                                    self.cancel_seq = self.claim_seq;
+                                }
                             } else {
-                                self.cancelled = true;
-                                self.cancel_set = true;
+                                self.late_dropped = true;
                             }
                         }
-                        self.claimer = if cfg.claimer == Claimer::Reply {
-                            CL_CLEAR
-                        } else {
-                            CL_WAKE
-                        };
+                        // A replier that delivered nothing skips the clear
+                        // (the entry belongs to the caller's next wait); the
+                        // code before the seq always cleared.
+                        self.claimer =
+                            if cfg.claimer == Claimer::Reply && (delivered || !cfg.seq_check) {
+                                CL_CLEAR
+                            } else {
+                                CL_WAKE
+                            };
                     }
                     CL_CLEAR => {
                         self.entry = false;
@@ -2512,6 +2600,8 @@ mod tests {
             slot_first: true,
             arm_first: true,
             cancel_expired: true,
+            calls: 1,
+            seq_check: true,
         }
     }
 
@@ -2625,6 +2715,69 @@ mod tests {
             ..call_config(Claimer::None, true)
         });
         assert!(finals.iter().any(|w| w.prepare_bad));
+    }
+
+    /// Two calls with a deadline and `claimer` claiming once, with or
+    /// without the `seq` check.
+    fn two_calls(claimer: Claimer, seq_check: bool) -> call_model::Finals {
+        let finals = call_model::explore(call_model::Config {
+            calls: 2,
+            seq_check,
+            ..call_config(claimer, true)
+        });
+        assert!(!finals.is_empty());
+        finals
+    }
+
+    /// With the `seq` check, a claim on the first call never writes the
+    /// second call's slot: every final state passes every check, and the
+    /// window (the first call timed out after the claim, and the claimer
+    /// then found the second call's slot) is reached.
+    fn check_two_calls(claimer: Claimer) {
+        let finals = two_calls(claimer, true);
+        for w in &finals {
+            assert!(!w.hung(), "hung: {w:?}");
+            assert!(!w.wrong_result(), "wrong result: {w:?}");
+            assert!(!w.stale_write, "stale write: {w:?}");
+            assert!(w.token_ok(), "token: {w:?}");
+            assert!(w.clean(), "left behind: {w:?}");
+        }
+        assert!(
+            finals
+                .iter()
+                .any(|w| w.first_res == Some(CallRes::Timedout) && w.late_dropped),
+            "{claimer:?}"
+        );
+    }
+
+    #[test]
+    fn call_model_late_reply_never_reaches_the_next_call() {
+        check_two_calls(Claimer::Reply);
+    }
+
+    #[test]
+    fn call_model_without_seq_the_late_reply_hits_the_next_call() {
+        // Negative control (the code before the seq): the replier claims
+        // the first call, the call times out, the second call posts its
+        // slot, and the late reply lands there and ends the second call.
+        let finals = two_calls(Claimer::Reply, false);
+        assert!(finals.iter().any(|w| w.stale_write));
+        assert!(finals
+            .iter()
+            .any(|w| w.wrong_result() && w.res == Some(CallRes::Replied)));
+    }
+
+    #[test]
+    fn call_model_late_cancel_never_reaches_the_next_call() {
+        check_two_calls(Claimer::Cancel);
+    }
+
+    #[test]
+    fn call_model_without_seq_the_late_cancel_hits_the_next_call() {
+        // Negative control: the late cancel marks the second call's slot
+        // cancelled.
+        let finals = two_calls(Claimer::Cancel, false);
+        assert!(finals.iter().any(|w| w.stale_write));
     }
 
     // ── Process lifecycle ───────────────────────────────────────────────

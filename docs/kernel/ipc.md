@@ -495,8 +495,12 @@ pub struct Channel {
     ring: MessageRing,
     /// Thread currently blocked in IpcRecv on this channel.
     waiting_receiver: Option<ThreadId>,
-    /// Thread currently blocked in IpcCall on this channel.
-    pending_caller: Option<ThreadId>,
+    /// Thread currently blocked in IpcCall on this channel, with the
+    /// call's sequence number (`PendingCall { tid, seq }`). The caller's
+    /// reply slot carries the same `seq`; a replier or canceller writes
+    /// the slot only on a match, so a late one never reaches the
+    /// caller's next call.
+    pending_caller: Option<PendingCall>,
     /// The capability token that authorized this channel's creation.
     /// On revocation, the kernel walks all channels and destroys any whose
     /// creation_cap has been revoked (zero trust: §10.3 Gap 1 in
@@ -1930,7 +1934,7 @@ This is particularly valuable for the AIRS inference pipeline: an agent can subm
 
 **Source:** seL4 MCS — reply capabilities are first-class kernel objects. When a server receives a call, the kernel creates a one-use reply capability. The server must hold this capability to reply. If the server crashes, the reply capability is revoked and the client is unblocked with an error.
 
-**Opportunity for AIOS.** Current implementation uses `pending_caller: Option<ThreadId>` in the Channel struct. This works but has a subtle issue: if the server thread is reused (exits and a new thread gets the same ThreadId), the new thread could accidentally reply to a stale caller. Reply capabilities eliminate this class of bug:
+**Opportunity for AIOS.** Current implementation uses `pending_caller: Option<PendingCall>` (the caller's ThreadId and its call's sequence number) in the Channel struct. This works but has a subtle issue: if the server thread is reused (exits and a new thread gets the same ThreadId), the new thread could accidentally reply to a stale caller. Reply capabilities eliminate this class of bug:
 
 - `ipc_recv` returns a `ReplyCapability` alongside the message
 - `ipc_reply` consumes the `ReplyCapability` (one-shot)

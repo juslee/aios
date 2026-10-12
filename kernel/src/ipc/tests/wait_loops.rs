@@ -70,7 +70,7 @@ fn receiver_is(ch: ChannelId, want: Option<ThreadId>) -> bool {
 /// caller, `None` for none).
 fn caller_is(ch: ChannelId, want: Option<ThreadId>) -> bool {
     let mut table = CHANNEL_TABLE.lock();
-    channel_mut(&mut table, ch).is_ok_and(|c| c.pending_caller == want)
+    channel_mut(&mut table, ch).is_ok_and(|c| c.pending_caller.map(|p| p.tid) == want)
 }
 
 /// Log `<test> test: as expected`, or `<test> test: (<case>) <failure>`.

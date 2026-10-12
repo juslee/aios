@@ -108,6 +108,16 @@ impl MessageRing {
 // Channel
 // ---------------------------------------------------------------------------
 
+/// A channel's pending `ipc_call`: the calling thread and the call's
+/// sequence number (`timeout::next_call_seq`), the same `seq` its reply slot
+/// carries. A claimer that takes it writes the slot only on a `seq` match,
+/// so a claim on one call never lands in the same thread's next call.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct PendingCall {
+    pub(crate) tid: ThreadId,
+    pub(crate) seq: u32,
+}
+
 /// Bidirectional IPC channel between two endpoints.
 ///
 /// endpoint_a is the "creator" side, endpoint_b is the "peer" side.
@@ -136,8 +146,9 @@ pub(crate) struct Channel {
     /// Thread waiting in ipc_call() for a reply to its queued request: armed
     /// for its wait (`wake::prepare_block`) before it registers here, with
     /// its reply slot already written. A replier or canceller claims the
-    /// call by taking it, then writes the reply slot and wakes the caller.
-    pub(crate) pending_caller: Option<ThreadId>,
+    /// call by taking it, then writes the reply slot only if the slot's
+    /// `seq` is the one it claimed, and wakes the caller.
+    pub(crate) pending_caller: Option<PendingCall>,
     /// Process whose checked `channel_create` made this channel, or `None`
     /// for a kernel channel (`channel_create_unchecked`). The revoke cascade
     /// looks up `creation_cap` in this process's capability table. Not
@@ -365,7 +376,7 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
 
     // Wake any blocked threads with EPIPE (both receiver and caller).
     let wake_recv = ch.waiting_receiver;
-    let wake_caller = ch.pending_caller;
+    let wake_caller = ch.pending_caller.map(|p| p.tid);
     // The channel held their last waiter references: their wakes are in
     // flight until wake_with_error reaches unblock.
     for tid in [wake_recv, wake_caller].into_iter().flatten() {

@@ -4,7 +4,7 @@
 //! buffers for synchronous IPC, and helper functions for waking threads
 //! with error codes.
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::arch::aarch64::daif;
 use crate::arch::aarch64::timer::TICK_COUNT;
@@ -42,7 +42,10 @@ pub(super) static TIMEOUT_QUEUE: IrqSpinLock<[Option<TimeoutEntry>; MAX_THREADS]
 /// Reply buffer and call state: an `ipc_call` writes its slot before it
 /// arms and publishes itself as the channel's pending caller, and takes it
 /// back at its exit. Not a waker record: the replier and the canceller find
-/// the caller through `pending_caller`, then write here.
+/// the caller through `pending_caller`, then write here, under REPLY_SLOTS,
+/// only if the slot's `seq` is the one they claimed. A claimer delayed
+/// between its claim and this write may find the caller's next call's slot
+/// instead, whose `seq` differs, and leaves it alone.
 ///
 /// Per-thread: index = thread table index. A thread has at most one
 /// `ipc_call` in progress, so at most one slot.
@@ -59,15 +62,21 @@ pub(super) struct ReplySlot {
     /// A canceller claimed the call (`ipc_cancel`, after taking
     /// `pending_caller`) before any reply was written.
     pub(super) cancelled: bool,
+    /// The sequence number of the `ipc_call` that posted this slot
+    /// ([`next_call_seq`]); a replier or canceller writes only on a match
+    /// with the `seq` it claimed.
+    pub(super) seq: u32,
 }
 
 // SAFETY: ReplySlot contains a *mut u8 pointing to the reply buffer of a
 // thread inside ipc_call, which holds the buffer's &mut borrow until it has
 // taken the slot back under REPLY_SLOTS, so the pointer is valid while the
-// slot exists and is written only under the REPLY_SLOTS lock. A slot left
-// behind after its call returned would let a replier write into a dead stack
-// frame; ipc_call's every exit takes it, and process exit step C drops a
-// victim's.
+// slot exists. The slot is written only under the REPLY_SLOTS lock, and only
+// by a claimer whose claimed `seq` matches the slot's, so a reply or cancel
+// claimed from one call never reaches the same thread's next call. A slot
+// left behind after its call returned would let a replier write into a dead
+// stack frame; ipc_call's every exit takes it, and process exit step C drops
+// a victim's.
 unsafe impl Send for ReplySlot {}
 unsafe impl Sync for ReplySlot {}
 
@@ -77,6 +86,28 @@ pub(super) static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
     const NONE: Option<ReplySlot> = None;
     Mutex::new([NONE; MAX_THREADS])
 };
+
+/// Per-thread `ipc_call` counter, by thread slot: the last call's sequence
+/// number. Written only by the thread itself (the own-tid rule, ADR §8), in
+/// [`next_call_seq`], and read by others only through its copies in
+/// `ReplySlot::seq` and `pending_caller`, under REPLY_SLOTS and
+/// CHANNEL_TABLE. So a plain `Relaxed` load and store suffice: no other
+/// thread writes the counter, and no RMW is needed. Never reset: a slot
+/// reused by a new thread continues the count, so a claim made against the
+/// old thread's call never matches the new thread's slot.
+static CALL_SEQ: [AtomicU32; MAX_THREADS] = [const { AtomicU32::new(0) }; MAX_THREADS];
+
+/// The sequence number of `me`'s next `ipc_call`: the counter plus one,
+/// wrapping, stored back. 0 for an out-of-range `me`, which has no counter
+/// (and no reply slot, so the value is never compared).
+pub(super) fn next_call_seq(me: ThreadId) -> u32 {
+    let Some(counter) = CALL_SEQ.get(me.0 as usize) else {
+        return 0;
+    };
+    let seq = counter.load(Ordering::Relaxed).wrapping_add(1);
+    counter.store(seq, Ordering::Relaxed);
+    seq
+}
 
 // ---------------------------------------------------------------------------
 // Per-thread wakeup error tracking
