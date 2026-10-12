@@ -384,7 +384,7 @@ pub fn ipc_select(
 
 - **Reply buffer lifetime** (channel.rs:107-114): The `ReplySlot` holds a pointer to the caller's recv_buf. The receiver copies directly into this buffer during `ipc_reply()`. The buffer must remain valid for the entire IPC round-trip. Do not use stack-allocated reply buffers that go out of scope before the reply arrives.
 
-- **Timeout registration before blocking** (channel.rs:118-126): Timeouts are registered in the TIMEOUT_QUEUE *before* the thread blocks. If direct switch fails and falls through to the scheduler, the timeout is still active. On timeout expiry, the timeout queue wakes the thread with an error code.
+- **Timeout registration before blocking** (`timeout::arm_timeout`): Timeouts are registered in the TIMEOUT_QUEUE *before* the thread blocks, with IRQs masked. If direct switch fails and falls through to the scheduler, the timeout is still active. On timeout expiry, the timeout queue wakes the thread with an error code. A deadline that has already passed when it is registered (`DeadlineArm::Expired`) inserts no entry, and the wait must not block: `ipc_call` and `ipc_recv` return ETIMEDOUT, and `sleep_ticks` ends.
 
 - **ipc_reply() needs no capability** (channel.rs:349): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
 

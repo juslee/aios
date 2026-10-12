@@ -8,14 +8,16 @@ use core::sync::atomic::Ordering;
 
 use crate::arch::aarch64::daif;
 use crate::arch::aarch64::timer::TICK_COUNT;
-use crate::observability::tripwire;
-use crate::sched;
+use crate::observability::tripwire::{self, WaitSide};
+use crate::sched::{self, wake};
 use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 use shared::deadline_after;
 use shared::lock::LockClass;
 use shared::tripwire::{ClearResult, WakeSource};
 use spin::Mutex;
+
+use super::DeadlineArm;
 
 // ---------------------------------------------------------------------------
 // Timeout queue
@@ -205,9 +207,10 @@ pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
 
 /// Remove `tid`'s timeout entry, waiting for TIMEOUT_QUEUE if it is busy.
 /// Returns whether it removed one. For thread context only (process exit
-/// step C): unlike [`clear_timeout`], it never leaves an entry behind to fire
-/// later at a dead thread's slot. The hold runs with IRQs masked, because
-/// TIMEOUT_QUEUE is an IRQ-class lock that this CPU's tick try-locks.
+/// step C, a wait's own exit through [`clear_own_timeout`], the self-tests'
+/// wake helper): unlike [`clear_timeout`], it never leaves an entry behind to
+/// fire later. The hold runs with IRQs masked, because TIMEOUT_QUEUE is an
+/// IRQ-class lock that this CPU's tick try-locks.
 pub(super) fn clear_timeout_blocking(tid: ThreadId) -> bool {
     daif::with_irqs_masked(|| {
         TIMEOUT_QUEUE
@@ -238,30 +241,101 @@ pub(super) fn clear_reply_slot(tid: ThreadId) {
     }
 }
 
-/// Sleep the current thread for the given number of ticks.
+/// Publish `me`'s wait deadline in TIMEOUT_QUEUE, after the arm (ADR §8
+/// rule 1), where `check_timeouts` wakes it with `code`.
 ///
-/// Uses the IPC timeout infrastructure to wake the thread after the deadline.
-/// error_code=0 distinguishes sleep wake from error wake.
+/// `TICK_COUNT` is read inside the TIMEOUT_QUEUE hold, which orders the read
+/// after any `check_timeouts` that fired and removed the entry: a deadline
+/// that has passed (`TICK_COUNT >= deadline`) gives [`DeadlineArm::Expired`]
+/// and inserts nothing, so an entry that already fired is never re-inserted,
+/// and the wait must not block. Otherwise the entry is inserted when the slot
+/// is empty (a later pass of the same wait finds its own entry still there
+/// unless a waker removed it) and the result is [`DeadlineArm::Armed`].
+/// `None` (no deadline) inserts nothing and gives [`DeadlineArm::Armed`].
+///
+/// `side` is the tripwire N2 phase of an `ipc_call` or `ipc_recv`, moved to
+/// armed inside the same hold whatever the result, or at the point where it
+/// would register for a wait with no deadline; a sleep has no phase (`None`).
+/// The hold runs with IRQs masked, because TIMEOUT_QUEUE is an IRQ-class lock
+/// that this CPU's tick try-locks.
+pub(super) fn arm_timeout(
+    me: ThreadId,
+    deadline: Option<u64>,
+    code: i64,
+    side: Option<WaitSide>,
+) -> DeadlineArm {
+    let Some(wake_at_tick) = deadline else {
+        if let Some(side) = side {
+            tripwire::wait_armed(side, me, false);
+        }
+        return DeadlineArm::Armed;
+    };
+    daif::with_irqs_masked(|| {
+        let mut tq = TIMEOUT_QUEUE.lock();
+        let arm = if TICK_COUNT.load(Ordering::Relaxed) >= wake_at_tick {
+            DeadlineArm::Expired
+        } else {
+            if let Some(slot) = tq.get_mut(me.0 as usize) {
+                if slot.is_none() {
+                    *slot = Some(TimeoutEntry {
+                        tid: me,
+                        wake_at_tick,
+                        error_code: code,
+                    });
+                }
+            }
+            DeadlineArm::Armed
+        };
+        if let Some(side) = side {
+            tripwire::wait_armed(side, me, true);
+        }
+        arm
+    })
+}
+
+/// Remove `me`'s own timeout entry at a wait's exit, waiting for
+/// TIMEOUT_QUEUE if it is busy ([`clear_timeout_blocking`]): nothing is left
+/// to fire into a later wait. A no-op when the entry fired or was never
+/// inserted.
+pub(super) fn clear_own_timeout(me: ThreadId) {
+    clear_timeout_blocking(me);
+}
+
+/// Sleep the current thread for `ticks` timer ticks.
 ///
 /// 0 returns at once. The deadline comes from `shared::deadline_after`, so a
 /// large `ticks` cannot overflow (#217); `u64::MAX`, no deadline there, is
 /// stored as the entry at `u64::MAX`, which the tick count never reaches.
+/// With no current thread it returns at once.
+///
+/// The thread's tid comes from `sched::current_tid()`. Its one waker record
+/// is its TIMEOUT_QUEUE entry, code 0, which `check_timeouts` fires. Each
+/// pass arms (`wake::prepare_block`), then publishes the entry
+/// ([`arm_timeout`]): once the deadline has passed the sleep ends; otherwise
+/// the thread blocks as `BlockedTimer` and the next pass re-checks. A stale
+/// wake (a stale reply or send whose `clear_timeout` removed the entry, or a
+/// late `wake_with_error` from an earlier `ipc_call`) costs one pass, which
+/// re-inserts the entry, so the sleep never returns before its deadline.
+/// The exit removes the entry if a stale wake left it ([`clear_own_timeout`])
+/// and then cancels the arm. `WAKEUP_ERRORS` is not taken: the entry's own
+/// wake carries 0, and a late non-zero code decides nothing (the next
+/// `wake_with_error` overwrites it, or the next `ipc_call`, `ipc_recv` or
+/// `ipc_select` exit discards it).
 pub fn sleep_ticks(ticks: u64) {
     if ticks == 0 {
         return;
     }
-    let tid = match current_thread_id() {
-        Some(t) => t,
-        None => return,
+    let Some(me) = sched::current_tid() else {
+        return;
     };
     let deadline = deadline_after(TICK_COUNT.load(Ordering::Relaxed), ticks).unwrap_or(u64::MAX);
-    {
-        let mut tq = TIMEOUT_QUEUE.lock();
-        tq[tid.0 as usize] = Some(TimeoutEntry {
-            tid,
-            wake_at_tick: deadline,
-            error_code: 0,
-        });
+    loop {
+        wake::prepare_block(me);
+        if arm_timeout(me, Some(deadline), 0, None) == DeadlineArm::Expired {
+            break;
+        }
+        sched::block_current(ThreadState::BlockedTimer { wake_at: deadline });
     }
-    sched::block_current(ThreadState::BlockedIpc { channel: u64::MAX });
+    clear_own_timeout(me);
+    wake::cancel_block(me);
 }

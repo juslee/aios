@@ -4,23 +4,27 @@
 //! the waits from the same CPU.
 //!
 //! Outcome-only (owner, 2026-10-11, Q8): each case checks which wake source
-//! fired (the result the wait returned), the order of events (the helper's
-//! stale wake landed inside the wait, which the helper guarantees by waiting
-//! for the wait's record, and a timed-out wait did not return before its
-//! deadline) and the state left behind (no waiter record or registration,
-//! and no deadline). No elapsed tick is read as a pass band. Every wait uses
-//! a 2000-tick timeout and every helper command is due 5 ticks after it is
-//! posted, so crowding on CPU 2 can delay a case but not change its outcome.
+//! fired (the result the wait returned, and for a sleep whether its backstop
+//! fired), the order of events (the helper's stale wake landed inside the
+//! wait, which the helper guarantees by waiting for the wait's record, and a
+//! timed-out wait did not return before its deadline) and the state left
+//! behind (no waiter record, registration, deadline or timeout entry). No
+//! elapsed tick is read as a pass band. Every wait uses a 2000-tick timeout,
+//! a backstop expires 2000 ticks after its wait's deadline, and every helper
+//! command is due 5 ticks after it is posted, so crowding on CPU 2 can delay
+//! a case but not change its outcome.
 
 use core::sync::atomic::Ordering;
 
 use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::ipc::channel::{ipc_recv, ipc_send};
 use crate::ipc::notify::{
-    deadline_of, has_waiter_record, notification_create, notification_destroy, notification_wait,
+    arm_deadline, clear_deadline, deadline_of, has_waiter_record, notification_create,
+    notification_destroy, notification_wait,
 };
 use crate::ipc::select::ipc_select;
-use crate::ipc::{channel_create, channel_destroy, channel_mut, CHANNEL_TABLE};
+use crate::ipc::timeout::{has_timeout_entry, sleep_ticks};
+use crate::ipc::{channel_create, channel_destroy, channel_mut, DeadlineArm, CHANNEL_TABLE};
 use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
@@ -31,6 +35,8 @@ use super::TEST_PID;
 
 /// Every loop-test wait's timeout.
 const LOOP_TICKS: u64 = 2000;
+/// Ticks after a wait's own deadline at which its backstop expires.
+const BACKSTOP_TICKS: u64 = 2000;
 /// Ticks after the post at which a helper command acts.
 const DUE_TICKS: u64 = 5;
 /// The notification bits the tests signal and wait for.
@@ -333,4 +339,60 @@ fn select_case_d(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
         return Some("helper receive failed");
     }
     leftover(me)
+}
+
+/// `Sleep-loop test`: `sleep_ticks(2000)` with a stale wake at +5 that first
+/// removes the sleep's TIMEOUT_QUEUE entry (`Command::Stale` with
+/// `clear_timeout`: a stale reply that clears the sleeper's entry and wakes
+/// it), so only the sleep's re-insert of its entry can end it on time.
+///
+/// A backstop deadline (`arm_deadline`), 2000 ticks after the sleep's, is
+/// published first: an independent wake source, so a sleep whose entry was
+/// lost returns instead of hanging. Pass: the sleep returned with the
+/// backstop not fired (`NOTIFY_DEADLINES[me]` still holds it), so the sleep's
+/// own re-inserted entry ended it; at or past its deadline; the helper
+/// removed an entry; and no TIMEOUT_QUEUE entry is left. Logs
+/// `Sleep-loop test: as expected`, or `Sleep-loop test: entry lost` (the
+/// backstop fired first), `Sleep-loop test: early` (returned before its
+/// deadline) or a line naming the helper's or the leftover's failure. The
+/// backstop is cleared afterwards; one that fired has already woken the
+/// sleep.
+pub(super) fn sleep_loop_test(me: ThreadId) {
+    let failure = sleep_case(me);
+    wake_helper::reclaim();
+    match failure {
+        None => crate::kinfo!(Ipc, "Sleep-loop test: as expected"),
+        Some(what) => crate::kwarn!(Ipc, "Sleep-loop test: {}", what),
+    }
+}
+
+/// The Sleep-loop case: the failure, if any.
+fn sleep_case(me: ThreadId) -> Option<&'static str> {
+    // The sleep's own deadline is at or after this one.
+    let deadline = now().saturating_add(LOOP_TICKS);
+    let backstop = deadline.saturating_add(BACKSTOP_TICKS);
+    if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
+        return Some("backstop expired");
+    }
+    let stale = Command::Stale {
+        target: me,
+        clear_timeout: true,
+    };
+    if !wake_helper::post(stale, DUE_TICKS) {
+        clear_deadline(me);
+        return Some("helper busy");
+    }
+    sleep_ticks(LOOP_TICKS);
+    let returned = now();
+    let backstop_fired = deadline_of(me) != backstop;
+    clear_deadline(me);
+    let helper = wake_helper::finish();
+    if backstop_fired {
+        return Some("entry lost");
+    }
+    if returned < deadline {
+        return Some("early");
+    }
+    wake_helper::stale_failure(helper, true)
+        .or_else(|| has_timeout_entry(me).then_some("entry left"))
 }

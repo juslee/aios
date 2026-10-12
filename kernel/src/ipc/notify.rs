@@ -236,8 +236,10 @@ enum WaitPass {
 
 /// Wait on a notification: if any bits matching `mask` are set, return+clear
 /// them immediately. Otherwise block until signalled, destroyed or past the
-/// deadline `timeout_ticks` from now (`shared::deadline_after`: 0 is a
-/// deadline the next tick passes, `u64::MAX` none).
+/// deadline `timeout_ticks` from now (`shared::deadline_after`: `u64::MAX` is
+/// none, and 0 is the current tick, a deadline `arm_deadline` finds already
+/// passed, so after the fast path the first pass registers, finds it Expired
+/// and returns ETIMEDOUT without blocking).
 ///
 /// The caller's tid comes from `sched::current_tid()` (EPERM with no current
 /// thread). After the fast path, which publishes nothing, each pass runs in

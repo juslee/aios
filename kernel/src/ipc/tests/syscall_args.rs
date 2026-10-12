@@ -187,9 +187,9 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
 
     // A live notification (#188 item 8): NotificationSignal returns 0, and
     // the bits it set are the ones a NotificationWait with timeout 0 returns
-    // from its fast path. Timeout 0 is not a poll for notification_wait: if
-    // the bits were not set, the wait would block until the next tick and
-    // time out, so this check fails late rather than at once.
+    // from its fast path. If the bits were not set, the wait's deadline (the
+    // current tick) would already have passed at its first pass, so it would
+    // return ETIMEDOUT without blocking and the check would fail.
     let id = svc(Syscall::NotificationCreate, &[]);
     if IpcError::try_from(id).is_err() && id >= 0 {
         checks[30] = svc(Syscall::NotificationSignal, &[id as u64, 0b101]) == 0;

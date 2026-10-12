@@ -1137,12 +1137,12 @@ mod tests {
             .any(|w| w.reset_armed && w.blocked_ran && w.idle_dead_block));
     }
 
-    // ── Wake token: the loop model (capability-lifetime step 11) ────────
+    // ── Wake token: the loop model (capability-lifetime steps 11–12) ────
 
     /// An exhaustive model of a converted waiting site against its wakers,
     /// explored over every interleaving of their atomic steps, with the
     /// decisions taken from [`wake_action`] and [`block_action`], as the
-    /// kernel's `notify.rs` and `select.rs` take them.
+    /// kernel's `notify.rs`, `select.rs` and `timeout.rs` take them.
     ///
     /// - [`Site::Notify`] is `notification_wait`: a fast path (no arm), then
     ///   passes that each, in one NOTIFICATION_TABLE critical section, take
@@ -1159,10 +1159,17 @@ mod tests {
     ///   signaller claims (removes) the select record and leaves the bit;
     ///   the sender queues the message and takes the receiver slot. Each
     ///   calls `unblock` if it found a registration.
+    /// - [`Site::Sleep`] is `sleep_ticks`: passes that arm, then publish the
+    ///   TIMEOUT_QUEUE entry (`arm_timeout`; Expired ends the sleep), and
+    ///   block as BlockedTimer. Its only record is the entry, and its exit
+    ///   removes the entry and cancels the arm.
     /// - The timeout fires once the clock has passed the deadline and the
-    ///   entry is published (`check_notification_timeouts`), then calls
-    ///   `unblock`. A stale `unblock` (the wake helper's) can land anywhere,
-    ///   and one tick can preempt the waiter.
+    ///   entry is published (`check_notification_timeouts`, or
+    ///   `check_timeouts` for a sleep), then calls `unblock`. A stale
+    ///   `unblock` (the wake helper's) can land anywhere, for a sleep after
+    ///   an optional removal of the entry (`stale_clear`: a stale reply or
+    ///   send's `clear_timeout`, or a late `wake_with_error`), and one tick
+    ///   can preempt the waiter.
     mod loop_model {
         extern crate std;
 
@@ -1181,11 +1188,11 @@ mod tests {
         }
 
         impl Th {
-            fn state(self) -> ThreadState {
+            fn state(self, site: Site) -> ThreadState {
                 match self {
                     Th::Running => ThreadState::Running,
                     Th::Runnable => ThreadState::Runnable,
-                    Th::Blocked => ThreadState::BlockedSelect,
+                    Th::Blocked => site.blocked(),
                 }
             }
         }
@@ -1195,6 +1202,18 @@ mod tests {
         pub(super) enum Site {
             Notify,
             Select,
+            Sleep,
+        }
+
+        impl Site {
+            /// The state the site blocks in.
+            fn blocked(self) -> ThreadState {
+                match self {
+                    Site::Notify => ThreadState::BlockedNotification { notification: 0 },
+                    Site::Select => ThreadState::BlockedSelect,
+                    Site::Sleep => ThreadState::BlockedTimer { wake_at: 0 },
+                }
+            }
         }
 
         /// The event waker: none, a notification signal, or a channel send
@@ -1214,6 +1233,13 @@ mod tests {
             pub(super) deadline: bool,
             /// A stale `unblock` may land at any point.
             pub(super) stale: bool,
+            /// The stale waker first removes the deadline entry (a stale
+            /// reply's or send's `clear_timeout`), at any point before its
+            /// `unblock`.
+            pub(super) stale_clear: bool,
+            /// Each pass re-publishes a missing deadline entry (negative
+            /// control: `false`, only the first pass publishes it).
+            pub(super) reinsert: bool,
             /// The waiter arms (negative control: `false`).
             pub(super) arm: bool,
             /// Notify only, negative control: the old signal path, which
@@ -1281,6 +1307,8 @@ mod tests {
             recv: bool,
             /// The deadline entry is published.
             entry: bool,
+            /// A pass has published the entry at least once.
+            inserted: bool,
             /// The clock has passed the deadline.
             past: bool,
             /// Event waker: 0 = not run, 1 = owes an `unblock`, 2 = done; 3 =
@@ -1289,6 +1317,8 @@ mod tests {
             /// Timeout: 0 = idle, 1 = owes an `unblock`.
             timer: u8,
             stale_done: bool,
+            /// The stale waker's removal of the entry has run.
+            stale_cleared: bool,
             preempted: bool,
             /// The signaller consumed the bit for the waiter (into a record
             /// or the old result slot).
@@ -1318,10 +1348,12 @@ mod tests {
                     msg: false,
                     recv: false,
                     entry: false,
+                    inserted: false,
                     past: false,
                     ev: if cfg.event == Event::None { 2 } else { 0 },
                     timer: 0,
                     stale_done: !cfg.stale,
+                    stale_cleared: false,
                     preempted: false,
                     consumed: false,
                     res: None,
@@ -1364,8 +1396,8 @@ mod tests {
                 self.res.is_none() || (!self.recv && !self.entry && self.rec != Rec::Armed)
             }
 
-            fn unblock(&mut self) {
-                let state = self.th.state();
+            fn unblock(&mut self, site: Site) {
+                let state = self.th.state(site);
                 match wake_action(&state, self.word) {
                     WakeAction::LeaveToken => self.word = WaitState::Woken,
                     WakeAction::Enqueue => {
@@ -1426,6 +1458,7 @@ mod tests {
                     return None;
                 }
                 match self.pc {
+                    FAST if cfg.site == Site::Sleep => self.pc = PASS,
                     FAST => {
                         if self.bit {
                             self.bit = false;
@@ -1439,6 +1472,10 @@ mod tests {
                         }
                     }
                     PASS if cfg.site == Site::Notify => self.notify_pass(cfg),
+                    PASS if cfg.site == Site::Sleep => {
+                        self.prepare(cfg);
+                        self.pc = DEADLINE;
+                    }
                     PASS => {
                         // Select: arm, then the notification entry.
                         self.prepare(cfg);
@@ -1478,7 +1515,10 @@ mod tests {
                                 self.ret(Res::Timedout, cfg);
                             }
                         } else {
-                            self.entry = cfg.deadline;
+                            if cfg.reinsert || !self.inserted {
+                                self.entry = cfg.deadline;
+                                self.inserted = true;
+                            }
                             self.pc = BLOCK;
                         }
                     }
@@ -1498,8 +1538,8 @@ mod tests {
                     BLOCK => {
                         let old = self.word;
                         self.word = WaitState::Idle;
-                        let next = ThreadState::BlockedSelect;
-                        let action = block_action(&self.th.state(), old, &next);
+                        let next = cfg.site.blocked();
+                        let action = block_action(&self.th.state(cfg.site), old, &next);
                         if cfg.arm && old == WaitState::Idle {
                             self.assert_hit = true;
                         }
@@ -1564,6 +1604,7 @@ mod tests {
                                 self.bit = true;
                                 false
                             }
+                            (_, Site::Sleep) => panic!("a sleep has no event waker"),
                         };
                         self.ev = if found { 1 } else { 2 };
                     }
@@ -1573,7 +1614,7 @@ mod tests {
                         self.ev = 1;
                     }
                     1 => {
-                        self.unblock();
+                        self.unblock(cfg.site);
                         self.ev = 2;
                     }
                     _ => return None,
@@ -1589,14 +1630,14 @@ mod tests {
                 Some(self)
             }
 
-            fn step_timer(mut self) -> Option<World> {
+            fn step_timer(mut self, cfg: Config) -> Option<World> {
                 match self.timer {
                     0 if self.entry && self.past => {
                         self.entry = false;
                         self.timer = 1;
                     }
                     1 => {
-                        self.unblock();
+                        self.unblock(cfg.site);
                         self.timer = 0;
                     }
                     _ => return None,
@@ -1604,12 +1645,17 @@ mod tests {
                 Some(self)
             }
 
-            fn step_stale(mut self) -> Option<World> {
+            fn step_stale(mut self, cfg: Config) -> Option<World> {
                 if self.stale_done {
                     return None;
                 }
-                self.unblock();
-                self.stale_done = true;
+                if cfg.stale_clear && !self.stale_cleared {
+                    self.entry = false;
+                    self.stale_cleared = true;
+                } else {
+                    self.unblock(cfg.site);
+                    self.stale_done = true;
+                }
                 Some(self)
             }
 
@@ -1648,8 +1694,8 @@ mod tests {
                     w.step_waiter(cfg),
                     w.step_event(cfg),
                     w.step_clock(cfg),
-                    w.step_timer(),
-                    w.step_stale(),
+                    w.step_timer(cfg),
+                    w.step_stale(cfg),
                     w.step_preempt(),
                     w.step_resume(),
                 ];
@@ -1676,6 +1722,8 @@ mod tests {
             event,
             deadline,
             stale: true,
+            stale_clear: site == Site::Sleep,
+            reinsert: true,
             arm: true,
             old_signal: false,
             split: false,
@@ -1723,6 +1771,32 @@ mod tests {
     }
 
     #[test]
+    fn loop_model_sleep_never_loses_a_wake() {
+        // A stale reply or send that removes the entry, then wakes the
+        // sleeper: the next pass re-inserts it.
+        check_loop_site(Site::Sleep, Event::None, true);
+    }
+
+    #[test]
+    fn loop_model_sleep_without_the_reinsert_hangs() {
+        // Negative control: only the first pass publishes the entry, so a
+        // stale clear and wake leave the sleeper blocked with no entry and
+        // no wake.
+        let finals = loop_model::explore(loop_model::Config {
+            site: Site::Sleep,
+            event: Event::None,
+            deadline: true,
+            stale: true,
+            stale_clear: true,
+            reinsert: false,
+            arm: true,
+            old_signal: false,
+            split: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_wake()));
+    }
+
+    #[test]
     fn loop_model_old_signal_path_loses_bits() {
         // Negative control: the result written after the table lock is
         // released, while the timed-out waiter removes its own record.
@@ -1731,6 +1805,8 @@ mod tests {
             event: Event::Signal,
             deadline: true,
             stale: false,
+            stale_clear: false,
+            reinsert: true,
             arm: true,
             old_signal: true,
             split: false,
@@ -1747,6 +1823,8 @@ mod tests {
             event: Event::None,
             deadline: true,
             stale: false,
+            stale_clear: false,
+            reinsert: true,
             arm: false,
             old_signal: false,
             split: false,
@@ -1764,6 +1842,8 @@ mod tests {
                 event,
                 deadline: false,
                 stale: false,
+                stale_clear: false,
+                reinsert: true,
                 arm: true,
                 old_signal: false,
                 split: true,

@@ -16,13 +16,13 @@ use shared::tripwire::WakeSource;
 use shared::{deadline_after, ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
-    clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, TimeoutEntry, REPLY_SLOTS,
+    arm_timeout, clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, REPLY_SLOTS,
     TIMEOUT_QUEUE,
 };
-use super::{channel_mut, direct, CHANNEL_TABLE};
+use super::{channel_mut, direct, DeadlineArm, CHANNEL_TABLE};
 
 // ---------------------------------------------------------------------------
-// Timeout registration shared by IpcCall and IpcRecv
+// Deadline shared by IpcCall and IpcRecv
 // ---------------------------------------------------------------------------
 
 /// The deadline of a wait for `timeout_ticks` that starts now, by
@@ -31,25 +31,6 @@ use super::{channel_mut, direct, CHANNEL_TABLE};
 /// reached). `ipc_call` and `ipc_recv` handle 0 before this.
 fn deadline_from_now(timeout_ticks: u64) -> Option<u64> {
     deadline_after(TICK_COUNT.load(Ordering::Relaxed), timeout_ticks)
-}
-
-/// Register `tid`'s `deadline` in `TIMEOUT_QUEUE`, where `check_timeouts`
-/// wakes it with ETIMEDOUT, and move its tripwire N2 phase on `side` to
-/// armed inside that critical section. `None` registers no entry: the wait
-/// has no deadline.
-fn arm_timeout(side: WaitSide, tid: ThreadId, deadline: Option<u64>) {
-    match deadline {
-        Some(wake_at_tick) => {
-            let mut tq = TIMEOUT_QUEUE.lock();
-            tq[tid.0 as usize] = Some(TimeoutEntry {
-                tid,
-                wake_at_tick,
-                error_code: IpcError::Etimedout as i64,
-            });
-            tripwire::wait_armed(side, tid, true);
-        }
-        None => tripwire::wait_armed(side, tid, false),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +83,9 @@ pub fn ipc_call(
     // Enqueue message and register as pending caller.
     // Also check for direct switch opportunity (receiver already waiting).
     let direct_switch_target: Option<ThreadId>;
+    // What registering the reply deadline found: Expired means it had
+    // already passed, so no entry was published and the call does not block.
+    let arm: DeadlineArm;
     {
         let mut table = CHANNEL_TABLE.lock();
         let ch = match channel_mut(&mut table, channel) {
@@ -173,13 +157,26 @@ pub fn ipc_call(
             // Register timeout (even with direct switch, the receiver
             // might not reply in time). The tripwire N2 phase becomes armed
             // inside the TIMEOUT_QUEUE critical section.
-            arm_timeout(WaitSide::Call, caller_tid, deadline);
+            arm = arm_timeout(
+                caller_tid,
+                deadline,
+                IpcError::Etimedout as i64,
+                Some(WaitSide::Call),
+            );
 
             #[cfg(feature = "kernel-metrics")]
             METRICS.ipc_call.inc();
 
-            // Attempt direct switch — bypasses scheduler entirely.
-            if direct::try_direct_switch(caller_tid, recv_tid) {
+            if arm == DeadlineArm::Expired {
+                // The deadline has already passed and no entry was
+                // published. A direct switch would block this thread with
+                // nothing to time it out, so wake the receiver through the
+                // scheduler and end the call below as its timeout would.
+                // Otherwise attempt the direct switch, which bypasses the
+                // scheduler entirely.
+                let outcome = sched::unblock(recv_tid, WakeSource::Call);
+                tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
+            } else if direct::try_direct_switch(caller_tid, recv_tid) {
                 // We've been restored after the reply. Continue below
                 // to check result (same as scheduler-woken path).
             } else {
@@ -208,15 +205,23 @@ pub fn ipc_call(
 
             // Register timeout. The tripwire N2 phase becomes armed inside
             // the TIMEOUT_QUEUE critical section.
-            arm_timeout(WaitSide::Call, caller_tid, deadline);
+            arm = arm_timeout(
+                caller_tid,
+                deadline,
+                IpcError::Etimedout as i64,
+                Some(WaitSide::Call),
+            );
 
             #[cfg(feature = "kernel-metrics")]
             METRICS.ipc_call.inc();
 
-            // Block until reply or timeout.
-            sched::block_current(ThreadState::BlockedIpc {
-                channel: u64::from(channel.raw()),
-            });
+            // Block until reply or timeout, unless the deadline has already
+            // passed (no entry was published).
+            if arm == DeadlineArm::Armed {
+                sched::block_current(ThreadState::BlockedIpc {
+                    channel: u64::from(channel.raw()),
+                });
+            }
         }
     }
 
@@ -240,8 +245,16 @@ pub fn ipc_call(
 
     // Check if we were woken due to error (timeout, EPIPE, cancel).
     // The wake_with_error function stores the error in the WAKEUP_ERRORS
-    // table (indexed by ThreadId), retrieved via get_wakeup_error().
+    // table (indexed by ThreadId), retrieved via get_wakeup_error(). A call
+    // whose deadline had passed at registration did not block: it takes the
+    // code all the same, as its fired timeout would have, and ends with
+    // ETIMEDOUT.
     let error = get_wakeup_error(caller_tid);
+    let error = if arm == DeadlineArm::Expired {
+        IpcError::Etimedout as i64
+    } else {
+        error
+    };
     if error != 0 {
         // Clean up pending caller state.
         let mut table = CHANNEL_TABLE.lock();
@@ -332,12 +345,20 @@ pub fn ipc_recv(
 
     // Register timeout. The tripwire N2 phase becomes armed inside the
     // TIMEOUT_QUEUE critical section.
-    arm_timeout(WaitSide::Recv, receiver_tid, deadline);
+    let arm = arm_timeout(
+        receiver_tid,
+        deadline,
+        IpcError::Etimedout as i64,
+        Some(WaitSide::Recv),
+    );
 
-    // Block until message arrives or timeout.
-    sched::block_current(ThreadState::BlockedIpc {
-        channel: u64::from(channel.raw()),
-    });
+    // Block until message arrives or timeout, unless the deadline has
+    // already passed (no entry was published).
+    if arm == DeadlineArm::Armed {
+        sched::block_current(ThreadState::BlockedIpc {
+            channel: u64::from(channel.raw()),
+        });
+    }
 
     // Woken up. The receive's tripwire N2 phase ends here.
     tripwire::wait_ended(WaitSide::Recv, receiver_tid);
@@ -357,8 +378,15 @@ pub fn ipc_recv(
         }
     }
 
-    // Check for error wake.
+    // Check for error wake. A receive whose deadline had passed at
+    // registration did not block: it takes the code all the same, as its
+    // fired timeout would have, and ends with ETIMEDOUT.
     let error = get_wakeup_error(receiver_tid);
+    let error = if arm == DeadlineArm::Expired {
+        IpcError::Etimedout as i64
+    } else {
+        error
+    };
     if error != 0 {
         #[cfg(feature = "kernel-metrics")]
         if error == IpcError::Etimedout as i64 {

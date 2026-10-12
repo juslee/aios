@@ -32,10 +32,11 @@ pub const DEFAULT_TIMEOUT_TICKS: u64 = 5_000;
 /// "no deadline" keeps the tripwire scans, which treat a `u64::MAX` entry as
 /// no waker, consistent with the wait's `timed` flag.
 ///
-/// `0` gives `Some(now)`, a deadline the next timer tick passes. A caller for
-/// which 0 means something else decides that before calling: `ipc_call`
-/// treats 0 as no deadline, `ipc_recv` as a poll, and `sleep_ticks` returns
-/// at once.
+/// `0` gives `Some(now)`, a deadline already reached: a wait that publishes
+/// it finds it passed (`TICK_COUNT >= deadline`) and returns without
+/// blocking. A caller for which 0 means something else decides that before
+/// calling: `ipc_call` treats 0 as no deadline, `ipc_recv` as a poll, and
+/// `sleep_ticks` returns at once.
 pub const fn deadline_after(now: u64, timeout_ticks: u64) -> Option<u64> {
     if timeout_ticks == u64::MAX {
         return None;

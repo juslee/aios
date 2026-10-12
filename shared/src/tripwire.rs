@@ -454,8 +454,6 @@ pub enum Key {
     /// ([`WakeAction::Skip`]).
     Ubrbl,
     /// `unblock` reached a Dead target and skipped it ([`UnblockKind::Dead`]).
-    /// A BlockedTimer target, which nothing in the kernel writes, would be
-    /// made Runnable and count here too ([`UnblockKind::Revived`]).
     Ubdead,
     /// `unblock` found an empty slot or an out-of-range id.
     Ubnone,
@@ -1480,8 +1478,7 @@ pub enum SlotState {
     Runnable,
     /// `ThreadState::Running`.
     Running,
-    /// `ThreadState::BlockedIpc`, including sleep (`BlockedIpc { channel: u64::MAX }`,
-    /// whose waker is its timeout).
+    /// `ThreadState::BlockedIpc`.
     BlockedIpc,
     /// `ThreadState::BlockedNotification`.
     BlockedNotification,
@@ -1490,8 +1487,11 @@ pub enum SlotState {
     /// `ThreadState::BlockedProcessWait`, whose waker is its `PROCESS_WAITERS`
     /// entry.
     BlockedProcessWait,
-    /// A blocked state the no-waker scan does not check: `BlockedTimer` or
-    /// `BlockedIo`.
+    /// `ThreadState::BlockedTimer` (`sleep_ticks`), whose waker is its
+    /// TIMEOUT_QUEUE entry.
+    BlockedTimer,
+    /// A blocked state the no-waker scan does not check: `BlockedIo`, which
+    /// nothing in the kernel writes.
     BlockedOther,
     /// `ThreadState::Suspended`.
     Suspended,
@@ -1510,9 +1510,8 @@ impl SlotState {
             Some(ThreadState::BlockedNotification { .. }) => SlotState::BlockedNotification,
             Some(ThreadState::BlockedSelect) => SlotState::BlockedSelect,
             Some(ThreadState::BlockedProcessWait { .. }) => SlotState::BlockedProcessWait,
-            Some(ThreadState::BlockedTimer { .. } | ThreadState::BlockedIo) => {
-                SlotState::BlockedOther
-            }
+            Some(ThreadState::BlockedTimer { .. }) => SlotState::BlockedTimer,
+            Some(ThreadState::BlockedIo) => SlotState::BlockedOther,
             Some(ThreadState::Suspended) => SlotState::Suspended,
             Some(ThreadState::Dead) => SlotState::Dead,
         }
@@ -1620,11 +1619,12 @@ pub const fn is_starved(now: u64, last_run: u64) -> bool {
 ///   a Dead thread lazily, so a thread killed while queued stays queued
 ///   until its CPU picks it.
 /// - Any other state with `QUEUED`: [`SlotVerdict::QueuedBad`].
-/// - BlockedIpc, BlockedNotification, BlockedSelect and BlockedProcessWait,
-///   not current: the waker flags. BlockedIpc is woken by `TIMEOUT` or
-///   `CHAN_REF`; BlockedNotification by `NDL`, `NOTIF_REF` or `TIMEOUT`;
-///   BlockedSelect by any of those four; BlockedProcessWait by
-///   `PROC_WAITER`. With none of them, `WAKE_PENDING` gives
+/// - BlockedIpc, BlockedNotification, BlockedSelect, BlockedProcessWait and
+///   BlockedTimer, not current: the waker flags. BlockedIpc is woken by
+///   `TIMEOUT` or `CHAN_REF`; BlockedNotification by `NDL`, `NOTIF_REF` or
+///   `TIMEOUT`; BlockedSelect by any of those four; BlockedProcessWait by
+///   `PROC_WAITER`; BlockedTimer by `TIMEOUT`. With none of them,
+///   `WAKE_PENDING` gives
 ///   [`SlotVerdict::WakeInFlight`], otherwise [`SlotVerdict::NoWaker`].
 /// - Everything else is [`SlotVerdict::Clear`]. A current thread that is
 ///   Blocked is between setting its state and switching away.
@@ -1669,6 +1669,7 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
             .with(SlotFlags::NOTIF_REF)
             .with(SlotFlags::TIMEOUT),
         SlotState::BlockedProcessWait => SlotFlags::PROC_WAITER,
+        SlotState::BlockedTimer => SlotFlags::TIMEOUT,
         _ => return SlotVerdict::Clear,
     };
     if flags.intersects(wakers) {
@@ -1698,6 +1699,7 @@ pub const fn wait_word_bad(state: SlotState, word: WaitState) -> bool {
                 | SlotState::BlockedNotification
                 | SlotState::BlockedSelect
                 | SlotState::BlockedProcessWait
+                | SlotState::BlockedTimer
                 | SlotState::BlockedOther
                 | SlotState::Suspended
         )
@@ -1893,12 +1895,9 @@ impl Default for EdgeCounter {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum UnblockKind {
-    /// Woke a thread in BlockedIpc, BlockedNotification, BlockedSelect,
-    /// BlockedProcessWait, BlockedIo or Suspended ([`WakeAction::Enqueue`]).
+    /// Woke a thread in a Blocked state or Suspended
+    /// ([`WakeAction::Enqueue`]).
     Woke,
-    /// Made a BlockedTimer thread Runnable (`ubdead`). Nothing in the kernel
-    /// writes BlockedTimer, so this kind is not reached.
-    Revived,
     /// Reached a Dead target and skipped it (`ubdead`): Dead is terminal.
     /// Neither a skip of a live target nor a wake.
     Dead,
@@ -1918,9 +1917,8 @@ pub enum UnblockKind {
 
 impl UnblockKind {
     /// Every kind.
-    pub const ALL: [UnblockKind; 8] = [
+    pub const ALL: [UnblockKind; 7] = [
         UnblockKind::Woke,
-        UnblockKind::Revived,
         UnblockKind::Dead,
         UnblockKind::SkipRunning,
         UnblockKind::SkipRunnable,
@@ -1931,8 +1929,8 @@ impl UnblockKind {
 
     /// `unblock`'s decision for a slot (`None` = empty or out of range)
     /// whose wait word is `word`: [`wake_action`] mapped onto the outcome
-    /// keys. Woke and Revived both make the thread Runnable and queue it;
-    /// the skips, the token kinds and Dead return without a state change.
+    /// keys. Woke makes the thread Runnable and queues it; the skips, the
+    /// token kinds and Dead return without a state change.
     pub const fn of(state: Option<&ThreadState>, word: WaitState) -> UnblockKind {
         let Some(state) = state else {
             return UnblockKind::NoThread;
@@ -1948,13 +1946,7 @@ impl UnblockKind {
                     UnblockKind::SkipRunnable
                 }
             }
-            WakeAction::Enqueue => {
-                if matches!(state, ThreadState::BlockedTimer { .. }) {
-                    UnblockKind::Revived
-                } else {
-                    UnblockKind::Woke
-                }
-            }
+            WakeAction::Enqueue => UnblockKind::Woke,
         }
     }
 
@@ -1971,14 +1963,14 @@ impl UnblockKind {
     /// Whether `unblock` made the target Runnable.
     #[inline]
     pub const fn made_runnable(self) -> bool {
-        matches!(self, UnblockKind::Woke | UnblockKind::Revived)
+        matches!(self, UnblockKind::Woke)
     }
 
     /// The per-source outcome key; `None` for [`UnblockKind::Woke`].
     pub const fn key(self) -> Option<Key> {
         match self {
             UnblockKind::Woke => None,
-            UnblockKind::Revived | UnblockKind::Dead => Some(Key::Ubdead),
+            UnblockKind::Dead => Some(Key::Ubdead),
             UnblockKind::SkipRunning => Some(Key::Ubrun),
             UnblockKind::SkipRunnable => Some(Key::Ubrbl),
             UnblockKind::LeaveToken => Some(Key::Ubtok),
@@ -3145,7 +3137,7 @@ mod tests {
             ),
             (
                 Some(S::BlockedTimer { wake_at: 9 }),
-                SlotState::BlockedOther,
+                SlotState::BlockedTimer,
             ),
             (Some(S::BlockedIo), SlotState::BlockedOther),
             (Some(S::Suspended), SlotState::Suspended),
@@ -3216,6 +3208,13 @@ mod tests {
             (S::BlockedProcessWait, cur, fresh, V::Clear),
             (S::BlockedProcessWait, q, fresh, V::QueuedBad),
             (S::BlockedIpc, F::PROC_WAITER, fresh, V::NoWaker),
+            (S::BlockedTimer, F::NONE, fresh, V::NoWaker),
+            (S::BlockedTimer, F::TIMEOUT, fresh, V::Clear),
+            (S::BlockedTimer, F::CHAN_REF, fresh, V::NoWaker),
+            (S::BlockedTimer, F::NDL, fresh, V::NoWaker),
+            (S::BlockedTimer, wp, fresh, V::WakeInFlight),
+            (S::BlockedTimer, cur, fresh, V::Clear),
+            (S::BlockedTimer, q, fresh, V::QueuedBad),
             (S::BlockedOther, F::NONE, old, V::Clear),
             (S::BlockedOther, q, fresh, V::QueuedBad),
             (S::Suspended, F::NONE, old, V::Clear),
@@ -3233,8 +3232,8 @@ mod tests {
             );
         }
 
-        // Sleep: BlockedIpc { channel: u64::MAX } is woken by its timeout.
-        let sleep = SlotState::of(Some(&ThreadState::BlockedIpc { channel: u64::MAX }));
+        // Sleep: BlockedTimer is woken by its timeout.
+        let sleep = SlotState::of(Some(&ThreadState::BlockedTimer { wake_at: 9 }));
         assert_eq!(classify_slot(sleep, F::TIMEOUT, 0, 0), V::Clear);
         assert_eq!(classify_slot(sleep, F::NONE, 0, 0), V::NoWaker);
 
@@ -3493,6 +3492,7 @@ mod tests {
             St::BlockedNotification,
             St::BlockedSelect,
             St::BlockedProcessWait,
+            St::BlockedTimer,
             St::BlockedOther,
             St::Suspended,
             St::Dead,
@@ -3504,6 +3504,7 @@ mod tests {
                     | St::BlockedNotification
                     | St::BlockedSelect
                     | St::BlockedProcessWait
+                    | St::BlockedTimer
                     | St::BlockedOther
                     | St::Suspended
             );
@@ -3540,7 +3541,7 @@ mod tests {
             ),
             (Some(S::BlockedSelect), [K::Woke; 3]),
             (Some(S::BlockedProcessWait { child_pid: 1 }), [K::Woke; 3]),
-            (Some(S::BlockedTimer { wake_at: 1 }), [K::Revived; 3]),
+            (Some(S::BlockedTimer { wake_at: 1 }), [K::Woke; 3]),
             (Some(S::BlockedIo), [K::Woke; 3]),
             (Some(S::Suspended), [K::Woke; 3]),
             (Some(S::Dead), [K::Dead; 3]),
@@ -3560,7 +3561,6 @@ mod tests {
             [
                 None,
                 Some(Key::Ubdead),
-                Some(Key::Ubdead),
                 Some(Key::Ubrun),
                 Some(Key::Ubrbl),
                 Some(Key::Ubtok),
@@ -3570,7 +3570,7 @@ mod tests {
         );
         for k in K::ALL {
             assert_eq!(k.skipped(), matches!(k, K::SkipRunning | K::SkipRunnable));
-            assert_eq!(k.made_runnable(), matches!(k, K::Woke | K::Revived));
+            assert_eq!(k.made_runnable(), matches!(k, K::Woke));
         }
     }
 
@@ -3669,12 +3669,12 @@ mod tests {
                     row.unwrap().2
                 }
                 (K::SkipRunning | K::SkipRunnable, false) => [LATE; 4],
-                (K::Woke | K::Revived, true) => [MIS, MIS, NC, MIS],
-                (K::Woke | K::Revived, false) => [MIS; 4],
+                (K::Woke, true) => [MIS, MIS, NC, MIS],
+                (K::Woke, false) => [MIS; 4],
                 (K::Dead | K::NoThread | K::LeaveToken | K::TokenPending, _) => [NC; 4],
             }
         });
-        assert_eq!(cells, 8 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 7 * 2 * 2 * 3 * 4);
     }
 
     #[test]
@@ -3704,7 +3704,7 @@ mod tests {
                 [NC; 4]
             }
         });
-        assert_eq!(cells, 8 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 7 * 2 * 2 * 3 * 4);
     }
 
     /// The kernel interleavings the N2 table has to separate (S3 review).

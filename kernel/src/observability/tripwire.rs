@@ -492,7 +492,7 @@ static SCAN_QBAD: AtomicU64 = AtomicU64::new(0);
 /// Scan A: blocked or Suspended threads whose wait word is not Idle (`bw`
 /// candidates, `shared::tripwire::wait_word_bad`).
 static SCAN_BW: AtomicU64 = AtomicU64::new(0);
-/// Scan A: threads in `BlockedIpc` (including sleep), scan B's candidates.
+/// Scan A: threads in `BlockedIpc`, scan B's candidates.
 static SCAN_BLOCKED_IPC: AtomicU64 = AtomicU64::new(0);
 /// Scan A: threads in `BlockedNotification`, scan B's candidates.
 static SCAN_BLOCKED_NOTIF: AtomicU64 = AtomicU64::new(0);
@@ -500,6 +500,8 @@ static SCAN_BLOCKED_NOTIF: AtomicU64 = AtomicU64::new(0);
 static SCAN_BLOCKED_SELECT: AtomicU64 = AtomicU64::new(0);
 /// Scan A: threads in `BlockedProcessWait`, scan B's candidates.
 static SCAN_BLOCKED_PWAIT: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads in `BlockedTimer` (asleep), scan B's candidates.
+static SCAN_BLOCKED_TIMER: AtomicU64 = AtomicU64::new(0);
 /// Scan B: threads with a TIMEOUT_QUEUE entry.
 static SCAN_TIMEOUT: AtomicU64 = AtomicU64::new(0);
 /// Scan B: threads a channel names as pending caller or waiting receiver.
@@ -666,6 +668,7 @@ pub fn scan_note_slot(slot: u32, state: SlotState, word: WaitState) {
         SlotState::BlockedNotification => Some(&SCAN_BLOCKED_NOTIF),
         SlotState::BlockedSelect => Some(&SCAN_BLOCKED_SELECT),
         SlotState::BlockedProcessWait => Some(&SCAN_BLOCKED_PWAIT),
+        SlotState::BlockedTimer => Some(&SCAN_BLOCKED_TIMER),
         _ => None,
     };
     if let Some(mask) = blocked {
@@ -731,6 +734,7 @@ fn scan_a(ncpu: usize) -> bool {
     SCAN_BLOCKED_NOTIF.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_SELECT.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_PWAIT.store(0, Ordering::Relaxed);
+    SCAN_BLOCKED_TIMER.store(0, Ordering::Relaxed);
 
     let start = timer::read_counter();
     let result = crate::sched::scan_snapshot(ncpu);
@@ -819,6 +823,7 @@ fn scan_b(ncpu: usize) {
     let notif = SCAN_BLOCKED_NOTIF.load(Ordering::Relaxed);
     let select = SCAN_BLOCKED_SELECT.load(Ordering::Relaxed);
     let pwait = SCAN_BLOCKED_PWAIT.load(Ordering::Relaxed);
+    let asleep = SCAN_BLOCKED_TIMER.load(Ordering::Relaxed);
     let here = cpu_here();
     if !crate::ipc::scan_wakers(notif | select != 0, pwait != 0) {
         add_row(here, Key::Skipb, 0, 1);
@@ -834,7 +839,7 @@ fn scan_b(ncpu: usize) {
     let proc_waiter = SCAN_PWAITER.load(Ordering::Relaxed);
     let mut nowaker = 0u64;
     let mut wakefl = 0u64;
-    let mut rest = ipc | notif | select | pwait;
+    let mut rest = ipc | notif | select | pwait | asleep;
     while let Some(tid) = pop_lowest(&mut rest) {
         let state = if mask_test(ipc, tid) {
             SlotState::BlockedIpc
@@ -842,8 +847,10 @@ fn scan_b(ncpu: usize) {
             SlotState::BlockedNotification
         } else if mask_test(select, tid) {
             SlotState::BlockedSelect
-        } else {
+        } else if mask_test(pwait, tid) {
             SlotState::BlockedProcessWait
+        } else {
+            SlotState::BlockedTimer
         };
         // Read after the tables: a waker marks the thread after it takes
         // the reference the tables no longer show.

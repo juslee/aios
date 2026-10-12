@@ -43,10 +43,11 @@ pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
     notify::irq_lock_words(f);
 }
 
-/// What arming a wait's deadline found (`notify::arm_deadline`): the deadline
+/// What arming a wait's deadline found (`notify::arm_deadline` for
+/// NOTIFY_DEADLINES, `timeout::arm_timeout` for TIMEOUT_QUEUE): the deadline
 /// is published, or it has already passed (`TICK_COUNT >= deadline`, read in
 /// the publishing hold), so the wait must not block and its result is
-/// ETIMEDOUT unless its condition was met first.
+/// ETIMEDOUT unless its condition was met first (a sleep simply ends).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum DeadlineArm {
     /// Published (or the wait has no deadline): the wait may block.
