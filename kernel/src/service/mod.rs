@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::ipc::{self, ChannelId};
 use crate::sched;
 use crate::task::process::ProcessId;
-use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId, ThreadState};
+use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 use spin::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -298,31 +298,27 @@ fn echo_server_entry() -> ! {
                     );
                 }
             }
+            // EPIPE: the channel is gone or its endpoints are Dead (pid 7
+            // exited). The server thread ends.
+            Err(e) if e == crate::syscall::IpcError::Epipe as i64 => {
+                crate::kinfo!(Ipc, "Echo server: channel destroyed (EPIPE), exiting");
+                sched::exit_current();
+            }
+            // EPERM: the server's own process has exited, so its capability
+            // check fails. The server thread ends.
+            Err(e) if e == crate::syscall::IpcError::Eperm as i64 => {
+                crate::kinfo!(Ipc, "Echo server: process exited (EPERM), exiting");
+                sched::exit_current();
+            }
+            // Timeout is expected if no clients — continue.
+            Err(e) if e == crate::syscall::IpcError::Etimedout as i64 => {}
+            // Anything else: retry. Ending here would leave pid 7 Alive with
+            // no server thread.
             Err(e) => {
-                // EPIPE means channel destroyed — exit the loop.
-                if e == crate::syscall::IpcError::Epipe as i64 {
-                    crate::kinfo!(Ipc, "Echo server: channel destroyed (EPIPE), exiting");
-                    break;
-                }
-                // Timeout is expected if no clients — continue.
-                if e != crate::syscall::IpcError::Etimedout as i64 {
-                    crate::kwarn!(Ipc, "Echo server: recv error {}", e);
-                }
+                crate::kwarn!(Ipc, "Echo server: recv error {}", e);
+                sched::thread_yield();
             }
         }
-    }
-
-    // After channel destruction, mark ourselves dead and yield forever.
-    let cpu = crate::arch::aarch64::exceptions::core_id() as usize;
-    let my_tid = { *crate::task::CURRENT_THREAD[cpu].lock() };
-    if let Some(tid) = my_tid {
-        let mut table = crate::task::THREAD_TABLE.lock();
-        if let Some(thread) = &mut table[tid.0 as usize] {
-            thread.sched.state = ThreadState::Dead;
-        }
-    }
-    loop {
-        sched::thread_yield();
     }
 }
 

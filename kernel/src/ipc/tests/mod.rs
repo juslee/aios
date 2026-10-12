@@ -6,6 +6,7 @@
 
 mod bad_pid;
 mod create_abi;
+mod dead_thread;
 mod kit_errors;
 mod select_cap;
 mod share;
@@ -221,6 +222,10 @@ pub fn init() {
         let idx = sched::allocate_thread(thread).expect("thread table full for IPC timeout");
         sched::enqueue_on_cpu(2, ThreadId(idx as u32), SchedulerClass::Normal);
     }
+
+    // Dead test helper (process 1, pinned to CPU 2): ends itself when it
+    // first runs; the ipc-timeout thread probes it.
+    dead_thread::init();
 
     // --- Priority inheritance test threads ---
     {
@@ -449,7 +454,9 @@ fn ipc_caller_entry() -> ! {
 /// (`stale_id_test`), the x0/x1 return of ChannelCreate and
 /// SharedMemoryCreate with their minted tokens (`create_abi_test`), and
 /// SharedMemoryShare as delegation and the Kit destroy's creator check
-/// (`share_test`, which grants into process 2). Last, it calls IpcCall on a channel
+/// (`share_test`, which grants into process 2), and that a thread ended by
+/// `exit_current` stays Dead (`dead_thread_test`, on a helper pinned to
+/// CPU 2). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
 /// wake can hide only that line.
@@ -523,6 +530,7 @@ fn ipc_timeout_entry() -> ! {
     stale_id::stale_id_test(caller_tid);
     create_abi::create_abi_test(caller_tid);
     share::share_test(caller_tid);
+    dead_thread::dead_thread_test();
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

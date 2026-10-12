@@ -8,7 +8,7 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use super::{ThreadId, ThreadState, THREAD_TABLE};
+use super::{ThreadId, ThreadState};
 use crate::cap::CapabilityTable;
 use crate::mm::uspace::UserAddressSpace;
 use crate::observability::tripwire;
@@ -118,8 +118,12 @@ static EXIT_CODES: [AtomicI32; MAX_PROCESSES] = {
 // Process lifecycle
 // ---------------------------------------------------------------------------
 
-/// Exit a process: mark all threads dead, clean up channels (set peer EPIPE),
+/// Exit a process: mark its threads dead, clean up channels (set peer EPIPE),
 /// wake ProcessWait waiters, and notify the service manager.
+///
+/// The calling thread is never marked Dead, even when it belongs to `pid`
+/// (`sched::kill_process_threads`), so a thread that exits its own process
+/// keeps running until it ends itself with `sched::exit_current()`.
 ///
 /// A pid `>= MAX_PROCESSES` names no process, so the call does nothing. The
 /// callers pass their own pid (the `ProcessExit` syscall), a fixed kernel
@@ -143,15 +147,10 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
         EXIT_CODES[idx].store(exit_code, Ordering::Release);
     }
 
-    // 1. Walk thread table: mark all threads owned by this process as Dead.
-    {
-        let mut table = THREAD_TABLE.lock();
-        for thread in table.iter_mut().flatten() {
-            if thread.owner_pid == Some(pid) {
-                thread.sched.state = ThreadState::Dead;
-            }
-        }
-    }
+    // 1. Mark every thread of this process Dead, except the calling thread,
+    //    in one IRQ-masked THREAD_TABLE hold. A self-exiting caller stays
+    //    runnable and ends itself with sched::exit_current().
+    crate::sched::kill_process_threads(pid);
 
     // 2. Walk channel table: mark Dead every channel with an endpoint owned
     //    by this process, and collect the threads blocked on it. Endpoint

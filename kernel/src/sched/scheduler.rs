@@ -6,9 +6,10 @@
 use core::sync::atomic::Ordering;
 
 use shared::tripwire::{Key, UnblockOutcome, WakeSource};
+use shared::ProcessId;
 
-use crate::arch::aarch64::exceptions;
 use crate::arch::aarch64::timer::NEED_RESCHED;
+use crate::arch::aarch64::{daif, exceptions};
 use crate::observability::metrics::METRICS;
 use crate::observability::tripwire::{self, DispatchSite};
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
@@ -73,14 +74,22 @@ pub fn enter_scheduler() -> ! {
         // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
 
-        let tid = {
-            let mut rq = RUN_QUEUES[cpu].lock();
-            rq.pick_next()
-        };
-
-        if let Some(tid) = tid {
+        // Pick until the pick is not Dead: a Dead thread is dropped from the
+        // queue (pick_next popped it) and never dispatched.
+        loop {
+            let tid = {
+                let mut rq = RUN_QUEUES[cpu].lock();
+                rq.pick_next()
+            };
+            let Some(tid) = tid else {
+                break;
+            };
             let mut table = THREAD_TABLE.lock();
             if let Some(thread) = &mut table[tid.0 as usize] {
+                if !thread.sched.state.may_become(&ThreadState::Running) {
+                    drop(table);
+                    continue;
+                }
                 // Mark thread as Running so schedule() handles it correctly.
                 thread.sched.state = ThreadState::Running;
                 // Set this thread as current on this CPU.
@@ -102,9 +111,9 @@ pub fn enter_scheduler() -> ! {
                 // regs, set SP, and branch to the entry function. IRQs remain masked;
                 // the thread entry or resume path will unmask when ready.
                 unsafe { restore_context(ctx_ptr) };
-            } else {
-                drop(table);
             }
+            drop(table);
+            break;
         }
 
         // No thread yet — unmask IRQs and wait for next timer interrupt.
@@ -214,8 +223,10 @@ pub fn schedule(origin: Origin) {
                 // nothing queued), so only Origin::Irq counts n1. From
                 // Origin::Block it is F4(3): a waker on another CPU saw the
                 // Blocked state inside block_current's window and queued or
-                // ran the thread, so it is not orphaned. Origin::Yield never
-                // gets here (thread_yield stores Running).
+                // ran the thread, so it is not orphaned. Origin::Yield gets
+                // here only for a Dead thread, whose Running write
+                // thread_yield skips (Dead is terminal): it is dropped, not
+                // re-enqueued, and counts nothing.
                 if origin == Origin::Irq && thread.sched.state == ThreadState::Runnable {
                     tripwire::bump_masked(Key::N1, 0);
                 }
@@ -226,36 +237,56 @@ pub fn schedule(origin: Origin) {
         }
     }
 
-    // Pick next thread from run queue.
-    let next_tid = {
-        let mut rq = RUN_QUEUES[cpu].lock();
-        rq.pick_next()
-    };
+    // Pick the next thread from the run queue. A picked Dead thread is
+    // dropped (pick_next popped it) and the pick repeated, before any
+    // Running write, note_repick, note_dispatch or CURRENT_THREAD write, so
+    // a Dead thread never runs again and never shows in SWITCH_GEN or
+    // CURRENT_TID. THREAD_TABLE is released before each re-pick takes
+    // RUN_QUEUES again.
+    let (next_tid, mut table) = loop {
+        let next_tid = {
+            let mut rq = RUN_QUEUES[cpu].lock();
+            rq.pick_next()
+        };
 
-    let next_tid = match next_tid {
-        Some(t) => t,
-        None => {
-            // No thread available — re-enqueue current if runnable and continue.
+        let next_tid = match next_tid {
+            Some(t) => t,
+            None => {
+                // No thread available — re-enqueue current if runnable and continue.
+                IN_SCHEDULER[cpu].store(false, Ordering::Release);
+                return;
+            }
+        };
+
+        // Same thread? No switch needed.
+        if current_tid == Some(next_tid) {
+            let mut table = THREAD_TABLE.lock();
+            if let Some(thread) = &mut table[next_tid.0 as usize] {
+                if !thread.sched.state.may_become(&ThreadState::Running) {
+                    drop(table);
+                    continue;
+                }
+                thread.sched.state = ThreadState::Running;
+                tripwire::note_repick(next_tid);
+            }
             IN_SCHEDULER[cpu].store(false, Ordering::Release);
             return;
         }
+
+        let table = THREAD_TABLE.lock();
+        if table[next_tid.0 as usize]
+            .as_ref()
+            .is_some_and(|thread| !thread.sched.state.may_become(&ThreadState::Running))
+        {
+            drop(table);
+            continue;
+        }
+        break (next_tid, table);
     };
 
-    // Same thread? No switch needed.
-    if current_tid == Some(next_tid) {
-        let mut table = THREAD_TABLE.lock();
-        if let Some(thread) = &mut table[next_tid.0 as usize] {
-            thread.sched.state = ThreadState::Running;
-            tripwire::note_repick(next_tid);
-        }
-        IN_SCHEDULER[cpu].store(false, Ordering::Release);
-        return;
-    }
-
-    // Context switch: save current, restore next.
+    // Context switch: save current, restore next. `table` is the
+    // THREAD_TABLE hold in which the pick was found not Dead.
     {
-        let mut table = THREAD_TABLE.lock();
-
         // Save current context.
         let old_ctx_ptr = if let Some(tid) = current_tid {
             if let Some(thread) = &mut table[tid.0 as usize] {
@@ -360,9 +391,13 @@ pub fn thread_yield() {
     if let Some(tid) = current {
         let mut table = THREAD_TABLE.lock();
         if let Some(thread) = &mut table[tid.0 as usize] {
-            // Reset time slice and mark runnable for re-enqueue.
+            // Reset time slice and mark runnable for re-enqueue: schedule()
+            // moves a Running thread to Runnable. A Dead thread stays Dead
+            // (Dead is terminal), so schedule() drops it instead.
             thread.sched.time_slice_remaining = 0;
-            thread.sched.state = ThreadState::Running; // schedule() will transition
+            if thread.sched.state.may_become(&ThreadState::Running) {
+                thread.sched.state = ThreadState::Running;
+            }
         }
         drop(table);
     }
@@ -380,6 +415,9 @@ pub fn thread_yield() {
 
 /// Block the current thread with the given state. Triggers a reschedule.
 /// The thread is NOT re-enqueued; the unblock() caller must re-enqueue it.
+///
+/// A thread already Dead (a process exit marked it) keeps Dead instead of
+/// `new_state`, so it never runs again: `schedule()` does not re-enqueue it.
 pub fn block_current(new_state: ThreadState) {
     // Mask IRQs during schedule.
     // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
@@ -391,7 +429,9 @@ pub fn block_current(new_state: ThreadState) {
     if let Some(tid) = current {
         let mut table = THREAD_TABLE.lock();
         if let Some(thread) = &mut table[tid.0 as usize] {
-            thread.sched.state = new_state;
+            if thread.sched.state.may_become(&new_state) {
+                thread.sched.state = new_state;
+            }
         }
         drop(table);
     }
@@ -411,6 +451,10 @@ pub fn block_current(new_state: ThreadState) {
 ///
 /// Saves and restores DAIF state to avoid unmasking IRQs when called from
 /// IRQ context (e.g., check_timeouts → wake_with_error → unblock).
+///
+/// Returns without a change for a Running or Runnable target (it is not
+/// blocked) and for a Dead one (Dead is terminal: a stray wake never revives
+/// a thread a process exit killed).
 ///
 /// `src` names the caller for the tripwire counters (`ubrun`, `ubrbl`,
 /// `ubdead`, `ubnone`, `ubmove` by source). The returned outcome is what
@@ -445,17 +489,19 @@ pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
     let (class, affinity) =
         if let Some(thread) = table.get_mut(tid.0 as usize).and_then(Option::as_mut) {
             // Guard: only unblock threads that are actually blocked.
-            // Prevents double-enqueue if a thread is already Running/Runnable.
-            match thread.sched.state {
-                ThreadState::Running | ThreadState::Runnable => {
-                    drop(table);
-                    if !irqs_were_masked {
-                        // SAFETY: Restore IRQ state. Safe at EL1.
-                        unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
-                    }
-                    return outcome;
+            // Prevents double-enqueue if a thread is already Running/Runnable,
+            // and never revives a Dead thread.
+            if matches!(
+                thread.sched.state,
+                ThreadState::Running | ThreadState::Runnable
+            ) || !thread.sched.state.may_become(&ThreadState::Runnable)
+            {
+                drop(table);
+                if !irqs_were_masked {
+                    // SAFETY: Restore IRQ state. Safe at EL1.
+                    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
                 }
-                _ => {}
+                return outcome;
             }
             thread.sched.state = ThreadState::Runnable;
             thread.sched.time_slice_remaining = default_slice(thread.sched.effective_class);
@@ -488,6 +534,93 @@ pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
     }
     outcome
+}
+
+// ---------------------------------------------------------------------------
+// Dead is terminal: exit, kill and probe (capability-lifetime ADR §7)
+// ---------------------------------------------------------------------------
+
+/// End the calling thread: block it as Dead, so it never runs again.
+///
+/// `block_current(Dead)` switches away and `schedule()` never re-enqueues a
+/// Dead thread, nor dispatches one it picks. It cannot return: the switch
+/// always finds a thread to run, because every CPU's idle thread is queued
+/// whenever it is not running. A return means that invariant broke, so it
+/// panics.
+pub fn exit_current() -> ! {
+    block_current(ThreadState::Dead);
+    panic!("exit_current: a Dead thread was resumed");
+}
+
+/// Mark every thread of `pid` Dead, except the calling thread (exit step B).
+///
+/// The whole walk runs in one IRQ-masked section: the caller's tid is read
+/// from `CURRENT_THREAD[core_id()]` after masking, so the thread cannot
+/// migrate between the CPU read and the lock (crash-fix N4), and the
+/// `THREAD_TABLE` hold cannot meet this CPU's own tick, whose `schedule()`
+/// takes `THREAD_TABLE` too (a `lock re-entry` panic). `CURRENT_THREAD` is
+/// released before `THREAD_TABLE` is taken; nothing nests.
+///
+/// The caller is left out so that a self-exit stays runnable until it calls
+/// [`exit_current`]; a Dead caller would be switched off by its next tick
+/// wherever it is, holding whatever lock it holds. A victim that is queued
+/// stays queued and is dropped when its CPU picks it; a victim running on
+/// another CPU keeps running until its next switch.
+pub fn kill_process_threads(pid: ProcessId) {
+    daif::with_irqs_masked(|| {
+        let cpu = exceptions::core_id() as usize;
+        let caller = { *CURRENT_THREAD[cpu].lock() };
+        let mut table = THREAD_TABLE.lock();
+        for (idx, slot) in table.iter_mut().enumerate() {
+            if let Some(thread) = slot {
+                if thread.owner_pid == Some(pid) && caller != Some(ThreadId(idx as u32)) {
+                    thread.sched.state = ThreadState::Dead;
+                }
+            }
+        }
+    });
+}
+
+/// What [`thread_probe`] read about a thread.
+#[derive(Clone, Copy, Debug)]
+pub struct ThreadProbe {
+    /// The thread's state, `None` for an empty slot or an out-of-range tid.
+    pub state: Option<ThreadState>,
+    /// Whether any online CPU's run queue holds the thread.
+    pub queued: bool,
+}
+
+/// Read `tid`'s state and whether a run queue holds it, after an optional
+/// `unblock(tid, WakeSource::SelfTest)` (`do_unblock`). For self-tests.
+///
+/// All of it runs in one IRQ-masked section, so this CPU's tick cannot run
+/// `schedule()` between the `unblock` and the reads. The locks are taken
+/// one at a time, never nested: `unblock` takes and releases its own (it
+/// drops `THREAD_TABLE` before `RUN_QUEUES`); then `THREAD_TABLE` alone, to
+/// copy the state; then each online CPU's `RUN_QUEUES` lock alone, in
+/// ascending CPU order. `THREAD_TABLE` is never held while a `RUN_QUEUES`
+/// lock is taken, because the IRQ-path load balancer on another CPU holds
+/// two run queue locks while it takes `THREAD_TABLE`.
+///
+/// The state and the queue scan are not one snapshot: another CPU can act
+/// on the thread between them. A probe of a Dead thread, whose state is
+/// terminal, or of a thread pinned to the probing CPU, needs none.
+pub fn thread_probe(tid: ThreadId, do_unblock: bool) -> ThreadProbe {
+    daif::with_irqs_masked(|| {
+        if do_unblock {
+            unblock(tid, WakeSource::SelfTest);
+        }
+        let state = {
+            let table = THREAD_TABLE.lock();
+            table
+                .get(tid.0 as usize)
+                .and_then(Option::as_ref)
+                .map(|thread| thread.sched.state)
+        };
+        let ncpu = crate::smp::online_cpus().min(MAX_CORES);
+        let queued = (0..ncpu).any(|cpu| RUN_QUEUES[cpu].lock().contains(tid));
+        ThreadProbe { state, queued }
+    })
 }
 
 // ---------------------------------------------------------------------------

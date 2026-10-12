@@ -144,7 +144,9 @@ const _: () = assert!(SchedulerClass::RealTime as usize + 1 == CLASS_COUNT);
 
 /// The caller of `unblock`, `wake_with_error` or `try_wake_select`.
 ///
-/// The order is the index order of the 15-wide per-source keys.
+/// The order is the index order of the 16-wide per-source keys. New sources
+/// are appended at the end, so an older line, which lacks the trailing
+/// indices, still decodes: a missing index reads 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum WakeSource {
@@ -178,11 +180,14 @@ pub enum WakeSource {
     PExit,
     /// `wake_with_error` from `ipc_cancel`.
     Cancel,
+    /// A self-test's deliberate wake: `sched::thread_probe` and the boot
+    /// self-tests' own `unblock` calls, kept apart from the real sources.
+    SelfTest,
 }
 
 impl WakeSource {
     /// Number of wake sources.
-    pub const COUNT: usize = 15;
+    pub const COUNT: usize = 16;
 
     /// Every source, in index order.
     pub const ALL: [WakeSource; Self::COUNT] = [
@@ -201,9 +206,10 @@ impl WakeSource {
         WakeSource::ChDestroy,
         WakeSource::PExit,
         WakeSource::Cancel,
+        WakeSource::SelfTest,
     ];
 
-    /// Index into 15-wide per-source values.
+    /// Index into 16-wide per-source values.
     #[inline]
     pub const fn index(self) -> usize {
         self as usize
@@ -227,6 +233,7 @@ impl WakeSource {
             WakeSource::ChDestroy => "chdestroy",
             WakeSource::PExit => "pexit",
             WakeSource::Cancel => "cancel",
+            WakeSource::SelfTest => "selftest",
         }
     }
 
@@ -341,7 +348,7 @@ pub enum Width {
     Cpu,
     /// A single value.
     One,
-    /// One per [`WakeSource`] (15).
+    /// One per [`WakeSource`] (16).
     Source,
     /// One per [`LockClass`] (9).
     Lock,
@@ -441,7 +448,9 @@ pub enum Key {
     Ubrun,
     /// `unblock` skipped a Runnable target.
     Ubrbl,
-    /// `unblock` revived a Dead, Suspended, BlockedTimer or BlockedIo thread.
+    /// `unblock` reached a Dead target and skipped it ([`UnblockKind::Dead`]).
+    /// A BlockedTimer target, which nothing in the kernel writes, would be
+    /// made Runnable and count here too ([`UnblockKind::Revived`]).
     Ubdead,
     /// `unblock` found an empty slot or an out-of-range id.
     Ubnone,
@@ -491,7 +500,8 @@ pub enum Key {
     Dupcur,
     /// Thread ids queued twice.
     Dupq,
-    /// Queued threads that were not Runnable.
+    /// Queued threads that were neither Runnable nor Dead. A queued Dead
+    /// thread is expected: the scheduler's pick drops Dead threads lazily.
     Qbad,
     // -- Scans: gauges --------------------------------------------------------
     /// Gauge: threads in the confirmed-orphan set now.
@@ -1553,7 +1563,7 @@ pub enum SlotVerdict {
     /// Blocked with no waker, but a waker has taken its reference and not
     /// yet run `unblock` (scan B): starvation or N1(b), not a lost wakeup.
     WakeInFlight,
-    /// Queued but not Runnable (`qbad`).
+    /// Queued but neither Runnable nor Dead (`qbad`).
     QueuedBad,
 }
 
@@ -1572,6 +1582,9 @@ pub const fn is_starved(now: u64, last_run: u64) -> bool {
 /// - Runnable: `QUEUED` and `CURRENT`, and `now`/`last_run` when queued.
 ///   Not queued and not current is [`SlotVerdict::Orphan`], even when it
 ///   is also old; queued and old is [`SlotVerdict::Starved`].
+/// - Dead with `QUEUED`: [`SlotVerdict::Clear`]. The scheduler's pick drops
+///   a Dead thread lazily, so a thread killed while queued stays queued
+///   until its CPU picks it.
 /// - Any other state with `QUEUED`: [`SlotVerdict::QueuedBad`].
 /// - BlockedIpc, BlockedNotification and BlockedSelect, not current: the
 ///   waker flags. BlockedIpc is woken by `TIMEOUT` or `CHAN_REF`;
@@ -1602,7 +1615,11 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
         };
     }
     if queued {
-        return SlotVerdict::QueuedBad;
+        return if state == SlotState::Dead {
+            SlotVerdict::Clear
+        } else {
+            SlotVerdict::QueuedBad
+        };
     }
     if current {
         return SlotVerdict::Clear;
@@ -1816,12 +1833,15 @@ impl Default for EdgeCounter {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum UnblockKind {
-    /// Woke a thread in BlockedIpc, BlockedNotification, BlockedSelect or
-    /// BlockedProcessWait.
+    /// Woke a thread in BlockedIpc, BlockedNotification, BlockedSelect,
+    /// BlockedProcessWait, BlockedIo or Suspended.
     Woke,
-    /// Made a Dead, Suspended, BlockedTimer or BlockedIo thread Runnable
-    /// (`ubdead`).
+    /// Made a BlockedTimer thread Runnable (`ubdead`). Nothing in the kernel
+    /// writes BlockedTimer, so this kind is not reached.
     Revived,
+    /// Reached a Dead target and skipped it (`ubdead`): Dead is terminal.
+    /// Neither a skip of a live target nor a wake.
+    Dead,
     /// Skipped a Running target (`ubrun`).
     SkipRunning,
     /// Skipped a Runnable target (`ubrbl`).
@@ -1832,9 +1852,10 @@ pub enum UnblockKind {
 
 impl UnblockKind {
     /// Every kind.
-    pub const ALL: [UnblockKind; 5] = [
+    pub const ALL: [UnblockKind; 6] = [
         UnblockKind::Woke,
         UnblockKind::Revived,
+        UnblockKind::Dead,
         UnblockKind::SkipRunning,
         UnblockKind::SkipRunnable,
         UnblockKind::NoThread,
@@ -1842,28 +1863,28 @@ impl UnblockKind {
 
     /// `unblock`'s decision for a slot (`None` = empty or out of range).
     /// Woke and Revived both make the thread Runnable and queue it; the
-    /// skips return without a change.
+    /// skips and Dead return without a change.
     pub const fn of(state: Option<&ThreadState>) -> UnblockKind {
         match state {
             None => UnblockKind::NoThread,
             Some(ThreadState::Running) => UnblockKind::SkipRunning,
             Some(ThreadState::Runnable) => UnblockKind::SkipRunnable,
+            Some(ThreadState::Dead) => UnblockKind::Dead,
             Some(
                 ThreadState::BlockedIpc { .. }
                 | ThreadState::BlockedNotification { .. }
                 | ThreadState::BlockedSelect
-                | ThreadState::BlockedProcessWait { .. },
-            ) => UnblockKind::Woke,
-            Some(
-                ThreadState::BlockedTimer { .. }
+                | ThreadState::BlockedProcessWait { .. }
                 | ThreadState::BlockedIo
-                | ThreadState::Suspended
-                | ThreadState::Dead,
-            ) => UnblockKind::Revived,
+                | ThreadState::Suspended,
+            ) => UnblockKind::Woke,
+            Some(ThreadState::BlockedTimer { .. }) => UnblockKind::Revived,
         }
     }
 
-    /// Whether `unblock` left the target as it was.
+    /// Whether `unblock` skipped a live (Running or Runnable) target. A Dead
+    /// target is not a skip: [`UnblockKind::Dead`] is neither this nor
+    /// [`UnblockKind::made_runnable`].
     #[inline]
     pub const fn skipped(self) -> bool {
         matches!(self, UnblockKind::SkipRunning | UnblockKind::SkipRunnable)
@@ -1879,7 +1900,7 @@ impl UnblockKind {
     pub const fn key(self) -> Option<Key> {
         match self {
             UnblockKind::Woke => None,
-            UnblockKind::Revived => Some(Key::Ubdead),
+            UnblockKind::Revived | UnblockKind::Dead => Some(Key::Ubdead),
             UnblockKind::SkipRunning => Some(Key::Ubrun),
             UnblockKind::SkipRunnable => Some(Key::Ubrbl),
             UnblockKind::NoThread => Some(Key::Ubnone),
@@ -2338,7 +2359,7 @@ mod tests {
         assert_eq!(Width::Cpu.slots(), 1);
         assert_eq!(Width::Cpu.values(4), 4);
         assert_eq!(Width::One.values(4), 1);
-        assert_eq!(Width::Source.slots(), 15);
+        assert_eq!(Width::Source.slots(), 16);
         assert_eq!(Width::Lock.slots(), 9);
         assert_eq!(Width::Class.slots(), 4);
         assert_eq!(Width::N2.slots(), 4);
@@ -2358,7 +2379,7 @@ mod tests {
             next += slots;
         }
         assert_eq!(next, SLOTS);
-        assert_eq!(SLOTS, 10 + 12 + 4 + 5 * 15 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3);
+        assert_eq!(SLOTS, 10 + 12 + 4 + 5 * 16 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3);
     }
 
     #[test]
@@ -2381,7 +2402,8 @@ mod tests {
                 "to",
                 "chdestroy",
                 "pexit",
-                "cancel"
+                "cancel",
+                "selftest"
             ]
         );
         for (i, s) in WakeSource::ALL.iter().enumerate() {
@@ -2390,7 +2412,8 @@ mod tests {
             assert_eq!(WakeSource::from_marker(s.marker()), Some(*s));
         }
         assert_eq!(WakeSource::from_marker(0), None);
-        assert_eq!(WakeSource::from_marker(16), None);
+        assert_eq!(WakeSource::from_marker(16), Some(WakeSource::SelfTest));
+        assert_eq!(WakeSource::from_marker(17), None);
         assert_eq!(WakeSource::from_marker(u8::MAX), None);
 
         let n2: Vec<&str> = N2Kind::ALL.iter().map(|k| k.name()).collect();
@@ -2477,11 +2500,11 @@ mod tests {
          tpidrbad=1000,1001,1002,1003 xdir=1100 xrep=1200 xnever=1300 n1=1400 pcnull=1500 \
          pcphys=1600 pcother=1700 spbad=1800 latereply=1900 misrep=2000 ctbusy=2100 badtid=2200 \
          n2=2300,2301,2302,2303 \
-         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411,2412,2413,2414 \
-         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511,2512,2513,2514 \
-         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614 \
-         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711,2712,2713,2714 \
-         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811,2812,2813,2814 \
+         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411,2412,2413,2414,2415 \
+         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511,2512,2513,2514,2515 \
+         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614,2615 \
+         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711,2712,2713,2714,2715 \
+         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811,2812,2813,2814,2815 \
          lkph=2900,2901,2902,2903,2904,2905,2906,2907,2908 \
          lkpho=3000,3001,3002,3003,3004,3005,3006,3007,3008 \
          lkphrun=3100,3101,3102,3103,3104,3105,3106,3107,3108 \
@@ -2533,7 +2556,7 @@ mod tests {
 
     const GOLDEN_NONZERO: &str =
         "[tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 \
-         irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0,0 \
+         irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0,0 \
          starved=1,0,0,0 badchan=4,0,6 twc=812345 twn=12 twmax=94000 n=14\n";
 
     fn nonzero_value(key: Key, idx: usize) -> u64 {
@@ -3092,7 +3115,9 @@ mod tests {
             (S::Suspended, F::NONE, old, V::Clear),
             (S::Dead, F::NONE, old, V::Clear),
             (S::Dead, cur, old, V::Clear),
-            (S::Dead, q, old, V::QueuedBad),
+            (S::Suspended, q, fresh, V::QueuedBad),
+            (S::Dead, q, old, V::Clear),
+            (S::Dead, q | cur, old, V::Clear),
         ];
         for (state, flags, (now, last_run), want) in rows {
             assert_eq!(
@@ -3366,9 +3391,9 @@ mod tests {
             (Some(S::BlockedSelect), K::Woke),
             (Some(S::BlockedProcessWait { child_pid: 1 }), K::Woke),
             (Some(S::BlockedTimer { wake_at: 1 }), K::Revived),
-            (Some(S::BlockedIo), K::Revived),
-            (Some(S::Suspended), K::Revived),
-            (Some(S::Dead), K::Revived),
+            (Some(S::BlockedIo), K::Woke),
+            (Some(S::Suspended), K::Woke),
+            (Some(S::Dead), K::Dead),
         ];
         for (state, want) in cases {
             assert_eq!(UnblockKind::of(state.as_ref()), want, "{state:?}");
@@ -3378,6 +3403,7 @@ mod tests {
             keys,
             [
                 None,
+                Some(Key::Ubdead),
                 Some(Key::Ubdead),
                 Some(Key::Ubrun),
                 Some(Key::Ubrbl),
@@ -3487,10 +3513,10 @@ mod tests {
                 (K::SkipRunning | K::SkipRunnable, false) => [LATE; 4],
                 (K::Woke | K::Revived, true) => [MIS, MIS, NC, MIS],
                 (K::Woke | K::Revived, false) => [MIS; 4],
-                (K::NoThread, _) => [NC; 4],
+                (K::Dead | K::NoThread, _) => [NC; 4],
             }
         });
-        assert_eq!(cells, 5 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 6 * 2 * 2 * 3 * 4);
     }
 
     #[test]
@@ -3520,7 +3546,7 @@ mod tests {
                 [NC; 4]
             }
         });
-        assert_eq!(cells, 5 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 6 * 2 * 2 * 3 * 4);
     }
 
     /// The kernel interleavings the N2 table has to separate (S3 review).

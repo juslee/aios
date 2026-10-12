@@ -84,17 +84,25 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
         return false;
     }
 
-    // Receiver must be blocked on IPC (waiting in ipc_recv).
+    // Receiver must be blocked on IPC (waiting in ipc_recv), and the sender
+    // must not be Dead: Dead is terminal, so a sender that a process exit
+    // killed takes the slow path, where block_current keeps it Dead.
     {
-        let receiver = table[receiver_idx].as_ref().unwrap();
-        match receiver.sched.state {
-            ThreadState::BlockedIpc { .. } => {}
-            _ => {
-                drop(table);
-                // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
-                unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
-                return false;
-            }
+        let receiver_blocked = matches!(
+            table[receiver_idx].as_ref().unwrap().sched.state,
+            ThreadState::BlockedIpc { .. }
+        );
+        let sender_may_block = table[sender_idx]
+            .as_ref()
+            .unwrap()
+            .sched
+            .state
+            .may_become(&ThreadState::BlockedIpc { channel: 0 });
+        if !receiver_blocked || !sender_may_block {
+            drop(table);
+            // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
+            unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+            return false;
         }
     }
 
@@ -302,12 +310,17 @@ pub fn try_reply_switch(
     // Block replier — it goes back to waiting for the next request.
     // The replier's ipc_recv loop will re-block via sched::block_current()
     // naturally, but we mark it Runnable and re-enqueue so the scheduler
-    // picks it up on its next pass.
-    {
+    // picks it up on its next pass. A Dead replier (a process exit killed
+    // it) is neither: Dead is terminal, so the switch leaves it for good.
+    let requeue_replier = {
         let replier = table[replier_idx].as_mut().unwrap();
-        replier.sched.state = ThreadState::Runnable;
+        let alive = replier.sched.state.may_become(&ThreadState::Runnable);
+        if alive {
+            replier.sched.state = ThreadState::Runnable;
+        }
         replier.sched.time_slice_remaining = 0;
-    }
+        alive
+    };
 
     let replier_ctx_ptr = &mut table[replier_idx].as_mut().unwrap().context as *mut ThreadContext;
     let (caller_ctx_ptr, caller_stack_phys) = {
@@ -326,7 +339,9 @@ pub fn try_reply_switch(
     drop(table);
 
     // Re-enqueue the replier so it can handle future requests.
-    crate::sched::enqueue_on_cpu(cpu, replier_tid, replier_class);
+    if requeue_replier {
+        crate::sched::enqueue_on_cpu(cpu, replier_tid, replier_class);
+    }
 
     #[cfg(feature = "kernel-metrics")]
     {

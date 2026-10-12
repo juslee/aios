@@ -183,18 +183,8 @@ fn compositor_loop() -> ! {
         present_frame_if_due(&mut state);
     }
 
-    // Mark ourselves dead and yield forever (matches GPU Service exit path).
-    let cpu = crate::arch::aarch64::exceptions::core_id() as usize;
-    let my_tid = { *crate::task::CURRENT_THREAD[cpu].lock() };
-    if let Some(tid) = my_tid {
-        let mut table = crate::task::THREAD_TABLE.lock();
-        if let Some(thread) = &mut table[tid.0 as usize] {
-            thread.sched.state = crate::task::ThreadState::Dead;
-        }
-    }
-    loop {
-        crate::sched::thread_yield();
-    }
+    // The channel is gone: end this thread.
+    crate::sched::exit_current()
 }
 
 // ---------------------------------------------------------------------------
@@ -795,22 +785,27 @@ fn handle_create_surface(
 /// comes from the client's message and ids are not secret, so the client
 /// must hold a live SharedMemoryAccess for it and the region must exist
 /// (`cap::check_shared_memory_access`, capability-lifetime ADR §4) before
-/// the surface records it; on EPERM or EPIPE the reply is the zeroed error
-/// event. Called with no compositor lock held: the check takes
+/// the surface records it; on EPERM, EPIPE or EINVAL the reply is the
+/// zeroed error event. Called with no compositor lock held: the check takes
 /// PROCESS_TABLE, which ranks above every compositor mutex.
+///
+/// An EPERM refusal is not logged here: the check itself logs `denied
+/// SharedMemoryAccess` for a missing token. EPIPE and EINVAL are.
 fn handle_attach_buffer(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
     let id = SurfaceId(req.surface_id);
     let damage = req.decode_damage();
     let shmem = SharedMemoryId::from_raw(req.shmem_id);
     if let Err(code) = crate::cap::check_shared_memory_access(owner_pid, shmem) {
-        crate::kwarn!(
-            Compositor,
-            "Compositor: AttachBuffer surface={} pid={} region={} refused: {}",
-            id.0,
-            owner_pid.0,
-            shmem,
-            code
-        );
+        if code != crate::syscall::IpcError::Eperm as i64 {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: AttachBuffer surface={} pid={} region={} refused: {}",
+                id.0,
+                owner_pid.0,
+                shmem,
+                code
+            );
+        }
         return CompositorEvent::zeroed();
     }
     match surface::surface_attach_buffer(id, shmem, damage, owner_pid) {

@@ -93,8 +93,26 @@ pub enum ThreadState {
     BlockedProcessWait { child_pid: u32 },
     /// Suspended by the kernel (memory limit, debugging).
     Suspended,
-    /// Thread has exited.
+    /// Thread has exited. Terminal: see [`ThreadState::may_become`].
     Dead,
+}
+
+impl ThreadState {
+    /// Whether a thread in this state may be moved to `next`.
+    ///
+    /// Dead is terminal: a Dead thread may only stay Dead, and every other
+    /// change is allowed (capability-lifetime ADR §7). Every kernel write of
+    /// a thread's state that could overwrite Dead is gated on this: the
+    /// Running writes of `thread_yield` and the scheduler's pick, the
+    /// Runnable write of `unblock`, `block_current`'s write, and the direct
+    /// and reply switches.
+    ///
+    /// Takes references so that no 16-byte state is copied: the scheduler
+    /// calls this on the IRQ return path, which saves no vector registers.
+    #[inline]
+    pub const fn may_become(&self, next: &ThreadState) -> bool {
+        !matches!(self, ThreadState::Dead) || matches!(next, ThreadState::Dead)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +308,59 @@ mod tests {
             ThreadState::BlockedIpc { channel: 1 },
             ThreadState::BlockedIpc { channel: 2 }
         );
+    }
+
+    /// One value of every `ThreadState` variant, payloads included.
+    const ALL_STATES: [ThreadState; 10] = [
+        ThreadState::Runnable,
+        ThreadState::Running,
+        ThreadState::BlockedIpc { channel: 3 },
+        ThreadState::BlockedTimer { wake_at: 9 },
+        ThreadState::BlockedIo,
+        ThreadState::BlockedNotification { notification: 1 },
+        ThreadState::BlockedSelect,
+        ThreadState::BlockedProcessWait { child_pid: 2 },
+        ThreadState::Suspended,
+        ThreadState::Dead,
+    ];
+
+    #[test]
+    fn may_become_every_pair() {
+        // Every variant appears once, so a new variant must be added here.
+        for (i, state) in ALL_STATES.iter().enumerate() {
+            let matched = match state {
+                ThreadState::Runnable => 0,
+                ThreadState::Running => 1,
+                ThreadState::BlockedIpc { .. } => 2,
+                ThreadState::BlockedTimer { .. } => 3,
+                ThreadState::BlockedIo => 4,
+                ThreadState::BlockedNotification { .. } => 5,
+                ThreadState::BlockedSelect => 6,
+                ThreadState::BlockedProcessWait { .. } => 7,
+                ThreadState::Suspended => 8,
+                ThreadState::Dead => 9,
+            };
+            assert_eq!(matched, i);
+        }
+        for from in &ALL_STATES {
+            for to in &ALL_STATES {
+                let want = *from != ThreadState::Dead || *to == ThreadState::Dead;
+                assert_eq!(from.may_become(to), want, "{from:?} -> {to:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn dead_is_terminal() {
+        for to in &ALL_STATES {
+            let allowed = ThreadState::Dead.may_become(to);
+            assert_eq!(allowed, *to == ThreadState::Dead, "Dead -> {to:?}");
+            assert!(to.may_become(&ThreadState::Dead), "{to:?} -> Dead");
+        }
+        // Payloads do not matter: a blocked state may move to another
+        // payload of the same variant.
+        assert!(ThreadState::BlockedIpc { channel: 1 }
+            .may_become(&ThreadState::BlockedIpc { channel: u64::MAX }));
     }
 
     // ── CpuSet ──────────────────────────────────────────────────────────

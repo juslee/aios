@@ -21,7 +21,8 @@ use shared::FixedQueue;
 // Re-export public API from submodules.
 pub use init::{init, start, try_load_balance};
 pub use scheduler::{
-    block_current, check_preemption, enter_scheduler, thread_yield, timer_tick, unblock,
+    block_current, check_preemption, enter_scheduler, exit_current, kill_process_threads,
+    thread_probe, thread_yield, timer_tick, unblock, ThreadProbe,
 };
 
 // Re-export time slice constants from shared for use in submodules.
@@ -81,6 +82,14 @@ impl RunQueue {
             return Some(tid);
         }
         self.idle.pop_front()
+    }
+
+    /// Whether any of the four class queues holds `tid`.
+    pub(crate) fn contains(&self, tid: ThreadId) -> bool {
+        self.rt.contains(&tid)
+            || self.interactive.contains(&tid)
+            || self.normal.contains(&tid)
+            || self.idle.contains(&tid)
     }
 
     pub(crate) fn total_depth(&self) -> usize {

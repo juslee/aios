@@ -33,7 +33,7 @@
 //!   line: scan A holds every run queue and THREAD_TABLE
 //!   (`sched::scan_snapshot`) and finds orphans (Runnable, not queued, not current), starved threads
 //!   (queued, not run for over 1000 ticks, by class) and the `dupq`,
-//!   `dupcur` and `qbad` checks; scan B try-locks each waker table alone
+//!   `dupcur` and `qbad` (queued, neither Runnable nor Dead) checks; scan B try-locks each waker table alone
 //!   (`ipc::scan_wakers`) and splits threads blocked with no waker into
 //!   `nowaker` and `wakefl` (a wake in flight). Two strikes per kind
 //!   (`shared::tripwire::TwoStrike`) confirm a flag, and edge counting
@@ -485,7 +485,7 @@ static SCAN_DUPCUR: AtomicU64 = AtomicU64::new(0);
 static SCAN_ORPHAN: AtomicU64 = AtomicU64::new(0);
 /// Scan A: queued Runnable threads not run for over `STARVE_TICKS`.
 static SCAN_STARVED: AtomicU64 = AtomicU64::new(0);
-/// Scan A: queued threads that are not Runnable (`qbad`).
+/// Scan A: queued threads that are neither Runnable nor Dead (`qbad`).
 static SCAN_QBAD: AtomicU64 = AtomicU64::new(0);
 /// Scan A: threads in `BlockedIpc` (including sleep), scan B's candidates.
 static SCAN_BLOCKED_IPC: AtomicU64 = AtomicU64::new(0);
