@@ -159,25 +159,25 @@ pub(crate) fn take(tid: ThreadId) -> WaitState {
 ///
 /// Called under THREAD_TABLE (ordering point 2 above). Other wakers also act
 /// only under THREAD_TABLE, so only the target itself can change the word
-/// between the load and the swap, by cancelling its wait: the swap then
-/// fails on Idle, and the decision is taken again on that value (a stale
-/// wake, [`WakeAction::Skip`]). The loop ends because every retry is on a
-/// value the target wrote, and the target writes Armed only once per pass.
+/// between the load and the swap: a cancel makes the swap fail on Idle, and
+/// that value is returned (a stale wake, [`WakeAction::Skip`]); a cancel
+/// followed by a re-arm leaves Armed, and the swap succeeds. A failed swap
+/// never sees Armed, so one try settles the word.
 pub(super) fn settle_wake(tid: ThreadId, state: &ThreadState) -> WaitState {
     let Some(word) = word(tid) else {
         return WaitState::Idle;
     };
-    let mut current = decode(word.load(Ordering::Relaxed));
-    while wake_action(state, current) == WakeAction::LeaveToken {
-        match word.compare_exchange(
-            WaitState::Armed.raw(),
-            WaitState::Woken.raw(),
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => break,
-            Err(seen) => current = decode(seen),
-        }
+    let current = decode(word.load(Ordering::Relaxed));
+    if wake_action(state, current) != WakeAction::LeaveToken {
+        return current;
     }
-    current
+    match word.compare_exchange(
+        WaitState::Armed.raw(),
+        WaitState::Woken.raw(),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
+        Ok(_) => current,
+        Err(seen) => decode(seen),
+    }
 }
