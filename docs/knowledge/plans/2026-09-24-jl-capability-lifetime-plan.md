@@ -30,10 +30,10 @@ This is the working plan for the one implementation PR of [the capability-lifeti
 - [x] Step 4: pin the ipc-timeout thread (and the bench server and bench main to CPU 0) (564de7d; gate boot `cap-lifetime-step-4` passed, 2026-10-12)
 - [x] Step 5: derived minting (3c7f139; gate boot passed on re-run `cap-lifetime-step-5-r2`, 2026-10-12)
 - [x] Step 6: region cascade, borrows and deferred free (e6a726f; gate boot passed on re-run `cap-lifetime-step-6-r2`, 2026-10-12)
-- [x] Step 7: delegation and object-bound checks (a6a1898; Fable approved, gate boots `cap-lifetime-step-7` and `cap-lifetime-step-7-gpu` pending)
-- [ ] Step 8: Dead is terminal
-- [ ] Step 9: the wake token
-- [ ] Step 10: process lifecycle
+- [x] Step 7: delegation and object-bound checks (a6a1898; gate boots passed: gpu `cap-lifetime-step-7-gpu` by Q6, text on `cap-lifetime-ab-6v7` arm-B run-02, 2026-10-12)
+- [x] Step 8: Dead is terminal (41d34f8; Fable approved, gate boots pending)
+- [x] Step 9: the wake token (b2628c0 kernel + d5ebda9 tools goldens; Fable approved, gate boot pending)
+- [x] Step 10: process lifecycle (7628592; Fable approved, gate boot pending)
 - [ ] Step 11: `notification_wait`, `ipc_select` and their wakers, with tripwire schema v2 and the soak harness's v1/v2 decoding (Q4)
 - [ ] Step 12: `sleep_ticks`
 - [ ] Step 13: `ipc_recv`
@@ -790,6 +790,19 @@ Step 11, not step 15, drops `SELECT_WAITERS` from the lock-order comment at `com
   - Gate 1 IPC was 10 µs, and shm throughput write 605 MB/s, read 310 MB/s.
   - The only extra WARN line was an Echo client `ipc_call failed with -1`, also present in step-5-r2's log. It is allowlisted from step 7 on (Decisions Made).
 - **Step 4 review, pre-existing nit** (2026-10-12): `try_direct_switch` and `try_reply_switch` (`kernel/src/ipc/direct.rs`) run the target on the current CPU without checking its affinity. That is not reachable for the ipc-timeout thread at steps 4–5, but it limits §3 step 4's "the thread cannot migrate" claim (filed as #258).
+- **Step 7's gate boots** (2026-10-12):
+  - The first runs were at host load 28–35: `cap-lifetime-step-7` (text) and `cap-lifetime-step-7-gpu` (10 boots).
+  - Text died at tick 2–3 with `lock re-entry: THREAD_TABLE on CPU 3 ctx=irq-exit holder_irqs=on`. The interrupted thread was tid 11, in `pi_server_entry`.
+  - gpu: THREAD_TABLE re-entry ×4, the CPU 0 data abort in `compositor_loop` ×5, the bad-free ×1. 1 of 10 boots reached the handoff.
+  - **Diagnosis** (Fable diagnose lens): both causes are pre-existing; step 7's diff is not on either path.
+    - (1) The CPU 0 abort is the H1/H2 register corruption at the `fill_buffer` store in `display_handoff`. The pointer passed its alignment check, yet the FAR was unaligned. The baseline's run-05 abort (0x8a28c) is the same instruction.
+    - (2) The CPU 3 re-entry is H3. `pi_server_entry` unmasks IRQs (`ipc/tests/mod.rs:573`) and takes THREAD_TABLE unmasked (`:592`, `:630`); a tick just after the CAS re-enters the lock.
+  - **A/B** `cap-lifetime-ab-6v7` (e6a726f against a6a1898, 3 interleaved text boots each), at load 24→113: every boot died in both arms (PCZERO 2, EXCEPTION 1 per arm; Fisher p = 1). No regression is visible.
+  - **Text PASS** on arm-B run-02 (and run-03): every acceptance line printed, with Timeout last, before the first fatal. The counts were right: cascade pid=1 5, pid=2 1, destroy 1, drained 1, SMA 2, CA 8, share 1. No new WARN against step-6-r2.
+  - **gpu PASS** by Q6: run-01 reached the handoff. Its WARN diff against the gpu baseline shows only the N.N id format.
+  - The ELFs are in `.git/aios-agent/evidence/cap-lifetime-{26b7955,e6a726f,a6a1898}/`.
+- **H3 issue not filed** (2026-10-12, skeptic verdict DROP): it is the known H3 hazard, which crash-fix step 2 (an IRQ-masking `IrqSpinLock` for the 9 IRQ-shared statics) fixes at the lock type. The crash-fix ADR already cites `cap/mod.rs:39`/`:50` and `timeout.rs`. `pi_server_entry` is one more site of the same pattern; recorded here as evidence that crash-fix step 2 is needed before the soak pair.
+- **Host load** (2026-10-12, about 14:30–15:20): load 125–170, from VS Code `rg`, the CodeQL java process and iCloud `bird`/`fileproviderd`. One verifier was DEFERRED (exit 77), and the A/B ran under heavy load.
 
 ## Decisions Made
 
@@ -835,6 +848,17 @@ Step 11, not step 15, drops `SELECT_WAITERS` from the lock-order comment at `com
   - the Kit `attenuate` TableFull/Expired mapping gets no dedicated test;
   - the deadlock-prevention row-4 omission is fixed in this docs commit.
 - **The Echo client `ipc_call failed with -1` WARN is allowlisted** for the no-new-kwarn check from step 7 on (lead ruling, 2026-10-12). It appeared in step-5-r2 and step-6-r2. It is the echo pair's exit path that step 200 exposed, and step 10 changes it (Q1).
+- **Step 8 review nits** (lead ruling, 2026-10-12):
+  - Exiting pid 0 and SVC 24 returning after exit were both closed in step 10 (A refuses pid 0 with EPERM; SVC 24 calls `exit_current()` on Ok).
+  - The one-part SAFETY comments on the re-indented `DAIFClr` lines (`scheduler.rs`, `direct.rs`) go to the simplifier.
+- **Step 9 review nits** (lead ruling, 2026-10-12) go to the simplifier: rewrap `scheduler.rs` about line 501 and `ipc/tests/mod.rs` about line 462, and reword the termination comment of `wake.rs` `settle_wake` ("a failed CAS can only see Idle, the target's cancel, which ends the loop; a re-arm makes the CAS succeed"). Also, step 9's kernel commit is titled `(kernel)`, not the `(shared, kernel)` that "Steps 9 and 11 are two commits each" describes. Kept as is.
+- **Step 10 review nits** (lead ruling, 2026-10-12):
+  - `lifecycle.rs` about lines 432 and 434: guard the one-waiter `wait_step(other, …)` checks with `armed &&`. This goes to the simplifier, or the next kernel-dev touch.
+  - The deadlock-prevention §3.5 (D) text is fixed in this docs commit.
+  - Two pre-existing findings go to issues after a skeptic:
+    - PROCESS_TABLE (about 598 KiB) is in `.data` because Empty is not all-zero; it already was before step 10, so this is not a regression;
+    - `process_exit`'s `epipe_wakeups` is capped at 16 and can silently drop wakes.
+- **SVC 24 uses the masked `current_thread_and_pid()`** (step 10 deviation, accepted, 2026-10-12): this removes one unmasked IRQ-class read.
 
 ## Answered questions (2026-10-11 reconcile)
 
