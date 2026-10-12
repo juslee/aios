@@ -12,9 +12,9 @@
 //! - [`write_line`]: the `[tripwire]` line. [`write_reentry_msg`]: the
 //!   `lock re-entry:` panic message.
 //! - [`classify_pc`]: where a saved PC points (N5).
-//! - [`classify_slot`], [`TwoStrike`], [`EdgeCounter`] and the mask helpers
-//!   ([`mask_set`], [`mask_test`], [`pop_lowest`], [`count_tids`]): the
-//!   heartbeat scans.
+//! - [`classify_slot`], [`wait_word_bad`], [`TwoStrike`], [`EdgeCounter`]
+//!   and the mask helpers ([`mask_set`], [`mask_test`], [`pop_lowest`],
+//!   [`count_tids`]): the heartbeat scans.
 //! - [`WakeSource`], [`UnblockOutcome`], [`ClearResult`], [`classify_reply`]
 //!   and [`classify_send`]: `unblock` attribution and the N2 counters.
 //!
@@ -63,7 +63,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::lock::{LockClass, OwnerStamp, SCALAR_INDEX, TID_NONE};
-use crate::sched::{SchedulerClass, ThreadState};
+use crate::sched::{wake_action, SchedulerClass, ThreadState, WaitState, WakeAction};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -444,9 +444,11 @@ pub enum Key {
     /// N2 phase counts, per [`N2Kind`].
     N2,
     // -- Per wake source ------------------------------------------------------
-    /// `unblock` skipped a Running target.
+    /// `unblock` skipped a Running target whose wait word was Idle
+    /// ([`WakeAction::Skip`]): a stale wake, outside any armed window.
     Ubrun,
-    /// `unblock` skipped a Runnable target.
+    /// `unblock` skipped a Runnable target whose wait word was Idle
+    /// ([`WakeAction::Skip`]).
     Ubrbl,
     /// `unblock` reached a Dead target and skipped it ([`UnblockKind::Dead`]).
     /// A BlockedTimer target, which nothing in the kernel writes, would be
@@ -528,11 +530,24 @@ pub enum Key {
     Twn,
     /// Gauge: the most CNTVCT ticks one tripwire line took.
     Twmax,
+    // -- Appended (capability-lifetime step 9) ---------------------------------
+    // New keys go at the end, so every earlier key keeps its position and an
+    // older line, which lacks them, still decodes: a missing key reads 0.
+    /// `unblock` found a Running or Runnable target Armed and left it the
+    /// wake token ([`WakeAction::LeaveToken`]), per [`WakeSource`].
+    Ubtok,
+    /// `unblock` found a Running or Runnable target with a token already
+    /// pending ([`WakeAction::TokenPending`]), per [`WakeSource`].
+    Ubpend,
+    /// Threads that entered the confirmed bad-wait-word set: flagged by two
+    /// consecutive scans A with a wait word that is not Idle while the
+    /// thread is blocked or Suspended ([`wait_word_bad`]). Expected 0.
+    Bw,
 }
 
 impl Key {
     /// Number of keys.
-    pub const COUNT: usize = 61;
+    pub const COUNT: usize = 64;
 
     /// Every key, in print order.
     pub const ALL: [Key; Self::COUNT] = [
@@ -597,6 +612,9 @@ impl Key {
         Key::Twc,
         Key::Twn,
         Key::Twmax,
+        Key::Ubtok,
+        Key::Ubpend,
+        Key::Bw,
     ];
 
     /// The key's position in [`Key::ALL`].
@@ -669,6 +687,9 @@ impl Key {
             Key::Twc => "twc",
             Key::Twn => "twn",
             Key::Twmax => "twmax",
+            Key::Ubtok => "ubtok",
+            Key::Ubpend => "ubpend",
+            Key::Bw => "bw",
         }
     }
 
@@ -686,7 +707,13 @@ impl Key {
             | Key::Rsthold
             | Key::Tpidrbad => Width::Cpu,
             Key::N2 => Width::N2,
-            Key::Ubrun | Key::Ubrbl | Key::Ubdead | Key::Ubnone | Key::Ubmove => Width::Source,
+            Key::Ubrun
+            | Key::Ubrbl
+            | Key::Ubdead
+            | Key::Ubnone
+            | Key::Ubmove
+            | Key::Ubtok
+            | Key::Ubpend => Width::Source,
             Key::Lkph
             | Key::Lkpho
             | Key::Lkphrun
@@ -1644,6 +1671,28 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
     }
 }
 
+/// Whether scan A flags a thread slot for `bw`: its wait word is not Idle
+/// while the thread is blocked (any Blocked state) or Suspended.
+///
+/// Every block site swaps the word to Idle in the same THREAD_TABLE critical
+/// section that blocks the thread, and scan A reads both under THREAD_TABLE,
+/// so a correct kernel never shows one. Running and Runnable threads arm by
+/// design, an empty slot holds no thread, and a Dead thread is left out until
+/// crash-fix step 8's exit safe point: a victim marked Dead while it runs may
+/// arm, and keeps that word until its next `block_current`.
+#[inline]
+pub const fn wait_word_bad(state: SlotState, word: WaitState) -> bool {
+    !matches!(word, WaitState::Idle)
+        && matches!(
+            state,
+            SlotState::BlockedIpc
+                | SlotState::BlockedNotification
+                | SlotState::BlockedSelect
+                | SlotState::BlockedOther
+                | SlotState::Suspended
+        )
+}
+
 // ---------------------------------------------------------------------------
 // Two strikes and edge counting
 // ---------------------------------------------------------------------------
@@ -1829,12 +1878,13 @@ impl Default for EdgeCounter {
 // Wake attribution and the N2 table
 // ---------------------------------------------------------------------------
 
-/// What `unblock` did with its target.
+/// What `unblock` did with its target: its [`WakeAction`], refined by the
+/// target's state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum UnblockKind {
     /// Woke a thread in BlockedIpc, BlockedNotification, BlockedSelect,
-    /// BlockedProcessWait, BlockedIo or Suspended.
+    /// BlockedProcessWait, BlockedIo or Suspended ([`WakeAction::Enqueue`]).
     Woke,
     /// Made a BlockedTimer thread Runnable (`ubdead`). Nothing in the kernel
     /// writes BlockedTimer, so this kind is not reached.
@@ -1842,49 +1892,67 @@ pub enum UnblockKind {
     /// Reached a Dead target and skipped it (`ubdead`): Dead is terminal.
     /// Neither a skip of a live target nor a wake.
     Dead,
-    /// Skipped a Running target (`ubrun`).
+    /// Skipped a Running target whose wait word was Idle (`ubrun`).
     SkipRunning,
-    /// Skipped a Runnable target (`ubrbl`).
+    /// Skipped a Runnable target whose wait word was Idle (`ubrbl`).
     SkipRunnable,
+    /// Left the wake token for an Armed Running or Runnable target
+    /// (`ubtok`). Not a skip: the target's `block_current` consumes it.
+    LeaveToken,
+    /// Found a token already pending for a Running or Runnable target
+    /// (`ubpend`). Not a skip: the pending token wakes the target.
+    TokenPending,
     /// Found an empty slot or an out-of-range id (`ubnone`).
     NoThread,
 }
 
 impl UnblockKind {
     /// Every kind.
-    pub const ALL: [UnblockKind; 6] = [
+    pub const ALL: [UnblockKind; 8] = [
         UnblockKind::Woke,
         UnblockKind::Revived,
         UnblockKind::Dead,
         UnblockKind::SkipRunning,
         UnblockKind::SkipRunnable,
+        UnblockKind::LeaveToken,
+        UnblockKind::TokenPending,
         UnblockKind::NoThread,
     ];
 
-    /// `unblock`'s decision for a slot (`None` = empty or out of range).
-    /// Woke and Revived both make the thread Runnable and queue it; the
-    /// skips and Dead return without a change.
-    pub const fn of(state: Option<&ThreadState>) -> UnblockKind {
-        match state {
-            None => UnblockKind::NoThread,
-            Some(ThreadState::Running) => UnblockKind::SkipRunning,
-            Some(ThreadState::Runnable) => UnblockKind::SkipRunnable,
-            Some(ThreadState::Dead) => UnblockKind::Dead,
-            Some(
-                ThreadState::BlockedIpc { .. }
-                | ThreadState::BlockedNotification { .. }
-                | ThreadState::BlockedSelect
-                | ThreadState::BlockedProcessWait { .. }
-                | ThreadState::BlockedIo
-                | ThreadState::Suspended,
-            ) => UnblockKind::Woke,
-            Some(ThreadState::BlockedTimer { .. }) => UnblockKind::Revived,
+    /// `unblock`'s decision for a slot (`None` = empty or out of range)
+    /// whose wait word is `word`: [`wake_action`] mapped onto the outcome
+    /// keys. Woke and Revived both make the thread Runnable and queue it;
+    /// the skips, the token kinds and Dead return without a state change.
+    pub const fn of(state: Option<&ThreadState>, word: WaitState) -> UnblockKind {
+        let Some(state) = state else {
+            return UnblockKind::NoThread;
+        };
+        match wake_action(state, word) {
+            WakeAction::Dead => UnblockKind::Dead,
+            WakeAction::LeaveToken => UnblockKind::LeaveToken,
+            WakeAction::TokenPending => UnblockKind::TokenPending,
+            WakeAction::Skip => {
+                if matches!(state, ThreadState::Running) {
+                    UnblockKind::SkipRunning
+                } else {
+                    UnblockKind::SkipRunnable
+                }
+            }
+            WakeAction::Enqueue => {
+                if matches!(state, ThreadState::BlockedTimer { .. }) {
+                    UnblockKind::Revived
+                } else {
+                    UnblockKind::Woke
+                }
+            }
         }
     }
 
-    /// Whether `unblock` skipped a live (Running or Runnable) target. A Dead
-    /// target is not a skip: [`UnblockKind::Dead`] is neither this nor
-    /// [`UnblockKind::made_runnable`].
+    /// Whether `unblock` skipped a live (Running or Runnable) target whose
+    /// word was Idle. A Dead target is not a skip, and neither is a token
+    /// left or already pending: [`UnblockKind::Dead`],
+    /// [`UnblockKind::LeaveToken`] and [`UnblockKind::TokenPending`] are
+    /// neither this nor [`UnblockKind::made_runnable`].
     #[inline]
     pub const fn skipped(self) -> bool {
         matches!(self, UnblockKind::SkipRunning | UnblockKind::SkipRunnable)
@@ -1903,6 +1971,8 @@ impl UnblockKind {
             UnblockKind::Revived | UnblockKind::Dead => Some(Key::Ubdead),
             UnblockKind::SkipRunning => Some(Key::Ubrun),
             UnblockKind::SkipRunnable => Some(Key::Ubrbl),
+            UnblockKind::LeaveToken => Some(Key::Ubtok),
+            UnblockKind::TokenPending => Some(Key::Ubpend),
             UnblockKind::NoThread => Some(Key::Ubnone),
         }
     }
@@ -2017,7 +2087,10 @@ const fn skip_fate(outcome: UnblockOutcome, channel: u64, clear: ClearResult) ->
 ///   timeout (fired, registered after the reply's clear, or left by a busy
 ///   clear) wakes it.
 /// - Made Runnable, unless the caller was armed in this call: `misrep`.
-/// - Anything else: not counted.
+/// - Anything else: not counted. That includes a token left for the caller
+///   or already pending ([`UnblockKind::LeaveToken`],
+///   [`UnblockKind::TokenPending`]): the caller's `block_current` consumes
+///   it, so the wake is not lost.
 pub const fn classify_reply(
     outcome: UnblockOutcome,
     channel: u64,
@@ -2304,6 +2377,9 @@ mod tests {
             "twc",
             "twn",
             "twmax",
+            "ubtok",
+            "ubpend",
+            "bw",
         ];
         assert_eq!(order, expected);
 
@@ -2323,7 +2399,7 @@ mod tests {
         );
         assert_eq!(
             widths(Width::Source),
-            ["ubrun", "ubrbl", "ubdead", "ubnone", "ubmove"]
+            ["ubrun", "ubrbl", "ubdead", "ubnone", "ubmove", "ubtok", "ubpend"]
         );
         assert_eq!(
             widths(Width::Lock),
@@ -2379,7 +2455,12 @@ mod tests {
             next += slots;
         }
         assert_eq!(next, SLOTS);
-        assert_eq!(SLOTS, 10 + 12 + 4 + 5 * 16 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3);
+        // ... + the closing 3, then the appended ubtok and ubpend (16 each)
+        // and bw.
+        assert_eq!(
+            SLOTS,
+            10 + 12 + 4 + 5 * 16 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3 + 2 * 16 + 1
+        );
     }
 
     #[test]
@@ -2516,7 +2597,10 @@ mod tests {
          scanb=4000 skipb=4100 scanstall=4200 hbdefer=4300 orphan=4400 nowaker=4500 wakefl=4600 \
          starved=4700,4701,4702,4703 dupcur=4800 dupq=4900 qbad=5000 orphan_now=5100 \
          nowaker_now=5200 wakefl_now=5300 scanhold1=5400 scanhold2=5500 lb=5600 enqfull=5700 \
-         badchan=5800,5801,5802 twc=5900 twn=6000 twmax=6100 n=66\n";
+         badchan=5800,5801,5802 twc=5900 twn=6000 twmax=6100 \
+         ubtok=6200,6201,6202,6203,6204,6205,6206,6207,6208,6209,6210,6211,6212,6213,6214,6215 \
+         ubpend=6300,6301,6302,6303,6304,6305,6306,6307,6308,6309,6310,6311,6312,6313,6314,6315 \
+         bw=6400 n=69\n";
 
     #[test]
     fn full_line_golden() {
@@ -3376,27 +3460,75 @@ mod tests {
         assert_eq!(e.confirmed(), T2);
     }
 
+    #[test]
+    fn wait_word_bad_only_for_blocked_or_suspended() {
+        use SlotState as St;
+        let states = [
+            St::Empty,
+            St::Runnable,
+            St::Running,
+            St::BlockedIpc,
+            St::BlockedNotification,
+            St::BlockedSelect,
+            St::BlockedOther,
+            St::Suspended,
+            St::Dead,
+        ];
+        for state in states {
+            let blocked = matches!(
+                state,
+                St::BlockedIpc
+                    | St::BlockedNotification
+                    | St::BlockedSelect
+                    | St::BlockedOther
+                    | St::Suspended
+            );
+            for word in WaitState::ALL {
+                let want = blocked && word != WaitState::Idle;
+                assert_eq!(wait_word_bad(state, word), want, "{state:?} {word:?}");
+            }
+        }
+    }
+
     // -- Wake attribution ----------------------------------------------------
 
     #[test]
     fn unblock_kind_of_thread_states() {
         use ThreadState as S;
         use UnblockKind as K;
+        use WaitState as W;
+        // (state, kind with an Idle, an Armed and a Woken word). The word
+        // matters only for a Running or Runnable target.
         let cases = [
-            (None, K::NoThread),
-            (Some(S::Running), K::SkipRunning),
-            (Some(S::Runnable), K::SkipRunnable),
-            (Some(S::BlockedIpc { channel: 1 }), K::Woke),
-            (Some(S::BlockedNotification { notification: 1 }), K::Woke),
-            (Some(S::BlockedSelect), K::Woke),
-            (Some(S::BlockedProcessWait { child_pid: 1 }), K::Woke),
-            (Some(S::BlockedTimer { wake_at: 1 }), K::Revived),
-            (Some(S::BlockedIo), K::Woke),
-            (Some(S::Suspended), K::Woke),
-            (Some(S::Dead), K::Dead),
+            (None, [K::NoThread; 3]),
+            (
+                Some(S::Running),
+                [K::SkipRunning, K::LeaveToken, K::TokenPending],
+            ),
+            (
+                Some(S::Runnable),
+                [K::SkipRunnable, K::LeaveToken, K::TokenPending],
+            ),
+            (Some(S::BlockedIpc { channel: 1 }), [K::Woke; 3]),
+            (
+                Some(S::BlockedNotification { notification: 1 }),
+                [K::Woke; 3],
+            ),
+            (Some(S::BlockedSelect), [K::Woke; 3]),
+            (Some(S::BlockedProcessWait { child_pid: 1 }), [K::Woke; 3]),
+            (Some(S::BlockedTimer { wake_at: 1 }), [K::Revived; 3]),
+            (Some(S::BlockedIo), [K::Woke; 3]),
+            (Some(S::Suspended), [K::Woke; 3]),
+            (Some(S::Dead), [K::Dead; 3]),
         ];
         for (state, want) in cases {
-            assert_eq!(UnblockKind::of(state.as_ref()), want, "{state:?}");
+            for (word, kind) in [W::Idle, W::Armed, W::Woken].into_iter().zip(want) {
+                assert_eq!(
+                    UnblockKind::of(state.as_ref(), word),
+                    kind,
+                    "{state:?} {word:?}"
+                );
+            }
         }
         let keys: Vec<Option<Key>> = K::ALL.iter().map(|k| k.key()).collect();
         assert_eq!(
@@ -3407,6 +3539,8 @@ mod tests {
                 Some(Key::Ubdead),
                 Some(Key::Ubrun),
                 Some(Key::Ubrbl),
+                Some(Key::Ubtok),
+                Some(Key::Ubpend),
                 Some(Key::Ubnone)
             ]
         );
@@ -3513,10 +3647,10 @@ mod tests {
                 (K::SkipRunning | K::SkipRunnable, false) => [LATE; 4],
                 (K::Woke | K::Revived, true) => [MIS, MIS, NC, MIS],
                 (K::Woke | K::Revived, false) => [MIS; 4],
-                (K::Dead | K::NoThread, _) => [NC; 4],
+                (K::Dead | K::NoThread | K::LeaveToken | K::TokenPending, _) => [NC; 4],
             }
         });
-        assert_eq!(cells, 6 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 8 * 2 * 2 * 3 * 4);
     }
 
     #[test]
@@ -3546,7 +3680,7 @@ mod tests {
                 [NC; 4]
             }
         });
-        assert_eq!(cells, 6 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 8 * 2 * 2 * 3 * 4);
     }
 
     /// The kernel interleavings the N2 table has to separate (S3 review).
@@ -3596,6 +3730,12 @@ mod tests {
         // The normal reply wake of an untimed caller is not misdirected.
         let untimed_armed = wait_phase(PHASE_ARMED, false);
         assert_eq!(reply(K::Woke, untimed_armed, C::Absent), W::NotCounted);
+        // With the wake token, the N2 reply finds the caller Armed and
+        // leaves it the token: no N2 count, the caller consumes it.
+        for kind in [K::LeaveToken, K::TokenPending] {
+            assert_eq!(reply(kind, armed, C::Removed), W::NotCounted);
+            assert_eq!(send(kind, armed, C::Removed), W::NotCounted);
+        }
 
         // Receive side: the send removes a receiver's registered timeout
         // before it blocks.

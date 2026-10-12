@@ -32,7 +32,8 @@
 //! - Heartbeat scans (observability.md §6.5), right before each `src=hb`
 //!   line: scan A holds every run queue and THREAD_TABLE
 //!   (`sched::scan_snapshot`) and finds orphans (Runnable, not queued, not current), starved threads
-//!   (queued, not run for over 1000 ticks, by class) and the `dupq`,
+//!   (queued, not run for over 1000 ticks, by class), threads blocked or
+//!   Suspended with a wait word that is not Idle (`bw`), and the `dupq`,
 //!   `dupcur` and `qbad` (queued, neither Runnable nor Dead) checks; scan B try-locks each waker table alone
 //!   (`ipc::scan_wakers`) and splits threads blocked with no waker into
 //!   `nowaker` and `wakefl` (a wake in flight). Two strikes per kind
@@ -93,6 +94,7 @@ use shared::tripwire::{
     SlotVerdict, TextLayout, TwoStrike, UnblockKind, UnblockOutcome, WakeSource, CLASS_COUNT,
     IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE, PHASE_PUBLISHED,
 };
+use shared::WaitState;
 
 use crate::arch::aarch64::{mmu, timer, uart};
 use crate::sched::STACK_SIZE;
@@ -487,6 +489,9 @@ static SCAN_ORPHAN: AtomicU64 = AtomicU64::new(0);
 static SCAN_STARVED: AtomicU64 = AtomicU64::new(0);
 /// Scan A: queued threads that are neither Runnable nor Dead (`qbad`).
 static SCAN_QBAD: AtomicU64 = AtomicU64::new(0);
+/// Scan A: blocked or Suspended threads whose wait word is not Idle (`bw`
+/// candidates, `shared::tripwire::wait_word_bad`).
+static SCAN_BW: AtomicU64 = AtomicU64::new(0);
 /// Scan A: threads in `BlockedIpc` (including sleep), scan B's candidates.
 static SCAN_BLOCKED_IPC: AtomicU64 = AtomicU64::new(0);
 /// Scan A: threads in `BlockedNotification`, scan B's candidates.
@@ -502,10 +507,11 @@ static SCAN_NDL: AtomicU64 = AtomicU64::new(0);
 /// Scan B: threads a notification lists as a waiter.
 static SCAN_NOTIF: AtomicU64 = AtomicU64::new(0);
 
-/// Two strikes, one history per kind (A-orphan, A-starved, B-nowaker,
-/// B-wakefl), each updated only when its own scan completes.
+/// Two strikes, one history per kind (A-orphan, A-starved, A-bw,
+/// B-nowaker, B-wakefl), each updated only when its own scan completes.
 static STRIKE_ORPHAN: TwoStrike<MAX_CORES> = TwoStrike::new();
 static STRIKE_STARVED: TwoStrike<MAX_CORES> = TwoStrike::new();
+static STRIKE_BW: TwoStrike<MAX_CORES> = TwoStrike::new();
 static STRIKE_NOWAKER: TwoStrike<MAX_CORES> = TwoStrike::new();
 static STRIKE_WAKEFL: TwoStrike<MAX_CORES> = TwoStrike::new();
 
@@ -513,6 +519,7 @@ static STRIKE_WAKEFL: TwoStrike<MAX_CORES> = TwoStrike::new();
 /// when it enters the set, again only after it left and came back.
 static EDGE_ORPHAN: EdgeCounter = EdgeCounter::new();
 static EDGE_STARVED: EdgeCounter = EdgeCounter::new();
+static EDGE_BW: EdgeCounter = EdgeCounter::new();
 static EDGE_NOWAKER: EdgeCounter = EdgeCounter::new();
 static EDGE_WAKEFL: EdgeCounter = EdgeCounter::new();
 
@@ -619,10 +626,12 @@ pub fn scan_note_currents(ncpu: usize) {
 
 /// Scan A, under THREAD_TABLE, after the queues and the current threads:
 /// classify thread slot `slot` in `state` ([`classify_slot`]) as an orphan
-/// candidate, a starved candidate or a queued non-Runnable thread, and
-/// record a blocked thread as a scan-B candidate.
+/// candidate, a starved candidate or a queued non-Runnable thread, flag a
+/// blocked or Suspended thread whose wait word `word` is not Idle as a `bw`
+/// candidate ([`tripwire::wait_word_bad`]), and record a blocked thread as a
+/// scan-B candidate.
 #[inline(never)]
-pub fn scan_note_slot(slot: u32, state: SlotState) {
+pub fn scan_note_slot(slot: u32, state: SlotState, word: WaitState) {
     let flags = SlotFlags::NONE
         .with_if(
             SlotFlags::QUEUED,
@@ -642,6 +651,9 @@ pub fn scan_note_slot(slot: u32, state: SlotState) {
     };
     if let Some(mask) = flagged {
         let _ = mask_add(mask, slot);
+    }
+    if tripwire::wait_word_bad(state, word) {
+        let _ = mask_add(&SCAN_BW, slot);
     }
     let blocked = match state {
         SlotState::BlockedIpc => Some(&SCAN_BLOCKED_IPC),
@@ -691,9 +703,9 @@ fn run_scans() {
 }
 
 /// Scan A: snapshot the run queues and thread table
-/// (`sched::scan_snapshot`), then confirm orphans and starved threads with
-/// two strikes and count the single-scan checks. Returns whether it
-/// completed.
+/// (`sched::scan_snapshot`), then confirm orphans, starved threads and bad
+/// wait words (`bw`) with two strikes and count the single-scan checks.
+/// Returns whether it completed.
 #[inline(never)]
 fn scan_a(ncpu: usize) -> bool {
     SCAN_QUEUED.store(0, Ordering::Relaxed);
@@ -706,6 +718,7 @@ fn scan_a(ncpu: usize) -> bool {
     SCAN_ORPHAN.store(0, Ordering::Relaxed);
     SCAN_STARVED.store(0, Ordering::Relaxed);
     SCAN_QBAD.store(0, Ordering::Relaxed);
+    SCAN_BW.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_IPC.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_NOTIF.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_SELECT.store(0, Ordering::Relaxed);
@@ -769,6 +782,17 @@ fn scan_a(ncpu: usize) -> bool {
             .map_or(0, |mask| mask.load(Ordering::Relaxed));
         add_row(here, Key::Starved, class, count_tids(entered & queued));
     }
+    // bw has no gauge. A correct kernel never flags a thread, so its history
+    // holds no first strike and its confirmation never stalls: it adds
+    // nothing to `scanstall`.
+    let entered = confirm(
+        &STRIKE_BW,
+        &EDGE_BW,
+        SCAN_BW.load(Ordering::Relaxed),
+        ncpu,
+        None,
+    );
+    add_row(here, Key::Bw, 0, count_tids(entered));
     true
 }
 
@@ -1310,11 +1334,14 @@ pub fn clear_wake_pending(tid: ThreadId) {
 /// after it has read the target's slot and before it acts on it.
 ///
 /// `state` is the target's state (`None` for an empty slot or an
-/// out-of-range `tid`). The function:
+/// out-of-range `tid`), and `word` the wait word `unblock`'s decision stands
+/// on (after its token compare-and-swap). The function:
 ///
-/// 1. decides the outcome kind the way `unblock` does
-///    ([`UnblockKind::of`]) and counts `ubrun`, `ubrbl`, `ubdead` or
-///    `ubnone` for `src`; an out-of-range `tid` also counts `badtid`;
+/// 1. maps that decision (`shared::wake_action`) onto the outcome kind
+///    ([`UnblockKind::of`]) and counts `ubrun`, `ubrbl` (a stale wake of a
+///    Running or Runnable target whose word was Idle), `ubdead`, `ubtok` (a
+///    token left), `ubpend` (a token already pending) or `ubnone` for `src`;
+///    an out-of-range `tid` also counts `badtid`;
 /// 2. for [`WakeSource::Reply`] snapshots the target's `CALL_PHASE` and
 ///    `CALL_CHAN`, and for [`WakeSource::Call`] and [`WakeSource::Send`] its
 ///    `RECV_PHASE` and `RECV_CHAN`, under the same lock hold that decided the
@@ -1324,10 +1351,15 @@ pub fn clear_wake_pending(tid: ThreadId) {
 /// Returns the outcome, which the reply, send and call wakers classify
 /// ([`note_reply_wake`], [`note_send_wake`]).
 #[inline(never)]
-pub fn note_unblock(tid: ThreadId, src: WakeSource, state: Option<&ThreadState>) -> UnblockOutcome {
+pub fn note_unblock(
+    tid: ThreadId,
+    src: WakeSource,
+    state: Option<&ThreadState>,
+    word: WaitState,
+) -> UnblockOutcome {
     debug_assert!(read_daif() & DAIF_I != 0);
     let here = cpu_here();
-    let kind = UnblockKind::of(state);
+    let kind = UnblockKind::of(state, word);
     if let Some(key) = kind.key() {
         add_row(here, key, src.index(), 1);
     }

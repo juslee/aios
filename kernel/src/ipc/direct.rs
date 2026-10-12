@@ -24,9 +24,10 @@
 use crate::arch::aarch64::exceptions;
 use crate::observability::metrics::METRICS;
 use crate::observability::tripwire::{self, DispatchSite};
+use crate::sched::wake;
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
 use shared::tripwire::{ClearResult, Key};
-use shared::ChannelId;
+use shared::{block_action, BlockAction, ChannelId, WaitState};
 
 // Re-export from shared crate so kernel code can use `direct::MAX_INHERITANCE_DEPTH`.
 pub use shared::MAX_INHERITANCE_DEPTH;
@@ -85,20 +86,25 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     }
 
     // Receiver must be blocked on IPC (waiting in ipc_recv), and the sender
-    // must not be Dead: Dead is terminal, so a sender that a process exit
-    // killed takes the slow path, where block_current keeps it Dead.
+    // must be able to block: shared::block_action on the sender's state and
+    // wait word must say Sleep. A Dead sender (AlreadyDead: a process exit
+    // killed it) and a sender with a token pending (ConsumeToken: a waker
+    // found it armed and not yet blocked) take the slow path, where
+    // block_current keeps the first Dead and lets the second consume its
+    // token. The word is only read here; THREAD_TABLE is held from this read
+    // to the swap at the BlockedIpc write below, and every waker's token CAS
+    // runs under THREAD_TABLE, so it cannot change in between.
     {
         let receiver_blocked = matches!(
             table[receiver_idx].as_ref().unwrap().sched.state,
             ThreadState::BlockedIpc { .. }
         );
-        let sender_may_block = table[sender_idx]
-            .as_ref()
-            .unwrap()
-            .sched
-            .state
-            .may_become(&ThreadState::BlockedIpc { channel: 0 });
-        if !receiver_blocked || !sender_may_block {
+        let sender_blocks = block_action(
+            &table[sender_idx].as_ref().unwrap().sched.state,
+            wake::wait_state(sender_tid),
+            &ThreadState::BlockedIpc { channel: 0 },
+        ) == BlockAction::Sleep;
+        if !receiver_blocked || !sender_blocks {
             drop(table);
             // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
             unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -148,11 +154,16 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     }
 
     // --- Block sender ---
-    // The sender blocks until ipc_reply wakes it.
+    // The sender blocks until ipc_reply wakes it. Its wait word goes to Idle
+    // in the same critical section, as block_current's does, so a blocked
+    // thread never holds a word that is not Idle. The check above saw Armed
+    // or Idle, and nothing can have left a token since.
     {
         let sender = table[sender_idx].as_mut().unwrap();
         sender.sched.state = ThreadState::BlockedIpc { channel: 0 };
         sender.sched.time_slice_remaining = 0;
+        let word = wake::take(sender_tid);
+        debug_assert_ne!(word, WaitState::Woken, "token left under THREAD_TABLE");
     }
 
     // Get context pointers. We need raw pointers because save_context

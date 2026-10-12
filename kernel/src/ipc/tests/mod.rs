@@ -13,6 +13,7 @@ mod share;
 mod stale_id;
 mod syscall_args;
 mod timeout_args;
+mod wake_token;
 
 use crate::sched;
 use crate::syscall::IpcError;
@@ -456,7 +457,9 @@ fn ipc_caller_entry() -> ! {
 /// SharedMemoryShare as delegation and the Kit destroy's creator check
 /// (`share_test`, which grants into process 2), and that a thread ended by
 /// `exit_current` stays Dead (`dead_thread_test`, on a helper pinned to
-/// CPU 2). Last, it calls IpcCall on a channel
+/// CPU 2), and that a wake between a thread's arm and its block is kept as a
+/// token that the block consumes (`wake_token_test`, on this thread's own
+/// tid, which the pin to CPU 2 makes safe to read). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
 /// wake can hide only that line.
@@ -531,6 +534,7 @@ fn ipc_timeout_entry() -> ! {
     create_abi::create_abi_test(caller_tid);
     share::share_test(caller_tid);
     dead_thread::dead_thread_test();
+    wake_token::wake_token_test(caller_tid);
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

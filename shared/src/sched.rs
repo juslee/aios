@@ -116,6 +116,146 @@ impl ThreadState {
 }
 
 // ---------------------------------------------------------------------------
+// Wake token (capability-lifetime ADR §8)
+// ---------------------------------------------------------------------------
+
+/// A thread's wait word: where the thread is in a wait, as the wake token
+/// sees it.
+///
+/// The kernel keeps one word per thread slot (`sched::wake`), outside
+/// THREAD_TABLE, so a thread arms without taking a lock. The word lets a
+/// waker that finds its target not yet blocked leave a token instead of
+/// losing the wake: the target's `block_current` then consumes the token and
+/// returns at once (Linux's `set_current_state` / `try_to_wake_up` split).
+///
+/// Invariant: a word that is not `Idle` belongs to a Running or Runnable
+/// thread, between the `prepare_block` that armed it and the
+/// `block_current` or `cancel_block` that ends the wait. Until crash-fix
+/// step 8's exit safe point, a thread marked Dead by a process exit while it
+/// still runs can arm too; its next `block_current` resets the word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum WaitState {
+    /// Not in a wait.
+    Idle = 0,
+    /// The thread recorded "about to block" and may already be published as
+    /// a waiter, but has not blocked.
+    Armed = 1,
+    /// A waker found the thread Armed and not blocked, and left the token.
+    Woken = 2,
+}
+
+impl WaitState {
+    /// Every wait state.
+    pub const ALL: [WaitState; 3] = [WaitState::Idle, WaitState::Armed, WaitState::Woken];
+
+    /// The value the kernel stores for this state.
+    #[inline]
+    pub const fn raw(self) -> u8 {
+        self as u8
+    }
+
+    /// The state a stored value names, `None` for a value no state has. The
+    /// kernel stores only [`WaitState::raw`] values.
+    #[inline]
+    pub const fn from_raw(raw: u8) -> Option<WaitState> {
+        match raw {
+            0 => Some(WaitState::Idle),
+            1 => Some(WaitState::Armed),
+            2 => Some(WaitState::Woken),
+            _ => None,
+        }
+    }
+}
+
+/// What `unblock` does with its target, decided under THREAD_TABLE from the
+/// target's state and wait word ([`wake_action`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeAction {
+    /// The target is Dead: nothing, no token and no enqueue (Dead is
+    /// terminal).
+    Dead,
+    /// The target is Running or Runnable and Armed: compare-and-swap its word
+    /// from Armed to Woken. No state change and no enqueue: its
+    /// `block_current` consumes the token instead of blocking.
+    LeaveToken,
+    /// The target is Running or Runnable and a token is already pending:
+    /// nothing.
+    TokenPending,
+    /// The target is Running or Runnable and Idle, outside any armed window:
+    /// nothing. The wake is stale; a waiter re-checks its condition after it
+    /// arms, so nothing is lost.
+    Skip,
+    /// The target is blocked (any Blocked state) or Suspended: make it
+    /// Runnable and queue it. Its word is Idle there (the invariant on
+    /// [`WaitState`]).
+    Enqueue,
+}
+
+/// `unblock`'s decision for a target in `state` whose wait word is `word`.
+///
+/// Takes the state by reference so that no 16-byte state is copied:
+/// `unblock` runs on the IRQ path (`check_timeouts`), which saves no vector
+/// registers.
+pub const fn wake_action(state: &ThreadState, word: WaitState) -> WakeAction {
+    match state {
+        ThreadState::Dead => WakeAction::Dead,
+        ThreadState::Running | ThreadState::Runnable => match word {
+            WaitState::Armed => WakeAction::LeaveToken,
+            WaitState::Woken => WakeAction::TokenPending,
+            WaitState::Idle => WakeAction::Skip,
+        },
+        ThreadState::BlockedIpc { .. }
+        | ThreadState::BlockedTimer { .. }
+        | ThreadState::BlockedIo
+        | ThreadState::BlockedNotification { .. }
+        | ThreadState::BlockedSelect
+        | ThreadState::BlockedProcessWait { .. }
+        | ThreadState::Suspended => WakeAction::Enqueue,
+    }
+}
+
+/// What a block site (`block_current`, `try_direct_switch`) does when the
+/// current thread asks to move to `next`, decided under THREAD_TABLE from
+/// its state and the wait word it swapped to Idle ([`block_action`]).
+///
+/// Every action leaves the word Idle: the block site reads it with a swap to
+/// Idle, which is the consume of a token and the reset of a stale arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockAction {
+    /// The thread is already Dead (a process exit marked it): write no
+    /// state, consume nothing, and switch away for good.
+    AlreadyDead,
+    /// `next` is Dead (`exit_current`): write Dead and switch away. A
+    /// pending token never makes an exit return.
+    Exit,
+    /// A token was pending (the swap returned Woken): write nothing and do
+    /// not switch. The caller returns at once and re-checks its condition.
+    ConsumeToken,
+    /// Armed or Idle: write `next` and switch away.
+    Sleep,
+}
+
+/// The block site's decision for a thread in `state`, whose wait word was
+/// `word`, asking to move to `next`.
+///
+/// `AlreadyDead` is decided first: exit step B resets a victim's word, so a
+/// victim that armed before B still reaches its block site with an Idle
+/// word, and must neither block as `next` nor trip the arm check that
+/// applies to every other block (capability-lifetime ADR §9, "Guard").
+pub const fn block_action(state: &ThreadState, word: WaitState, next: &ThreadState) -> BlockAction {
+    if matches!(state, ThreadState::Dead) {
+        BlockAction::AlreadyDead
+    } else if matches!(next, ThreadState::Dead) {
+        BlockAction::Exit
+    } else if matches!(word, WaitState::Woken) {
+        BlockAction::ConsumeToken
+    } else {
+        BlockAction::Sleep
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CPU affinity (scheduler.md §3.3)
 // ---------------------------------------------------------------------------
 
@@ -361,6 +501,546 @@ mod tests {
         // payload of the same variant.
         assert!(ThreadState::BlockedIpc { channel: 1 }
             .may_become(&ThreadState::BlockedIpc { channel: u64::MAX }));
+    }
+
+    // ── Wake token: the decision tables ─────────────────────────────────
+
+    #[test]
+    fn wait_state_raw_round_trips() {
+        for (i, word) in WaitState::ALL.iter().enumerate() {
+            assert_eq!(usize::from(word.raw()), i);
+            assert_eq!(WaitState::from_raw(word.raw()), Some(*word));
+        }
+        assert_eq!(WaitState::from_raw(3), None);
+        assert_eq!(WaitState::from_raw(u8::MAX), None);
+    }
+
+    /// The state change a wake action implies, if any.
+    fn wake_next(action: WakeAction) -> Option<ThreadState> {
+        match action {
+            WakeAction::Enqueue => Some(ThreadState::Runnable),
+            WakeAction::Dead
+            | WakeAction::LeaveToken
+            | WakeAction::TokenPending
+            | WakeAction::Skip => None,
+        }
+    }
+
+    /// The state change a block action implies for a block to `next`, if
+    /// any.
+    fn block_next(action: BlockAction, next: ThreadState) -> Option<ThreadState> {
+        match action {
+            BlockAction::AlreadyDead | BlockAction::ConsumeToken => None,
+            BlockAction::Exit => Some(ThreadState::Dead),
+            BlockAction::Sleep => Some(next),
+        }
+    }
+
+    #[test]
+    fn wake_action_every_state_and_word() {
+        for state in &ALL_STATES {
+            for word in WaitState::ALL {
+                let want = match (state, word) {
+                    (ThreadState::Dead, _) => WakeAction::Dead,
+                    (ThreadState::Running | ThreadState::Runnable, WaitState::Armed) => {
+                        WakeAction::LeaveToken
+                    }
+                    (ThreadState::Running | ThreadState::Runnable, WaitState::Woken) => {
+                        WakeAction::TokenPending
+                    }
+                    (ThreadState::Running | ThreadState::Runnable, WaitState::Idle) => {
+                        WakeAction::Skip
+                    }
+                    _ => WakeAction::Enqueue,
+                };
+                let got = wake_action(state, word);
+                assert_eq!(got, want, "{state:?} {word:?}");
+                if let Some(next) = wake_next(got) {
+                    assert!(state.may_become(&next), "{state:?} -> {next:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn block_action_every_state_word_and_next() {
+        for state in &ALL_STATES {
+            for word in WaitState::ALL {
+                for next in &ALL_STATES {
+                    let want = if *state == ThreadState::Dead {
+                        BlockAction::AlreadyDead
+                    } else if *next == ThreadState::Dead {
+                        BlockAction::Exit
+                    } else if word == WaitState::Woken {
+                        BlockAction::ConsumeToken
+                    } else {
+                        BlockAction::Sleep
+                    };
+                    let got = block_action(state, word, next);
+                    assert_eq!(got, want, "{state:?} {word:?} -> {next:?}");
+                    if let Some(to) = block_next(got, *next) {
+                        assert!(state.may_become(&to), "{state:?} -> {to:?}");
+                    }
+                }
+            }
+        }
+        // A token never makes an exit return, and a Dead thread never
+        // consumes one.
+        assert_eq!(
+            block_action(&ThreadState::Running, WaitState::Woken, &ThreadState::Dead),
+            BlockAction::Exit
+        );
+        assert_eq!(
+            block_action(
+                &ThreadState::Dead,
+                WaitState::Woken,
+                &ThreadState::BlockedSelect
+            ),
+            BlockAction::AlreadyDead
+        );
+    }
+
+    // ── Wake token: the protocol model ──────────────────────────────────
+
+    /// An exhaustive model of one wait against its wakers, explored over
+    /// every interleaving of their atomic steps, with the decisions taken
+    /// from [`wake_action`] and [`block_action`].
+    ///
+    /// - The waiter checks its condition, and if it is not set arms (when
+    ///   the model arms) and registers its waiter record, all under the
+    ///   publish lock; it may publish a timeout entry before or after that;
+    ///   then it calls `block_current`. It may be preempted once (Running to
+    ///   Runnable and queued) and resumed by the scheduler's pick.
+    /// - The condition waker publishes the condition and takes the waiter
+    ///   record under the publish lock, then calls `unblock` if it found one.
+    /// - The timeout takes the waiter's entry (the timeout is spent), then
+    ///   calls `unblock`.
+    /// - Exit step B marks the waiter Dead and resets its word, both under
+    ///   THREAD_TABLE.
+    mod token_model {
+        extern crate std;
+
+        use super::super::{
+            block_action, wake_action, BlockAction, ThreadState, WaitState, WakeAction,
+        };
+        use std::collections::HashSet;
+        use std::vec::Vec;
+
+        /// The waiter's scheduler state.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        enum Th {
+            Running,
+            Runnable,
+            Blocked,
+            Dead,
+        }
+
+        impl Th {
+            fn state(self) -> ThreadState {
+                match self {
+                    Th::Running => ThreadState::Running,
+                    Th::Runnable => ThreadState::Runnable,
+                    Th::Blocked => ThreadState::BlockedIpc { channel: 0 },
+                    Th::Dead => ThreadState::Dead,
+                }
+            }
+        }
+
+        /// Where the waiter publishes its timeout entry.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) enum Timeout {
+            None,
+            /// After the arm (the protocol's rule 1).
+            AfterArm,
+            /// Before the arm (the negative control).
+            BeforeArm,
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub(super) struct Config {
+            /// The waiter arms (`false`: today's code, no token).
+            pub(super) arm: bool,
+            pub(super) cond_waker: bool,
+            pub(super) timeout: Timeout,
+            pub(super) exit_b: bool,
+        }
+
+        // Waiter program counters.
+        const W_ENTRY_BEFORE: u8 = 0;
+        const W_CHECK: u8 = 1;
+        const W_ENTRY_AFTER: u8 = 2;
+        const W_BLOCK: u8 = 3;
+        const W_DONE: u8 = 4;
+
+        /// One state of the model, with the history flags the checks read.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub(super) struct World {
+            th: Th,
+            /// The waiter is executing on its CPU.
+            on_cpu: bool,
+            queued: bool,
+            word: WaitState,
+            cond: bool,
+            record: bool,
+            entry: bool,
+            /// The timeout fired: it took the entry.
+            spent: bool,
+            waiter: u8,
+            waker: u8,
+            timer: u8,
+            exit: u8,
+            preempted: bool,
+            /// The waiter's `block_current` has run.
+            pub(super) blocked_ran: bool,
+            /// A `block_current` consumed a token.
+            pub(super) consumed: bool,
+            /// A block to a live state found an Idle word: the step-14 arm
+            /// assertion would fire.
+            pub(super) assert_hit: bool,
+            /// A block of a Dead thread found an Idle word, which the arm
+            /// assertion skips because `AlreadyDead` is decided first.
+            pub(super) idle_dead_block: bool,
+            /// `prepare_block` found a word that was not Idle.
+            pub(super) prepare_bad: bool,
+            /// The waiter armed after exit B marked it Dead.
+            pub(super) armed_while_dead: bool,
+            /// Exit B reset an Armed word.
+            pub(super) reset_armed: bool,
+        }
+
+        impl World {
+            fn start(cfg: Config) -> World {
+                World {
+                    th: Th::Running,
+                    on_cpu: true,
+                    queued: false,
+                    word: WaitState::Idle,
+                    cond: false,
+                    record: false,
+                    entry: false,
+                    spent: false,
+                    waiter: if cfg.timeout == Timeout::BeforeArm {
+                        W_ENTRY_BEFORE
+                    } else {
+                        W_CHECK
+                    },
+                    waker: if cfg.cond_waker { 0 } else { 2 },
+                    timer: if cfg.timeout == Timeout::None { 2 } else { 0 },
+                    exit: if cfg.exit_b { 0 } else { 1 },
+                    preempted: false,
+                    blocked_ran: false,
+                    consumed: false,
+                    assert_hit: false,
+                    idle_dead_block: false,
+                    prepare_bad: false,
+                    armed_while_dead: false,
+                    reset_armed: false,
+                }
+            }
+
+            /// The waiter is blocked with its condition set and nothing
+            /// queued it.
+            pub(super) fn lost_cond(&self) -> bool {
+                self.th == Th::Blocked && self.cond && !self.queued
+            }
+
+            /// The waiter is blocked with its timeout spent and nothing
+            /// queued it.
+            pub(super) fn lost_timeout(&self) -> bool {
+                self.th == Th::Blocked && self.spent && !self.queued
+            }
+
+            pub(super) fn word(&self) -> WaitState {
+                self.word
+            }
+
+            /// `unblock` of the waiter, one THREAD_TABLE critical section.
+            fn unblock(&mut self) {
+                let state = self.th.state();
+                match wake_action(&state, self.word) {
+                    WakeAction::LeaveToken => self.word = WaitState::Woken,
+                    WakeAction::Enqueue => {
+                        assert!(state.may_become(&ThreadState::Runnable));
+                        self.th = Th::Runnable;
+                        self.queued = true;
+                    }
+                    WakeAction::Dead | WakeAction::Skip | WakeAction::TokenPending => {}
+                }
+            }
+
+            /// `prepare_block`: swap the word to Armed.
+            fn prepare(&mut self) {
+                if self.word != WaitState::Idle {
+                    self.prepare_bad = true;
+                }
+                if self.th == Th::Dead {
+                    self.armed_while_dead = true;
+                }
+                self.word = WaitState::Armed;
+            }
+
+            /// `block_current(BlockedIpc)`, one THREAD_TABLE critical section:
+            /// swap the word to Idle and apply the block decision.
+            fn block(&mut self) {
+                let old = self.word;
+                self.word = WaitState::Idle;
+                self.blocked_ran = true;
+                let next = ThreadState::BlockedIpc { channel: 0 };
+                let action = block_action(&self.th.state(), old, &next);
+                if old == WaitState::Idle {
+                    if action == BlockAction::AlreadyDead {
+                        self.idle_dead_block = true;
+                    } else {
+                        self.assert_hit = true;
+                    }
+                }
+                match action {
+                    BlockAction::AlreadyDead => self.on_cpu = false,
+                    BlockAction::ConsumeToken => self.consumed = true,
+                    BlockAction::Sleep => {
+                        self.th = Th::Blocked;
+                        self.on_cpu = false;
+                    }
+                    BlockAction::Exit => panic!("the waiter never blocks as Dead"),
+                }
+                self.waiter = W_DONE;
+            }
+
+            /// The waiter's next step, if it can run one.
+            fn step_waiter(mut self, cfg: Config) -> Option<World> {
+                if !self.on_cpu || self.waiter == W_DONE {
+                    return None;
+                }
+                match self.waiter {
+                    W_ENTRY_BEFORE => {
+                        self.entry = true;
+                        self.waiter = W_CHECK;
+                    }
+                    W_CHECK => {
+                        if self.cond {
+                            self.waiter = W_DONE;
+                        } else {
+                            if cfg.arm {
+                                self.prepare();
+                            }
+                            self.record = true;
+                            self.waiter = if cfg.timeout == Timeout::AfterArm {
+                                W_ENTRY_AFTER
+                            } else {
+                                W_BLOCK
+                            };
+                        }
+                    }
+                    W_ENTRY_AFTER => {
+                        self.entry = true;
+                        self.waiter = W_BLOCK;
+                    }
+                    _ => self.block(),
+                }
+                Some(self)
+            }
+
+            /// The condition waker's next step.
+            fn step_waker(mut self) -> Option<World> {
+                match self.waker {
+                    0 => {
+                        self.cond = true;
+                        self.waker = if self.record { 1 } else { 2 };
+                        self.record = false;
+                    }
+                    1 => {
+                        self.unblock();
+                        self.waker = 2;
+                    }
+                    _ => return None,
+                }
+                Some(self)
+            }
+
+            /// The timeout's next step: it fires only once the entry exists.
+            fn step_timer(mut self) -> Option<World> {
+                match self.timer {
+                    0 if self.entry => {
+                        self.entry = false;
+                        self.spent = true;
+                        self.timer = 1;
+                    }
+                    1 => {
+                        self.unblock();
+                        self.timer = 2;
+                    }
+                    _ => return None,
+                }
+                Some(self)
+            }
+
+            /// Exit step B: mark the waiter Dead and reset its word.
+            fn step_exit(mut self) -> Option<World> {
+                if self.exit != 0 {
+                    return None;
+                }
+                if self.word == WaitState::Armed {
+                    self.reset_armed = true;
+                }
+                self.th = Th::Dead;
+                self.word = WaitState::Idle;
+                self.exit = 1;
+                Some(self)
+            }
+
+            /// One tick preempts the running waiter (at most once): Running
+            /// to Runnable, queued.
+            fn step_preempt(mut self) -> Option<World> {
+                if !self.on_cpu || self.th != Th::Running || self.preempted {
+                    return None;
+                }
+                if self.waiter == W_DONE {
+                    return None;
+                }
+                self.th = Th::Runnable;
+                self.queued = true;
+                self.on_cpu = false;
+                self.preempted = true;
+                Some(self)
+            }
+
+            /// The scheduler's pick resumes a queued Runnable waiter. A
+            /// queued Dead thread is dropped by the pick, so it never runs.
+            fn step_resume(mut self) -> Option<World> {
+                if self.on_cpu || !self.queued || self.th != Th::Runnable {
+                    return None;
+                }
+                self.th = Th::Running;
+                self.queued = false;
+                self.on_cpu = true;
+                Some(self)
+            }
+        }
+
+        /// Every final state (no step can run) reachable from the start.
+        pub(super) fn explore(cfg: Config) -> Vec<World> {
+            let mut seen = HashSet::new();
+            let mut finals = Vec::new();
+            let mut stack = Vec::from([World::start(cfg)]);
+            while let Some(w) = stack.pop() {
+                if !seen.insert(w) {
+                    continue;
+                }
+                let next = [
+                    w.step_waiter(cfg),
+                    w.step_waker(),
+                    w.step_timer(),
+                    w.step_exit(),
+                    w.step_preempt(),
+                    w.step_resume(),
+                ];
+                let mut any = false;
+                for n in next.into_iter().flatten() {
+                    any = true;
+                    stack.push(n);
+                }
+                if !any {
+                    finals.push(w);
+                }
+            }
+            finals
+        }
+    }
+
+    use token_model::{explore, Config, Timeout};
+
+    /// Checks every final state of an armed model shares: no arm found a
+    /// word that was not Idle, the arm assertion never fires, and the word
+    /// is Idle once `block_current` has run.
+    fn check_armed_finals(finals: &[token_model::World]) {
+        assert!(!finals.is_empty());
+        for w in finals {
+            assert!(!w.prepare_bad, "{w:?}");
+            assert!(!w.assert_hit, "{w:?}");
+            if w.blocked_ran {
+                assert_eq!(w.word(), WaitState::Idle, "{w:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn token_model_never_loses_the_condition() {
+        let finals = explore(Config {
+            arm: true,
+            cond_waker: true,
+            timeout: Timeout::None,
+            exit_b: false,
+        });
+        check_armed_finals(&finals);
+        for w in &finals {
+            assert!(!w.lost_cond(), "lost wakeup: {w:?}");
+        }
+        // The token path is exercised: some interleaving woke the waiter
+        // between its arm and its block, and the block consumed the token.
+        assert!(finals.iter().any(|w| w.consumed));
+    }
+
+    #[test]
+    fn token_model_without_the_arm_loses_the_condition() {
+        // Negative control: today's unblock, with no arm, skips a waiter that
+        // has registered but not blocked, and the waiter then blocks for good.
+        let finals = explore(Config {
+            arm: false,
+            cond_waker: true,
+            timeout: Timeout::None,
+            exit_b: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_cond()));
+    }
+
+    #[test]
+    fn token_model_never_loses_the_timeout() {
+        for cond_waker in [false, true] {
+            let finals = explore(Config {
+                arm: true,
+                cond_waker,
+                timeout: Timeout::AfterArm,
+                exit_b: false,
+            });
+            check_armed_finals(&finals);
+            for w in &finals {
+                assert!(!w.lost_timeout(), "lost timeout: {w:?}");
+                assert!(!(cond_waker && w.lost_cond()), "lost wakeup: {w:?}");
+            }
+            assert!(finals.iter().any(|w| w.consumed));
+        }
+    }
+
+    #[test]
+    fn token_model_entry_before_the_arm_loses_the_timeout() {
+        // Negative control: the timeout entry published before the arm can
+        // fire into an Idle word, and the waiter then blocks with its timeout
+        // spent.
+        let finals = explore(Config {
+            arm: true,
+            cond_waker: false,
+            timeout: Timeout::BeforeArm,
+            exit_b: false,
+        });
+        assert!(finals.iter().any(|w| w.lost_timeout()));
+    }
+
+    #[test]
+    fn token_model_exit_victims_end_idle() {
+        let finals = explore(Config {
+            arm: true,
+            cond_waker: false,
+            timeout: Timeout::None,
+            exit_b: true,
+        });
+        check_armed_finals(&finals);
+        // Both victims are reached: one that arms after exit B marked it
+        // Dead, and one whose Armed word exit B reset, whose block then finds
+        // an Idle word and is decided AlreadyDead before the arm check.
+        assert!(finals.iter().any(|w| w.armed_while_dead && w.blocked_ran));
+        assert!(finals
+            .iter()
+            .any(|w| w.reset_armed && w.blocked_ran && w.idle_dead_block));
     }
 
     // ── CpuSet ──────────────────────────────────────────────────────────

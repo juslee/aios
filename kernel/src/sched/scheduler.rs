@@ -6,7 +6,7 @@
 use core::sync::atomic::Ordering;
 
 use shared::tripwire::{Key, UnblockOutcome, WakeSource};
-use shared::ProcessId;
+use shared::{block_action, wake_action, BlockAction, ProcessId, WaitState, WakeAction};
 
 use crate::arch::aarch64::timer::NEED_RESCHED;
 use crate::arch::aarch64::{daif, exceptions};
@@ -14,7 +14,7 @@ use crate::observability::metrics::METRICS;
 use crate::observability::tripwire::{self, DispatchSite};
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
 
-use super::{default_slice, IN_SCHEDULER, MAX_CORES, NS_PER_TICK, RUN_QUEUES, SCHED_READY};
+use super::{default_slice, wake, IN_SCHEDULER, MAX_CORES, NS_PER_TICK, RUN_QUEUES, SCHED_READY};
 
 extern "C" {
     fn save_context(ctx: *mut ThreadContext);
@@ -416,8 +416,22 @@ pub fn thread_yield() {
 /// Block the current thread with the given state. Triggers a reschedule.
 /// The thread is NOT re-enqueued; the unblock() caller must re-enqueue it.
 ///
-/// A thread already Dead (a process exit marked it) keeps Dead instead of
-/// `new_state`, so it never runs again: `schedule()` does not re-enqueue it.
+/// Under THREAD_TABLE it swaps the thread's wait word to Idle
+/// (`wake::take`) and applies `shared::block_action` to the state, the old
+/// word and `new_state`:
+///
+/// - `AlreadyDead` (a process exit marked the thread): no state write and no
+///   consume (the swap reset the word), then `schedule()`, which does not
+///   re-enqueue a Dead thread, so it never runs again.
+/// - `Exit` (`new_state` is Dead, `exit_current`): write Dead, then
+///   `schedule()`. A pending token never makes an exit return.
+/// - `ConsumeToken` (the word was Woken: a waker found this thread armed and
+///   not yet blocked): no state write and no `schedule()`. It returns at
+///   once, and the caller re-checks its condition.
+/// - `Sleep` (Armed or Idle): write `new_state`, then `schedule()`.
+///
+/// Every case leaves through the one IRQ unmask at the end, so the token
+/// adds no `DAIFClr` site.
 pub fn block_current(new_state: ThreadState) {
     // Mask IRQs during schedule.
     // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
@@ -426,17 +440,27 @@ pub fn block_current(new_state: ThreadState) {
     let cpu = exceptions::core_id() as usize;
     let current = { *CURRENT_THREAD[cpu].lock() };
 
+    let mut consumed = false;
     if let Some(tid) = current {
         let mut table = THREAD_TABLE.lock();
         if let Some(thread) = &mut table[tid.0 as usize] {
-            if thread.sched.state.may_become(&new_state) {
-                thread.sched.state = new_state;
+            // The consume swap runs in this THREAD_TABLE critical section,
+            // as every waker's token CAS does in unblock's, so the two are
+            // totally ordered (sched::wake, "Memory ordering").
+            let word = wake::take(tid);
+            match block_action(&thread.sched.state, word, &new_state) {
+                BlockAction::AlreadyDead => {}
+                BlockAction::Exit => thread.sched.state = ThreadState::Dead,
+                BlockAction::ConsumeToken => consumed = true,
+                BlockAction::Sleep => thread.sched.state = new_state,
             }
         }
         drop(table);
     }
 
-    schedule(Origin::Block);
+    if !consumed {
+        schedule(Origin::Block);
+    }
 
     // Unmask IRQs after being unblocked and re-scheduled.
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
@@ -452,15 +476,29 @@ pub fn block_current(new_state: ThreadState) {
 /// Saves and restores DAIF state to avoid unmasking IRQs when called from
 /// IRQ context (e.g., check_timeouts → wake_with_error → unblock).
 ///
-/// Returns without a change for a Running or Runnable target (it is not
-/// blocked) and for a Dead one (Dead is terminal: a stray wake never revives
-/// a thread a process exit killed).
+/// One decision under THREAD_TABLE, `shared::wake_action` of the target's
+/// state and wait word:
+///
+/// - Dead: return, no token and no enqueue (Dead is terminal: a stray wake
+///   never revives a thread a process exit killed).
+/// - Running or Runnable and Armed (`LeaveToken`): compare-and-swap the word
+///   to Woken (`wake::settle_wake`), with no state change and no enqueue.
+///   The target's `block_current` consumes the token instead of blocking.
+///   Runnable gets a token on purpose: an armed thread preempted by a tick
+///   is Runnable and queued, and a thread `try_direct_switch` started is
+///   Runnable while it runs.
+/// - Running or Runnable with a token already pending (`TokenPending`), or
+///   Idle (`Skip`, a stale wake outside any armed window): return.
+/// - Blocked or Suspended (`Enqueue`): make it Runnable and queue it.
+///
+/// Every non-enqueue case leaves through the one early return, so the token
+/// adds no `DAIFClr` site.
 ///
 /// `src` names the caller for the tripwire counters (`ubrun`, `ubrbl`,
-/// `ubdead`, `ubnone`, `ubmove` by source). The returned outcome is what
-/// `unblock` did, with the target's call or receive phase for the reply,
-/// send and call wakers; it is instrumentation only, and callers that do not
-/// classify a wake ignore it. An out-of-range `tid` counts `badtid` and
+/// `ubdead`, `ubnone`, `ubtok`, `ubpend`, `ubmove` by source). The returned
+/// outcome is what `unblock` did, with the target's call or receive phase
+/// for the reply, send and call wakers; it is instrumentation only, and
+/// callers that do not classify a wake ignore it. An out-of-range `tid` counts `badtid` and
 /// `ubnone` and returns, like an empty slot.
 pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
     // Save current DAIF state so we can restore it on exit.
@@ -476,26 +514,25 @@ pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
     unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
 
     let mut table = THREAD_TABLE.lock();
+    let state = table
+        .get(tid.0 as usize)
+        .and_then(Option::as_ref)
+        .map(|thread| &thread.sched.state);
+    // The token step: leave the token for an Armed Running or Runnable
+    // target. Its CAS runs in this THREAD_TABLE critical section, as the
+    // block sites' consume swap does in theirs, so the two are totally
+    // ordered (sched::wake, "Memory ordering"). `word` is the value the
+    // decision stands on: wake_action(state, word) is the action taken.
+    let word = state.map_or(WaitState::Idle, |state| wake::settle_wake(tid, state));
     // Count the outcome by source and snapshot the target's phase under this
     // hold, so the phase is read at the same instant as the state decided on.
-    let outcome = tripwire::note_unblock(
-        tid,
-        src,
-        table
-            .get(tid.0 as usize)
-            .and_then(Option::as_ref)
-            .map(|thread| &thread.sched.state),
-    );
+    let outcome = tripwire::note_unblock(tid, src, state, word);
     let (class, affinity) =
         if let Some(thread) = table.get_mut(tid.0 as usize).and_then(Option::as_mut) {
-            // Guard: only unblock threads that are actually blocked.
-            // Prevents double-enqueue if a thread is already Running/Runnable,
-            // and never revives a Dead thread.
-            if matches!(
-                thread.sched.state,
-                ThreadState::Running | ThreadState::Runnable
-            ) || !thread.sched.state.may_become(&ThreadState::Runnable)
-            {
+            // Only a blocked or Suspended target is made Runnable and
+            // queued. Dead, a token left or pending, and a stale wake of a
+            // Running or Runnable target all return here.
+            if wake_action(&thread.sched.state, word) != WakeAction::Enqueue {
                 drop(table);
                 if !irqs_were_masked {
                     // SAFETY: Restore IRQ state. Safe at EL1.
@@ -552,7 +589,8 @@ pub fn exit_current() -> ! {
     panic!("exit_current: a Dead thread was resumed");
 }
 
-/// Mark every thread of `pid` Dead, except the calling thread (exit step B).
+/// Mark every thread of `pid` Dead, except the calling thread (exit step B),
+/// and reset each victim's wait word, in the same masked walk.
 ///
 /// The whole walk runs in one IRQ-masked section: the caller's tid is read
 /// from `CURRENT_THREAD[core_id()]` after masking, so the thread cannot
@@ -565,7 +603,10 @@ pub fn exit_current() -> ! {
 /// [`exit_current`]; a Dead caller would be switched off by its next tick
 /// wherever it is, holding whatever lock it holds. A victim that is queued
 /// stays queued and is dropped when its CPU picks it; a victim running on
-/// another CPU keeps running until its next switch.
+/// another CPU keeps running until its next switch. Such a victim can still
+/// arm after the reset (the transient exception to the wait-word invariant
+/// until crash-fix step 8's safe point); its next `block_current` finds it
+/// Dead (`AlreadyDead`) and resets the word again.
 pub fn kill_process_threads(pid: ProcessId) {
     daif::with_irqs_masked(|| {
         let cpu = exceptions::core_id() as usize;
@@ -573,8 +614,10 @@ pub fn kill_process_threads(pid: ProcessId) {
         let mut table = THREAD_TABLE.lock();
         for (idx, slot) in table.iter_mut().enumerate() {
             if let Some(thread) = slot {
-                if thread.owner_pid == Some(pid) && caller != Some(ThreadId(idx as u32)) {
+                let victim = ThreadId(idx as u32);
+                if thread.owner_pid == Some(pid) && caller != Some(victim) {
                     thread.sched.state = ThreadState::Dead;
+                    wake::reset(victim);
                 }
             }
         }
