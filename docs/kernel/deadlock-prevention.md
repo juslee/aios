@@ -81,7 +81,7 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 | 1 | `PROCESS_TABLE` | `task/process.rs` | `Mutex<[Option<ProcessControl>; 32]>` | Top of hierarchy |
 | 2 | `THREAD_TABLE` | `task/mod.rs` | `IrqSpinLock<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
 | 3 | `SERVICE_MANAGER` | `service/mod.rs` | `Mutex<ServiceManager>` | Released before `AUDIT_RING` |
-| 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[RegionSlot; 64]>` | Nested under `PROCESS_TABLE` by create, map, share, destroy and the revoke cascade; alone for unmap, exit cleanup and borrows |
+| 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[RegionSlot; 64]>` | Nested under `PROCESS_TABLE` by create, map, share, destroy, the revoke cascade and the attach check (`check_shared_memory_access`); alone for unmap, exit cleanup and borrows |
 | 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `IrqSpinLock<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
 | 6 | `CHANNEL_TABLE` | `ipc/mod.rs` | `Mutex<[Option<Channel>; 128]>` | After `THREAD_TABLE` |
 | 7 | `SELECT_WAITERS` | `ipc/select.rs` | `IrqSpinLock<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
