@@ -620,8 +620,9 @@ fn a_stale_binary_is_rebuilt_in_the_foreground() {
 }
 
 /// The fallback spec §2 records for other subcommands, and the warning
-/// `scripts/agent/brief.sh` greps for (`^aios: rebuilding .* failed; running
-/// the stale binary`) to flag a drift summary from the stale binary.
+/// `aios brief` reports as a stale note in its drift summary, through
+/// `AIOS_SHIM_STALE` (`^aios: rebuilding .* failed; running the stale
+/// binary`).
 #[test]
 fn a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
     let sandbox = Sandbox::new("shim-stale-build-fails");
@@ -2296,4 +2297,105 @@ fn a_replaced_binary_never_runs_as_a_hook() {
     assert_silent(&out);
     assert!(!sandbox.no_build_started(), "a background build starts");
     sandbox.wait_for_background_build();
+}
+
+/// A binary that reports whether the shim exported `AIOS_SHIM_STALE` to it.
+const REPORTS_STALE: &str = "#!/bin/sh\nprintf 'stale=%s\\n' \"${AIOS_SHIM_STALE-unset}\"\n";
+
+/// A stale binary that runs because its rebuild failed gets `AIOS_SHIM_STALE=1`.
+#[test]
+fn a_stale_binary_whose_rebuild_fails_runs_it_with_aios_shim_stale() {
+    let sandbox = Sandbox::new("shim-stale-flag");
+    sandbox.install(Some(REPORTS_STALE), false);
+    let out = sandbox.run_env(&["docs-check"], &[("FAKE_CARGO_FAIL", "1")]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "stale=1\n");
+    assert!(
+        stderr(&out).contains("failed; running the stale binary (run: just tools)"),
+        "the warning stays: {}",
+        stderr(&out)
+    );
+}
+
+/// Every other path clears the variable, a value inherited from a parent stale
+/// run included.
+#[test]
+fn a_fresh_binary_runs_with_aios_shim_stale_cleared() {
+    let sandbox = Sandbox::new("shim-fresh-flag");
+    sandbox.install(Some(REPORTS_STALE), true);
+    let out = sandbox.run_env(&["docs-check"], &[("AIOS_SHIM_STALE", "1")]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "stale=unset\n");
+    assert!(!sandbox.built(), "a fresh binary must not build");
+}
+
+/// `aios checkpoint` never runs a stale binary: a failed rebuild is exit 3 with
+/// empty stdout (a secret stop prints its block on stdout, so the two differ).
+#[test]
+fn checkpoint_on_a_stale_binary_whose_rebuild_fails_exits_3() {
+    let sandbox = Sandbox::new("shim-checkpoint-stale");
+    sandbox.install(Some("#!/bin/sh\necho binary-ran\n"), false);
+    let out = sandbox.run_env(
+        &["checkpoint", "--handoff", "saved"],
+        &[("FAKE_CARGO_FAIL", "1")],
+    );
+    assert_eq!(code(&out), 3);
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+    let err = stderr(&out);
+    assert!(
+        err.lines().any(|line| line.starts_with("aios: rebuilding ")
+            && line.ends_with(
+                "failed; aios checkpoint never commits or pushes with a stale binary (run: just tools)"
+            )),
+        "missing the refusal: {err}"
+    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+}
+
+/// Owner decision 5: a dirty build still runs for checkpoint.
+#[test]
+fn checkpoint_runs_a_dirty_binary() {
+    let sandbox = Sandbox::new("shim-checkpoint-dirty");
+    sandbox
+        .repo
+        .write("tools/src/lib.rs", "// an uncommitted edit\n");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    let out = sandbox.run(&["checkpoint", "--handoff", "saved"]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "fake:checkpoint --handoff saved\n");
+    assert!(!sandbox.built(), "a dirty build is not rebuilt");
+}
+
+/// Owner decision 5: an `AIOS_TOOLS_BIN` override still runs for checkpoint,
+/// even with a stale main binary and a build that would fail.
+#[test]
+fn checkpoint_honours_aios_tools_bin() {
+    let sandbox = Sandbox::new("shim-checkpoint-override");
+    sandbox.install_bin(false);
+    let other = sandbox.bin_dir.path().join("other-aios");
+    write_executable(&other, "#!/bin/sh\nprintf 'override:%s\\n' \"$*\"\n");
+    let other = other.to_str().expect("a UTF-8 path");
+    let out = sandbox.run_env(
+        &["checkpoint", "--handoff", "saved"],
+        &[("AIOS_TOOLS_BIN", other), ("FAKE_CARGO_FAIL", "1")],
+    );
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "override:checkpoint --handoff saved\n");
+    assert!(!sandbox.built(), "an override must not build");
+}
+
+/// The control for the checkpoint refusal: brief runs the stale binary.
+#[test]
+fn brief_on_a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
+    let sandbox = Sandbox::new("shim-brief-stale");
+    sandbox.install_bin(false);
+    let out = sandbox.run_env(&["brief", "--no-fetch"], &[("FAKE_CARGO_FAIL", "1")]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "fake:brief --no-fetch\n");
+    assert!(
+        stderr(&out).contains("failed; running the stale binary (run: just tools)"),
+        "{}",
+        stderr(&out)
+    );
 }

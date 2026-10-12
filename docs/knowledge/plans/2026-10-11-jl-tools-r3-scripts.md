@@ -139,7 +139,7 @@ Each item was checked against the repo on 2026-10-11.
    - Each scenario's fake-gh calls must match its allowlist:
      - brief, `BRIEF_GH_ALLOW`: `api rate_limit`, `api graphql` with `reviewThreads` or `checkSuites`, the three `issue list` calls, `pr list --state open --limit 30`, `run list --branch main`;
      - checkpoint, `CHECKPOINT_GH_ALLOW`: `pr list --head`.
-   - `git grep -n 'Command::new("gh")' -- tools/src` lists only `tools/src/gh.rs`.
+   - `gh.rs` spawns through `Command::new(program)` (the `run_program` seam), so a grep for `Command::new("gh")` matches nothing. The check that means something is that no file other than `tools/src/gh.rs` runs `std::process::Command` with a gh program. `git grep -n 'GhCli\|run_program' -- tools/src` lists the expected callers only: `gh.rs`, `cmd/brief/mod.rs` (builds the `GhCli`), `cmd/brief/github.rs` (reads through `GhRunner`; it names `GhCli` in a doc comment) and `cmd/checkpoint/mod.rs`.
 
 ## Progress
 
@@ -604,18 +604,19 @@ Conventions for every task:
     - Add `brief_differential_against_oracle`: twin repos over the 74 non-divergent scenarios, with `PLATFORM_SCENARIOS` handled as defined. It compares stdout, exit, gh calls (so the call sequence), docs calls, the marker and remote refs, using `parallel_map`.
     - Verify: `ls tools/tests/golden/brief/*.golden | wc -l` = 76; `git grep -c NOT_YET_PORTED -- tools` prints nothing.
   - [x] 7c: Mutation checks (uncommitted):
-    - `alt` falls through on 0 → `threads_zero_is_known` fails;
+    - the call-site lookup of the open-thread count filters out 0 (`.filter(|n| *n > 0)` in `tools/src/cmd/brief/github.rs`; `pr_lines` takes an `Option<u64>`, so the count never passes through `merge_ready::alt`) → `threads_zero_is_known` fails;
     - `max_by` takes the first maximum → `main_ci_tie` fails;
     - the gate regex matches a body as a title → `prs_every_blocker` fails;
     - drop blocker 4 → `pr_labelled_needs_human` fails;
     - always issue the suites query → `no_origin_main` fails;
     - issue `run list` after a suites failure → `main_ci_suites_fail` fails;
     - print `0` instead of `?` for a failed queue count → `queue_counts_unknown` fails.
+    - Run 2026-10-12 as call-site mutations in github.rs (all 7 caught); merge_ready.rs is frozen, and the classifier refused editing it.
     - Verify: each named test exits non-zero under its mutation; `git status --porcelain -- tools/src` prints nothing afterwards.
   - [x] 7d: Verify: T(`--test brief_parity`) = 79 (76 per-scenario tests + `oracle_reproduces_brief_goldens` + `brief_fixtures_label_needs_human_only_in_d10` + the differential); `cargo test -p aios-tools` passes in full; G.
 
-- [ ] **Task 8: Shim: `AIOS_SHIM_STALE`, and checkpoint's exit 3 on a failed stale rebuild** (worker, **foreground**: `.claude/hooks/aios` is protected; contract §6; R2 edits the shim only after R3 is on main)
-  - [ ] 8a: `.claude/hooks/aios`, exactly the contract §6 R3 rows:
+- [x] **Task 8: Shim: `AIOS_SHIM_STALE`, and checkpoint's exit 3 on a failed stale rebuild** (worker, **foreground**: `.claude/hooks/aios` is protected; contract §6; R2 edits the shim only after R3 is on main)
+  - [x] 8a: `.claude/hooks/aios`, exactly the contract §6 R3 rows:
     - `unset AIOS_SHIM_STALE`, with a one-line comment, right after `sub=${1:-}` (W234 L136).
     - The `<other>` tail (W234 L580-582) becomes `if ! build_fg; then`:
       - for `$sub` = `checkpoint`: `echo "aios: rebuilding $bin failed; aios checkpoint never commits or pushes with a stale binary (run: just tools)" >&2; exit 3`;
@@ -623,7 +624,7 @@ Conventions for every task:
     - The header's `aios <other>` paragraph (W234 L87-91) documents both, and states that checkpoint still runs a dirty build and an `AIOS_TOOLS_BIN` override (owner decision 5).
     - There is no `case` arm and no exit-3 helper: checkpoint does not join the loop's strict arm. The former Task 8b (a shim helper) is removed, so the sub-tasks run 8a, 8c, 8d.
     - Verify: `sh -n .claude/hooks/aios`; `diff <(git show origin/main:.claude/hooks/aios | shellcheck -s sh -f json1 - | jq -r '.comments[].code' | sort) <(shellcheck -s sh -f json1 .claude/hooks/aios | jq -r '.comments[].code' | sort) | grep -c '^>'` = 0 (no new shellcheck finding).
-  - [ ] 8c: `tools/tests/shim.rs`, appended at the end of the file:
+  - [x] 8c: `tools/tests/shim.rs`, appended at the end of the file:
     - `a_stale_binary_whose_rebuild_fails_runs_it_with_aios_shim_stale` (the fake binary prints `${AIOS_SHIM_STALE-unset}`);
     - `a_fresh_binary_runs_with_aios_shim_stale_cleared` (with `AIOS_SHIM_STALE=1` inherited);
     - `checkpoint_on_a_stale_binary_whose_rebuild_fails_exits_3` (code 3, empty stdout, binary not run, stderr names `just tools`);
@@ -632,7 +633,7 @@ Conventions for every task:
 
     Edit the doc comment at L623 to name `aios brief`. The existing `a_stale_binary_whose_rebuild_fails_warns_and_runs_it` stays.
     - Verify: T(`--test shim aios_shim_stale`) = 2; T(`--test shim checkpoint_`) = 3; T(`--test shim brief_on_a_stale`) = 1.
-  - [ ] 8d: Verify: `cargo test -p aios-tools --test shim` passes; `git grep -n 'brief\.sh' -- tools/tests/shim.rs` prints nothing; G.
+  - [x] 8d: Verify: `cargo test -p aios-tools --test shim` passes; `git grep -n 'brief\.sh' -- tools/tests/shim.rs` prints nothing; G.
 
 - [ ] **Task 9: Recipes and build tables** (worker, background)
   - [ ] 9a: `justfile`: directly after `docs-check-all` (main L347-348), add `[positional-arguments]` recipes `brief *args:` and `checkpoint *args:`. Each runs `{{ quote(justfile_directory() / ".claude" / "hooks" / "aios") }} <sub> "$@"` (the soak recipe's idiom, justfile L153), with a one-line comment. So `just --justfile <main>/justfile --working-directory . …` from any worktree runs **main's** shim. This is the only justfile hunk.
@@ -767,7 +768,7 @@ Conventions for every task:
       - `git -C <BW> ls-files docs/knowledge/plans | grep -cE 'tools-r3-scripts|tools-r2-r3-contract'` = 0;
       - `git -C <BW> diff --exit-code origin/main...HEAD -- Cargo.toml Cargo.lock`;
       - `git -C <BW> diff -U0 origin/main...HEAD -- tools/Cargo.toml | grep -cE '^[-+][^-+]'` = 2;
-      - `git -C <BW> grep -n 'Command::new("gh")' -- tools/src` lists only `tools/src/gh.rs`;
+      - `git -C <BW> grep -n 'GhCli\|run_program' -- tools/src` lists only `gh.rs`, `cmd/brief/mod.rs`, `cmd/brief/github.rs` and `cmd/checkpoint/mod.rs` (Review focus 6);
       - `git -C <BW> grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only `tools/src/cmd/checkpoint/` files;
       - every contract item has a non-test caller: `for f in GhCli GhEnv::INHERIT first_stderr_line git::command git::out git::text git::ok git::output git::worktrees git::branch merge_ready::pr_lines merge_ready::PR_FIELDS merge_ready::NEEDS_HUMAN_ISSUES_ARGS; do git -C <BW> grep -qF "$f" -- tools/src/cmd || echo "unused $f"; done` prints nothing;
       - the contract §10 token grep over `tools scripts/agent .claude` prints nothing;
