@@ -693,7 +693,7 @@ Conventions for every task:
     - Verify: `git grep -hcF 'R1 → R4 → R3 → R2 → R5 → R5b' -- docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md` prints `1`; `git grep -hc 'labelled needs-human' -- .claude/rules/11-teams.md` prints `1`; `git grep -hc 'cargo run' -- .claude/rules/03-git-workflow.md` prints a number ≥ 1; DG; G.
   - [x] 10c: The guard test (protected). In `test_main_thread_everyday_commands_stay_allowed` (W234 L1471-1487), drop the brief.sh copy (L1472-1473) and its commands (L1482, L1487). Add `just brief`, `just brief --no-fetch` and `just checkpoint --handoff saved`, each expected "none": the guard gives no decision, and the settings ask is the control.
     - Verify: `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests` passes (local only: not in CI); `grep -c 'brief\.sh' .claude/hooks/tests/test_git_push_guard.py` prints `0`; G.
-  - [ ] 10g: `tools/tests/skill_contract.rs` (after 10a; see the commit order):
+  - [x] 10g: `tools/tests/skill_contract.rs` (after 10a; see the commit order):
     - `merge_and_cleanup_awk_reads_every_pr_verdict`: extracts the awk program from `.claude/skills/merge-and-cleanup/SKILL.md` (its `awk -v n=` line), runs it with `sh -c` on `aios brief --no-fetch` output for `prs_every_blocker` and `pr_labelled_needs_human`, and asserts each PR's `merge-ready:` line.
     - `pause_skill_names_just_checkpoint_and_line_formats`: the pause SKILL.md names `just checkpoint --handoff saved`, the first-line format `checkpoint: <branch> @ <sha> | wip: ... | pushed: ... | handoff: ...` and both last-line forms, and each matches what `aios checkpoint` prints in `handoff_saved` and `other_worktree_dirty_from_main`.
     - `pause_skill_tells_the_two_exit_3s_apart`:
