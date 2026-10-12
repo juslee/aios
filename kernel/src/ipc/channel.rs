@@ -14,10 +14,10 @@ use crate::sched::{self, wake};
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
 use shared::tripwire::{Key, WakeSource};
-use shared::{deadline_after, ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
+use shared::{deadline_after, ChannelId, RawMessage, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
-    arm_timeout, clear_own_timeout, clear_timeout, get_wakeup_error, next_call_seq, ReplySlot,
+    arm_timeout, clear_timeout, clear_timeout_blocking, get_wakeup_error, next_call_seq, ReplySlot,
     REPLY_SLOTS,
 };
 use super::{channel_mut, direct, DeadlineArm, PendingCall, CHANNEL_TABLE};
@@ -230,7 +230,7 @@ pub fn ipc_call(
             }
         }
     };
-    clear_own_timeout(me);
+    clear_timeout_blocking(me);
     // Taken once per wait and discarded: it decides nothing (ADR §9).
     daif::with_irqs_masked(|| get_wakeup_error(me));
     wake::cancel_block(me);
@@ -262,7 +262,7 @@ fn call_publish(
 ) -> Result<(Option<u64>, Option<ThreadId>), i64> {
     let mut table = CHANNEL_TABLE.lock();
     let ch = channel_mut(&mut table, channel)?;
-    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+    if ch.has_dead_endpoint() {
         return Err(IpcError::Epipe as i64);
     }
     // Only one pending caller per channel at a time.
@@ -349,7 +349,7 @@ fn reply_read(me: ThreadId) -> ReplyRead {
 fn call_claimed(me: ThreadId, seq: u32, channel: ChannelId) -> Option<bool> {
     let mut table = CHANNEL_TABLE.lock();
     let ch = channel_mut(&mut table, channel).ok()?;
-    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+    if ch.has_dead_endpoint() {
         return None;
     }
     Some(ch.pending_caller != Some(PendingCall { tid: me, seq }))
@@ -460,7 +460,7 @@ pub fn ipc_recv(
             }
         }
     }
-    clear_own_timeout(me);
+    clear_timeout_blocking(me);
     // Taken once per wait and discarded: it decides nothing (ADR §9).
     daif::with_irqs_masked(|| get_wakeup_error(me));
     if armed {
@@ -494,7 +494,7 @@ fn recv_pass(
         Ok(ch) => ch,
         Err(code) => return RecvPass::Ended(Err(code)),
     };
-    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+    if ch.has_dead_endpoint() {
         return RecvPass::Ended(Err(IpcError::Epipe as i64));
     }
     if let Some(msg) = ch.ring.pop() {
@@ -684,7 +684,7 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         Err(e) => return e,
     };
 
-    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+    if ch.has_dead_endpoint() {
         return IpcError::Epipe as i64;
     }
 

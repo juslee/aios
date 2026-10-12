@@ -175,6 +175,12 @@ impl Channel {
             creation_cap: None,
         }
     }
+
+    /// Whether either endpoint is Dead: the IPC paths fail on the channel
+    /// with EPIPE.
+    fn has_dead_endpoint(&self) -> bool {
+        self.state_a == EndpointState::Dead || self.state_b == EndpointState::Dead
+    }
 }
 
 // ---------------------------------------------------------------------------

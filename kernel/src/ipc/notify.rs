@@ -291,16 +291,12 @@ pub fn notification_wait(id: NotificationId, mask: u64, timeout_ticks: u64) -> R
             };
             let own = notif.own_record(me, WaitKind::Wait);
             let fired = own.and_then(|i| notif.waiters[i]).map_or(0, |w| w.fired);
-            if fired != 0 {
-                if let Some(i) = own {
-                    notif.waiters[i] = None;
-                }
-                return WaitPass::Exit {
-                    result: Ok(fired),
-                    armed: false,
-                };
-            }
-            if let Some(bits) = notif.take_bits(mask) {
+            let bits = if fired != 0 {
+                Some(fired)
+            } else {
+                notif.take_bits(mask)
+            };
+            if let Some(bits) = bits {
                 if let Some(i) = own {
                     notif.waiters[i] = None;
                 }

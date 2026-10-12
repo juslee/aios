@@ -21,7 +21,7 @@ use crate::sched::{self, wake};
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
 use shared::tripwire::{BadchanSite, Key};
-use shared::{deadline_after, EndpointState, SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
+use shared::{deadline_after, SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
 
 use super::{channel_mut, notify, timeout, DeadlineArm, CHANNEL_TABLE};
 
@@ -174,7 +174,7 @@ fn fast_scan(entries: &[SelectEntry]) -> Result<Option<(usize, u64)>, i64> {
             SelectKind::Channel(ch_id) => {
                 let mut table = CHANNEL_TABLE.lock();
                 let ch = channel_mut(&mut table, ch_id)?;
-                if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+                if ch.has_dead_endpoint() {
                     return Err(IpcError::Epipe as i64);
                 }
                 if ch.ring.len > 0 {
@@ -204,7 +204,7 @@ fn register_pass(me: ThreadId, entries: &[SelectEntry]) -> Option<Result<(usize,
                     Ok(ch) => ch,
                     Err(code) => return Some(Err(code)),
                 };
-                if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+                if ch.has_dead_endpoint() {
                     return Some(Err(IpcError::Epipe as i64));
                 }
                 if ch.ring.len > 0 {
