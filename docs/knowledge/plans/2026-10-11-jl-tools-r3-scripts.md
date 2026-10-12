@@ -252,7 +252,7 @@ Conventions for every task:
       - The precondition loop, re-run with `git -C <BW> show HEAD:docs/knowledge/plans/2026-10-11-jl-tools-r2-r3-contract.md` as its input (`grep -qF -- "$m" <(…)`), prints nothing.
 
 - [ ] **Task 1: Shared test harness, `gh.rs`, `git.rs`, R3's oracle and twin-repo support; draft PR; gate issue** (worker, background; the lead runs 1h and 1i)
-  - [ ] 1a: `tools/tests/common/jail.rs` (new; contract §5 with A1-A3).
+  - [x] 1a: `tools/tests/common/jail.rs` (new; contract §5 with A1-A3).
     - `jail::bin(dir, tools) -> PathBuf` symlinks each tool, plus `sh` and every entry of `FAKE_TOOLS`, resolved once from the host PATH. It panics on a missing tool, and refuses `gh` and `claude`.
     - `jail::hermetic(cmd, fake_bin, jail_bin)` applies `common::isolated()`, removes every `GH_*`, `GITHUB_*`, `AIOS_*` and `CLAUDE*` variable, and sets only `PATH=<fake_bin>:<jail_bin>`, `TZ=UTC` and `LC_ALL=C`. It sets no git identity: R3's runners add the identity env after it (Task 1e), and R2's scenario builder writes it into the clone's `.git/config` (contract §5).
     - `jail::assert_no_command_not_found(stderr)`.
@@ -270,21 +270,21 @@ Conventions for every task:
       Each entry is an external command some line runs, never a builtin.
     - `jail.rs` and `fake_gh.rs` use only `super::{isolated, unique_dir}` and each other (A3).
     - Verify: T(`--test agent_support jail_`) = 2 (`jail_has_no_gh_or_claude`, `jail_covers_every_script_command`); T(`--test agent_support script_commands_`) = 1 (the extractor's unit table, 1f).
-  - [ ] 1b: `tools/tests/common/fake_gh.rs` (new; contract §5).
+  - [x] 1b: `tools/tests/common/fake_gh.rs` (new; contract §5).
     - `pub const SCRIPT`: the `#!/bin/sh` fake. It finds its root from `$0`, never from the environment, and uses the `<root>/gh/<NN>-<label>/{match,out[.K],err[.K],rc[.K]}` layout with ordinals.
     - The per-call log is `<root>/gh-calls/<SEQ>/{argv,cwd,env,fixture,body}`. The fake exits 99 on an unknown call and 98 on a `<SEQ>` race, and appends its own stderr to `<root>/fake-stderr`.
     - `fake_gh::render`; `FakeGh::install`, `.fixture(label, regex)` with `.out/.err/.rc/.nth`, `.calls()`, `.assert_all_matched()`, `.assert_calls_match(allow)` and `.assert_none_match(deny)`.
     - Verify: T(`--test agent_support fake_gh_`) = 3 (`fake_gh_unknown_call_exits_99`, `fake_gh_ordinals_advance`, `fake_gh_logs_cwd_env_and_body`).
-  - [ ] 1c: `tools/src/gh.rs` (new; `pub mod gh;` in `lib.rs` between `cmd` and `paths`).
+  - [x] 1c: `tools/src/gh.rs` (new; `pub mod gh;` in `lib.rs` between `cmd` and `paths`).
     - Exactly contract §2: `GhOutcome`, `GhOutcome::first_stderr_line`, `GhEnv` with `INHERIT` and `apply`, `GhRunner`, `GhCli`, `run_program` and `is_read`.
     - No write helpers, no forced environment, and no `GH_` literal in the file. The module doc states the read-only rule.
     - Unit tests (contract §2): `run_program_missing_is_missing`, `nonzero_exit_is_failed_with_stderr`, `refused_argv_spawns_nothing`, `env_set_and_remove_applied` (with `AIOS_GHENV_TEST_SET` and `AIOS_GHENV_TEST_REMOVE`), and `is_read_table` (every brief and checkpoint argv passes; the contract's write list fails).
     - Verify: T(`--lib gh::`) ≥ 5; `git grep -c 'GH_' -- tools/src/gh.rs` prints 0 or nothing.
-  - [ ] 1d: `tools/src/git.rs` (new; `pub mod git;`).
+  - [x] 1d: `tools/src/git.rs` (new; `pub mod git;`).
     - Exactly contract §4: `command`, `out` → `Option<Vec<u8>>`, `text`, `ok`, `output`, `worktrees` and `branch`, all inheriting the environment unchanged.
     - Unit tests: `git_command_sets_no_env` (`Command::get_envs().count() == 0`), `out_chomps_trailing_newlines`, `out_is_none_on_failure`, `worktrees_reads_porcelain_bytes` (with a non-UTF-8 path) and `branch_is_none_when_detached`.
     - Verify: T(`--lib git::`) ≥ 5.
-  - [ ] 1e: `tools/tests/common/agent.rs` (new).
+  - [x] 1e: `tools/tests/common/agent.rs` (new).
     - `tools/tests/common/mod.rs` gains `pub mod agent; pub mod fake_gh; pub mod jail;`, alphabetical with `fixture`, `soak` and `soak_fake`.
     - It also gains `pub fn parallel_map`, moved from `tools/tests/docs_check_parity.rs` L56, which then calls `common::parallel_map` (no copy).
 
@@ -325,7 +325,7 @@ Conventions for every task:
       `oracle_renames()` applies the documented renames to oracle output (the D1 prefixes, the D5 hint) and nothing else.
     - `DIVERGENT_SCENARIOS` (scenario → D-number) lists the aios-only goldens, which are excluded from the oracle differential. `PLATFORM_SCENARIOS` (scenario → host tool and oracle line) lists scenarios whose oracle comparison runs on macOS only; elsewhere it prints `oracle skipped on <os>: <scenario> (<reason>)`.
     - Verify: T(`--test agent_support oracles_load_from_history`) = 1; T(`--test agent_support twin_repos_have_identical_heads`) = 1; T(`--test docs_check_parity`) ≥ 1 (the moved `parallel_map`).
-  - [ ] 1f: `tools/tests/agent_support.rs` self-tests. Each is written in the sub-task whose code it tests, so the 1a-1e verifies run them:
+  - [x] 1f: `tools/tests/agent_support.rs` self-tests. Each is written in the sub-task whose code it tests, so the 1a-1e verifies run them:
     - **The contract §5 set:**
       - `jail_has_no_gh_or_claude`.
       - `jail_covers_every_script_command`:
@@ -348,7 +348,7 @@ Conventions for every task:
     - `oracle_smoke_brief_and_checkpoint`: the oracle's `brief.sh --no-fetch` and `checkpoint.sh` run in one scenario with the fake gh. brief exits 0 with the oracle's full `## ` header set, and checkpoint's first line starts `checkpoint: `. Both pass `assert_not_vacuous` and their allowlists.
     - `outside_repo_scenarios_escape_the_checkout`: `Scenario::outside_repo()`'s directory is not under `env!("CARGO_MANIFEST_DIR")/..`, and `git rev-parse --show-toplevel` fails there under the runner's env.
     - Verify: T(`--test agent_support script_commands_`) = 1; T(`--test agent_support outside_repo_`) = 1; T(`--test agent_support checkpoint_wip_identity_is_pinned`) = 1; T(`--test agent_support`) = 14; G.
-  - [ ] 1g: The worker commits Task 1 in one commit: the harness, `gh.rs`, `git.rs`, `agent.rs` and the `parallel_map` move.
+  - [x] 1g: The worker commits Task 1 in one commit: the harness, `gh.rs`, `git.rs`, `agent.rs` and the `parallel_map` move.
     - Verify (in the writer's worktree): `git show --name-only --format= HEAD | grep -cE '^tools/(src/(gh|git)\.rs|tests/common/(agent|fake_gh|jail)\.rs)$'` = 5; G.
   - [ ] 1h: **Prove the harness on CI.** The lead places the range, pushes, and opens a draft PR: `gh pr create --draft --label team-build --title "Tools R3: aios brief and aios checkpoint" --body "R3 in progress: shared API and harness first; plan in docs/knowledge/plans"`.
     - Verify: `gh pr checks <n>` shows "Tools (host)" passing, and `gh run view <run-id> --log | grep -cE 'test (oracle_smoke_brief_and_checkpoint|jail_covers_every_script_command) \.\.\. ok'` = 2, so both ran on ubuntu-26.04 and were not skipped. A tool missing on that image fails here. It is resolved by a contract amendment to the tool lists, never by a skip.

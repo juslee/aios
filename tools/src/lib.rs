@@ -8,6 +8,8 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod gh;
+pub mod git;
 pub mod paths;
 pub mod proc;
 pub mod pyre;
