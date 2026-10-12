@@ -389,7 +389,7 @@ Conventions for every task:
       3. After the next commit: `git -C <BW> show HEAD:docs/knowledge/plans/2026-10-11-jl-tools-r3-scripts.md | grep -cE 'R3_API_FREEZE = [0-9a-f]{40}'` prints `1`.
 
 - [ ] **Task 2: Checkpoint scenarios and goldens recorded from the oracle (no port code)** (worker, background)
-  - [ ] 2a: `tools/tests/checkpoint_parity.rs`, with a `scenario!` macro whose invocations each start at column 0 as `scenario!(<name>, …)` and declare one scenario-table entry. From Task 3 on, the macro also generates one `#[test]` named after the scenario, which runs `aios` on it and checks its golden. So `cargo test -p aios-tools --test checkpoint_parity <name>` runs one scenario. In this task it generates the table entry only. 52 scenarios:
+  - [x] 2a: `tools/tests/checkpoint_parity.rs`, with a `scenario!` macro whose invocations each start at column 0 as `scenario!(<name>, …)` and declare one scenario-table entry. From Task 3 on, the macro also generates one `#[test]` named after the scenario, which runs `aios` on it and checks its golden. So `cargo test -p aios-tools --test checkpoint_parity <name>` runs one scenario. In this task it generates the table entry only. 52 scenarios:
     - the 15 from #166: `sensitive_name_new_doc`, `pem_line_in_added_text`, `key_file_in_earlier_local_commit`, `allow_matches_flagged_path`, `allow_matches_nothing`, `allow_dot_slash_prefix`, `other_worktree_dirty_from_claude_worktree`, `other_worktree_dirty_from_main`, `gh_fails_holds_wip`, `gh_missing_holds_wip`, `ready_pr_holds_wip`, `draft_pr_pushes_wip`, `non_wip_commits_push_without_gh`, `merge_in_progress`, `detached_head`;
     - #166's 5 round-1 extras: `env_in_new_untracked_dir`, `pem_in_keys_dir`, `modified_tracked_creds_not_flagged`, `clean_tree_unpushed_pushes`, `real_conflict_merge`;
     - 24 gaps:
@@ -407,7 +407,7 @@ Conventions for every task:
       - `scan_git_failure_fails_closed`: a dirty new file and one unpushed non-wip commit; the wrapper fails `log -p`. It pins: index unchanged (`write-tree` before = after), no new commit, origin refs unchanged (the unpushed commit is not pushed either), the D9 output (Code Structure D9), exit 1;
       - `scan_git_failure_on_clean_tree`: nothing to commit and nothing unpushed; the wrapper fails the first scan call, `diff --cached --name-only`. Here the script's own logic would print `Safe to /clear` and exit 0 (L276-278); it pins exit 1 and no `Safe to /clear` line.
     - Verify: `grep -c '^scenario!' tools/tests/checkpoint_parity.rs` = 52.
-  - [ ] 2b: Golden format, `tools/tests/golden/checkpoint/<name>.golden`, with these sections:
+  - [x] 2b: Golden format, `tools/tests/golden/checkpoint/<name>.golden`, with these sections:
     - `exit`, `stdout`, `stderr`;
     - `origin refs` (`git -C origin for-each-ref --format='%(refname) %(objectname)'`);
     - `HEAD message` (`git log -1 --format=%B`);
@@ -417,9 +417,9 @@ Conventions for every task:
 
     Every scenario also runs `assert_not_vacuous`, `assert_origin_invariants` and `fake.assert_calls_match(CHECKPOINT_GH_ALLOW)`.
     - Verify: `grep -c 'assert_origin_invariants' tools/tests/checkpoint_parity.rs` ≥ 1, inside the shared scenario runner (one call site covers all scenarios).
-  - [ ] 2c: `#[ignore] record_checkpoint_goldens` writes the 49 non-divergent goldens from the **oracle** (`AIOS_BLESS_GOLDENS=1`, through `oracle_renames()`). The only active test this task adds is `oracle_reproduces_checkpoint_goldens`.
+  - [x] 2c: `#[ignore] record_checkpoint_goldens` writes the 49 non-divergent goldens from the **oracle** (`AIOS_BLESS_GOLDENS=1`, through `oracle_renames()`). The only active test this task adds is `oracle_reproduces_checkpoint_goldens`.
     - Verify: `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test checkpoint_parity -- --ignored record_checkpoint_goldens` exits 0; then T(`--test checkpoint_parity`) = 1.
-  - [ ] 2d: Hygiene and counts.
+  - [x] 2d: Hygiene and counts.
     - Verify: `ls tools/tests/golden/checkpoint/*.golden | wc -l` = 49; `git grep -n -e /Users/ -e /home/ -e /private/ -- tools/tests/golden/checkpoint` prints nothing; the contract §10 token grep over `tools` prints nothing; G.
     - After placement and push, the lead checks `gh run view <run-id> --log | grep -c 'test oracle_reproduces_checkpoint_goldens ... ok'` = 1 (ubuntu-26.04). A failure there adds the scenario to `PLATFORM_SCENARIOS`, with its tool and oracle line, in a follow-up worker commit.
     - An identity or sha mismatch (a failed `wip` commit, an author other than `aios-test`, or a commit sha that differs between twins or between macOS and CI) is never a `PLATFORM_SCENARIOS` case: it is a harness bug in `twin_command`'s identity env or date pinning (Task 1e), fixed there in a follow-up worker commit.

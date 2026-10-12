@@ -1,0 +1,18 @@
+== exit ==
+1
+== stdout ==
+checkpoint: claude/x @ bda4b86 | wip: not committed (cherry-pick in progress) | pushed: no (cherry-pick in progress) | handoff: not recorded
+Not fully saved: 1 uncommitted file(s) and 1 commit(s) not on origin remain only in <ROOT>.
+/clear keeps all of it on disk; run /justin:start after.
+== stderr ==
+== origin refs ==
+refs/heads/main efe00810ccc03b554f651389a6b05f6a837dcabd
+== HEAD message ==
+x changes f
+== index ==
+before none
+after none
+== upstream ==
+(none)
+== gh calls ==
+(none)

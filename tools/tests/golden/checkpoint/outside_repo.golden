@@ -1,0 +1,15 @@
+== exit ==
+2
+== stdout ==
+== stderr ==
+checkpoint: not inside a git repository
+== origin refs ==
+== HEAD message ==
+(none)
+== index ==
+before none
+after none
+== upstream ==
+(none)
+== gh calls ==
+(none)
