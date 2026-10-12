@@ -701,7 +701,7 @@ Conventions for every task:
       - `aios checkpoint`'s `sensitive_name_new_doc` output has the stdout cue and no `aios: ` stderr line;
       - the shim source contains the exact refusal text the skill quotes (`aios checkpoint never commits or pushes with a stale binary`), and `checkpoint_on_a_stale_binary_whose_rebuild_fails_exits_3` (Task 8c) pins its empty stdout.
     - Verify: T(`--test skill_contract`) = 3; G.
-  - [ ] 10d: `git rm scripts/agent/brief.sh scripts/agent/checkpoint.sh`, the last Task-10 commit, alone.
+  - [x] 10d: `git rm scripts/agent/brief.sh scripts/agent/checkpoint.sh`, the last Task-10 commit, alone.
     - Verify, in the worker's worktree:
       - before the change, on the parent commit (`<tip>`): `git grep -nE 'scripts/agent/(brief|checkpoint)\.sh' <tip> -- tools ':!tools/tests/common/agent.rs' | grep -vE 'former `?scripts/agent/(brief|checkpoint)\.sh`? \(blob at'` prints nothing, so no test reads a script from disk;
       - after `git rm` and before the commit: T(`--test soak_interleave`) passes with the scripts gone from the work tree (`test ! -e scripts/agent/brief.sh`), and G passes (so `cargo test -p aios-tools` and DG hold without the scripts);
