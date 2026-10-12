@@ -565,8 +565,18 @@ pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
             thread.sched.time_slice_remaining = default_slice(thread.sched.effective_class);
             (thread.sched.effective_class, thread.sched.affinity)
         } else {
+            // An empty slot or an out-of-range tid: nothing to wake.
+            drop(table);
             if !irqs_were_masked {
-                // SAFETY: Restore IRQ state. Safe at EL1.
+                // SAFETY: IRQs were unmasked on entry (the DAIF read above)
+                // and THREAD_TABLE is dropped, so no IRQ-class lock is held
+                // and clearing PSTATE.I restores the caller's state. This
+                // function maintains both: it masked at entry and releases
+                // its only lock first. Unmasking with THREAD_TABLE still
+                // held would let this CPU's tick, whose schedule() takes
+                // THREAD_TABLE, panic "lock re-entry:"; unmasking for a
+                // caller that entered masked would let a nested IRQ into its
+                // critical section.
                 unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
             }
             return outcome;
