@@ -552,23 +552,17 @@ pub static GPU_SERVICE_CHANNEL: Mutex<Option<shared::ChannelId>> = Mutex::new(No
 /// The GPU Service thread starts running when the scheduler begins.
 pub fn init_gpu_service() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
+    use crate::task::process::{process_install, KernelResourceLimits};
     use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 
     // --- Create Process 9: gpu-svc ---
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..7].copy_from_slice(b"gpu-svc");
-        procs[9] = Some(ProcessControl {
-            pid: ProcessId(9),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(9),
+        None,
+        b"gpu-svc",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 9 install");
 
     // Grant capabilities to the GPU Service process.
     let _ = cap::grant_to_process(ProcessId(9), shared::Capability::ChannelCreate, true);

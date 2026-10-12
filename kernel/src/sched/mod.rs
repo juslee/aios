@@ -22,8 +22,8 @@ use shared::FixedQueue;
 // Re-export public API from submodules.
 pub use init::{init, start, try_load_balance};
 pub use scheduler::{
-    block_current, check_preemption, enter_scheduler, exit_current, kill_process_threads,
-    thread_probe, thread_yield, timer_tick, unblock, ThreadProbe,
+    block_current, check_preemption, current_thread_and_pid, enter_scheduler, exit_current,
+    kill_process_threads, thread_probe, thread_yield, timer_tick, unblock, ThreadProbe,
 };
 
 // Re-export time slice constants from shared for use in submodules.

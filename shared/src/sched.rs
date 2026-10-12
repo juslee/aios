@@ -256,6 +256,100 @@ pub const fn block_action(state: &ThreadState, word: WaitState, next: &ThreadSta
 }
 
 // ---------------------------------------------------------------------------
+// Process lifecycle (capability-lifetime ADR §6)
+// ---------------------------------------------------------------------------
+
+/// A process-table slot's lifecycle state.
+///
+/// The four legal changes ([`ProcessState::may_become`]): install (Empty to
+/// Alive), exit step A (Alive to `Exited { code: None }`), exit step E, which
+/// publishes the code last (`Exited { None }` to `Exited { Some }`), and the
+/// reap (`Exited { Some }` to Empty). A slot that was ever Alive is never
+/// installed again: a `ProcessId` carries no generation, so a reused pid
+/// would hand a stale holder the new process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessState {
+    /// No process; never installed, or reaped.
+    Empty,
+    /// Installed and not exited: the only state whose capabilities count.
+    Alive,
+    /// Exited. `code` is `None` from exit step A until step E publishes it,
+    /// so a waiter never reaps a process whose exit is still running.
+    Exited { code: Option<i32> },
+}
+
+impl ProcessState {
+    /// Whether a slot in this state may be moved to `next`: only the four
+    /// changes the type's doc lists. Every writer of a slot's state checks
+    /// it.
+    pub const fn may_become(&self, next: &ProcessState) -> bool {
+        matches!(
+            (self, next),
+            (ProcessState::Empty, ProcessState::Alive)
+                | (ProcessState::Alive, ProcessState::Exited { code: None })
+                | (
+                    ProcessState::Exited { code: None },
+                    ProcessState::Exited { code: Some(_) }
+                )
+                | (ProcessState::Exited { code: Some(_) }, ProcessState::Empty)
+        )
+    }
+}
+
+/// What one pass of `process_wait` (the kernel's `wait_step`) does, decided
+/// under `PROCESS_TABLE → PROCESS_WAITERS` by [`process_wait_action`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessWaitAction {
+    /// EPERM: the caller's own process is not Alive. If the child's waiter
+    /// entry names the calling thread (`clear_entry`), the pass clears it,
+    /// so an exited waiter leaves no entry behind.
+    CallerNotAlive { clear_entry: bool },
+    /// EPERM: the child slot is Empty, or the child is not the caller's.
+    NotChild,
+    /// EEXIST: another thread is registered as the child's waiter, before or
+    /// after the child exits. Decided before any arm.
+    OtherWaiter,
+    /// The child has exited and its code is published: clear the entry,
+    /// reap the slot in place and return `code`.
+    Reap { code: i32 },
+    /// The child is Alive or still exiting: arm the calling thread's wait,
+    /// register it as the child's waiter and block.
+    Wait,
+}
+
+/// `wait_step`'s decision for thread `me` of process `caller` (Alive or not,
+/// `caller_alive`), waiting on a child in state `child` whose parent is
+/// `child_parent`, with `waiter` the thread registered for that child.
+///
+/// In order (capability-lifetime ADR §6): a caller that is not Alive gets
+/// EPERM; an Empty child or one that is not the caller's gets EPERM; another
+/// registered thread gets EEXIST; an exited child with its code published is
+/// reaped; anything else waits.
+pub fn process_wait_action(
+    caller_alive: bool,
+    caller: ProcessId,
+    child: &ProcessState,
+    child_parent: Option<ProcessId>,
+    waiter: Option<ThreadId>,
+    me: ThreadId,
+) -> ProcessWaitAction {
+    let mine = waiter == Some(me);
+    if !caller_alive {
+        return ProcessWaitAction::CallerNotAlive { clear_entry: mine };
+    }
+    if *child == ProcessState::Empty || child_parent != Some(caller) {
+        return ProcessWaitAction::NotChild;
+    }
+    if waiter.is_some() && !mine {
+        return ProcessWaitAction::OtherWaiter;
+    }
+    match child {
+        ProcessState::Exited { code: Some(code) } => ProcessWaitAction::Reap { code: *code },
+        _ => ProcessWaitAction::Wait,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CPU affinity (scheduler.md §3.3)
 // ---------------------------------------------------------------------------
 
@@ -1041,6 +1135,218 @@ mod tests {
         assert!(finals
             .iter()
             .any(|w| w.reset_armed && w.blocked_ran && w.idle_dead_block));
+    }
+
+    // ── Process lifecycle ───────────────────────────────────────────────
+
+    /// One value of every `ProcessState`, with two published codes.
+    const PROCESS_STATES: [ProcessState; 5] = [
+        ProcessState::Empty,
+        ProcessState::Alive,
+        ProcessState::Exited { code: None },
+        ProcessState::Exited { code: Some(0) },
+        ProcessState::Exited { code: Some(-6) },
+    ];
+
+    /// The lifecycle step a state belongs to: 0 Empty, 1 Alive, 2 exiting
+    /// (code not yet published), 3 exited with its code.
+    fn lifecycle_step(state: &ProcessState) -> usize {
+        match state {
+            ProcessState::Empty => 0,
+            ProcessState::Alive => 1,
+            ProcessState::Exited { code: None } => 2,
+            ProcessState::Exited { code: Some(_) } => 3,
+        }
+    }
+
+    #[test]
+    fn process_state_may_become_every_pair() {
+        for from in &PROCESS_STATES {
+            for to in &PROCESS_STATES {
+                // The legal changes are exactly one step along the cycle
+                // Empty → Alive → Exited(None) → Exited(Some) → Empty.
+                let want = (lifecycle_step(from) + 1) % 4 == lifecycle_step(to);
+                assert_eq!(from.may_become(to), want, "{from:?} -> {to:?}");
+            }
+        }
+        // No self-change: a writer never rewrites the state it reads, and
+        // the published code never changes.
+        assert!(!ProcessState::Exited { code: Some(1) }
+            .may_become(&ProcessState::Exited { code: Some(2) }));
+        assert!(!ProcessState::Alive.may_become(&ProcessState::Exited { code: Some(0) }));
+        assert!(!ProcessState::Empty.may_become(&ProcessState::Exited { code: None }));
+    }
+
+    #[test]
+    fn process_wait_action_every_combination() {
+        let caller = ProcessId(1);
+        let me = ThreadId(4);
+        let other = ThreadId(5);
+        let mut seen = [0usize; 5];
+        for caller_alive in [true, false] {
+            for child in &PROCESS_STATES {
+                for parent in [None, Some(caller), Some(ProcessId(2))] {
+                    for waiter in [None, Some(me), Some(other)] {
+                        let action =
+                            process_wait_action(caller_alive, caller, child, parent, waiter, me);
+                        let ours = caller_alive && parent == Some(caller);
+                        match action {
+                            ProcessWaitAction::CallerNotAlive { clear_entry } => {
+                                seen[0] += 1;
+                                assert!(!caller_alive);
+                                assert_eq!(clear_entry, waiter == Some(me));
+                            }
+                            ProcessWaitAction::NotChild => {
+                                seen[1] += 1;
+                                assert!(caller_alive);
+                                assert!(*child == ProcessState::Empty || parent != Some(caller));
+                            }
+                            ProcessWaitAction::OtherWaiter => {
+                                seen[2] += 1;
+                                assert!(ours && *child != ProcessState::Empty);
+                                assert_eq!(waiter, Some(other));
+                            }
+                            ProcessWaitAction::Reap { code } => {
+                                seen[3] += 1;
+                                assert!(ours && waiter != Some(other));
+                                assert_eq!(*child, ProcessState::Exited { code: Some(code) });
+                            }
+                            ProcessWaitAction::Wait => {
+                                seen[4] += 1;
+                                assert!(ours && waiter != Some(other));
+                                assert!(matches!(
+                                    child,
+                                    ProcessState::Alive | ProcessState::Exited { code: None }
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // 2 × 5 × 3 × 3 combinations: 45 with the caller gone; with it
+        // alive, 33 not its child (an Empty child or a foreign parent), and
+        // of the 12 left (4 states × 3 waiters) another waiter in 4, a reap
+        // in 2 × 2 and a wait in 2 × 2.
+        assert_eq!(seen, [45, 33, 4, 4, 4]);
+    }
+
+    /// A process-table slot as `wait_step` and `process_exit` see it, for
+    /// the lifecycle scenarios: its state, parent and registered waiter.
+    struct WaitSlot {
+        state: ProcessState,
+        parent: Option<ProcessId>,
+        waiter: Option<ThreadId>,
+    }
+
+    impl WaitSlot {
+        /// One `wait_step` pass by thread `me` of the Alive process
+        /// `caller`, with its effect on the slot: register on Wait, clear
+        /// and reap on Reap, clear an exited caller's own entry.
+        fn wait(&mut self, caller: ProcessId, me: ThreadId) -> ProcessWaitAction {
+            self.wait_as(true, caller, me)
+        }
+
+        fn wait_as(&mut self, alive: bool, caller: ProcessId, me: ThreadId) -> ProcessWaitAction {
+            let action =
+                process_wait_action(alive, caller, &self.state, self.parent, self.waiter, me);
+            match action {
+                ProcessWaitAction::Wait => self.waiter = Some(me),
+                ProcessWaitAction::Reap { .. } => {
+                    self.waiter = None;
+                    self.set(ProcessState::Empty);
+                    self.parent = None;
+                }
+                ProcessWaitAction::CallerNotAlive { clear_entry: true } => self.waiter = None,
+                _ => {}
+            }
+            action
+        }
+
+        /// A state change, checked against `may_become`.
+        fn set(&mut self, next: ProcessState) {
+            assert!(self.state.may_become(&next), "{:?} -> {next:?}", self.state);
+            self.state = next;
+        }
+    }
+
+    #[test]
+    fn process_wait_one_waiter_then_reap() {
+        let parent = ProcessId(1);
+        let (t1, t2) = (ThreadId(4), ThreadId(5));
+        let mut child = WaitSlot {
+            state: ProcessState::Alive,
+            parent: Some(parent),
+            waiter: None,
+        };
+        // T1 registers; T2 is refused before and during the exit.
+        assert_eq!(child.wait(parent, t1), ProcessWaitAction::Wait);
+        assert_eq!(child.wait(parent, t2), ProcessWaitAction::OtherWaiter);
+        child.set(ProcessState::Exited { code: None }); // exit step A
+        assert_eq!(child.wait(parent, t2), ProcessWaitAction::OtherWaiter);
+        // A pass of T1 between A and E waits again: no reap before the code.
+        assert_eq!(child.wait(parent, t1), ProcessWaitAction::Wait);
+        // Exit step E publishes the code and leaves T1's entry set, so T2 is
+        // still refused and only T1 reaps.
+        child.set(ProcessState::Exited { code: Some(5) });
+        assert_eq!(child.waiter, Some(t1));
+        assert_eq!(child.wait(parent, t2), ProcessWaitAction::OtherWaiter);
+        assert_eq!(child.wait(parent, t1), ProcessWaitAction::Reap { code: 5 });
+        // Reaped: Empty, so every later wait is EPERM.
+        assert_eq!(child.wait(parent, t1), ProcessWaitAction::NotChild);
+        assert_eq!(child.wait(parent, t2), ProcessWaitAction::NotChild);
+    }
+
+    #[test]
+    fn process_wait_exited_waiter_clears_its_entry() {
+        let parent = ProcessId(1);
+        let (t1, t2) = (ThreadId(4), ThreadId(5));
+        let mut child = WaitSlot {
+            state: ProcessState::Alive,
+            parent: Some(parent),
+            waiter: None,
+        };
+        assert_eq!(child.wait(parent, t1), ProcessWaitAction::Wait);
+        // The waiter's own process exits; its next pass clears its entry.
+        assert_eq!(
+            child.wait_as(false, parent, t1),
+            ProcessWaitAction::CallerNotAlive { clear_entry: true }
+        );
+        assert_eq!(child.waiter, None);
+        // Another exited thread leaves a live entry alone.
+        assert_eq!(child.wait(parent, t2), ProcessWaitAction::Wait);
+        assert_eq!(
+            child.wait_as(false, parent, t1),
+            ProcessWaitAction::CallerNotAlive { clear_entry: false }
+        );
+        assert_eq!(child.waiter, Some(t2));
+    }
+
+    #[test]
+    fn process_wait_already_exited_reaps_at_once() {
+        let parent = ProcessId(1);
+        let mut child = WaitSlot {
+            state: ProcessState::Exited {
+                code: Some(i32::MIN),
+            },
+            parent: Some(parent),
+            waiter: None,
+        };
+        // i32::MIN is an ordinary code: no sentinel.
+        assert_eq!(
+            child.wait(parent, ThreadId(4)),
+            ProcessWaitAction::Reap { code: i32::MIN }
+        );
+        // A child with no parent, or another's, is never the caller's.
+        let mut orphan = WaitSlot {
+            state: ProcessState::Exited { code: Some(0) },
+            parent: None,
+            waiter: None,
+        };
+        assert_eq!(
+            orphan.wait(parent, ThreadId(4)),
+            ProcessWaitAction::NotChild
+        );
     }
 
     // ── CpuSet ──────────────────────────────────────────────────────────

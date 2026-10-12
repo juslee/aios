@@ -590,7 +590,10 @@ pub fn exit_current() -> ! {
 }
 
 /// Mark every thread of `pid` Dead, except the calling thread (exit step B),
-/// and reset each victim's wait word, in the same masked walk.
+/// and reset each victim's wait word, in the same masked walk. Returns the
+/// victims as a mask (bit t = thread slot t): every thread of `pid`, the
+/// caller included when it belongs to `pid`, for exit steps C and E, which
+/// clean up after every victim.
 ///
 /// The whole walk runs in one IRQ-masked section: the caller's tid is read
 /// from `CURRENT_THREAD[core_id()]` after masking, so the thread cannot
@@ -607,21 +610,46 @@ pub fn exit_current() -> ! {
 /// arm after the reset (the transient exception to the wait-word invariant
 /// until crash-fix step 8's safe point); its next `block_current` finds it
 /// Dead (`AlreadyDead`) and resets the word again.
-pub fn kill_process_threads(pid: ProcessId) {
+pub fn kill_process_threads(pid: ProcessId) -> u64 {
     daif::with_irqs_masked(|| {
         let cpu = exceptions::core_id() as usize;
         let caller = { *CURRENT_THREAD[cpu].lock() };
         let mut table = THREAD_TABLE.lock();
+        let mut victims = 0u64;
         for (idx, slot) in table.iter_mut().enumerate() {
             if let Some(thread) = slot {
+                if thread.owner_pid != Some(pid) {
+                    continue;
+                }
+                // MAX_THREADS is 64, so every slot has a bit.
+                victims |= 1u64 << idx;
                 let victim = ThreadId(idx as u32);
-                if thread.owner_pid == Some(pid) && caller != Some(victim) {
+                if caller != Some(victim) {
                     thread.sched.state = ThreadState::Dead;
                     wake::reset(victim);
                 }
             }
         }
-    });
+        victims
+    })
+}
+
+/// The calling thread's tid and the pid of the process it belongs to, read
+/// in one IRQ-masked section: `CURRENT_THREAD[core_id()]`, released, then
+/// the thread's `owner_pid` under THREAD_TABLE. Masked, the thread cannot
+/// migrate between the CPU read and the `CURRENT_THREAD` read (crash-fix N4),
+/// so the tid is the caller's own, as `wake::prepare_block` requires (the
+/// own-tid rule, ADR §8), and neither IRQ-class hold can meet this CPU's
+/// tick. `None` when the CPU has no current thread or the thread has no
+/// process. For the process syscalls (SVC 24 and 25).
+pub fn current_thread_and_pid() -> Option<(ThreadId, ProcessId)> {
+    daif::with_irqs_masked(|| {
+        let cpu = exceptions::core_id() as usize;
+        let tid = { *CURRENT_THREAD[cpu].lock() }?;
+        let table = THREAD_TABLE.lock();
+        let pid = table.get(tid.0 as usize)?.as_ref()?.owner_pid?;
+        Some((tid, pid))
+    })
 }
 
 /// What [`thread_probe`] read about a thread.

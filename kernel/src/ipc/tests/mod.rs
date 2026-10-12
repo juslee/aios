@@ -8,6 +8,7 @@ mod bad_pid;
 mod create_abi;
 mod dead_thread;
 mod kit_errors;
+mod lifecycle;
 mod select_cap;
 mod share;
 mod stale_id;
@@ -50,25 +51,19 @@ const TEST_PID: shared::ProcessId = shared::ProcessId(1);
 /// - Process 3 ("cap-test-denied"): NO ChannelCreate cap (for enforcement test)
 pub fn init() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
+    use crate::task::process::{process_install, KernelResourceLimits};
     use crate::task::{CpuSet, SchedulerClass, Thread, THREAD_TABLE};
 
     // --- Create processes ---
 
     // Process 0: kernel (owns idle threads, scheduler test threads).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..6].copy_from_slice(b"kernel");
-        procs[0] = Some(ProcessControl {
-            pid: ProcessId(0),
-            address_space: None,
-            resource_limits: KernelResourceLimits::system(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(0),
+        None,
+        b"kernel",
+        KernelResourceLimits::system(),
+    )
+    .expect("process 0 install");
     // Grant kernel process all capability types.
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::DebugPrint, true);
@@ -86,53 +81,35 @@ pub fn init() {
     }
 
     // Process 1: IPC test (server, caller, timeout).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..8].copy_from_slice(b"ipc-test");
-        procs[1] = Some(ProcessControl {
-            pid: ProcessId(1),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(1),
+        None,
+        b"ipc-test",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 1 install");
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::DebugPrint, false);
 
     // Process 2: PI test (priority inheritance server + caller).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..7].copy_from_slice(b"pi-test");
-        procs[2] = Some(ProcessControl {
-            pid: ProcessId(2),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(2),
+        None,
+        b"pi-test",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 2 install");
     let _ = cap::grant_to_process(ProcessId(2), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(2), shared::Capability::DebugPrint, false);
 
     // Process 3: cap-test-denied (NO ChannelCreate — used to test enforcement).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..15].copy_from_slice(b"cap-test-denied");
-        procs[3] = Some(ProcessControl {
-            pid: ProcessId(3),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(3),
+        None,
+        b"cap-test-denied",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 3 install");
     // Process 3 gets DebugPrint only — no ChannelCreate, no ChannelAccess.
     let _ = cap::grant_to_process(ProcessId(3), shared::Capability::DebugPrint, false);
 
@@ -227,6 +204,10 @@ pub fn init() {
     // Dead test helper (process 1, pinned to CPU 2): ends itself when it
     // first runs; the ipc-timeout thread probes it.
     dead_thread::init();
+
+    // Lifecycle test: processes 14 and 17, and pid 14's thread (pinned to
+    // CPU 2), which exits its own process when the test starts it.
+    lifecycle::init();
 
     // --- Priority inheritance test threads ---
     {
@@ -459,7 +440,10 @@ fn ipc_caller_entry() -> ! {
 /// `exit_current` stays Dead (`dead_thread_test`, on a helper pinned to
 /// CPU 2), and that a wake between a thread's arm and its block is kept as a
 /// token that the block consumes (`wake_token_test`, on this thread's own
-/// tid, which the pin to CPU 2 makes safe to read). Last, it calls IpcCall on a channel
+/// tid, which the pin to CPU 2 makes safe to read), and the process
+/// lifecycle: exit, wait and reap, the exit cascade, one waiter per child,
+/// the token on the wait path, and the exit walk over channel endpoints
+/// (`lifecycle_test`, on pids 12-18). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
 /// wake can hide only that line.
@@ -535,6 +519,7 @@ fn ipc_timeout_entry() -> ! {
     share::share_test(caller_tid);
     dead_thread::dead_thread_test();
     wake_token::wake_token_test(caller_tid);
+    lifecycle::lifecycle_test(caller_tid);
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

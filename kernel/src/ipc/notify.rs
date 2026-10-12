@@ -393,6 +393,28 @@ pub fn check_notification_timeouts(now: u64) {
     }
 }
 
+/// Forget thread `tid` (process exit step C): reset its notification
+/// deadline, then remove it from every notification's waiter list. Each of
+/// the two IRQ-class locks is taken alone, with IRQs masked, because the
+/// tick's timeout scan try-locks both.
+pub(super) fn forget_waiter(tid: ThreadId) {
+    crate::arch::aarch64::daif::with_irqs_masked(|| {
+        if let Some(deadline) = NOTIFY_DEADLINES.lock().get_mut(tid.0 as usize) {
+            *deadline = u64::MAX;
+        }
+    });
+    crate::arch::aarch64::daif::with_irqs_masked(|| {
+        let mut table = NOTIFICATION_TABLE.lock();
+        for notif in table.iter_mut().flatten() {
+            for slot in notif.waiters.iter_mut() {
+                if slot.is_some_and(|waiter| waiter.tid == tid) {
+                    *slot = None;
+                }
+            }
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

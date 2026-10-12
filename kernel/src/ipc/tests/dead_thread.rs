@@ -49,6 +49,14 @@ pub(super) fn init() {
     sched::enqueue_on_cpu(PINNED_CPU, ThreadId(idx as u32), SchedulerClass::Normal);
 }
 
+/// The helper's tid, once [`init`] has created it: a pid-1 thread other than
+/// the ipc-timeout thread, for the lifecycle test's one-waiter case, which
+/// only names it in a `wait_step` that is refused before any arm.
+pub(super) fn helper_tid() -> Option<ThreadId> {
+    let raw = HELPER_TID.load(Ordering::Acquire);
+    (raw != NO_HELPER).then_some(ThreadId(raw))
+}
+
 /// The helper: ends itself the first time it runs. IRQs stay masked as
 /// `enter_scheduler` or `schedule` left them; `exit_current` masks anyway.
 fn dead_helper_entry() -> ! {
@@ -66,12 +74,10 @@ fn dead_helper_entry() -> ! {
 /// Logs `Dead test: terminal as expected`, or a warning naming the step
 /// that failed and what the probe read.
 pub(super) fn dead_thread_test() {
-    let raw = HELPER_TID.load(Ordering::Acquire);
-    if raw == NO_HELPER {
+    let Some(helper) = helper_tid() else {
         crate::kwarn!(Ipc, "Dead test: no helper thread");
         return;
-    }
-    let helper = ThreadId(raw);
+    };
 
     let mut polled = sched::thread_probe(helper, false);
     let mut yields = 0;

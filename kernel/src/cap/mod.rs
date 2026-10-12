@@ -392,12 +392,12 @@ fn collect_revoked_channels(
     count
 }
 
-/// Destroy the channels a cascade collected, with no lock held. Each destroy
-/// wakes the channel's blocked threads with EPIPE. The destroy is unchecked:
-/// this is a kernel-initiated teardown, and the full id makes a channel
-/// destroyed since the collection an EPIPE no-op that never reaches the
-/// channel now in its slot.
-fn destroy_channels(ids: &[Option<shared::ChannelId>]) {
+/// Destroy the channels a cascade or an exit (step C) collected, with no
+/// lock held. Each destroy wakes the channel's blocked threads with EPIPE.
+/// The destroy is unchecked: this is a kernel-initiated teardown, and the
+/// full id makes a channel destroyed since the collection an EPIPE no-op
+/// that never reaches the channel now in its slot.
+pub(crate) fn destroy_channels(ids: &[Option<shared::ChannelId>]) {
     for &id in ids.iter().flatten() {
         let _ = crate::ipc::channel_destroy_unchecked(id);
     }

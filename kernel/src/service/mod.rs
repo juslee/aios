@@ -183,22 +183,16 @@ static ECHO_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// service manager, and spawns echo server + client test threads.
 pub fn init() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
+    use crate::task::process::{process_install, KernelResourceLimits};
 
     // --- Create Process 7: echo service ---
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..8].copy_from_slice(b"echo-svc");
-        procs[7] = Some(ProcessControl {
-            pid: ProcessId(7),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(7),
+        None,
+        b"echo-svc",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 7 install");
     let _ = cap::grant_to_process(ProcessId(7), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(7), shared::Capability::DebugPrint, false);
 
@@ -322,87 +316,9 @@ fn echo_server_entry() -> ! {
     }
 }
 
-/// Endpoint states (A, B) of `channel`, or `None` if the channel is gone
-/// (its slot is empty or holds another generation's channel).
-fn channel_endpoint_states(channel: ChannelId) -> Option<(ipc::EndpointState, ipc::EndpointState)> {
-    let mut table = ipc::CHANNEL_TABLE.lock();
-    ipc::channel_mut(&mut table, channel)
-        .ok()
-        .map(|ch| (ch.state_a, ch.state_b))
-}
-
-/// Pid that the echo client's exit-walk probe exits. No process or thread has
-/// it, so `process_exit` marks no thread Dead, and with its process-table
-/// slot empty records no exit code: `ProcessWait` on it stays `EPERM`.
-const EXIT_PROBE_PID: ProcessId = ProcessId(6);
-
-/// Check that `process_exit` marks Dead each channel with the exiting pid on
-/// endpoint A or B, and leaves the rest Active, with or without a peer. The
-/// echo channel has pid 7 on both endpoints, so it cannot tell the two
-/// matches apart. The probe exits a thread-less pid, not 7, so the caller
-/// stays Running: a thread marked Dead is switched out for good at its CPU's
-/// next tick, which could leave the probe channels unfreed or `CHANNEL_TABLE`
-/// held.
-fn exit_walk_probe() {
-    let dead = Some((ipc::EndpointState::Dead, ipc::EndpointState::Dead));
-    let active = Some((ipc::EndpointState::Active, ipc::EndpointState::Active));
-
-    // Pid on endpoint A only, no peer: the shape of the GPU, compositor and
-    // space-storage channels.
-    let a_ch = ipc::channel_create_unchecked(EXIT_PROBE_PID);
-    // Pid on endpoint B only.
-    let b_ch = ipc::channel_create_unchecked(ProcessId(0));
-    // Pid on neither endpoint, both set: must stay Active.
-    let other_ch = ipc::channel_create_unchecked(ProcessId(0));
-    // Another pid on endpoint A and no peer, the shape of most live channels:
-    // must stay Active, so a missing peer never counts as a match.
-    let lone_ch = ipc::channel_create_unchecked(ProcessId(0));
-    let mut ok = ipc::channel_set_peer(b_ch, EXIT_PROBE_PID).is_ok()
-        && ipc::channel_set_peer(other_ch, ProcessId(0)).is_ok();
-    if !ok {
-        crate::kwarn!(Ipc, "Echo client: exit probe channel_set_peer failed");
-    }
-
-    // A non-member exit: this pid-7 thread is not in pid 6. It cannot be
-    // killed partway through, because only this thread exits pid 7, later.
-    crate::task::process::process_exit(EXIT_PROBE_PID, 0);
-
-    let probes = [
-        ("A-owned", a_ch, dead),
-        ("B-owned", b_ch, dead),
-        ("other", other_ch, active),
-        ("no-peer", lone_ch, active),
-    ];
-    for (name, probe, expected) in probes {
-        let states = channel_endpoint_states(probe);
-        if states != expected {
-            ok = false;
-            crate::kwarn!(
-                Ipc,
-                "Echo client: exit walk wrong for {} probe: {:?}",
-                name,
-                states
-            );
-        }
-        if let Err(e) = ipc::channel_destroy_unchecked(probe) {
-            crate::kwarn!(
-                Ipc,
-                "Echo client: probe channel {} destroy failed: {}",
-                probe,
-                e
-            );
-        }
-    }
-    if ok {
-        crate::kinfo!(
-            Ipc,
-            "Echo client: process_exit matched endpoints A and B, spared other pid (expected)"
-        );
-    }
-}
-
 /// Echo client test thread: sends "hello" to echo service, expects "ECHO:hello" back.
-/// Then demonstrates service death by calling process_exit.
+/// Then demonstrates service death by calling process_exit on its own
+/// process, 7, and ends itself with `sched::exit_current()`.
 fn echo_client_entry() -> ! {
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -442,18 +358,19 @@ fn echo_client_entry() -> ! {
         crate::kwarn!(Ipc, "Echo client: ipc_call failed with {}", result);
     }
 
-    // Probe the exit walk while this thread is still Running: the exit of
-    // pid 7 below marks it Dead.
-    exit_walk_probe();
-
-    // Demonstrate service death: exit process 7.
+    // Demonstrate service death: exit process 7, this thread's own. The
+    // exit marks the echo server Dead and leaves this thread, the caller,
+    // running until its exit_current below.
     crate::kinfo!(Ipc, "Echo client: triggering process_exit for pid=7");
-    crate::task::process::process_exit(ProcessId(7), 0);
+    if let Err(e) = crate::task::process::process_exit(ProcessId(7), 0) {
+        crate::kwarn!(Ipc, "Echo client: process_exit failed with {}", e);
+    }
 
     // process_exit marks both endpoints of the echo channel Dead: process 7
-    // owns them. Check the state directly, so the result does not depend on
-    // whether the echo server thread ever ran.
-    let endpoints_dead = channel_endpoint_states(svc_ch)
+    // owns them. The echo channel is a kernel channel (no creator), so the
+    // exit does not destroy it. Check the state directly, so the result does
+    // not depend on whether the echo server thread ever ran.
+    let endpoints_dead = ipc::channel_endpoint_states(svc_ch)
         .map(|states| states == (ipc::EndpointState::Dead, ipc::EndpointState::Dead));
     match endpoints_dead {
         Some(true) => crate::kinfo!(
@@ -467,22 +384,17 @@ fn echo_client_entry() -> ! {
         None => crate::kwarn!(Ipc, "Echo client: channel gone after service death"),
     }
 
-    // Then try the channel: the Dead endpoints make the call return EPIPE.
-    // Any other error (ETIMEDOUT means the channel stayed Active) is a failure.
+    // Then try the channel: process 7 has exited, so its capability check
+    // fails (EPERM) before the channel is looked up. Any other result is a
+    // failure.
     let mut buf = [0u8; 64];
     let result2 = ipc::ipc_call(svc_ch, b"dead", &mut buf, 100);
-    if result2 == crate::syscall::IpcError::Epipe as i64 {
-        crate::kinfo!(Ipc, "Echo client: EPIPE after service death (expected)");
-    } else if result2 < 0 {
-        crate::kwarn!(
-            Ipc,
-            "Echo client: error {} after service death (expected EPIPE)",
-            result2
-        );
+    if result2 == crate::syscall::IpcError::Eperm as i64 {
+        crate::kinfo!(Ipc, "Echo client: EPERM after exit (expected)");
     } else {
         crate::kwarn!(
             Ipc,
-            "Echo client: unexpected reply ({} bytes) after service death",
+            "Echo client: result {} after exit (expected EPERM)",
             result2
         );
     }
@@ -497,7 +409,6 @@ fn echo_client_entry() -> ! {
         crate::kwarn!(Ipc, "Echo client: service still found after death");
     }
 
-    loop {
-        sched::thread_yield();
-    }
+    // Process 7 has exited: this, its last thread, ends here.
+    sched::exit_current()
 }

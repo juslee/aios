@@ -1484,8 +1484,11 @@ pub enum SlotState {
     BlockedNotification,
     /// `ThreadState::BlockedSelect`.
     BlockedSelect,
-    /// A blocked state the no-waker scan does not check: `BlockedProcessWait`,
-    /// `BlockedTimer` or `BlockedIo`.
+    /// `ThreadState::BlockedProcessWait`, whose waker is its `PROCESS_WAITERS`
+    /// entry.
+    BlockedProcessWait,
+    /// A blocked state the no-waker scan does not check: `BlockedTimer` or
+    /// `BlockedIo`.
     BlockedOther,
     /// `ThreadState::Suspended`.
     Suspended,
@@ -1503,11 +1506,10 @@ impl SlotState {
             Some(ThreadState::BlockedIpc { .. }) => SlotState::BlockedIpc,
             Some(ThreadState::BlockedNotification { .. }) => SlotState::BlockedNotification,
             Some(ThreadState::BlockedSelect) => SlotState::BlockedSelect,
-            Some(
-                ThreadState::BlockedProcessWait { .. }
-                | ThreadState::BlockedTimer { .. }
-                | ThreadState::BlockedIo,
-            ) => SlotState::BlockedOther,
+            Some(ThreadState::BlockedProcessWait { .. }) => SlotState::BlockedProcessWait,
+            Some(ThreadState::BlockedTimer { .. } | ThreadState::BlockedIo) => {
+                SlotState::BlockedOther
+            }
             Some(ThreadState::Suspended) => SlotState::Suspended,
             Some(ThreadState::Dead) => SlotState::Dead,
         }
@@ -1536,6 +1538,8 @@ impl SlotFlags {
     /// `WAKE_PENDING[tid] != 0`: a waker took its reference and has not yet
     /// run `unblock` (scan B).
     pub const WAKE_PENDING: SlotFlags = SlotFlags(1 << 6);
+    /// Is a child's registered waiter in `PROCESS_WAITERS` (scan B).
+    pub const PROC_WAITER: SlotFlags = SlotFlags(1 << 7);
 
     /// These flags and `other`.
     #[inline]
@@ -1613,10 +1617,11 @@ pub const fn is_starved(now: u64, last_run: u64) -> bool {
 ///   a Dead thread lazily, so a thread killed while queued stays queued
 ///   until its CPU picks it.
 /// - Any other state with `QUEUED`: [`SlotVerdict::QueuedBad`].
-/// - BlockedIpc, BlockedNotification and BlockedSelect, not current: the
-///   waker flags. BlockedIpc is woken by `TIMEOUT` or `CHAN_REF`;
-///   BlockedNotification by `NDL`, `NOTIF_REF` or `TIMEOUT`; BlockedSelect
-///   by any of the four. With none of them, `WAKE_PENDING` gives
+/// - BlockedIpc, BlockedNotification, BlockedSelect and BlockedProcessWait,
+///   not current: the waker flags. BlockedIpc is woken by `TIMEOUT` or
+///   `CHAN_REF`; BlockedNotification by `NDL`, `NOTIF_REF` or `TIMEOUT`;
+///   BlockedSelect by any of those four; BlockedProcessWait by
+///   `PROC_WAITER`. With none of them, `WAKE_PENDING` gives
 ///   [`SlotVerdict::WakeInFlight`], otherwise [`SlotVerdict::NoWaker`].
 /// - Everything else is [`SlotVerdict::Clear`]. A current thread that is
 ///   Blocked is between setting its state and switching away.
@@ -1660,6 +1665,7 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
             .with(SlotFlags::CHAN_REF)
             .with(SlotFlags::NOTIF_REF)
             .with(SlotFlags::TIMEOUT),
+        SlotState::BlockedProcessWait => SlotFlags::PROC_WAITER,
         _ => return SlotVerdict::Clear,
     };
     if flags.intersects(wakers) {
@@ -1688,6 +1694,7 @@ pub const fn wait_word_bad(state: SlotState, word: WaitState) -> bool {
             SlotState::BlockedIpc
                 | SlotState::BlockedNotification
                 | SlotState::BlockedSelect
+                | SlotState::BlockedProcessWait
                 | SlotState::BlockedOther
                 | SlotState::Suspended
         )
@@ -3127,7 +3134,7 @@ mod tests {
             (Some(S::BlockedSelect), SlotState::BlockedSelect),
             (
                 Some(S::BlockedProcessWait { child_pid: 2 }),
-                SlotState::BlockedOther,
+                SlotState::BlockedProcessWait,
             ),
             (
                 Some(S::BlockedTimer { wake_at: 9 }),
@@ -3194,6 +3201,14 @@ mod tests {
             (S::BlockedSelect, F::TIMEOUT, fresh, V::Clear),
             (S::BlockedSelect, wp, fresh, V::WakeInFlight),
             (S::BlockedSelect, cur, fresh, V::Clear),
+            (S::BlockedProcessWait, F::NONE, fresh, V::NoWaker),
+            (S::BlockedProcessWait, F::PROC_WAITER, fresh, V::Clear),
+            (S::BlockedProcessWait, F::TIMEOUT, fresh, V::NoWaker),
+            (S::BlockedProcessWait, F::CHAN_REF, fresh, V::NoWaker),
+            (S::BlockedProcessWait, wp, fresh, V::WakeInFlight),
+            (S::BlockedProcessWait, cur, fresh, V::Clear),
+            (S::BlockedProcessWait, q, fresh, V::QueuedBad),
+            (S::BlockedIpc, F::PROC_WAITER, fresh, V::NoWaker),
             (S::BlockedOther, F::NONE, old, V::Clear),
             (S::BlockedOther, q, fresh, V::QueuedBad),
             (S::Suspended, F::NONE, old, V::Clear),
@@ -3470,6 +3485,7 @@ mod tests {
             St::BlockedIpc,
             St::BlockedNotification,
             St::BlockedSelect,
+            St::BlockedProcessWait,
             St::BlockedOther,
             St::Suspended,
             St::Dead,
@@ -3480,6 +3496,7 @@ mod tests {
                 St::BlockedIpc
                     | St::BlockedNotification
                     | St::BlockedSelect
+                    | St::BlockedProcessWait
                     | St::BlockedOther
                     | St::Suspended
             );

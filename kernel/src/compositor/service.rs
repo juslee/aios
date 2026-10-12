@@ -546,23 +546,17 @@ pub static COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// site documents its position with a `// Lock ordering:` comment.
 pub fn init_compositor() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
+    use crate::task::process::{process_install, KernelResourceLimits};
     use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 
     // --- Create Process 10: compositor ---
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..10].copy_from_slice(b"compositor");
-        procs[10] = Some(ProcessControl {
-            pid: ProcessId(10),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(10),
+        None,
+        b"compositor",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 10 install");
 
     // Grant capabilities to the compositor process.
     let _ = cap::grant_to_process(ProcessId(10), shared::Capability::ChannelCreate, true);

@@ -146,7 +146,7 @@ fn shm_checks(pid: ProcessId) -> [bool; 6] {
 
 /// Issue syscall `nr` with `args` in x0.. through `syscall_dispatch` and
 /// return x0 as the signed result and x1 as it was left.
-fn svc(nr: Syscall, args: &[u64]) -> (i64, u64) {
+pub(super) fn svc(nr: Syscall, args: &[u64]) -> (i64, u64) {
     let mut tf = TrapFrame {
         x: [0; 31],
         sp_el0: 0,

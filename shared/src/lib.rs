@@ -52,9 +52,10 @@ pub use memory::{
 };
 pub use observability::{timestamp_to_secs_micros, LogEntry, LogLevel, Subsystem};
 pub use sched::{
-    block_action, default_slice, wake_action, BlockAction, CpuSet, KernelResourceLimits, ProcessId,
-    SchedulerClass, ThreadId, ThreadState, WaitState, WakeAction, IDLE_SLICE_NS,
-    INTERACTIVE_SLICE_NS, MAX_PROCESSES, NORMAL_SLICE_NS, RT_SLICE_NS,
+    block_action, default_slice, process_wait_action, wake_action, BlockAction, CpuSet,
+    KernelResourceLimits, ProcessId, ProcessState, ProcessWaitAction, SchedulerClass, ThreadId,
+    ThreadState, WaitState, WakeAction, IDLE_SLICE_NS, INTERACTIVE_SLICE_NS, MAX_PROCESSES,
+    NORMAL_SLICE_NS, RT_SLICE_NS,
 };
 pub use storage::{
     BlockId, BlockLocation, ContentHash, ContentType, SecurityZone, SpaceId, StorageError,

@@ -722,34 +722,49 @@ fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
 
 /// ProcessExit (nr=24): x0=exit_code.
 ///
-/// Exit the current process. Cleans up all threads, channels, and
-/// notifies the service manager.
+/// Exit the caller's own process (`process_exit`, steps A–E), then end the
+/// calling thread with `sched::exit_current()`: on success it does not
+/// return. The tid and pid come from `sched::current_thread_and_pid()`, one
+/// IRQ-masked read. EPERM in x0 when the thread has no process, and any
+/// `process_exit` error is returned with the thread still running, so pid
+/// 0's threads, which `process_exit` refuses, get EPERM rather than being
+/// killed.
 fn sys_process_exit(tf: &TrapFrame) -> i64 {
     let exit_code = tf.x[0] as i32;
 
-    let pid = match crate::cap::current_process_id() {
-        Some(p) => p,
-        None => return IpcError::Eperm as i64,
+    let Some((_, pid)) = crate::sched::current_thread_and_pid() else {
+        return IpcError::Eperm as i64;
     };
 
-    crate::task::process::process_exit(pid, exit_code);
-    0
+    match crate::task::process::process_exit(pid, exit_code) {
+        Ok(()) => crate::sched::exit_current(),
+        Err(e) => e,
+    }
 }
 
 /// ProcessWait (nr=25): x0=child_pid.
 ///
-/// Block until a child process exits, return its exit code.
-fn sys_process_wait(tf: &TrapFrame) -> i64 {
+/// Block until the caller's child `child_pid` has exited, then reap it:
+/// x0 = 0 and x1 = the exit code, sign-extended. On an error x0 is the errno
+/// and x1 is not written (EINVAL for a pid out of range; EPERM for no such
+/// child, a child that is not the caller's, or a caller with no process;
+/// EEXIST when another thread already waits on the child). The caller's tid
+/// and pid come from `sched::current_thread_and_pid()`, one IRQ-masked read,
+/// so the tid the wait arms is the caller's own (the own-tid rule of
+/// `wake::prepare_block`).
+fn sys_process_wait(tf: &mut TrapFrame) -> i64 {
     let child_pid = match id_arg(tf.x[0]) {
         Ok(pid) => shared::ProcessId(pid),
         Err(e) => return e,
     };
-    let tid = match crate::ipc::current_thread_id() {
-        Some(t) => t,
-        None => return IpcError::Eperm as i64,
+    let Some((tid, pid)) = crate::sched::current_thread_and_pid() else {
+        return IpcError::Eperm as i64;
     };
-    match crate::task::process::process_wait(tid, child_pid) {
-        Ok(code) => code as i64,
+    match crate::task::process::process_wait(tid, pid, child_pid) {
+        Ok(code) => {
+            tf.x[1] = i64::from(code) as u64;
+            0
+        }
         Err(e) => e,
     }
 }

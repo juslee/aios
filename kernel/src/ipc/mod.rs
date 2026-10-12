@@ -367,6 +367,30 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
     Ok(())
 }
 
+/// Endpoint states (A, B) of `channel`, or `None` if the channel is gone
+/// (its slot is empty or holds another generation's channel).
+pub(crate) fn channel_endpoint_states(
+    channel: ChannelId,
+) -> Option<(EndpointState, EndpointState)> {
+    let mut table = CHANNEL_TABLE.lock();
+    channel_mut(&mut table, channel)
+        .ok()
+        .map(|ch| (ch.state_a, ch.state_b))
+}
+
+/// Process exit step C's per-victim cleanup of thread `tid`, which the exit
+/// marked Dead (or which is the exiting caller): its timeout entry (a
+/// blocking clear, so no entry fires later at the dead slot), its reply
+/// slot, its select registration, its notification deadline and its
+/// notification waiter records. Each lock is taken alone; the IRQ-class ones
+/// with IRQs masked.
+pub(crate) fn forget_thread(tid: ThreadId) {
+    timeout::clear_timeout_blocking(tid);
+    timeout::clear_reply_slot(tid);
+    select::forget_waiter(tid);
+    notify::forget_waiter(tid);
+}
+
 // ---------------------------------------------------------------------------
 // IPC Kit trait implementations
 // ---------------------------------------------------------------------------

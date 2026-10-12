@@ -36,6 +36,17 @@ pub(super) struct SelectWaiter {
 pub(super) static SELECT_WAITERS: IrqSpinLock<[Option<SelectWaiter>; MAX_THREADS]> =
     IrqSpinLock::new(LockClass::SelectWaiters, [const { None }; MAX_THREADS]);
 
+/// Drop `tid`'s select registration, if any (process exit step C). The
+/// hold runs with IRQs masked: SELECT_WAITERS is an IRQ-class lock that the
+/// notification timeout scan try-locks from the tick.
+pub(super) fn forget_waiter(tid: ThreadId) {
+    crate::arch::aarch64::daif::with_irqs_masked(|| {
+        if let Some(slot) = SELECT_WAITERS.lock().get_mut(tid.0 as usize) {
+            *slot = None;
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------

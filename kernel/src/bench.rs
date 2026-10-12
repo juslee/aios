@@ -15,7 +15,7 @@ use crate::cap;
 use crate::ipc::{self, ChannelId};
 use crate::observability::tripwire;
 use crate::sched;
-use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
+use crate::task::process::{process_install, KernelResourceLimits, ProcessId};
 use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 
 // ---------------------------------------------------------------------------
@@ -506,19 +506,8 @@ pub fn bench_main_entry() -> ! {
 /// Create bench process, threads, and enqueue them.
 pub fn init() {
     // Create Process 8: bench.
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..5].copy_from_slice(b"bench");
-        procs[8] = Some(ProcessControl {
-            pid: ProcessId(8),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(ProcessId(8), None, b"bench", KernelResourceLimits::native())
+        .expect("process 8 install");
     let _ = cap::grant_to_process(ProcessId(8), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(8), shared::Capability::SharedMemoryCreate, true);
     let _ = cap::grant_to_process(ProcessId(8), shared::Capability::DebugPrint, false);

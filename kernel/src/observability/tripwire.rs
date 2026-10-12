@@ -498,6 +498,8 @@ static SCAN_BLOCKED_IPC: AtomicU64 = AtomicU64::new(0);
 static SCAN_BLOCKED_NOTIF: AtomicU64 = AtomicU64::new(0);
 /// Scan A: threads in `BlockedSelect`, scan B's candidates.
 static SCAN_BLOCKED_SELECT: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads in `BlockedProcessWait`, scan B's candidates.
+static SCAN_BLOCKED_PWAIT: AtomicU64 = AtomicU64::new(0);
 /// Scan B: threads with a TIMEOUT_QUEUE entry.
 static SCAN_TIMEOUT: AtomicU64 = AtomicU64::new(0);
 /// Scan B: threads a channel names as pending caller or waiting receiver.
@@ -506,6 +508,8 @@ static SCAN_CHANREF: AtomicU64 = AtomicU64::new(0);
 static SCAN_NDL: AtomicU64 = AtomicU64::new(0);
 /// Scan B: threads a notification lists as a waiter.
 static SCAN_NOTIF: AtomicU64 = AtomicU64::new(0);
+/// Scan B: threads `PROCESS_WAITERS` lists as a child's waiter.
+static SCAN_PWAITER: AtomicU64 = AtomicU64::new(0);
 
 /// Two strikes, one history per kind (A-orphan, A-starved, A-bw,
 /// B-nowaker, B-wakefl), each updated only when its own scan completes.
@@ -545,6 +549,8 @@ pub enum ScanWaker {
     Deadline,
     /// A notification's waiter (`notif_ref`).
     NotifRef,
+    /// A child's registered waiter in `PROCESS_WAITERS` (`proc_waiter`).
+    ProcWaiter,
 }
 
 /// Set `tid`'s bit in the accumulator `mask` ([`tripwire::mask_set`]).
@@ -659,6 +665,7 @@ pub fn scan_note_slot(slot: u32, state: SlotState, word: WaitState) {
         SlotState::BlockedIpc => Some(&SCAN_BLOCKED_IPC),
         SlotState::BlockedNotification => Some(&SCAN_BLOCKED_NOTIF),
         SlotState::BlockedSelect => Some(&SCAN_BLOCKED_SELECT),
+        SlotState::BlockedProcessWait => Some(&SCAN_BLOCKED_PWAIT),
         _ => None,
     };
     if let Some(mask) = blocked {
@@ -675,6 +682,7 @@ pub fn scan_note_waker(kind: ScanWaker, tid: u32) {
         ScanWaker::ChanRef => &SCAN_CHANREF,
         ScanWaker::Deadline => &SCAN_NDL,
         ScanWaker::NotifRef => &SCAN_NOTIF,
+        ScanWaker::ProcWaiter => &SCAN_PWAITER,
     };
     if mask_add(mask, tid) == MaskSet::BadTid {
         bump_masked(Key::Badtid, 0);
@@ -722,6 +730,7 @@ fn scan_a(ncpu: usize) -> bool {
     SCAN_BLOCKED_IPC.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_NOTIF.store(0, Ordering::Relaxed);
     SCAN_BLOCKED_SELECT.store(0, Ordering::Relaxed);
+    SCAN_BLOCKED_PWAIT.store(0, Ordering::Relaxed);
 
     let start = timer::read_counter();
     let result = crate::sched::scan_snapshot(ncpu);
@@ -805,11 +814,13 @@ fn scan_b(ncpu: usize) {
     SCAN_CHANREF.store(0, Ordering::Relaxed);
     SCAN_NDL.store(0, Ordering::Relaxed);
     SCAN_NOTIF.store(0, Ordering::Relaxed);
+    SCAN_PWAITER.store(0, Ordering::Relaxed);
     let ipc = SCAN_BLOCKED_IPC.load(Ordering::Relaxed);
     let notif = SCAN_BLOCKED_NOTIF.load(Ordering::Relaxed);
     let select = SCAN_BLOCKED_SELECT.load(Ordering::Relaxed);
+    let pwait = SCAN_BLOCKED_PWAIT.load(Ordering::Relaxed);
     let here = cpu_here();
-    if !crate::ipc::scan_wakers(notif | select != 0) {
+    if !crate::ipc::scan_wakers(notif | select != 0, pwait != 0) {
         add_row(here, Key::Skipb, 0, 1);
         return;
     }
@@ -820,16 +831,19 @@ fn scan_b(ncpu: usize) {
     let chan_ref = SCAN_CHANREF.load(Ordering::Relaxed);
     let ndl = SCAN_NDL.load(Ordering::Relaxed);
     let notif_ref = SCAN_NOTIF.load(Ordering::Relaxed);
+    let proc_waiter = SCAN_PWAITER.load(Ordering::Relaxed);
     let mut nowaker = 0u64;
     let mut wakefl = 0u64;
-    let mut rest = ipc | notif | select;
+    let mut rest = ipc | notif | select | pwait;
     while let Some(tid) = pop_lowest(&mut rest) {
         let state = if mask_test(ipc, tid) {
             SlotState::BlockedIpc
         } else if mask_test(notif, tid) {
             SlotState::BlockedNotification
-        } else {
+        } else if mask_test(select, tid) {
             SlotState::BlockedSelect
+        } else {
+            SlotState::BlockedProcessWait
         };
         // Read after the tables: a waker marks the thread after it takes
         // the reference the tables no longer show.
@@ -842,6 +856,7 @@ fn scan_b(ncpu: usize) {
             .with_if(SlotFlags::CHAN_REF, mask_test(chan_ref, tid))
             .with_if(SlotFlags::NDL, mask_test(ndl, tid))
             .with_if(SlotFlags::NOTIF_REF, mask_test(notif_ref, tid))
+            .with_if(SlotFlags::PROC_WAITER, mask_test(proc_waiter, tid))
             .with_if(SlotFlags::WAKE_PENDING, pending);
         let bit = mask_bit(tid).unwrap_or(0);
         match classify_slot(state, flags, 0, 0) {

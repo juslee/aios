@@ -6,6 +6,7 @@
 
 use core::sync::atomic::Ordering;
 
+use crate::arch::aarch64::daif;
 use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::observability::tripwire;
 use crate::sched;
@@ -196,6 +197,30 @@ pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
     // skip — the timeout handler will see the thread is already awake
     // and the wakeup error slot is already set, so it's benign.
     ClearResult::Busy
+}
+
+/// Remove `tid`'s timeout entry, waiting for TIMEOUT_QUEUE if it is busy.
+/// Returns whether it removed one. For thread context only (process exit
+/// step C): unlike [`clear_timeout`], it never leaves an entry behind to fire
+/// later at a dead thread's slot. The hold runs with IRQs masked, because
+/// TIMEOUT_QUEUE is an IRQ-class lock that this CPU's tick try-locks.
+pub(super) fn clear_timeout_blocking(tid: ThreadId) -> bool {
+    daif::with_irqs_masked(|| {
+        TIMEOUT_QUEUE
+            .lock()
+            .get_mut(tid.0 as usize)
+            .and_then(Option::take)
+            .is_some()
+    })
+}
+
+/// Drop `tid`'s reply slot, if any: the buffer it points at belongs to a
+/// thread that will never read it (process exit step C). REPLY_SLOTS is not
+/// IRQ-class.
+pub(super) fn clear_reply_slot(tid: ThreadId) {
+    if let Some(slot) = REPLY_SLOTS.lock().get_mut(tid.0 as usize) {
+        *slot = None;
+    }
 }
 
 /// Sleep the current thread for the given number of ticks.
