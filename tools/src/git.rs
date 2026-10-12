@@ -1,4 +1,5 @@
-//! git as the former `brief.sh` and `checkpoint.sh` ran it: the inherited
+//! git as the former `scripts/agent/brief.sh` (blob at `2d4a9f7`) ran it, and as
+//! the former `scripts/agent/checkpoint.sh` (blob at `faf6d20`) did: the inherited
 //! environment, unchanged.
 //!
 //! No `LC_ALL`, no `GIT_NO_REPLACE_OBJECTS`, no `GIT_GRAFT_FILE` and no

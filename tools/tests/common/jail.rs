@@ -31,14 +31,15 @@ pub const FAKE_TOOLS: &[&str] = &[
     "cat", "cp", "dirname", "env", "git", "grep", "mkdir", "sleep", "sort", "tr",
 ];
 
-/// The external commands of the former `scripts/agent/brief.sh`, less `gh` and
-/// `.claude/hooks/aios` (fakes) and `sh` (always linked).
+/// The external commands of the former `scripts/agent/brief.sh` (blob at `2d4a9f7`),
+/// less `gh` and `.claude/hooks/aios` (fakes) and `sh` (always linked).
 pub const BRIEF_TOOLS: &[&str] = &[
     "awk", "basename", "cat", "date", "find", "git", "grep", "head", "jq", "ls", "mkdir", "mktemp",
     "rm", "sed", "sort", "stat", "tail", "touch", "tr", "wc",
 ];
 
-/// The external commands of the former `scripts/agent/checkpoint.sh`, less `gh`.
+/// The external commands of the former `scripts/agent/checkpoint.sh` (blob at `faf6d20`),
+/// less `gh`.
 pub const CHECKPOINT_TOOLS: &[&str] = &[
     "awk", "basename", "cut", "dirname", "git", "grep", "head", "mktemp", "paste", "rm", "sed",
     "sort", "tr", "wc",
