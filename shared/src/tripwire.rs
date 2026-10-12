@@ -189,7 +189,8 @@ pub enum WakeSource {
     ChDestroy,
     /// `wake_with_error` from a process exit (EPIPE to peers).
     PExit,
-    /// `wake_with_error` from `ipc_cancel`.
+    /// `unblock` from `ipc_cancel` (the call reads ECANCELED from its reply
+    /// slot).
     Cancel,
     /// A self-test's deliberate wake: `sched::thread_probe` and the boot
     /// self-tests' own `unblock` calls, kept apart from the real sources.

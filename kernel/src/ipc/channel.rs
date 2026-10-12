@@ -17,8 +17,7 @@ use shared::tripwire::WakeSource;
 use shared::{deadline_after, ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
-    arm_timeout, clear_own_timeout, clear_timeout, get_wakeup_error, wake_with_error, ReplySlot,
-    REPLY_SLOTS, TIMEOUT_QUEUE,
+    arm_timeout, clear_own_timeout, clear_timeout, get_wakeup_error, ReplySlot, REPLY_SLOTS,
 };
 use super::{channel_mut, direct, DeadlineArm, CHANNEL_TABLE};
 
@@ -38,6 +37,14 @@ fn deadline_from_now(timeout_ticks: u64) -> Option<u64> {
 // IpcCall — send request and block for reply (synchronous)
 // ---------------------------------------------------------------------------
 
+/// What a pass after the first found in `me`'s reply slot.
+enum ReplyRead {
+    /// The reply is written: its length. The slot has been taken.
+    Done(usize),
+    /// No reply yet, and whether a canceller has marked the call cancelled.
+    Waiting { cancelled: bool },
+}
+
 /// Synchronous IPC call: send a message and block until reply or timeout.
 ///
 /// `send_buf`/`send_len`: request payload.
@@ -49,6 +56,39 @@ fn deadline_from_now(timeout_ticks: u64) -> Option<u64> {
 /// reach `u64::MAX`, so a value from a syscall register cannot overflow (#217). `DEFAULT_TIMEOUT_TICKS` is 5 s.
 ///
 /// Returns bytes received on success, or negative error code.
+///
+/// The caller's tid comes from `sched::current_tid()` (EPERM with no current
+/// thread). The first pass writes the reply slot (`REPLY_SLOTS[me]`, with
+/// `done` and `cancelled` clear; not a waker record, so it comes before the
+/// arm), then, in one CHANNEL_TABLE critical section, fails on a lookup
+/// error, a Dead endpoint (EPIPE), another pending caller (EAGAIN) or a full
+/// ring (ENOSPC), with the slot taken back and nothing armed, or queues the
+/// request, arms (`wake::prepare_block`), publishes itself as the channel's
+/// `pending_caller` and takes the waiting receiver. After the release it
+/// publishes its timeout entry (`timeout::arm_timeout`), clears the
+/// receiver's entry and wakes it, by a direct switch when it can (the
+/// caller resumes once the reply switches back to it) and otherwise by
+/// `unblock`, and blocks. A deadline that had already passed at the entry
+/// still wakes the receiver, but cancels the arm and does not block.
+///
+/// Every later pass arms, then reads the reply slot (REPLY_SLOTS): a written
+/// reply ends the call. Then, under CHANNEL_TABLE, a destroyed channel or a
+/// Dead endpoint ends it with EPIPE, and a claimed call (`pending_caller` no
+/// longer this thread) that the slot showed cancelled ends it with
+/// ECANCELED; a claimed call that is not cancelled has a reply in flight and
+/// keeps waiting. Then the deadline: ETIMEDOUT once it has passed, otherwise
+/// the timeout entry is re-inserted if a waker removed it, and the pass
+/// blocks. The canceller claims before it sets `cancelled`, and the pass
+/// reads `cancelled` before the claim, so a cancel landing between the two
+/// reads leaves a token and is seen on the next pass. A stale wake costs one
+/// pass, never an early return.
+///
+/// The exit clears `pending_caller` if it is still this thread, takes the
+/// reply slot (a written reply wins over a concurrent timeout, cancel or
+/// destroy), removes the timeout entry, takes and discards the thread's
+/// `WAKEUP_ERRORS` code once (it decides nothing, capability-lifetime ADR
+/// §9), and cancels the arm. The first pass's failures return before the
+/// arm and take nothing.
 pub fn ipc_call(
     channel: ChannelId,
     send_buf: &[u8],
@@ -59,221 +99,238 @@ pub fn ipc_call(
         return IpcError::Enospc as i64;
     }
 
-    // Get current thread ID.
-    let caller_tid = match super::current_thread_id() {
-        Some(t) => t,
-        None => return IpcError::Eperm as i64,
+    let Some(me) = sched::current_tid() else {
+        return IpcError::Eperm as i64;
     };
 
     // Capability enforcement: check ChannelAccess (fail-closed).
-    match crate::cap::process_of_thread(caller_tid) {
-        Some(pid) => {
-            if let Err(e) = crate::cap::check_channel_access(pid, channel) {
-                return e;
-            }
-        }
-        None => return IpcError::Eperm as i64,
+    let Some(pid) = crate::cap::process_of_thread(me) else {
+        return IpcError::Eperm as i64;
+    };
+    if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+        return e;
     }
 
-    // Build message.
     let mut msg = RawMessage::EMPTY;
-    msg.sender = caller_tid;
+    msg.sender = me;
     msg.len = send_buf.len();
     msg.data[..send_buf.len()].copy_from_slice(send_buf);
 
-    // Enqueue message and register as pending caller.
-    // Also check for direct switch opportunity (receiver already waiting).
-    let direct_switch_target: Option<ThreadId>;
-    // What registering the reply deadline found: Expired means it had
-    // already passed, so no entry was published and the call does not block.
-    let arm: DeadlineArm;
-    {
-        let mut table = CHANNEL_TABLE.lock();
-        let ch = match channel_mut(&mut table, channel) {
-            Ok(c) => c,
-            Err(e) => return e,
-        };
-
-        // Check endpoint is active.
-        if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
-            return IpcError::Epipe as i64;
+    // --- Pass 1 ---
+    // The reply slot first: a replier that takes pending_caller must find it.
+    post_reply_slot(me, recv_buf);
+    let (deadline, receiver) = match call_publish(me, channel, msg, timeout_ticks) {
+        Ok(published) => published,
+        Err(code) => {
+            take_reply_slot(me);
+            return code;
         }
+    };
 
-        // Only one pending caller per channel at a time.
-        if ch.pending_caller.is_some() {
-            return IpcError::Eagain as i64;
-        }
+    #[cfg(feature = "kernel-metrics")]
+    METRICS.ipc_call.inc();
 
-        // Enqueue the request message.
-        if !ch.ring.push(msg) {
-            return IpcError::Enospc as i64;
-        }
-
-        // The reply deadline counts from the queued request. 0 is no
-        // timeout for ipc_call (capability-lifetime ADR §9), not a poll.
-        let deadline = if timeout_ticks == 0 {
-            None
-        } else {
-            deadline_from_now(timeout_ticks)
-        };
-
-        // Register as pending caller.
-        ch.pending_caller = Some(caller_tid);
-        // Tripwire N2 phase: published, timeout not yet registered.
-        tripwire::wait_published(
-            WaitSide::Call,
-            caller_tid,
-            u64::from(channel.raw()),
-            deadline.is_some(),
-        );
-
-        // Check for direct switch: is a receiver already waiting?
-        direct_switch_target = ch.waiting_receiver.take();
-
-        if let Some(recv_tid) = direct_switch_target {
-            // The receiver's wake is in flight until the direct switch or
-            // the unblock below lands.
-            tripwire::mark_wake_pending(recv_tid, WakeSource::Call);
-            // Receiver found — we'll attempt direct switch below.
-            // Don't unblock via scheduler; direct switch is faster.
-            // Clear the receiver's timeout first (they're being woken by message delivery).
-            // The result stays with this wake until its unblock fallback
-            // classifies it (tripwire N2 counters). A receiver in ipc_select
-            // took its own slot and re-scans when woken: it finds the queued
-            // request ready.
-            let recv_clear = clear_timeout(recv_tid);
-            tripwire::note_clear(recv_clear);
-            drop(table);
-
-            // Register reply buffer BEFORE direct switch (we'll be blocked).
-            {
-                let mut slots = REPLY_SLOTS.lock();
-                slots[caller_tid.0 as usize] = Some(ReplySlot {
-                    buf: recv_buf.as_mut_ptr(),
-                    buf_len: recv_buf.len(),
-                    bytes_written: 0,
-                });
-            }
-
-            // Register timeout (even with direct switch, the receiver
-            // might not reply in time). The tripwire N2 phase becomes armed
-            // inside the TIMEOUT_QUEUE critical section.
-            arm = arm_timeout(
-                caller_tid,
-                deadline,
-                IpcError::Etimedout as i64,
-                Some(WaitSide::Call),
-            );
-
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_call.inc();
-
-            if arm == DeadlineArm::Expired {
-                // The deadline has already passed and no entry was
-                // published. A direct switch would block this thread with
-                // nothing to time it out, so wake the receiver through the
-                // scheduler and end the call below as its timeout would.
-                // Otherwise attempt the direct switch, which bypasses the
-                // scheduler entirely.
-                let outcome = sched::unblock(recv_tid, WakeSource::Call);
-                tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
-            } else if direct::try_direct_switch(caller_tid, recv_tid) {
-                // We've been restored after the reply. Continue below
-                // to check result (same as scheduler-woken path).
-            } else {
-                // Direct switch failed (the receiver is not blocked in
-                // ipc_recv, a select included) — fall back to the scheduler
-                // path.
-                let outcome = sched::unblock(recv_tid, WakeSource::Call);
-                tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
-                sched::block_current(ThreadState::BlockedIpc {
-                    channel: u64::from(channel.raw()),
-                });
-            }
-        } else {
-            // No receiver waiting — use scheduler path.
-            drop(table);
-
-            // Register reply buffer.
-            {
-                let mut slots = REPLY_SLOTS.lock();
-                slots[caller_tid.0 as usize] = Some(ReplySlot {
-                    buf: recv_buf.as_mut_ptr(),
-                    buf_len: recv_buf.len(),
-                    bytes_written: 0,
-                });
-            }
-
-            // Register timeout. The tripwire N2 phase becomes armed inside
-            // the TIMEOUT_QUEUE critical section.
-            arm = arm_timeout(
-                caller_tid,
-                deadline,
-                IpcError::Etimedout as i64,
-                Some(WaitSide::Call),
-            );
-
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_call.inc();
-
-            // Block until reply or timeout, unless the deadline has already
-            // passed (no entry was published).
+    // Publish the timeout entry after the arm (ADR §8 rule 1). The tripwire
+    // N2 phase becomes armed inside the TIMEOUT_QUEUE hold.
+    let arm = arm_timeout(
+        me,
+        deadline,
+        IpcError::Etimedout as i64,
+        Some(WaitSide::Call),
+    );
+    let blocked_on = ThreadState::BlockedIpc {
+        channel: u64::from(channel.raw()),
+    };
+    if let Some(recv_tid) = receiver {
+        // The receiver is woken by the queued request: clear its timeout
+        // first. The result stays with this wake until its unblock fallback
+        // classifies it (tripwire N2 counters).
+        let recv_clear = clear_timeout(recv_tid);
+        tripwire::note_clear(recv_clear);
+        // A direct switch blocks this thread, so it needs a published
+        // deadline (or none at all). It fails, and the scheduler path
+        // follows, when the receiver is not blocked in ipc_recv (an armed
+        // receiver, or one in ipc_select) or when this thread holds a token.
+        let switched = arm == DeadlineArm::Armed && direct::try_direct_switch(me, recv_tid);
+        if !switched {
+            let outcome = sched::unblock(recv_tid, WakeSource::Call);
+            tripwire::note_send_wake(outcome, u64::from(channel.raw()), recv_clear);
             if arm == DeadlineArm::Armed {
-                sched::block_current(ThreadState::BlockedIpc {
-                    channel: u64::from(channel.raw()),
-                });
+                sched::block_current(blocked_on);
             }
         }
+    } else if arm == DeadlineArm::Armed {
+        sched::block_current(blocked_on);
+    }
+    if arm == DeadlineArm::Expired {
+        // The deadline had passed: no entry was published, and the pass did
+        // not block. The next pass re-arms before it re-checks the reply,
+        // the claim and the deadline, so cancelling loses no wake.
+        wake::cancel_block(me);
     }
 
-    // Woken up — check result. The call's tripwire N2 phase ends here.
-    tripwire::wait_ended(WaitSide::Call, caller_tid);
-    // Clear timeout entry.
-    {
-        let mut tq = TIMEOUT_QUEUE.lock();
-        tq[caller_tid.0 as usize] = None;
-    }
-
-    // Read reply bytes written.
-    let result = {
-        let mut slots = REPLY_SLOTS.lock();
-        if let Some(slot) = slots[caller_tid.0 as usize].take() {
-            slot.bytes_written as i64
-        } else {
-            0
+    // --- Passes 2 and later ---
+    let result = loop {
+        wake::prepare_block(me);
+        let cancelled = match reply_read(me) {
+            ReplyRead::Done(len) => break Ok(len),
+            ReplyRead::Waiting { cancelled } => cancelled,
+        };
+        match call_claimed(me, channel) {
+            None => break Err(IpcError::Epipe as i64),
+            Some(true) if cancelled => break Err(IpcError::Ecanceled as i64),
+            // Unclaimed, or claimed with a reply in flight: keep waiting.
+            Some(_) => {}
         }
+        let arm = arm_timeout(
+            me,
+            deadline,
+            IpcError::Etimedout as i64,
+            Some(WaitSide::Call),
+        );
+        if arm == DeadlineArm::Expired {
+            break Err(IpcError::Etimedout as i64);
+        }
+        sched::block_current(blocked_on);
     };
 
-    // Check if we were woken due to error (timeout, EPIPE, cancel).
-    // The wake_with_error function stores the error in the WAKEUP_ERRORS
-    // table (indexed by ThreadId), retrieved via get_wakeup_error(). A call
-    // whose deadline had passed at registration did not block: it takes the
-    // code all the same, as its fired timeout would have, and ends with
-    // ETIMEDOUT.
-    let error = get_wakeup_error(caller_tid);
-    let error = if arm == DeadlineArm::Expired {
-        IpcError::Etimedout as i64
-    } else {
-        error
-    };
-    if error != 0 {
-        // Clean up pending caller state.
+    // --- Exit: every exit comes from a pass that armed ---
+    // The call's tripwire N2 phase ends here.
+    tripwire::wait_ended(WaitSide::Call, me);
+    {
         let mut table = CHANNEL_TABLE.lock();
         if let Ok(ch) = channel_mut(&mut table, channel) {
-            if ch.pending_caller == Some(caller_tid) {
+            if ch.pending_caller == Some(me) {
                 ch.pending_caller = None;
             }
         }
-
-        #[cfg(feature = "kernel-metrics")]
-        if error == IpcError::Etimedout as i64 {
-            METRICS.ipc_timeout.inc();
-        }
-
-        return error;
     }
+    // A written reply wins over a concurrent timeout, cancel or destroy.
+    let result = match take_reply_slot(me) {
+        Some(slot) if slot.done => Ok(slot.bytes_written),
+        _ => result,
+    };
+    clear_own_timeout(me);
+    // Taken once per wait and discarded: it decides nothing (ADR §9).
+    daif::with_irqs_masked(|| get_wakeup_error(me));
+    wake::cancel_block(me);
 
-    result
+    #[cfg(feature = "kernel-metrics")]
+    if result == Err(IpcError::Etimedout as i64) {
+        METRICS.ipc_timeout.inc();
+    }
+    match result {
+        Ok(len) => len as i64,
+        Err(code) => code,
+    }
+}
+
+/// `ipc_call`'s first-pass critical section, under CHANNEL_TABLE: fail on a
+/// lookup error, a Dead endpoint (EPIPE), another pending caller (EAGAIN)
+/// or a full ring (ENOSPC), before any arm. Otherwise queue `msg`, arm
+/// (`wake::prepare_block`, ADR §8 rule 1), publish `me` as the pending
+/// caller and take the waiting receiver, whose wake is then in flight.
+/// Returns the call's deadline, counted from the queued request (`None`: no
+/// timeout, for 0 as for a value whose deadline would reach `u64::MAX`), and
+/// the receiver to wake.
+fn call_publish(
+    me: ThreadId,
+    channel: ChannelId,
+    msg: RawMessage,
+    timeout_ticks: u64,
+) -> Result<(Option<u64>, Option<ThreadId>), i64> {
+    let mut table = CHANNEL_TABLE.lock();
+    let ch = channel_mut(&mut table, channel)?;
+    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+        return Err(IpcError::Epipe as i64);
+    }
+    // Only one pending caller per channel at a time.
+    if ch.pending_caller.is_some() {
+        return Err(IpcError::Eagain as i64);
+    }
+    if !ch.ring.push(msg) {
+        return Err(IpcError::Enospc as i64);
+    }
+    // 0 is no timeout for ipc_call (capability-lifetime ADR §9), not a poll.
+    let deadline = if timeout_ticks == 0 {
+        None
+    } else {
+        deadline_from_now(timeout_ticks)
+    };
+    wake::prepare_block(me);
+    ch.pending_caller = Some(me);
+    // Tripwire N2 phase: published, timeout not yet registered.
+    tripwire::wait_published(
+        WaitSide::Call,
+        me,
+        u64::from(channel.raw()),
+        deadline.is_some(),
+    );
+    let receiver = ch.waiting_receiver.take();
+    if let Some(recv_tid) = receiver {
+        // The receiver's wake is in flight until the direct switch or the
+        // unblock lands.
+        tripwire::mark_wake_pending(recv_tid, WakeSource::Call);
+    }
+    Ok((deadline, receiver))
+}
+
+/// Write `me`'s reply slot for a call starting now: `recv_buf`, nothing
+/// written, neither done nor cancelled.
+fn post_reply_slot(me: ThreadId, recv_buf: &mut [u8]) {
+    if let Some(entry) = REPLY_SLOTS.lock().get_mut(me.0 as usize) {
+        *entry = Some(ReplySlot {
+            buf: recv_buf.as_mut_ptr(),
+            buf_len: recv_buf.len(),
+            bytes_written: 0,
+            done: false,
+            cancelled: false,
+        });
+    }
+}
+
+/// Take `me`'s reply slot back, if it is still there.
+fn take_reply_slot(me: ThreadId) -> Option<ReplySlot> {
+    REPLY_SLOTS
+        .lock()
+        .get_mut(me.0 as usize)
+        .and_then(Option::take)
+}
+
+/// A later pass's read of `me`'s reply slot, under REPLY_SLOTS: a written
+/// reply is taken, with its length; otherwise whether the call was
+/// cancelled. A missing slot (process exit step C dropped a victim's) reads
+/// as waiting and not cancelled: the victim is Dead, and its next
+/// `block_current` drops it.
+fn reply_read(me: ThreadId) -> ReplyRead {
+    let mut slots = REPLY_SLOTS.lock();
+    let Some(entry) = slots.get_mut(me.0 as usize) else {
+        return ReplyRead::Waiting { cancelled: false };
+    };
+    match entry {
+        Some(slot) if slot.done => {
+            let len = slot.bytes_written;
+            *entry = None;
+            ReplyRead::Done(len)
+        }
+        Some(slot) => ReplyRead::Waiting {
+            cancelled: slot.cancelled,
+        },
+        None => ReplyRead::Waiting { cancelled: false },
+    }
+}
+
+/// A later pass's channel check, under CHANNEL_TABLE: `None` when the
+/// channel is gone (destroyed, or its slot reused) or has a Dead endpoint,
+/// the call's EPIPE; otherwise whether the call has been claimed, that is,
+/// a replier or canceller has taken `pending_caller`.
+fn call_claimed(me: ThreadId, channel: ChannelId) -> Option<bool> {
+    let mut table = CHANNEL_TABLE.lock();
+    let ch = channel_mut(&mut table, channel).ok()?;
+    if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
+        return None;
+    }
+    Some(ch.pending_caller != Some(me))
 }
 
 // ---------------------------------------------------------------------------
@@ -455,15 +512,22 @@ fn recv_pass(
 ///
 /// No capability check required (ipc.md §9.1).
 /// Uses direct switch when the caller is on the same CPU (fast path).
+///
+/// The replier's tid comes from `sched::current_tid()` (EPERM with no
+/// current thread). It claims the call (takes `pending_caller`; EPROTO with
+/// none), then, under REPLY_SLOTS, copies the reply into the caller's
+/// buffer and marks the slot `done`, the condition the caller's next pass
+/// reads, then clears the caller's timeout and wakes it. A caller that is
+/// still armed (not yet blocked) fails the reply switch, and the fallback
+/// `unblock` leaves it the token.
 pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
     if reply_buf.len() > MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
 
     let caller_tid;
-    let replier_tid = match super::current_thread_id() {
-        Some(t) => t,
-        None => return IpcError::Eperm as i64,
+    let Some(replier_tid) = sched::current_tid() else {
+        return IpcError::Eperm as i64;
     };
 
     // Find and clear the pending caller.
@@ -483,19 +547,29 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
         tripwire::mark_wake_pending(caller_tid, WakeSource::Reply);
     }
 
-    // Copy reply into caller's reply buffer.
+    // Copy the reply into the caller's reply buffer and mark it done. A
+    // caller that has already left its call (its deadline passed after this
+    // claim) took its slot back, and the reply is dropped.
     {
         let mut slots = REPLY_SLOTS.lock();
-        if let Some(slot) = &mut slots[caller_tid.0 as usize] {
+        if let Some(slot) = slots
+            .get_mut(caller_tid.0 as usize)
+            .and_then(Option::as_mut)
+        {
             let copy_len = reply_buf.len().min(slot.buf_len);
-            // SAFETY: The reply buffer pointer was provided by the caller thread
-            // from its kernel stack. The caller is blocked, so the buffer is valid
-            // and not concurrently accessed. copy_len is bounded by both the reply
-            // payload size and the buffer capacity.
+            // SAFETY: The reply buffer pointer was provided by the caller
+            // thread, which is still inside ipc_call while its slot exists: it
+            // holds the buffer's &mut borrow until its exit takes the slot back
+            // under REPLY_SLOTS, held here, and it never touches the buffer in
+            // between. So the buffer is valid and not concurrently accessed.
+            // copy_len is bounded by both the reply payload size and the
+            // buffer capacity. Writing through a slot whose call had returned
+            // would corrupt a dead stack frame.
             unsafe {
                 core::ptr::copy_nonoverlapping(reply_buf.as_ptr(), slot.buf, copy_len);
             }
             slot.bytes_written = copy_len;
+            slot.done = true;
         }
     }
 
@@ -592,33 +666,56 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
 // IpcCancel — cancel a pending IpcCall
 // ---------------------------------------------------------------------------
 
-/// Cancel a pending IpcCall on a channel. The blocked caller is woken
-/// with ECANCELED.
+/// Cancel a pending IpcCall on a channel: the call returns ECANCELED, unless
+/// its reply was written first. Returns 0, also when no call is pending.
+///
+/// The canceller's tid comes from `sched::current_tid()` (EPERM with no
+/// current thread or no process). It claims the call (takes
+/// `pending_caller`), then, under REPLY_SLOTS, marks the caller's slot
+/// `cancelled` if it is present and not `done`, then wakes the caller with
+/// `unblock`. The result comes from that state (capability-lifetime ADR §9),
+/// so no error code is written: the caller's next pass reads `cancelled`
+/// before it reads the claim, and a cancel landing between those reads
+/// leaves a token.
 pub fn ipc_cancel(channel: ChannelId) -> i64 {
+    let Some(me) = sched::current_tid() else {
+        return IpcError::Eperm as i64;
+    };
+
     // Capability enforcement: check ChannelAccess (fail-closed).
-    match crate::cap::current_process_id() {
-        Some(pid) => {
-            if let Err(e) = crate::cap::check_channel_access(pid, channel) {
-                return e;
-            }
-        }
-        None => return IpcError::Eperm as i64,
+    let Some(pid) = crate::cap::process_of_thread(me) else {
+        return IpcError::Eperm as i64;
+    };
+    if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+        return e;
     }
 
-    let mut table = CHANNEL_TABLE.lock();
-    let ch = match channel_mut(&mut table, channel) {
-        Ok(c) => c,
-        Err(e) => return e,
+    // Claim the call.
+    let caller_tid = {
+        let mut table = CHANNEL_TABLE.lock();
+        let ch = match channel_mut(&mut table, channel) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let Some(caller_tid) = ch.pending_caller.take() else {
+            return 0; // Nothing to cancel.
+        };
+        // The caller's wake is in flight until the unblock below lands.
+        tripwire::mark_wake_pending(caller_tid, WakeSource::Cancel);
+        caller_tid
     };
 
-    let caller_tid = match ch.pending_caller.take() {
-        Some(t) => t,
-        None => return 0, // Nothing to cancel.
-    };
-    // The caller's wake is in flight until wake_with_error reaches unblock.
-    tripwire::mark_wake_pending(caller_tid, WakeSource::Cancel);
+    // Mark the call cancelled, after the claim. A written reply wins.
+    if let Some(slot) = REPLY_SLOTS
+        .lock()
+        .get_mut(caller_tid.0 as usize)
+        .and_then(Option::as_mut)
+    {
+        if !slot.done {
+            slot.cancelled = true;
+        }
+    }
 
-    drop(table);
-    wake_with_error(caller_tid, IpcError::Ecanceled as i64, WakeSource::Cancel);
+    sched::unblock(caller_tid, WakeSource::Cancel);
     0
 }

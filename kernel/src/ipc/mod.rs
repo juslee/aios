@@ -133,8 +133,10 @@ pub(crate) struct Channel {
     /// armed for its wait (`wake::prepare_block`) before it registers here,
     /// and blocked or about to block. A waker takes it, then wakes it.
     pub(crate) waiting_receiver: Option<ThreadId>,
-    /// Thread currently blocked in ipc_call() waiting for a reply.
-    /// The receiver uses this to deliver the reply.
+    /// Thread waiting in ipc_call() for a reply to its queued request: armed
+    /// for its wait (`wake::prepare_block`) before it registers here, with
+    /// its reply slot already written. A replier or canceller claims the
+    /// call by taking it, then writes the reply slot and wakes the caller.
     pub(crate) pending_caller: Option<ThreadId>,
     /// Process whose checked `channel_create` made this channel, or `None`
     /// for a kernel channel (`channel_create_unchecked`). The revoke cascade

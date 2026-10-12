@@ -428,7 +428,12 @@ pub fn thread_yield() {
 /// - `ConsumeToken` (the word was Woken: a waker found this thread armed and
 ///   not yet blocked): no state write and no `schedule()`. It returns at
 ///   once, and the caller re-checks its condition.
-/// - `Sleep` (Armed or Idle): write `new_state`, then `schedule()`.
+/// - `Sleep` (Armed or Idle): write `new_state`, then `schedule()`. Every
+///   caller except `exit_current` arms first, so a debug build asserts that
+///   the word was Armed (the guard, capability-lifetime ADR §9): Idle would
+///   be a block without an arm, which loses any wake that landed before it.
+///   The assertion is reached only after `AlreadyDead` and `Exit` are
+///   decided, because exit B resets a victim's word.
 ///
 /// Every case leaves through the one IRQ unmask at the end, so the token
 /// adds no `DAIFClr` site.
@@ -452,7 +457,19 @@ pub fn block_current(new_state: ThreadState) {
                 BlockAction::AlreadyDead => {}
                 BlockAction::Exit => thread.sched.state = ThreadState::Dead,
                 BlockAction::ConsumeToken => consumed = true,
-                BlockAction::Sleep => thread.sched.state = new_state,
+                BlockAction::Sleep => {
+                    // The guard (capability-lifetime ADR §9), checked only
+                    // here, after block_action has ruled out AlreadyDead: a
+                    // victim that armed before exit B reset its word reaches
+                    // this block with an Idle word, legitimately.
+                    debug_assert_ne!(
+                        word,
+                        WaitState::Idle,
+                        "block_current: tid {} blocks without prepare_block",
+                        tid.0
+                    );
+                    thread.sched.state = new_state;
+                }
             }
         }
         drop(table);

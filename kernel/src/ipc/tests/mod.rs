@@ -450,11 +450,12 @@ fn ipc_caller_entry() -> ! {
 /// lifecycle: exit, wait and reap, the exit cascade, one waiter per child,
 /// the token on the wait path, and the exit walk over channel endpoints
 /// (`lifecycle_test`, on pids 12-18), and that `notification_wait`,
-/// `ipc_select`, `sleep_ticks` and `ipc_recv` return on their own condition,
-/// failure or deadline whatever wakes them (`notify_loop_test`,
-/// `select_loop_test`, `sleep_loop_test`, `recv_loop_test`, with the wake
-/// helper pinned to CPU 2; their timed-out cases take about 2 s each, so the
-/// lines after them print after the bench). Last, it calls IpcCall on a channel
+/// `ipc_select`, `sleep_ticks`, `ipc_recv` and `ipc_call` return on their
+/// own condition, failure or deadline whatever wakes them
+/// (`notify_loop_test`, `select_loop_test`, `sleep_loop_test`,
+/// `recv_loop_test`, `call_loop_test`, with the wake helper pinned to CPU 2;
+/// their timed-out cases take about 2 s each, so the lines after them print
+/// after the bench). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
 /// wake can hide only that line.
@@ -535,6 +536,7 @@ fn ipc_timeout_entry() -> ! {
     wait_loops::select_loop_test(caller_tid);
     wait_loops::sleep_loop_test(caller_tid);
     wait_loops::recv_loop_test(caller_tid);
+    wait_loops::call_loop_test(caller_tid);
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

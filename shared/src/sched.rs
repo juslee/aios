@@ -1968,6 +1968,665 @@ mod tests {
         }
     }
 
+    // ── Wake token: the call model (capability-lifetime step 14) ────────
+
+    /// An exhaustive model of `ipc_call` against its wakers, explored over
+    /// every interleaving of their atomic steps, with the decisions taken
+    /// from [`wake_action`] and [`block_action`], as the kernel's
+    /// `channel.rs` takes them.
+    ///
+    /// - The caller's first pass writes its reply slot (under REPLY_SLOTS),
+    ///   then, in one CHANNEL_TABLE critical section, arms and publishes
+    ///   itself as `pending_caller`; then it publishes its timeout entry
+    ///   (`arm_timeout`) and blocks. A deadline already passed there
+    ///   (Expired) cancels the arm and goes to the next pass without
+    ///   blocking. The first pass's direct switch to a waiting receiver
+    ///   blocks the caller only when `block_action` says Sleep, as
+    ///   `block_current` does, so the model's block covers it.
+    /// - Every later pass arms, reads the slot (a written reply ends the
+    ///   call), then reads the claim under CHANNEL_TABLE (claimed and
+    ///   cancelled ends it with ECANCELED), then publishes the timeout entry
+    ///   again if it is missing (Expired ends it with ETIMEDOUT), and
+    ///   blocks.
+    /// - The exit clears `pending_caller` if it is still the caller, takes
+    ///   the slot (a written reply wins), removes the entry and cancels the
+    ///   arm.
+    /// - The claimer is the real replier (claims `pending_caller`, writes
+    ///   the reply and `done` if the slot is there, removes the entry, then
+    ///   `unblock`) or a canceller (claims, sets `cancelled` if the slot is
+    ///   there and not done, then `unblock`). It claims only once the
+    ///   request is queued, which is the step that publishes
+    ///   `pending_caller`.
+    /// - The timeout fires once the clock has passed the deadline and the
+    ///   entry is published, then calls `unblock`. A stale replier removes
+    ///   the entry, then calls `unblock`, at any point; one tick can preempt
+    ///   the caller.
+    mod call_model {
+        extern crate std;
+
+        use super::super::{
+            block_action, wake_action, BlockAction, ThreadState, WaitState, WakeAction,
+        };
+        use std::collections::HashSet;
+        use std::vec::Vec;
+
+        /// The state the caller blocks in.
+        const BLOCKED: ThreadState = ThreadState::BlockedIpc { channel: 0 };
+
+        /// The caller's scheduler state.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        enum Th {
+            Running,
+            Runnable,
+            Blocked,
+        }
+
+        impl Th {
+            fn state(self) -> ThreadState {
+                match self {
+                    Th::Running => ThreadState::Running,
+                    Th::Runnable => ThreadState::Runnable,
+                    Th::Blocked => BLOCKED,
+                }
+            }
+        }
+
+        /// The thread that claims the call by taking `pending_caller`.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) enum Claimer {
+            None,
+            Reply,
+            Cancel,
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub(super) struct Config {
+            pub(super) claimer: Claimer,
+            /// The call has a deadline, which the clock may pass.
+            pub(super) deadline: bool,
+            /// A stale replier removes the entry and wakes the caller.
+            pub(super) stale: bool,
+            /// Each later pass re-publishes a missing entry (negative
+            /// control: `false`, only the first pass publishes it).
+            pub(super) reinsert: bool,
+            /// The reply slot is written before `pending_caller` (negative
+            /// control: `false`, after it, today's order before the loop).
+            pub(super) slot_first: bool,
+            /// The arm is inside the critical section that publishes
+            /// `pending_caller` (negative control: `false`, after it).
+            pub(super) arm_first: bool,
+            /// The first pass's Expired path cancels its arm (negative
+            /// control: `false`).
+            pub(super) cancel_expired: bool,
+        }
+
+        /// The call's result.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub(super) enum Res {
+            Replied,
+            Canceled,
+            Timedout,
+        }
+
+        // Caller program counters.
+        const P1_SLOT: u8 = 0;
+        const P1_PUB: u8 = 1;
+        const P1_LATE: u8 = 2;
+        const P1_TIMEOUT: u8 = 3;
+        const P1_CANCEL: u8 = 4;
+        const BLOCK: u8 = 5;
+        const PASS: u8 = 6;
+        const PASS_SLOT: u8 = 7;
+        const PASS_CLAIM: u8 = 8;
+        const PASS_TIMEOUT: u8 = 9;
+        const EXIT_CHAN: u8 = 10;
+        const EXIT_SLOT: u8 = 11;
+        const EXIT_CLEAR: u8 = 12;
+        const EXIT_CANCEL: u8 = 13;
+        const DONE: u8 = 14;
+
+        // Claimer program counters.
+        const CL_CLAIM: u8 = 0;
+        const CL_SLOT: u8 = 1;
+        const CL_CLEAR: u8 = 2;
+        const CL_WAKE: u8 = 3;
+        const CL_DONE: u8 = 4;
+
+        /// One state of the model, with the history flags the checks read.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub(super) struct World {
+            th: Th,
+            on_cpu: bool,
+            queued: bool,
+            word: WaitState,
+            pc: u8,
+            /// The reply slot is present.
+            slot: bool,
+            /// The slot's `done` and `cancelled` flags.
+            done: bool,
+            cancelled: bool,
+            /// This pass's read of `cancelled`.
+            seen_cancelled: bool,
+            /// `pending_caller` is the caller.
+            pending: bool,
+            /// The timeout entry is published.
+            entry: bool,
+            /// A pass has published the entry at least once.
+            inserted: bool,
+            /// The clock has passed the deadline.
+            past: bool,
+            claimer: u8,
+            /// The replier wrote the reply (`done`).
+            pub(super) written: bool,
+            /// The canceller set `cancelled`.
+            cancel_set: bool,
+            /// Timeout: 0 = idle, 1 = owes an `unblock`.
+            timer: u8,
+            stale_done: bool,
+            /// The stale replier's removal of the entry has run.
+            stale_cleared: bool,
+            preempted: bool,
+            /// The first pass's `arm_timeout` found the deadline passed.
+            pub(super) expired_first: bool,
+            pub(super) res: Option<Res>,
+            /// The clock had passed the deadline when the call returned.
+            past_at_return: bool,
+            pub(super) consumed_token: bool,
+            /// A block to a live state found an Idle word.
+            assert_hit: bool,
+            /// `prepare_block` found a word that was not Idle.
+            pub(super) prepare_bad: bool,
+        }
+
+        impl World {
+            fn start(cfg: Config) -> World {
+                World {
+                    th: Th::Running,
+                    on_cpu: true,
+                    queued: false,
+                    word: WaitState::Idle,
+                    pc: P1_SLOT,
+                    slot: false,
+                    done: false,
+                    cancelled: false,
+                    seen_cancelled: false,
+                    pending: false,
+                    entry: false,
+                    inserted: false,
+                    past: false,
+                    claimer: if cfg.claimer == Claimer::None {
+                        CL_DONE
+                    } else {
+                        CL_CLAIM
+                    },
+                    written: false,
+                    cancel_set: false,
+                    timer: 0,
+                    stale_done: !cfg.stale,
+                    stale_cleared: false,
+                    preempted: false,
+                    expired_first: false,
+                    res: None,
+                    past_at_return: false,
+                    consumed_token: false,
+                    assert_hit: false,
+                    prepare_bad: false,
+                }
+            }
+
+            /// The call never returned: the caller is blocked for good.
+            pub(super) fn hung(&self) -> bool {
+                self.res.is_none()
+            }
+
+            /// The result does not match the state that decides it: a
+            /// written reply lost to another result, a reply or a cancel
+            /// returned that never happened, or ETIMEDOUT before the
+            /// deadline.
+            pub(super) fn wrong_result(&self) -> bool {
+                match self.res {
+                    None => false,
+                    Some(Res::Replied) => !self.written,
+                    Some(Res::Canceled) => self.written || !self.cancel_set,
+                    Some(Res::Timedout) => self.written || !self.past_at_return,
+                }
+            }
+
+            /// Token hygiene: no arm found a word that was not Idle, no
+            /// block found an Idle word, and the word is Idle once the call
+            /// has returned.
+            pub(super) fn token_ok(&self) -> bool {
+                !self.prepare_bad
+                    && !self.assert_hit
+                    && (self.res.is_none() || self.word == WaitState::Idle)
+            }
+
+            /// Nothing left once the call has returned: no `pending_caller`,
+            /// reply slot or timeout entry.
+            pub(super) fn clean(&self) -> bool {
+                self.res.is_none() || (!self.pending && !self.slot && !self.entry)
+            }
+
+            fn unblock(&mut self) {
+                match wake_action(&self.th.state(), self.word) {
+                    WakeAction::LeaveToken => self.word = WaitState::Woken,
+                    WakeAction::Enqueue => {
+                        self.th = Th::Runnable;
+                        self.queued = true;
+                    }
+                    WakeAction::Dead | WakeAction::Skip | WakeAction::TokenPending => {}
+                }
+            }
+
+            fn prepare(&mut self) {
+                if self.word != WaitState::Idle {
+                    self.prepare_bad = true;
+                }
+                self.word = WaitState::Armed;
+            }
+
+            fn post_slot(&mut self) {
+                self.slot = true;
+                self.done = false;
+                self.cancelled = false;
+            }
+
+            fn ret(&mut self, res: Res) {
+                self.res = Some(res);
+                self.past_at_return = self.past;
+                self.pc = EXIT_CHAN;
+            }
+
+            /// `arm_timeout`: whether the deadline has passed (Expired);
+            /// otherwise publish the entry if it is missing.
+            fn arm_timeout(&mut self, cfg: Config) -> bool {
+                if cfg.deadline && self.past {
+                    return true;
+                }
+                if cfg.deadline && (cfg.reinsert || !self.inserted) {
+                    self.entry = true;
+                    self.inserted = true;
+                }
+                false
+            }
+
+            fn step_caller(mut self, cfg: Config) -> Option<World> {
+                if !self.on_cpu || self.pc == DONE {
+                    return None;
+                }
+                match self.pc {
+                    P1_SLOT => {
+                        if cfg.slot_first {
+                            self.post_slot();
+                        }
+                        self.pc = P1_PUB;
+                    }
+                    P1_PUB => {
+                        // One CHANNEL_TABLE section: queue the request, arm,
+                        // publish pending_caller.
+                        if cfg.arm_first {
+                            self.prepare();
+                        }
+                        self.pending = true;
+                        self.pc = if cfg.slot_first && cfg.arm_first {
+                            P1_TIMEOUT
+                        } else {
+                            P1_LATE
+                        };
+                    }
+                    P1_LATE => {
+                        if !cfg.slot_first {
+                            self.post_slot();
+                        }
+                        if !cfg.arm_first {
+                            self.prepare();
+                        }
+                        self.pc = P1_TIMEOUT;
+                    }
+                    P1_TIMEOUT => {
+                        if self.arm_timeout(cfg) {
+                            self.expired_first = true;
+                            self.pc = if cfg.cancel_expired { P1_CANCEL } else { PASS };
+                        } else {
+                            self.pc = BLOCK;
+                        }
+                    }
+                    P1_CANCEL => {
+                        self.word = WaitState::Idle;
+                        self.pc = PASS;
+                    }
+                    BLOCK => {
+                        let old = self.word;
+                        self.word = WaitState::Idle;
+                        let action = block_action(&self.th.state(), old, &BLOCKED);
+                        self.pc = PASS;
+                        match action {
+                            BlockAction::ConsumeToken => self.consumed_token = true,
+                            BlockAction::Sleep => {
+                                if old == WaitState::Idle {
+                                    self.assert_hit = true;
+                                }
+                                self.th = Th::Blocked;
+                                self.on_cpu = false;
+                            }
+                            BlockAction::AlreadyDead | BlockAction::Exit => {
+                                panic!("the caller is never Dead")
+                            }
+                        }
+                    }
+                    PASS => {
+                        self.prepare();
+                        self.pc = PASS_SLOT;
+                    }
+                    PASS_SLOT => {
+                        // REPLY_SLOTS: a written reply is taken and ends the
+                        // call; otherwise read `cancelled`.
+                        if self.slot && self.done {
+                            self.slot = false;
+                            self.ret(Res::Replied);
+                        } else {
+                            self.seen_cancelled = self.slot && self.cancelled;
+                            self.pc = PASS_CLAIM;
+                        }
+                    }
+                    PASS_CLAIM => {
+                        // CHANNEL_TABLE: claimed and cancelled ends the call;
+                        // claimed alone is a reply in flight.
+                        if !self.pending && self.seen_cancelled {
+                            self.ret(Res::Canceled);
+                        } else {
+                            self.pc = PASS_TIMEOUT;
+                        }
+                    }
+                    PASS_TIMEOUT => {
+                        if self.arm_timeout(cfg) {
+                            self.ret(Res::Timedout);
+                        } else {
+                            self.pc = BLOCK;
+                        }
+                    }
+                    EXIT_CHAN => {
+                        self.pending = false;
+                        self.pc = EXIT_SLOT;
+                    }
+                    EXIT_SLOT => {
+                        // A written reply wins.
+                        if self.slot && self.done {
+                            self.res = Some(Res::Replied);
+                        }
+                        self.slot = false;
+                        self.pc = EXIT_CLEAR;
+                    }
+                    EXIT_CLEAR => {
+                        self.entry = false;
+                        self.pc = EXIT_CANCEL;
+                    }
+                    _ => {
+                        self.word = WaitState::Idle;
+                        self.pc = DONE;
+                    }
+                }
+                Some(self)
+            }
+
+            fn step_claimer(mut self, cfg: Config) -> Option<World> {
+                match self.claimer {
+                    // The claim needs the queued request, published with
+                    // pending_caller.
+                    CL_CLAIM if self.pending => {
+                        self.pending = false;
+                        self.claimer = CL_SLOT;
+                    }
+                    CL_SLOT => {
+                        if self.slot && !self.done {
+                            if cfg.claimer == Claimer::Reply {
+                                self.done = true;
+                                self.written = true;
+                            } else {
+                                self.cancelled = true;
+                                self.cancel_set = true;
+                            }
+                        }
+                        self.claimer = if cfg.claimer == Claimer::Reply {
+                            CL_CLEAR
+                        } else {
+                            CL_WAKE
+                        };
+                    }
+                    CL_CLEAR => {
+                        self.entry = false;
+                        self.claimer = CL_WAKE;
+                    }
+                    CL_WAKE => {
+                        self.unblock();
+                        self.claimer = CL_DONE;
+                    }
+                    _ => return None,
+                }
+                Some(self)
+            }
+
+            fn step_clock(mut self, cfg: Config) -> Option<World> {
+                if !cfg.deadline || self.past {
+                    return None;
+                }
+                self.past = true;
+                Some(self)
+            }
+
+            fn step_timer(mut self) -> Option<World> {
+                match self.timer {
+                    0 if self.entry && self.past => {
+                        self.entry = false;
+                        self.timer = 1;
+                    }
+                    1 => {
+                        self.unblock();
+                        self.timer = 0;
+                    }
+                    _ => return None,
+                }
+                Some(self)
+            }
+
+            fn step_stale(mut self) -> Option<World> {
+                if self.stale_done {
+                    return None;
+                }
+                if !self.stale_cleared {
+                    self.entry = false;
+                    self.stale_cleared = true;
+                } else {
+                    self.unblock();
+                    self.stale_done = true;
+                }
+                Some(self)
+            }
+
+            fn step_preempt(mut self) -> Option<World> {
+                if !self.on_cpu || self.th != Th::Running || self.preempted || self.pc == DONE {
+                    return None;
+                }
+                self.th = Th::Runnable;
+                self.queued = true;
+                self.on_cpu = false;
+                self.preempted = true;
+                Some(self)
+            }
+
+            fn step_resume(mut self) -> Option<World> {
+                if self.on_cpu || !self.queued || self.th != Th::Runnable {
+                    return None;
+                }
+                self.th = Th::Running;
+                self.queued = false;
+                self.on_cpu = true;
+                Some(self)
+            }
+        }
+
+        /// The final states of one exploration.
+        pub(super) type Finals = Vec<World>;
+
+        /// Every final state (no step can run) reachable from the start.
+        pub(super) fn explore(cfg: Config) -> Finals {
+            let mut seen = HashSet::new();
+            let mut finals = Vec::new();
+            let mut stack = Vec::from([World::start(cfg)]);
+            while let Some(w) = stack.pop() {
+                if !seen.insert(w) {
+                    continue;
+                }
+                let next = [
+                    w.step_caller(cfg),
+                    w.step_claimer(cfg),
+                    w.step_clock(cfg),
+                    w.step_timer(),
+                    w.step_stale(),
+                    w.step_preempt(),
+                    w.step_resume(),
+                ];
+                let mut any = false;
+                for n in next.into_iter().flatten() {
+                    any = true;
+                    stack.push(n);
+                }
+                if !any {
+                    finals.push(w);
+                }
+            }
+            finals
+        }
+    }
+
+    use call_model::{Claimer, Res as CallRes};
+
+    /// The converted call site's configuration with every check on, for
+    /// `claimer` and `deadline`.
+    fn call_config(claimer: Claimer, deadline: bool) -> call_model::Config {
+        call_model::Config {
+            claimer,
+            deadline,
+            stale: true,
+            reinsert: true,
+            slot_first: true,
+            arm_first: true,
+            cancel_expired: true,
+        }
+    }
+
+    /// The converted call site with the real wakers: every final state
+    /// passes every check, and the model reaches the token path.
+    fn check_call_site(claimer: Claimer, deadline: bool) -> call_model::Finals {
+        let finals = call_model::explore(call_config(claimer, deadline));
+        assert!(!finals.is_empty());
+        for w in &finals {
+            assert!(!w.hung(), "hung: {w:?}");
+            assert!(!w.wrong_result(), "wrong result: {w:?}");
+            assert!(w.token_ok(), "token: {w:?}");
+            assert!(w.clean(), "left behind: {w:?}");
+        }
+        assert!(finals.iter().any(|w| w.consumed_token), "{claimer:?}");
+        let want = match claimer {
+            Claimer::Reply => Some(CallRes::Replied),
+            Claimer::Cancel => Some(CallRes::Canceled),
+            Claimer::None => None,
+        };
+        if want.is_some() {
+            assert!(finals.iter().any(|w| w.res == want), "{claimer:?}");
+        }
+        if deadline {
+            assert!(finals.iter().any(|w| w.res == Some(CallRes::Timedout)));
+            // The first pass's Expired path, which cancels its arm and goes
+            // on without blocking, is reached.
+            assert!(finals.iter().any(|w| w.expired_first));
+        }
+        finals
+    }
+
+    #[test]
+    fn call_model_reply_never_lost() {
+        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
+        for &deadline in deadlines {
+            let finals = check_call_site(Claimer::Reply, deadline);
+            if deadline {
+                // The first pass's Expired path with a concurrent reply
+                // (the reply wins) and without one.
+                assert!(finals
+                    .iter()
+                    .any(|w| w.expired_first && w.res == Some(CallRes::Replied)));
+                assert!(finals
+                    .iter()
+                    .any(|w| w.expired_first && w.res == Some(CallRes::Timedout)));
+            }
+        }
+    }
+
+    #[test]
+    fn call_model_cancel_never_lost() {
+        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
+        for &deadline in deadlines {
+            check_call_site(Claimer::Cancel, deadline);
+        }
+    }
+
+    #[test]
+    fn call_model_timeout_with_a_stale_replier() {
+        // No server: a stale replier removes the entry and wakes the call,
+        // and only the next pass's re-insert ends it on time.
+        check_call_site(Claimer::None, true);
+    }
+
+    #[test]
+    fn call_model_slot_after_pending_caller_loses_the_reply() {
+        // Negative control (the order before the loop): the replier claims
+        // the call before the slot exists, writes nothing, and the caller
+        // waits for good with its reply in flight.
+        let finals = call_model::explore(call_model::Config {
+            stale: false,
+            slot_first: false,
+            ..call_config(Claimer::Reply, false)
+        });
+        assert!(finals.iter().any(|w| w.hung()));
+    }
+
+    #[test]
+    fn call_model_arm_after_pending_caller_loses_the_wake() {
+        // Negative control: the reply lands before the arm, finds the caller
+        // Running with an Idle word and skips it, and the caller then blocks
+        // with nothing to wake it.
+        let finals = call_model::explore(call_model::Config {
+            stale: false,
+            arm_first: false,
+            ..call_config(Claimer::Reply, false)
+        });
+        assert!(finals.iter().any(|w| w.hung()));
+    }
+
+    #[test]
+    fn call_model_without_the_reinsert_hangs() {
+        // Negative control: only the first pass publishes the entry, so the
+        // stale replier's clear and wake leave the caller blocked with no
+        // entry and no wake.
+        let finals = call_model::explore(call_model::Config {
+            reinsert: false,
+            ..call_config(Claimer::None, true)
+        });
+        assert!(finals.iter().any(|w| w.hung()));
+    }
+
+    #[test]
+    fn call_model_expired_without_cancel_block_finds_armed() {
+        // Negative control: the first pass's Expired path goes on without
+        // cancelling its arm, so the next pass's prepare_block finds Armed.
+        let finals = call_model::explore(call_model::Config {
+            stale: false,
+            cancel_expired: false,
+            ..call_config(Claimer::None, true)
+        });
+        assert!(finals.iter().any(|w| w.prepare_bad));
+    }
+
     // ── Process lifecycle ───────────────────────────────────────────────
 
     /// One value of every `ProcessState`, with two published codes.

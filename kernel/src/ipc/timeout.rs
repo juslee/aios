@@ -39,12 +39,13 @@ pub(super) static TIMEOUT_QUEUE: IrqSpinLock<[Option<TimeoutEntry>; MAX_THREADS]
 // Reply slots
 // ---------------------------------------------------------------------------
 
-/// Reply buffer: when a caller blocks in ipc_call(), it registers where
-/// the reply should be written. Protected by the CHANNEL_TABLE lock
-/// (reply is written while the lock is held in ipc_reply).
+/// Reply buffer and call state: an `ipc_call` writes its slot before it
+/// arms and publishes itself as the channel's pending caller, and takes it
+/// back at its exit. Not a waker record: the replier and the canceller find
+/// the caller through `pending_caller`, then write here.
 ///
-/// Per-thread: index = thread table index. Only one outstanding ipc_call
-/// per thread is possible (thread is blocked).
+/// Per-thread: index = thread table index. A thread has at most one
+/// `ipc_call` in progress, so at most one slot.
 pub(super) struct ReplySlot {
     /// Pointer to the caller's reply buffer (kernel VA).
     pub(super) buf: *mut u8,
@@ -52,14 +53,26 @@ pub(super) struct ReplySlot {
     pub(super) buf_len: usize,
     /// Actual bytes written by the replier (set by ipc_reply).
     pub(super) bytes_written: usize,
+    /// The replier has written the reply (`ipc_reply`). A written reply wins
+    /// over a concurrent timeout, cancel or destroy.
+    pub(super) done: bool,
+    /// A canceller claimed the call (`ipc_cancel`, after taking
+    /// `pending_caller`) before any reply was written.
+    pub(super) cancelled: bool,
 }
 
-// SAFETY: ReplySlot contains a *mut u8 pointing to a blocked thread's kernel
-// stack buffer. The thread is blocked (cannot run) while the slot is active,
-// so the pointer is stable and exclusively accessed via REPLY_SLOTS lock.
+// SAFETY: ReplySlot contains a *mut u8 pointing to the reply buffer of a
+// thread inside ipc_call, which holds the buffer's &mut borrow until it has
+// taken the slot back under REPLY_SLOTS, so the pointer is valid while the
+// slot exists and is written only under the REPLY_SLOTS lock. A slot left
+// behind after its call returned would let a replier write into a dead stack
+// frame; ipc_call's every exit takes it, and process exit step C drops a
+// victim's.
 unsafe impl Send for ReplySlot {}
 unsafe impl Sync for ReplySlot {}
 
+/// The reply slots, by thread slot. A plain `spin::Mutex`: no IRQ path takes
+/// it, and no other lock is taken while it is held.
 pub(super) static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
     const NONE: Option<ReplySlot> = None;
     Mutex::new([NONE; MAX_THREADS])
@@ -69,10 +82,12 @@ pub(super) static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
 // Per-thread wakeup error tracking
 // ---------------------------------------------------------------------------
 
-/// Per-thread wakeup error codes. Set by wake_with_error(), read by
-/// the woken thread to distinguish normal wakeup from error wakeup. An
-/// IRQ-class lock (`sync::IrqSpinLock`): `check_timeouts` wakes threads with
-/// errors from the timer IRQ.
+/// Per-thread wakeup error codes, set by wake_with_error(). They decide
+/// nothing (capability-lifetime ADR §9): a wait's result comes from object
+/// state and its own deadline, and `ipc_call`, `ipc_recv` and `ipc_select`
+/// take their code once at exit and discard it, so a stale code never
+/// reaches a later wait's result. An IRQ-class lock (`sync::IrqSpinLock`):
+/// `check_timeouts` wakes threads with errors from the timer IRQ.
 static WAKEUP_ERRORS: IrqSpinLock<[i64; MAX_THREADS]> =
     IrqSpinLock::new(LockClass::WakeupErrors, [0; MAX_THREADS]);
 
@@ -147,11 +162,13 @@ pub fn current_thread_id() -> Option<ThreadId> {
 // Helper: wake a thread with an error code
 // ---------------------------------------------------------------------------
 
-/// Wake a blocked thread and signal an error condition.
+/// Wake a blocked thread with an error code (a timeout, a destroyed channel,
+/// a process exit).
 ///
-/// We store the error code in a per-thread wakeup error slot so the
-/// thread can check it after being unblocked. Also clears any pending
-/// timeout entry to prevent stale timeouts from firing later.
+/// The code goes into the thread's `WAKEUP_ERRORS` slot, where the woken
+/// wait discards it: the wait re-checks its own state and deadline. Also
+/// clears any pending timeout entry to prevent stale timeouts from firing
+/// later.
 ///
 /// `src` names the caller for the tripwire's per-source `unblock` counters.
 pub(crate) fn wake_with_error(tid: ThreadId, error: i64, src: WakeSource) {
@@ -161,8 +178,8 @@ pub(crate) fn wake_with_error(tid: ThreadId, error: i64, src: WakeSource) {
         errors[tid.0 as usize] = error;
     }
     // Clear any pending timeout — the thread is being woken for a
-    // different reason (cancel, destroy, etc.), so the timeout must
-    // not fire later and overwrite this error code. The timeout's own
+    // different reason (a destroy or an exit), so the timeout need not fire
+    // later as one more stale wake. The timeout's own
     // wake (`check_timeouts`) has already taken the entry, so a busy clear
     // there leaves nothing behind and is not a `ctbusy`.
     let clear = clear_timeout(tid);
@@ -172,17 +189,19 @@ pub(crate) fn wake_with_error(tid: ThreadId, error: i64, src: WakeSource) {
     sched::unblock(tid, src);
 }
 
-/// Get and clear the wakeup error for a thread. Returns 0 if no error.
+/// Get and clear the wakeup error for a thread. Returns 0 if no error, and
+/// for an out-of-range `tid`, which has no slot: its callers run it inside
+/// `daif::with_irqs_masked`, where a bounds panic would halt the CPU.
 pub(super) fn get_wakeup_error(tid: ThreadId) -> i64 {
-    let mut errors = WAKEUP_ERRORS.lock();
-    let error = errors[tid.0 as usize];
-    errors[tid.0 as usize] = 0;
-    error
+    WAKEUP_ERRORS
+        .lock()
+        .get_mut(tid.0 as usize)
+        .map_or(0, core::mem::take)
 }
 
 /// Clear any pending timeout entry for a thread.
 /// Called when a thread is woken by a non-timeout path (reply, send,
-/// cancel, destroy) to prevent stale timeouts from firing later.
+/// destroy, exit) to prevent stale timeouts from firing later.
 ///
 /// Returns what it found, for the tripwire's N2 classification: the reply,
 /// send and call wakers pass their own result to it. A busy TIMEOUT_QUEUE
@@ -200,8 +219,8 @@ pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
         };
     }
     // If the lock is contended (IRQ handler running check_timeouts),
-    // skip — the timeout handler will see the thread is already awake
-    // and the wakeup error slot is already set, so it's benign.
+    // skip: an entry left behind fires later as a stale wake, which costs
+    // its wait one more pass, never a wrong result.
     ClearResult::Busy
 }
 
@@ -241,6 +260,14 @@ pub(super) fn clear_reply_slot(tid: ThreadId) {
     }
 }
 
+/// Whether `tid` has a reply slot. For self-tests.
+pub(super) fn has_reply_slot(tid: ThreadId) -> bool {
+    REPLY_SLOTS
+        .lock()
+        .get(tid.0 as usize)
+        .is_some_and(Option::is_some)
+}
+
 /// Publish `me`'s wait deadline in TIMEOUT_QUEUE, after the arm (ADR §8
 /// rule 1), where `check_timeouts` wakes it with `code`.
 ///
@@ -253,8 +280,8 @@ pub(super) fn clear_reply_slot(tid: ThreadId) {
 /// unless a waker removed it) and the result is [`DeadlineArm::Armed`].
 /// `None` (no deadline) inserts nothing and gives [`DeadlineArm::Armed`].
 /// An out-of-range `me`, whose entry no slot can hold, counts `badtid` and
-/// gives [`DeadlineArm::Expired`], so the wait ends instead of blocking with
-/// nothing to time it out.
+/// gives [`DeadlineArm::Expired`] whatever its deadline, `None` included, so
+/// the wait ends instead of blocking with nothing to end it.
 ///
 /// `side` is the tripwire N2 phase of an `ipc_call` or `ipc_recv`, moved to
 /// armed inside the same hold whatever the result, or at the point where it
@@ -267,6 +294,12 @@ pub(super) fn arm_timeout(
     code: i64,
     side: Option<WaitSide>,
 ) -> DeadlineArm {
+    // No slot can hold the entry, so nothing would end the wait: fail closed
+    // rather than block unbounded.
+    if me.0 as usize >= MAX_THREADS {
+        tripwire::bump(Key::Badtid, 0);
+        return DeadlineArm::Expired;
+    }
     let Some(wake_at_tick) = deadline else {
         if let Some(side) = side {
             tripwire::wait_armed(side, me, false);
@@ -275,24 +308,19 @@ pub(super) fn arm_timeout(
     };
     daif::with_irqs_masked(|| {
         let mut tq = TIMEOUT_QUEUE.lock();
-        let arm = match tq.get_mut(me.0 as usize) {
-            // No slot can hold the entry, so nothing would end the wait:
-            // fail closed rather than block unbounded.
-            None => {
-                tripwire::bump_masked(Key::Badtid, 0);
-                DeadlineArm::Expired
+        let arm = if TICK_COUNT.load(Ordering::Relaxed) >= wake_at_tick {
+            DeadlineArm::Expired
+        } else {
+            // Insert only into an empty slot: a later pass of the same wait
+            // keeps its own entry if no waker removed it.
+            if let Some(slot @ None) = tq.get_mut(me.0 as usize) {
+                *slot = Some(TimeoutEntry {
+                    tid: me,
+                    wake_at_tick,
+                    error_code: code,
+                });
             }
-            Some(_) if TICK_COUNT.load(Ordering::Relaxed) >= wake_at_tick => DeadlineArm::Expired,
-            Some(slot) => {
-                if slot.is_none() {
-                    *slot = Some(TimeoutEntry {
-                        tid: me,
-                        wake_at_tick,
-                        error_code: code,
-                    });
-                }
-                DeadlineArm::Armed
-            }
+            DeadlineArm::Armed
         };
         if let Some(side) = side {
             tripwire::wait_armed(side, me, true);

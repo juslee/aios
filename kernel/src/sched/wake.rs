@@ -26,7 +26,11 @@
 //!    `PROCESS_WAITERS`). The arm
 //!    is sequenced before the waiter's release of that lock, and the waker
 //!    reads the word after its acquire of it, so the lock's
-//!    release/acquire pair orders the arm before the read.
+//!    release/acquire pair orders the arm before the read. An `ipc_call`
+//!    past its first pass publishes no record again: it re-arms, then reads
+//!    its reply slot under `REPLY_SLOTS`, where the replier and the
+//!    canceller write before their `unblock`, so that lock orders the
+//!    re-arm before a waker that the read missed.
 //! 2. **A token is never lost against a block.** The waker's
 //!    compare-and-swap ([`settle_wake`], in `unblock`) and the block site's
 //!    consume swap ([`take`], in `block_current` and `try_direct_switch`)
