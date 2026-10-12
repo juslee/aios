@@ -11,7 +11,7 @@ use shared::{
 
 use crate::cap::revoke_in_process;
 
-use super::bad_pid::{creation_cap, holds_live, revoke_region_access, token_id};
+use super::bad_pid::{creation_cap, holds_live, token_id};
 use super::select_cap::SelectCapChannels;
 use super::TEST_PID;
 
@@ -229,7 +229,7 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     // minted SharedMemoryAccess, its child, which the map needs, and would
     // destroy the region that checks 5 and 6 unmap.
     let created = kit.shmem_create(PAGE, READ);
-    let Ok((region, _access)) = created else {
+    let Ok((region, access)) = created else {
         let _ = revoke_in_process(pid, create_token);
         return checks;
     };
@@ -246,11 +246,15 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
             reason: "not mapped",
         });
     let mapped = kit.shmem_map(region, 0, READ).is_ok();
-    // The creator's minted SharedMemoryAccess is revoked before the unmap
-    // that frees the region, as in the other shared memory self-tests. The
-    // capability is checked before the duplicate-mapping check, so the
-    // repeated map fails for the missing right, naming this region.
-    revoke_region_access(pid, region);
+    // The creator's minted SharedMemoryAccess, process 1's only token for
+    // the region, is revoked through revoke_in_process before the unmap that
+    // frees the region. It is a child of the create token, not a region's
+    // creation_cap, so its cascade destroys nothing. The capability is
+    // checked before the duplicate-mapping check, so the repeated map fails
+    // for the missing right, naming this region.
+    if let Some(access_token) = token_id(pid, access) {
+        let _ = revoke_in_process(pid, access_token);
+    }
     // USER is an undefined flag bit for shmem_map too, rejected before the
     // capability check: without the decoder this map would be
     // CapabilityDenied, and with the grant still held it would be the

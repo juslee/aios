@@ -15,6 +15,13 @@ use crate::syscall::IpcError;
 /// Maximum capabilities per process (model/capabilities.md §3.2).
 pub const MAX_CAPS_PER_PROCESS: usize = 256;
 
+/// Free slots of a process's capability table that a token another process
+/// causes to be granted (a `SharedMemoryShare` to a foreign target) may not
+/// use (capability-lifetime ADR §4). A share is refused with ENOSPC when the
+/// target has this many free slots or fewer, so another process can never
+/// fill a table and block its owner's own mints, which need a slot.
+pub const CAP_FOREIGN_RESERVE: usize = 64;
+
 // ---------------------------------------------------------------------------
 // Identity types
 // ---------------------------------------------------------------------------
@@ -116,7 +123,7 @@ impl Capability {
 // ---------------------------------------------------------------------------
 
 /// A capability token granting a specific permission to a process.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityToken {
     /// Unique token identifier.
     pub id: CapabilityTokenId,
@@ -143,6 +150,34 @@ impl CapabilityToken {
     /// `expires_at_tick`, not after it.
     pub fn is_expired(&self, now_tick: u64) -> bool {
         self.expires_at_tick.is_some_and(|exp| now_tick >= exp)
+    }
+
+    /// The token a share delegates from this one to `holder`, another
+    /// process (capability-lifetime ADR §4): the same capability, not
+    /// delegatable, this token as its `parent_token`, this token's expiry
+    /// (never widened), created at `now_tick`, with id `id`.
+    ///
+    /// The child lives in `holder`'s table and its parent in this token's
+    /// holder's, so revoking this token does not reach it
+    /// (`CapabilityTable::revoke` cascades within one table); the region
+    /// cascade, which destroys the object, makes it stale instead.
+    pub fn delegated_child(
+        &self,
+        holder: ProcessId,
+        id: CapabilityTokenId,
+        now_tick: u64,
+    ) -> CapabilityToken {
+        CapabilityToken {
+            id,
+            capability: self.capability,
+            holder,
+            delegatable: false,
+            revoked: false,
+            parent_token: Some(self.id),
+            usage_count: 0,
+            created_at_tick: now_tick,
+            expires_at_tick: self.expires_at_tick,
+        }
     }
 }
 
@@ -231,6 +266,21 @@ impl CapabilityTable {
             }
         }
         None
+    }
+
+    /// The live, unexpired token for `cap` that a share delegates from: a
+    /// delegatable match if the table holds one, otherwise the first match,
+    /// so a share is not refused because a non-delegatable token for the
+    /// same object happens to come first. None if no live token permits
+    /// `cap`.
+    pub fn delegation_parent(&self, cap: &Capability, now_tick: u64) -> Option<&CapabilityToken> {
+        let mut live = self
+            .tokens
+            .iter()
+            .flatten()
+            .filter(|t| !t.revoked && !t.is_expired(now_tick) && t.capability.permits(cap));
+        let first = live.clone().next();
+        live.find(|t| t.delegatable).or(first)
     }
 
     /// Revoke a token by ID, cascading to all children.
@@ -414,6 +464,83 @@ impl CapabilityTable {
     pub fn tokens(&self) -> &[Option<CapabilityToken>; MAX_CAPS_PER_PROCESS] {
         &self.tokens
     }
+}
+
+// ---------------------------------------------------------------------------
+// Delegation (SharedMemoryShare)
+// ---------------------------------------------------------------------------
+
+/// What a `SharedMemoryShare` found, read by the kernel under one
+/// `PROCESS_TABLE → SHARED_REGION_TABLE` hold, for `share_decision`.
+pub struct ShareFacts<'a> {
+    /// The process asking to share.
+    pub caller: ProcessId,
+    /// The process to receive access; may be `caller`.
+    pub target: ProcessId,
+    /// Whether `caller` is a live process.
+    pub caller_alive: bool,
+    /// The caller's live token for `SharedMemoryAccess(full id)`
+    /// (`CapabilityTable::delegation_parent`), or None.
+    pub caller_token: Option<&'a CapabilityToken>,
+    /// The region check, the ADR's step 3: `Ok`, or EPIPE for a slot that is
+    /// empty, draining or of another generation, or EPERM when `caller` is not
+    /// the region's creator.
+    pub region: Result<(), i64>,
+    /// Whether `target` is a live process.
+    pub target_alive: bool,
+    /// Whether `target` already holds a live token for the full id.
+    pub target_holds: bool,
+    /// Free slots in `target`'s capability table.
+    pub target_free_slots: usize,
+}
+
+/// What `share_decision` allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareVerdict<'a> {
+    /// The target already holds a live token for the region: `Ok`, and
+    /// nothing is granted (a repeat share, and every self-share).
+    AlreadyHeld,
+    /// Grant the target `parent.delegated_child(..)`, a non-delegatable
+    /// child of the caller's token.
+    Grant {
+        /// The caller's token the child is delegated from.
+        parent: &'a CapabilityToken,
+    },
+}
+
+/// The verdict on a `SharedMemoryShare` (capability-lifetime ADR §4, steps
+/// 2-4; the malformed-argument EINVALs of step 1 come before any lock). In
+/// order:
+///
+/// 1. EPERM: the caller is not alive; it holds no live token for the full
+///    id; or the target is another process and that token is not
+///    delegatable.
+/// 2. The region check (`facts.region`): EPIPE or EPERM as the kernel found.
+/// 3. EPERM if the target is not alive. `AlreadyHeld` if the target already
+///    holds a live token for the full id (idempotent). ENOSPC if the target
+///    is another process with `CAP_FOREIGN_RESERVE` or fewer free slots, or
+///    is the caller with none. Otherwise `Grant`.
+///
+/// Pure: the kernel reads every fact and applies the verdict in one hold.
+pub fn share_decision<'a>(facts: &ShareFacts<'a>) -> Result<ShareVerdict<'a>, i64> {
+    let eperm = Err(IpcError::Eperm as i64);
+    let foreign = facts.target != facts.caller;
+    let parent = match facts.caller_token {
+        Some(t) if facts.caller_alive && (t.delegatable || !foreign) => t,
+        _ => return eperm,
+    };
+    facts.region?;
+    if !facts.target_alive {
+        return eperm;
+    }
+    if facts.target_holds {
+        return Ok(ShareVerdict::AlreadyHeld);
+    }
+    let reserve = if foreign { CAP_FOREIGN_RESERVE } else { 0 };
+    if facts.target_free_slots <= reserve {
+        return Err(IpcError::Enospc as i64);
+    }
+    Ok(ShareVerdict::Grant { parent })
 }
 
 // ---------------------------------------------------------------------------
@@ -1608,5 +1735,177 @@ mod tests {
         assert!(!Capability::CompositorCreateSurface
             .can_attenuate_to(&Capability::ChannelAccess(ChannelId::new(0, ID_GEN_FIRST))));
         assert!(!Capability::ChannelCreate.can_attenuate_to(&Capability::CompositorCreateSurface));
+    }
+
+    // --- Delegation: share_decision, delegation_parent, delegated_child ---
+
+    fn region_access() -> Capability {
+        Capability::SharedMemoryAccess(SharedMemoryId::new(3, ID_GEN_FIRST))
+    }
+
+    /// A caller token for `region_access()`, delegatable or not.
+    fn caller_token(delegatable: bool) -> CapabilityToken {
+        let mut t = make_token(10, region_access(), 1);
+        t.delegatable = delegatable;
+        t
+    }
+
+    /// Facts for a share from pid 1 to `target` that every check passes,
+    /// with the target holding no token and `free` free slots.
+    fn facts(token: &CapabilityToken, target: u32, free: usize) -> ShareFacts<'_> {
+        ShareFacts {
+            caller: ProcessId(1),
+            target: ProcessId(target),
+            caller_alive: true,
+            caller_token: Some(token),
+            region: Ok(()),
+            target_alive: true,
+            target_holds: false,
+            target_free_slots: free,
+        }
+    }
+
+    #[test]
+    fn share_decision_foreign_reserve_boundary() {
+        let token = caller_token(true);
+        assert_eq!(CAP_FOREIGN_RESERVE, 64);
+        assert_eq!(
+            share_decision(&facts(&token, 2, 64)),
+            Err(IpcError::Enospc as i64)
+        );
+        assert_eq!(
+            share_decision(&facts(&token, 2, 65)),
+            Ok(ShareVerdict::Grant { parent: &token })
+        );
+        assert_eq!(
+            share_decision(&facts(&token, 2, 0)),
+            Err(IpcError::Enospc as i64)
+        );
+    }
+
+    #[test]
+    fn share_decision_self_share_ignores_the_reserve() {
+        let token = caller_token(false);
+        // A self-target is not foreign: only a full table refuses it.
+        assert_eq!(
+            share_decision(&facts(&token, 1, 1)),
+            Ok(ShareVerdict::Grant { parent: &token })
+        );
+        assert_eq!(
+            share_decision(&facts(&token, 1, 0)),
+            Err(IpcError::Enospc as i64)
+        );
+    }
+
+    #[test]
+    fn share_decision_delegatable_rule() {
+        let eperm = Err(IpcError::Eperm as i64);
+        let plain = caller_token(false);
+        let delegatable = caller_token(true);
+        // Another target needs a delegatable token.
+        assert_eq!(share_decision(&facts(&plain, 2, 200)), eperm);
+        assert_eq!(
+            share_decision(&facts(&delegatable, 2, 200)),
+            Ok(ShareVerdict::Grant {
+                parent: &delegatable
+            })
+        );
+        // The caller itself does not: it already holds the token, so the
+        // share is a no-op either way.
+        for token in [&plain, &delegatable] {
+            let mut f = facts(token, 1, 200);
+            f.target_holds = true;
+            assert_eq!(share_decision(&f), Ok(ShareVerdict::AlreadyHeld));
+        }
+    }
+
+    #[test]
+    fn share_decision_idempotent() {
+        let token = caller_token(true);
+        let mut f = facts(&token, 2, 200);
+        f.target_holds = true;
+        assert_eq!(share_decision(&f), Ok(ShareVerdict::AlreadyHeld));
+        // A target that already holds the token needs no slot, so the reserve
+        // does not refuse a repeat share.
+        f.target_free_slots = 0;
+        assert_eq!(share_decision(&f), Ok(ShareVerdict::AlreadyHeld));
+    }
+
+    #[test]
+    fn share_decision_failure_order() {
+        let eperm = Err(IpcError::Eperm as i64);
+        let epipe = Err(IpcError::Epipe as i64);
+        let token = caller_token(true);
+
+        // Caller not alive, or no token: EPERM before the region check.
+        let mut f = facts(&token, 2, 200);
+        f.caller_alive = false;
+        f.region = epipe;
+        assert_eq!(share_decision(&f), eperm);
+        let mut f = facts(&token, 2, 200);
+        f.caller_token = None;
+        f.region = epipe;
+        assert_eq!(share_decision(&f), eperm);
+        // A non-delegatable token for a foreign target: EPERM before EPIPE.
+        let plain = caller_token(false);
+        let mut f = facts(&plain, 2, 200);
+        f.region = epipe;
+        assert_eq!(share_decision(&f), eperm);
+
+        // The region check's error comes next, before the target's checks.
+        let mut f = facts(&token, 2, 0);
+        f.region = epipe;
+        f.target_alive = false;
+        assert_eq!(share_decision(&f), Err(IpcError::Epipe as i64));
+
+        // Then a dead target, before idempotence.
+        let mut f = facts(&token, 2, 200);
+        f.target_alive = false;
+        f.target_holds = true;
+        assert_eq!(share_decision(&f), eperm);
+    }
+
+    #[test]
+    fn delegation_parent_prefers_a_delegatable_token() {
+        let mut table = CapabilityTable::new();
+        assert!(table.delegation_parent(&region_access(), 0).is_none());
+
+        table.grant(caller_token(false)).unwrap();
+        let first = table.delegation_parent(&region_access(), 0).unwrap();
+        assert_eq!(first.id, CapabilityTokenId(10));
+
+        let mut second = make_token(11, region_access(), 1);
+        second.delegatable = true;
+        table.grant(second).unwrap();
+        let parent = table.delegation_parent(&region_access(), 0).unwrap();
+        assert_eq!(parent.id, CapabilityTokenId(11));
+
+        // Revoked and expired tokens never qualify.
+        table.revoke(CapabilityTokenId(11));
+        let parent = table.delegation_parent(&region_access(), 0).unwrap();
+        assert_eq!(parent.id, CapabilityTokenId(10));
+        let mut table = CapabilityTable::new();
+        let mut expiring = make_expiring_token(12, region_access(), 50);
+        expiring.delegatable = true;
+        table.grant(expiring).unwrap();
+        assert!(table.delegation_parent(&region_access(), 49).is_some());
+        assert!(table.delegation_parent(&region_access(), 50).is_none());
+    }
+
+    #[test]
+    fn delegated_child_is_a_non_delegatable_child() {
+        let mut parent = make_expiring_token(10, region_access(), 900);
+        parent.delegatable = true;
+        parent.created_at_tick = 5;
+        let child = parent.delegated_child(ProcessId(2), CapabilityTokenId(20), 40);
+        assert_eq!(child.id, CapabilityTokenId(20));
+        assert_eq!(child.capability, region_access());
+        assert_eq!(child.holder, ProcessId(2));
+        assert!(!child.delegatable);
+        assert!(!child.revoked);
+        assert_eq!(child.parent_token, Some(CapabilityTokenId(10)));
+        assert_eq!(child.usage_count, 0);
+        assert_eq!(child.created_at_tick, 40);
+        assert_eq!(child.expires_at_tick, Some(900));
     }
 }

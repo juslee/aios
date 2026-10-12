@@ -16,7 +16,7 @@ use shared::{
 
 use crate::cap::revoke_in_process;
 
-use super::bad_pid::{creation_cap, holds_live, revoke_region_access, token_id};
+use super::bad_pid::{creation_cap, holds_live, token_id};
 use super::TEST_PID;
 
 const PAGE: u64 = 4096;
@@ -284,10 +284,10 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS
 /// process 1 must hold no live SharedMemoryCreate (otherwise it logs `holds
 /// SharedMemoryCreate` and returns all false), and the region must record the
 /// granted token as its `creation_cap` (otherwise it logs `creation_cap
-/// mismatch`). It revokes every SharedMemoryAccess token of the region (the
-/// creator's, minted as a child of the create token) before the unmap that
-/// frees it, and the SharedMemoryCreate token it granted last, after the
-/// unmap, through `revoke_in_process`: revoking the create token earlier
+/// mismatch`). Through `revoke_in_process`, it revokes the region's only
+/// SharedMemoryAccess token (the creator's, minted as a child of the create
+/// token) before the unmap that frees it, and the SharedMemoryCreate token
+/// it granted last, after the unmap: revoking the create token earlier
 /// would also revoke the minted access the maps need. By then the region is
 /// freed, so the cascade destroys nothing; if no map succeeded, it destroys
 /// the region instead.
@@ -312,7 +312,7 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // for, so the `max_flags` check passes a READ | USER map and only the
     // syscall's flag decode can reject it.
     let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ | VmFlags::USER);
-    let Ok((region, _access)) = created else {
+    let Ok((region, access)) = created else {
         let _ = revoke_in_process(pid, create_token);
         return [false, false, false, oversize, false, false];
     };
@@ -336,7 +336,12 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     let probe_mapped = high_bits_result > 0 || undefined_bit_result > 0;
     // The creator holds SharedMemoryAccess(region), so READ maps.
     let mapped = map(READ) > 0;
-    revoke_region_access(pid, region);
+    // The creator's minted token, process 1's only SharedMemoryAccess for
+    // the region: a child of the create token, not the region's
+    // creation_cap, so its cascade destroys nothing.
+    if let Some(access_token) = token_id(pid, access) {
+        let _ = revoke_in_process(pid, access_token);
+    }
     // The capability is checked before the duplicate-mapping check, so the
     // repeated map fails for the missing right: EPERM, not EEXIST.
     let denied = map(READ) == IpcError::Eperm as i64;

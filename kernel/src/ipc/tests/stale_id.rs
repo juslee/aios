@@ -13,12 +13,9 @@ use crate::mm::pgtable::VmFlags;
 use crate::syscall::IpcError;
 use crate::task::process::{process_ref, ProcessId, PROCESS_TABLE};
 use crate::task::ThreadId;
-use shared::{
-    Capability, CapabilityHandle, CapabilityTokenId, ChannelId, SelectEntry, SelectKind,
-    SharedMemoryId,
-};
+use shared::{Capability, CapabilityHandle, ChannelId, SelectEntry, SelectKind, SharedMemoryId};
 
-use super::bad_pid::{creation_cap, holds_live, token_id};
+use super::bad_pid::{creation_cap, grant_shm_create, holds_live};
 use super::TEST_PID;
 
 /// Creates of the second object (B, R2) a case tries before it gives up on
@@ -40,7 +37,8 @@ const ATTEMPTS: usize = 8;
 /// access token a create mints, is revoked through `revoke_in_process`. None
 /// logs a capability denial: each stale call is made while the stale token is
 /// still held, so it passes the capability check and reaches the identity
-/// check.
+/// check, and the shared memory case's self-share after its revoke is
+/// refused by a share, which logs no denial.
 pub(super) fn stale_id_test(my_tid: ThreadId) {
     let pid = match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => p,
@@ -173,19 +171,28 @@ fn revoke_minted(pid: ProcessId, created: &[Option<ChannelId>]) {
 /// token stays); create R2 in R1's slot (a wrong-slot R2 is freed the same
 /// way, and a failure to free one fails the cleanup bit). With R1's token
 /// still held, `shared_memory_map` and a self-share of R1 return EPIPE, and
-/// `shared_memory_map` of R2 succeeds. R2 is then unmapped, which frees it.
-/// A create that fails, R1's or a retry's, logs `shm_create failed`. Each
-/// create mints its region's SharedMemoryAccess as a child of T, so revoking
-/// T at the end revokes them too.
+/// `shared_memory_map` of R2 succeeds. Then T is revoked through
+/// `revoke_in_process` while R2 is mapped: each create minted its region's
+/// SharedMemoryAccess as a child of T, so the revoke takes every minted
+/// token with it, and its cascade destroys R2 (`shm_cascade: pid=1 destroyed
+/// 1 regions`). A self-share of R2 then returns EPERM (the token check comes
+/// before the region) and its unmap EPIPE (the cascade freed it). A create
+/// that fails, R1's or a retry's, logs `shm_create failed`; in that case,
+/// and if no retry reused the slot, T is revoked at the end.
+///
+/// Checks (bit n of the failure mask is check n): 0, R1 freed; 1, R2 is a
+/// new id; 2, map of R1 is EPIPE; 3, self-share of R1 is EPIPE; 4, R2
+/// mapped; 5, T revoked; 6, self-share of R2 is EPERM; 7, unmap of R2 is
+/// EPIPE. The cleanup bit is the wrong-slot frees.
 fn stale_shm_case(pid: ProcessId) {
     if holds_live(pid, &Capability::SharedMemoryCreate) {
         crate::kwarn!(Ipc, "Stale-shm test: holds SharedMemoryCreate");
         return;
     }
-    if crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false).is_err() {
+    let Some(t) = grant_shm_create(pid, false) else {
         crate::kwarn!(Ipc, "Stale-shm test: grant failed");
         return;
-    }
+    };
 
     let r1 = shmem::shared_memory_create(pid, 4096, SHM_FLAGS).map(|(r, _access)| r);
     // None if any create failed, R1's or a retry's; Some(None) if no retry
@@ -206,21 +213,27 @@ fn stale_shm_case(pid: ProcessId) {
         }
 
         Some(r2.map(|r2| {
-            let epipe = Err(IpcError::Epipe as i64);
-            let mapped = shmem::shared_memory_map(pid, r2, SHM_FLAGS);
+            let epipe = IpcError::Epipe as i64;
+            // Array elements are evaluated in order, so the calls run as
+            // listed: the stale calls on R1, the map of R2, then the revoke
+            // of T while R2 is mapped, which revokes every minted token and
+            // destroys R2, then the calls on R2.
             let checks = [
                 r1_freed,
                 r2 != r1,
-                shmem::shared_memory_map(pid, r1, SHM_FLAGS) == epipe,
-                shmem::shared_memory_share(pid, r1, pid) == Err(IpcError::Epipe as i64),
-                mapped.is_ok(),
+                shmem::shared_memory_map(pid, r1, SHM_FLAGS) == Err(epipe),
+                shmem::shared_memory_share(pid, r1, pid) == Err(epipe),
+                shmem::shared_memory_map(pid, r2, SHM_FLAGS).is_ok(),
+                revoke_in_process(pid, t).is_ok(),
+                shmem::shared_memory_share(pid, r2, pid) == Err(IpcError::Eperm as i64),
+                shmem::shared_memory_unmap(pid, r2) == Err(epipe),
             ];
-            let r2_freed = mapped.is_ok() && shmem::shared_memory_unmap(pid, r2).is_ok();
-            (checks, r2_freed && wrong_slots_freed)
+            (checks, wrong_slots_freed)
         }))
     });
 
-    // Revoking T also revokes every region's minted SharedMemoryAccess, its
+    // T is still live only if a create failed or no retry reused R1's slot.
+    // Revoking it also revokes every region's minted SharedMemoryAccess, its
     // child.
     revoke_all(pid, Capability::SharedMemoryCreate);
 
@@ -252,7 +265,7 @@ fn shm_cascade_case(pid: ProcessId) {
         crate::kwarn!(Ipc, "Shm-cascade test: holds SharedMemoryCreate");
         return;
     }
-    let Some(t) = grant_shm_create(pid) else {
+    let Some(t) = grant_shm_create(pid, false) else {
         crate::kwarn!(Ipc, "Shm-cascade test: grant failed");
         return;
     };
@@ -280,7 +293,7 @@ fn shm_cascade_case(pid: ProcessId) {
     let unmap_epipe = shmem::shared_memory_unmap(pid, r) == Err(IpcError::Epipe as i64);
     let gone = !b.is_live();
 
-    let t2 = grant_shm_create(pid);
+    let t2 = grant_shm_create(pid, false);
     let r2 = t2
         .and_then(|_| shmem::shared_memory_create(pid, 4096, SHM_FLAGS).ok())
         .map(|(r2, _access)| r2);
@@ -305,13 +318,6 @@ fn shm_cascade_case(pid: ProcessId) {
         ],
         cleaned_up,
     );
-}
-
-/// Grant `pid` a parentless SharedMemoryCreate and return its token id.
-fn grant_shm_create(pid: ProcessId) -> Option<CapabilityTokenId> {
-    crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
-        .ok()
-        .and_then(|handle| token_id(pid, handle))
 }
 
 /// Flags of the shared memory case's regions and mappings.
@@ -345,8 +351,9 @@ fn report(name: &str, checks: &[bool], cleaned_up: bool) {
 
 /// Revoke, through `revoke_in_process`, every unrevoked token for exactly
 /// `cap` in `pid`'s capability table. Each revoke runs with no lock held:
-/// `revoke_in_process` takes PROCESS_TABLE and then CHANNEL_TABLE itself.
-fn revoke_all(pid: ProcessId, cap: Capability) {
+/// `revoke_in_process` takes PROCESS_TABLE, then SHARED_REGION_TABLE and
+/// CHANNEL_TABLE nested in turn, itself.
+pub(super) fn revoke_all(pid: ProcessId, cap: Capability) {
     loop {
         let next = {
             let table = PROCESS_TABLE.lock();

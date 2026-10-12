@@ -791,10 +791,28 @@ fn handle_create_surface(
     }
 }
 
+/// Attach the client's region `req.shmem_id` to its surface. The region id
+/// comes from the client's message and ids are not secret, so the client
+/// must hold a live SharedMemoryAccess for it and the region must exist
+/// (`cap::check_shared_memory_access`, capability-lifetime ADR §4) before
+/// the surface records it; on EPERM or EPIPE the reply is the zeroed error
+/// event. Called with no compositor lock held: the check takes
+/// PROCESS_TABLE, which ranks above every compositor mutex.
 fn handle_attach_buffer(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
     let id = SurfaceId(req.surface_id);
     let damage = req.decode_damage();
     let shmem = SharedMemoryId::from_raw(req.shmem_id);
+    if let Err(code) = crate::cap::check_shared_memory_access(owner_pid, shmem) {
+        crate::kwarn!(
+            Compositor,
+            "Compositor: AttachBuffer surface={} pid={} region={} refused: {}",
+            id.0,
+            owner_pid.0,
+            shmem,
+            code
+        );
+        return CompositorEvent::zeroed();
+    }
     match surface::surface_attach_buffer(id, shmem, damage, owner_pid) {
         Ok(()) => CompositorEvent::buffer_released(id, shmem),
         Err(e) => {

@@ -81,7 +81,7 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 | 1 | `PROCESS_TABLE` | `task/process.rs` | `Mutex<[Option<ProcessControl>; 32]>` | Top of hierarchy |
 | 2 | `THREAD_TABLE` | `task/mod.rs` | `IrqSpinLock<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
 | 3 | `SERVICE_MANAGER` | `service/mod.rs` | `Mutex<ServiceManager>` | Released before `AUDIT_RING` |
-| 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[Option<SharedMemoryRegion>; 64]>` | Released before `PROCESS_TABLE` re-acquire |
+| 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[RegionSlot; 64]>` | Nested under `PROCESS_TABLE` by create, map, share, destroy and the revoke cascade; alone for unmap, exit cleanup and borrows |
 | 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `IrqSpinLock<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
 | 6 | `CHANNEL_TABLE` | `ipc/mod.rs` | `Mutex<[Option<Channel>; 128]>` | After `THREAD_TABLE` |
 | 7 | `SELECT_WAITERS` | `ipc/select.rs` | `IrqSpinLock<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
@@ -94,9 +94,9 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 **Code evidence** for the ordering:
 
-- `shmem.rs:18` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
+- `shmem.rs:19` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
 - `cap/mod.rs:86-87` (`create_with_access`) — *"It nests `CHANNEL_TABLE` or `SHARED_REGION_TABLE` under `PROCESS_TABLE` (both allowed edges), never takes `PROCESS_TABLE`"*.
-- `shmem.rs:713` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
+- `shmem.rs:740-742` (`shared_memory_share`) — *"Everything after step 1 runs in one `PROCESS_TABLE` hold with `SHARED_REGION_TABLE` nested (an allowed edge), the grant included (`cap::mint_share_token`, on the held table)"*. `shared_memory_map` (`insert_mapping`) and `shared_memory_destroy` take the same pair.
 - `process.rs:159-160` (`process_exit`) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
@@ -170,7 +170,7 @@ Examples in the codebase:
 
 - **`check_timeouts`** (`ipc/timeout.rs`): Collects expired entries under `TIMEOUT_QUEUE`, releases the lock, then wakes threads (which acquire `THREAD_TABLE` and scheduler locks).
 
-- **`process_cleanup_shared_memory` and the last `shared_memory_unmap`** (`ipc/shmem.rs`): Under `SHARED_REGION_TABLE` alone, remove the mappings and detach each region whose last mapping went (`region_detach`), then free the detached regions' frames after releasing the lock, so a region free never nests `FRAME_ALLOC` under the table. A region that a kernel `RegionBorrow` still holds keeps its frames draining until the last `region_release`, which also frees them after the lock. Similarly, `shared_memory_share` drops `SHARED_REGION_TABLE` before calling `grant_to_process` (which may acquire `PROCESS_TABLE`).
+- **`process_cleanup_shared_memory` and the last `shared_memory_unmap`** (`ipc/shmem.rs`): Under `SHARED_REGION_TABLE` alone, remove the mappings and detach each region whose last mapping went (`region_detach`), then free the detached regions' frames after releasing the lock, so a region free never nests `FRAME_ALLOC` under the table. A region that a kernel `RegionBorrow` still holds keeps its frames draining until the last `region_release`, which also frees them after the lock. `shared_memory_destroy` detaches its region the same way, under `PROCESS_TABLE` with `SHARED_REGION_TABLE` nested, and frees the frames after releasing both.
 
 - **The region and channel cascades of `revoke_in_process` and the Capability Kit's `revoke`** (`cap/mod.rs`): In the revoking `PROCESS_TABLE` hold, with `SHARED_REGION_TABLE` nested and then released (an allowed edge), detach the regions the process created under a token that is now revoked; then, with `CHANNEL_TABLE` nested and then released, collect the IDs of such channels. The two tables are never held together. After `PROCESS_TABLE` is released, the regions' frames are freed and the channels destroyed, because a destroy wakes the threads blocked on them.
 

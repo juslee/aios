@@ -586,7 +586,9 @@ fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
 
 /// SharedMemoryShare (nr=22): x0=region_id, x1=target_pid.
 ///
-/// Share a region with another process by granting capability.
+/// Share a region by delegation: the target gets a non-delegatable child of
+/// the caller's SharedMemoryAccess token (`shmem::shared_memory_share`). A
+/// repeat share or a self-share returns 0 and grants nothing.
 fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
     let region_id = match id_arg(tf.x[0]) {
         Ok(id) => shared::SharedMemoryId::from_raw(id),

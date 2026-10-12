@@ -8,6 +8,7 @@ mod bad_pid;
 mod create_abi;
 mod kit_errors;
 mod select_cap;
+mod share;
 mod stale_id;
 mod syscall_args;
 mod timeout_args;
@@ -445,8 +446,10 @@ fn ipc_caller_entry() -> ! {
 /// (`kit_errors_test`, on all three of `select_cap_test`'s channels), EPIPE
 /// for stale channel and region ids whose slot was reused, and the region
 /// cascade of a SharedMemoryCreate revoke with a kernel borrow held
-/// (`stale_id_test`), and the x0/x1 return of ChannelCreate and SharedMemoryCreate with their
-/// minted tokens (`create_abi_test`). Last, it calls IpcCall on a channel
+/// (`stale_id_test`), the x0/x1 return of ChannelCreate and
+/// SharedMemoryCreate with their minted tokens (`create_abi_test`), and
+/// SharedMemoryShare as delegation and the Kit destroy's creator check
+/// (`share_test`, which grants into process 2). Last, it calls IpcCall on a channel
 /// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
 /// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
 /// wake can hide only that line.
@@ -519,6 +522,7 @@ fn ipc_timeout_entry() -> ! {
     kit_errors::kit_errors_test(caller_tid, select_channels);
     stale_id::stale_id_test(caller_tid);
     create_abi::create_abi_test(caller_tid);
+    share::share_test(caller_tid);
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

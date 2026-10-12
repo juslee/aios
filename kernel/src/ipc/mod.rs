@@ -666,47 +666,24 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         shmem::shared_memory_unmap(pid, id).map_err(|code| shm_kit_err(code, None))
     }
 
+    /// Destroy region `id` for the calling thread's process, which must be
+    /// its creator and hold a live `SharedMemoryAccess(id)`
+    /// (`shmem::shared_memory_destroy`: one authorising hold that detaches
+    /// the region, force-unmapping every mapper).
     fn shmem_destroy(&mut self, id: shared::SharedMemoryId) -> Result<(), IpcKitError> {
-        // No dedicated kernel destroy function exists. Walk the region's
-        // mappings and unmap each one. The last unmap frees backing pages.
-        // The unmaps name the full id, so if the region is freed and its slot
-        // reused meanwhile, they return EPIPE and leave the new region alone.
-        let pids_to_unmap: alloc::vec::Vec<crate::task::process::ProcessId> = {
-            let mut table = shmem::SHARED_REGION_TABLE.lock();
-            match shmem::region_mut(&mut table, id) {
-                Ok(region) => region
-                    .mappings
-                    .iter()
-                    .filter_map(|m| m.as_ref().map(|mapping| mapping.pid))
-                    .collect(),
-                Err(code) if code == IpcError::Einval as i64 => {
-                    return Err(IpcKitError::SharedMemoryError {
-                        reason: "invalid region id",
-                    })
-                }
-                // EPIPE: the slot is empty or holds another generation's
-                // region.
-                Err(_) => {
-                    return Err(IpcKitError::SharedMemoryError {
-                        reason: "region not found",
-                    })
-                }
-            }
+        // shared_memory_destroy's EPERM is a caller with no process, no live
+        // token or not the creator: the right it lacks is being the creator
+        // with access, which no single capability names.
+        let not_creator = IpcKitError::SharedMemoryError {
+            reason: "not creator or no access",
         };
-
-        let mut first_err: Option<IpcKitError> = None;
-        for pid in pids_to_unmap {
-            if let Err(code) = shmem::shared_memory_unmap(pid, id) {
-                if first_err.is_none() {
-                    first_err = Some(shm_kit_err(code, None));
-                }
-            }
-        }
-
-        if let Some(err) = first_err {
-            Err(err)
-        } else {
-            Ok(())
-        }
+        let pid = crate::cap::current_process_id().ok_or_else(|| not_creator.clone())?;
+        shmem::shared_memory_destroy(pid, id).map_err(|code| match IpcError::try_from(code) {
+            Ok(IpcError::Einval) => IpcKitError::SharedMemoryError {
+                reason: "invalid region id",
+            },
+            Ok(IpcError::Eperm) => not_creator,
+            _ => shm_kit_err(code, None),
+        })
     }
 }

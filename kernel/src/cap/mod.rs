@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::observability::metrics::METRICS;
 use crate::syscall::IpcError;
-use crate::task::process::{process_mut, process_ref, ProcessId, PROCESS_TABLE};
+use crate::task::process::{process_mut, process_ref, ProcessId, ProcessTable, PROCESS_TABLE};
 use crate::task::{ThreadId, CURRENT_THREAD, THREAD_TABLE};
 
 // Re-export shared types for ergonomic kernel-side imports.
@@ -178,30 +178,119 @@ pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i
     }
 }
 
-/// Check that a process holds SharedMemoryAccess(region_id) capability.
+/// Check that a process holds a live SharedMemoryAccess(region_id) and that
+/// the region still exists, in one `PROCESS_TABLE → SHARED_REGION_TABLE`
+/// hold (capability-lifetime ADR §4, the compositor's attach check).
+///
+/// In the ADR's failure order: EINVAL for a malformed region slot, before
+/// any lock; EPERM when the process does not exist (as
+/// `deny_missing_process`) or holds no live token for the full id, logging
+/// the usual `denied SharedMemoryAccess` warning after the release; EPIPE
+/// when the region is gone, draining or of another generation.
 pub fn check_shared_memory_access(
     pid: ProcessId,
     region_id: shared::SharedMemoryId,
 ) -> Result<(), i64> {
+    if region_id.index().is_none() {
+        return Err(IpcError::Einval as i64);
+    }
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
-    let table = PROCESS_TABLE.lock();
-    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
+    let held = {
+        let table = PROCESS_TABLE.lock();
+        let held = has_live_token(&table, pid, &Capability::SharedMemoryAccess(region_id), now)?;
+        if held {
+            let mut regions = crate::ipc::shmem::SHARED_REGION_TABLE.lock();
+            crate::ipc::shmem::region_mut(&mut regions, region_id)?;
+        }
+        held
+    };
+    if !held {
+        note_shm_access_denied(pid, region_id);
+        return Err(IpcError::Eperm as i64);
+    }
+    Ok(())
+}
 
-    if proc
-        .cap_table
-        .has_capability(&Capability::SharedMemoryAccess(region_id), now)
-    {
-        Ok(())
-    } else {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        crate::kwarn!(
-            Cap,
-            "pid={}: denied SharedMemoryAccess({})",
-            pid.0,
-            region_id
-        );
-        Err(IpcError::Eperm as i64)
+/// Whether `pid` holds a live, unexpired token for `cap`, read from a locked
+/// `PROCESS_TABLE`. Takes no lock and logs nothing, so it serves the
+/// one-hold shared memory paths (map, share, destroy).
+///
+/// `Err(EPERM)` when `pid` names no process (out of range or an empty slot,
+/// counted as `deny_missing_process` counts it); `Ok(false)` when it holds no
+/// such token, which the caller reports.
+pub(crate) fn has_live_token(
+    table: &ProcessTable,
+    pid: ProcessId,
+    cap: &Capability,
+    now: u64,
+) -> Result<bool, i64> {
+    let proc = process_ref(table, pid).map_err(deny_missing_process)?;
+    Ok(proc.cap_table.has_capability(cap, now))
+}
+
+/// Count and log a `SharedMemoryAccess(region_id)` denial for `pid`: the
+/// `pid=N: denied SharedMemoryAccess(S.G)` warning. Called with no lock held,
+/// after a one-hold path found no token.
+pub(crate) fn note_shm_access_denied(pid: ProcessId, region_id: shared::SharedMemoryId) {
+    #[cfg(feature = "kernel-metrics")]
+    METRICS.ipc_cap_denied.inc();
+    crate::kwarn!(
+        Cap,
+        "pid={}: denied SharedMemoryAccess({})",
+        pid.0,
+        region_id
+    );
+}
+
+/// The capability half of `SharedMemoryShare`, run on the caller's locked
+/// `PROCESS_TABLE` with `SHARED_REGION_TABLE` nested (capability-lifetime ADR
+/// §4): it takes no lock, frees, logs and wakes nothing.
+///
+/// Reads the caller's delegation parent, its live token for
+/// `SharedMemoryAccess(region)` (`CapabilityTable::delegation_parent`), and
+/// the target's liveness, holding and free slots from `table`, and asks the
+/// pure `share_decision`, with `region_check` (the caller's region lookup
+/// and creator check, made under the nested hold) as its step 3. On `Grant`
+/// it puts the parent's `delegated_child` in the target's table: not
+/// delegatable, with the caller's token as its `parent_token`. Every read and
+/// the grant use the one guard, so a concurrent revoke or exit runs wholly
+/// before or after the share.
+///
+/// Returns whether a token was granted (`false` for an idempotent share), or
+/// the verdict's errno.
+pub(crate) fn mint_share_token(
+    table: &mut ProcessTable,
+    caller: ProcessId,
+    target: ProcessId,
+    region: shared::SharedMemoryId,
+    region_check: Result<(), i64>,
+    now: u64,
+) -> Result<bool, i64> {
+    let access = Capability::SharedMemoryAccess(region);
+    let caller_proc = process_ref(table, caller).ok();
+    // A copy: the grant below needs the table mutably.
+    let caller_token =
+        caller_proc.and_then(|p| p.cap_table.delegation_parent(&access, now).cloned());
+    let target_proc = process_ref(table, target).ok();
+    let facts = shared::cap::ShareFacts {
+        caller,
+        target,
+        caller_alive: caller_proc.is_some(),
+        caller_token: caller_token.as_ref(),
+        region: region_check,
+        target_alive: target_proc.is_some(),
+        target_holds: target_proc.is_some_and(|p| p.cap_table.has_capability(&access, now)),
+        target_free_slots: target_proc.map_or(0, |p| p.cap_table.free_slots()),
+    };
+    match shared::cap::share_decision(&facts)? {
+        shared::cap::ShareVerdict::AlreadyHeld => Ok(false),
+        shared::cap::ShareVerdict::Grant { parent } => {
+            let child = parent.delegated_child(target, new_token_id(), now);
+            // The verdict found the target alive with a free slot in this
+            // same hold, so neither the lookup nor the grant fails.
+            process_mut(table, target)?.cap_table.grant(child)?;
+            Ok(true)
+        }
     }
 }
 
@@ -450,6 +539,11 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
     }
 
     /// Attenuate with no requested expiry: the child takes the parent's.
+    ///
+    /// Errors: `TableFull` for a full table (ENOSPC); `Expired`, naming the
+    /// parent, when the live token at `handle` has expired; every other
+    /// refusal (no live token at `handle`, a narrowing it does not permit) is
+    /// `InvalidAttenuation`.
     fn attenuate(
         &mut self,
         holder: ProcessId,
@@ -461,11 +555,23 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         let proc = process_mut(&mut table, holder)
             .map_err(|_| CapabilityError::InvalidHandle { handle })?;
 
-        proc.cap_table
+        match proc
+            .cap_table
             .attenuate(handle, narrowed, None, holder, new_token_id(), now)
-            .map_err(|_| CapabilityError::InvalidAttenuation {
-                reason: "parent does not permit narrowing to requested capability",
-            })
+        {
+            Ok(child) => Ok(child),
+            Err(code) if code == IpcError::Enospc as i64 => Err(CapabilityError::TableFull),
+            Err(_) => Err(
+                match proc.cap_table.get(handle).filter(|t| t.is_expired(now)) {
+                    Some(parent) => CapabilityError::Expired {
+                        token_id: parent.id,
+                    },
+                    None => CapabilityError::InvalidAttenuation {
+                        reason: "parent does not permit narrowing to requested capability",
+                    },
+                },
+            ),
+        }
     }
 
     fn list_active(&self, holder: ProcessId) -> Vec<CapabilityToken> {
