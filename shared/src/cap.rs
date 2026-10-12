@@ -98,22 +98,16 @@ impl Capability {
         }
     }
 
-    /// Check if `self` is equal to or broader than `other` (for attenuation).
+    /// Check if a token for `self` may be attenuated to a child for `other`.
     ///
-    /// Attenuation must be monotonically restrictive: a ChannelCreate cap
-    /// can be attenuated to ChannelAccess(specific_id), but not vice versa.
-    /// For Phase 3, only same-variant attenuation is supported (identity).
+    /// Only identity attenuation exists: the child names the same capability,
+    /// and for an object-bound one (ChannelAccess, SharedMemoryAccess,
+    /// GpuBufferAccess) the same full id. A Create capability never attenuates
+    /// to an Access one (capability-lifetime ADR, owner decision 1): access to
+    /// a new object is minted for its creator at creation
+    /// (`CapabilityTable::mint_child`) and reaches others only by delegation.
     pub fn can_attenuate_to(&self, other: &Capability) -> bool {
-        match (self, other) {
-            // ChannelCreate can be narrowed to ChannelAccess (broader → narrower).
-            (Capability::ChannelCreate, Capability::ChannelAccess(_)) => true,
-            // SharedMemoryCreate can be narrowed to SharedMemoryAccess.
-            (Capability::SharedMemoryCreate, Capability::SharedMemoryAccess(_)) => true,
-            // GpuBufferCreate can be narrowed to GpuBufferAccess (broader → narrower).
-            (Capability::GpuBufferCreate, Capability::GpuBufferAccess(_)) => true,
-            // Same-variant is always valid (identity attenuation).
-            _ => self.permits(other),
-        }
+        self.permits(other)
     }
 }
 
@@ -142,6 +136,14 @@ pub struct CapabilityToken {
     pub created_at_tick: u64,
     /// Tick when this token expires (None = no expiry).
     pub expires_at_tick: Option<u64>,
+}
+
+impl CapabilityToken {
+    /// Whether the token has expired at `now_tick`: it expires at its
+    /// `expires_at_tick`, not after it.
+    pub fn is_expired(&self, now_tick: u64) -> bool {
+        self.expires_at_tick.is_some_and(|exp| now_tick >= exp)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +192,23 @@ impl CapabilityTable {
         self.tokens[idx].as_ref().filter(|t| !t.revoked)
     }
 
+    /// The token with id `id`, revoked or not. None if no slot holds it.
+    fn find_by_id(&self, id: CapabilityTokenId) -> Option<&CapabilityToken> {
+        self.tokens.iter().flatten().find(|t| t.id == id)
+    }
+
+    /// Number of empty slots. A revoked token keeps its slot, so it counts as
+    /// occupied.
+    pub fn free_slots(&self) -> usize {
+        self.tokens.iter().filter(|slot| slot.is_none()).count()
+    }
+
+    /// Whether the token `id` is revoked. True for an id no slot holds, so a
+    /// cascade that asks about a token that is gone fails closed.
+    pub fn is_revoked(&self, id: CapabilityTokenId) -> bool {
+        self.find_by_id(id).is_none_or(|t| t.revoked)
+    }
+
     /// Check if this table holds a valid (non-revoked, non-expired) token
     /// that permits the given action.
     pub fn has_capability(&self, cap: &Capability, now_tick: u64) -> bool {
@@ -204,13 +223,8 @@ impl CapabilityTable {
         now_tick: u64,
     ) -> Option<CapabilityTokenId> {
         for token in self.tokens.iter().flatten() {
-            if token.revoked {
+            if token.revoked || token.is_expired(now_tick) {
                 continue;
-            }
-            if let Some(exp) = token.expires_at_tick {
-                if now_tick >= exp {
-                    continue;
-                }
             }
             if token.capability.permits(cap) {
                 return Some(token.id);
@@ -258,8 +272,43 @@ impl CapabilityTable {
         }
     }
 
-    /// Attenuate a capability: create a narrower child token from an existing one.
+    /// Revoke every token in the table that is not revoked yet, in one pass.
+    /// Returns the number of tokens it revoked. Every slot stays occupied.
+    pub fn revoke_all(&mut self) -> u32 {
+        let mut revoked = 0;
+        for token in self.tokens.iter_mut().flatten() {
+            if !token.revoked {
+                token.revoked = true;
+                revoked += 1;
+            }
+        }
+        self.count = 0;
+        revoked
+    }
+
+    /// Empty every slot in place (no table-sized temporary on the stack), for
+    /// process install and reap. Afterwards the table is as `new()` makes it.
+    pub fn clear(&mut self) {
+        for slot in self.tokens.iter_mut() {
+            *slot = None;
+        }
+        self.count = 0;
+    }
+
+    /// Attenuate a capability: create a child token from the live token at
+    /// `handle`.
     ///
+    /// EPERM when the handle names no live token (out of range, empty or
+    /// revoked), when that token has expired at `now_tick`, when its
+    /// capability cannot attenuate to `new_cap` (identity only,
+    /// `Capability::can_attenuate_to`), or when `new_expiry` is later than the
+    /// parent's expiry: expiry never grows (`docs/security/model/capabilities.md`
+    /// §3.3, `ExpiryExpansion`). A `None` request gives the child the parent's
+    /// expiry; under a parent that never expires the child gets `new_expiry`
+    /// as requested, so the child never expires only when neither does.
+    /// ENOSPC when the table is full.
+    ///
+    /// The child is not delegatable and records the parent as `parent_token`.
     /// `new_id` is the unique token ID for the child (caller provides it to
     /// decouple from the kernel's atomic ID generator).
     pub fn attenuate(
@@ -269,18 +318,21 @@ impl CapabilityTable {
         new_expiry: Option<u64>,
         holder: ProcessId,
         new_id: CapabilityTokenId,
+        now_tick: u64,
     ) -> Result<CapabilityHandle, i64> {
+        let eperm = Err(IpcError::Eperm as i64);
         let parent = match self.get(handle) {
             Some(t) => t,
-            None => return Err(IpcError::Eperm as i64),
+            None => return eperm,
         };
-
-        if !parent.capability.can_attenuate_to(&new_cap) {
-            return Err(IpcError::Eperm as i64);
+        if parent.is_expired(now_tick) || !parent.capability.can_attenuate_to(&new_cap) {
+            return eperm;
         }
-
-        let parent_id = parent.id;
-        let created_at = parent.created_at_tick;
+        let expires_at_tick = match (parent.expires_at_tick, new_expiry) {
+            (Some(limit), Some(requested)) if requested > limit => return eperm,
+            (Some(limit), None) => Some(limit),
+            (_, requested) => requested,
+        };
 
         let child = CapabilityToken {
             id: new_id,
@@ -288,10 +340,49 @@ impl CapabilityTable {
             holder,
             delegatable: false, // Attenuated tokens are not further delegatable by default.
             revoked: false,
-            parent_token: Some(parent_id),
+            parent_token: Some(parent.id),
             usage_count: 0,
-            created_at_tick: created_at,
-            expires_at_tick: new_expiry,
+            created_at_tick: parent.created_at_tick,
+            expires_at_tick,
+        };
+
+        self.grant(child)
+    }
+
+    /// Mint `capability` as a child of the live token `parent`, for the
+    /// kernel's create paths (capability-lifetime ADR §2). Kernel-only: it
+    /// does not consult `can_attenuate_to`, so a `ChannelCreate` parent can
+    /// mint the `ChannelAccess` of the channel it just authorised.
+    ///
+    /// The child records `parent` as `parent_token`, so revoking the parent
+    /// revokes it, and takes the parent's `delegatable` and expiry, which never
+    /// widens what the parent allows; `created_at_tick` is `now_tick`.
+    ///
+    /// EPERM when no slot holds `parent`, or it is revoked or expired at
+    /// `now_tick`. ENOSPC when the table is full.
+    pub fn mint_child(
+        &mut self,
+        parent: CapabilityTokenId,
+        capability: Capability,
+        holder: ProcessId,
+        id: CapabilityTokenId,
+        now_tick: u64,
+    ) -> Result<CapabilityHandle, i64> {
+        let parent_token = match self.find_by_id(parent) {
+            Some(t) if !t.revoked && !t.is_expired(now_tick) => t,
+            _ => return Err(IpcError::Eperm as i64),
+        };
+
+        let child = CapabilityToken {
+            id,
+            capability,
+            holder,
+            delegatable: parent_token.delegatable,
+            revoked: false,
+            parent_token: Some(parent),
+            usage_count: 0,
+            created_at_tick: now_tick,
+            expires_at_tick: parent_token.expires_at_tick,
         };
 
         self.grant(child)
@@ -435,15 +526,15 @@ mod tests {
     // --- Attenuation tests ---
 
     #[test]
-    fn attenuate_channel_create_to_access() {
-        assert!(Capability::ChannelCreate
+    fn attenuate_denies_channel_create_to_access() {
+        assert!(!Capability::ChannelCreate
             .can_attenuate_to(&Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST))));
     }
 
     #[test]
-    fn attenuate_shm_create_to_access() {
+    fn attenuate_denies_shm_create_to_access() {
         assert!(
-            Capability::SharedMemoryCreate.can_attenuate_to(&Capability::SharedMemoryAccess(
+            !Capability::SharedMemoryCreate.can_attenuate_to(&Capability::SharedMemoryAccess(
                 SharedMemoryId::new(1, ID_GEN_FIRST)
             ))
         );
@@ -804,61 +895,93 @@ mod tests {
 
     // --- CapabilityTable: attenuate ---
 
+    /// Attenuate the token at `h` to `cap` with the requested expiry, at tick
+    /// `now`, as child token 2 held by pid 1.
+    fn attenuate_at(
+        table: &mut CapabilityTable,
+        h: CapabilityHandle,
+        cap: Capability,
+        expiry: Option<u64>,
+        now: u64,
+    ) -> Result<CapabilityHandle, i64> {
+        table.attenuate(h, cap, expiry, ProcessId(1), CapabilityTokenId(2), now)
+    }
+
+    fn chan_access(slot: usize) -> Capability {
+        Capability::ChannelAccess(ChannelId::new(slot, ID_GEN_FIRST))
+    }
+
     #[test]
-    fn attenuate_channel_create_to_access_ok() {
+    fn attenuate_identity_access_ok() {
+        let mut table = CapabilityTable::new();
+        let h = table.grant(make_token(1, chan_access(7), 1)).unwrap();
+        let child_h = attenuate_at(&mut table, h, chan_access(7), None, 0).unwrap();
+
+        let child = table.get(child_h).unwrap();
+        assert_eq!(child.id, CapabilityTokenId(2));
+        assert_eq!(child.capability, chan_access(7));
+        assert_eq!(child.parent_token, Some(CapabilityTokenId(1)));
+        assert!(!child.delegatable);
+        assert_eq!(child.expires_at_tick, None);
+        assert_eq!(table.count(), 2);
+    }
+
+    #[test]
+    fn attenuate_denies_other_channel() {
+        let mut table = CapabilityTable::new();
+        let h = table.grant(make_token(1, chan_access(7), 1)).unwrap();
+        assert_eq!(
+            attenuate_at(&mut table, h, chan_access(8), None, 0),
+            Err(IpcError::Eperm as i64)
+        );
+        assert_eq!(table.count(), 1);
+    }
+
+    /// SVC 15 type 1 from a `ChannelCreate` handle: x1 = 1 decodes to
+    /// `ChannelAccess(x3)`, x2 = 0 to a `None` expiry.
+    #[test]
+    fn attenuate_svc15_channel_create_to_access_eperm() {
         let mut table = CapabilityTable::new();
         let h = table
             .grant(make_token(1, Capability::ChannelCreate, 1))
             .unwrap();
-        let child_h = table
-            .attenuate(
-                h,
-                Capability::ChannelAccess(ChannelId::new(7, ID_GEN_FIRST)),
-                None,
-                ProcessId(1),
-                CapabilityTokenId(2),
-            )
-            .unwrap();
-
-        let child = table.get(child_h).unwrap();
-        assert_eq!(child.id, CapabilityTokenId(2));
         assert_eq!(
-            child.capability,
-            Capability::ChannelAccess(ChannelId::new(7, ID_GEN_FIRST))
+            attenuate_at(&mut table, h, chan_access(7), None, 0),
+            Err(IpcError::Eperm as i64)
         );
-        assert_eq!(child.parent_token, Some(CapabilityTokenId(1)));
-        assert_eq!(table.count(), 2);
+        assert_eq!(table.count(), 1);
+    }
+
+    #[test]
+    fn attenuate_denies_shm_create_to_access_in_table() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_token(1, Capability::SharedMemoryCreate, 1))
+            .unwrap();
+        let access = Capability::SharedMemoryAccess(SharedMemoryId::new(3, ID_GEN_FIRST));
+        assert_eq!(
+            attenuate_at(&mut table, h, access, None, 0),
+            Err(IpcError::Eperm as i64)
+        );
     }
 
     #[test]
     fn table_attenuate_denies_broadening() {
         let mut table = CapabilityTable::new();
-        let h = table
-            .grant(make_token(
-                1,
-                Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
-                1,
-            ))
-            .unwrap();
-        let result = table.attenuate(
-            h,
-            Capability::ChannelCreate,
-            None,
-            ProcessId(1),
-            CapabilityTokenId(2),
-        );
+        let h = table.grant(make_token(1, chan_access(5), 1)).unwrap();
+        let result = attenuate_at(&mut table, h, Capability::ChannelCreate, None, 0);
         assert_eq!(result, Err(IpcError::Eperm as i64));
     }
 
     #[test]
     fn attenuate_invalid_handle() {
         let mut table = CapabilityTable::new();
-        let result = table.attenuate(
+        let result = attenuate_at(
+            &mut table,
             CapabilityHandle(0),
             Capability::DebugPrint,
             None,
-            ProcessId(1),
-            CapabilityTokenId(2),
+            0,
         );
         assert_eq!(result, Err(IpcError::Eperm as i64));
     }
@@ -866,18 +989,8 @@ mod tests {
     #[test]
     fn attenuate_with_expiry() {
         let mut table = CapabilityTable::new();
-        let h = table
-            .grant(make_token(1, Capability::ChannelCreate, 1))
-            .unwrap();
-        let child_h = table
-            .attenuate(
-                h,
-                Capability::ChannelAccess(ChannelId::new(3, ID_GEN_FIRST)),
-                Some(500),
-                ProcessId(1),
-                CapabilityTokenId(2),
-            )
-            .unwrap();
+        let h = table.grant(make_token(1, chan_access(3), 1)).unwrap();
+        let child_h = attenuate_at(&mut table, h, chan_access(3), Some(500), 0).unwrap();
 
         let child = table.get(child_h).unwrap();
         assert_eq!(child.expires_at_tick, Some(500));
@@ -886,19 +999,335 @@ mod tests {
     #[test]
     fn attenuate_revoked_parent_denied() {
         let mut table = CapabilityTable::new();
-        let h = table
-            .grant(make_token(1, Capability::ChannelCreate, 1))
-            .unwrap();
+        let h = table.grant(make_token(1, chan_access(5), 1)).unwrap();
         table.revoke(CapabilityTokenId(1));
         // get() returns None for revoked → attenuate returns Eperm.
-        let result = table.attenuate(
-            h,
-            Capability::ChannelAccess(ChannelId::new(5, ID_GEN_FIRST)),
-            None,
-            ProcessId(1),
-            CapabilityTokenId(2),
-        );
+        let result = attenuate_at(&mut table, h, chan_access(5), None, 0);
         assert_eq!(result, Err(IpcError::Eperm as i64));
+    }
+
+    #[test]
+    fn attenuate_expiring_parent_later_request_eperm() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_expiring_token(1, Capability::DebugPrint, 100))
+            .unwrap();
+        assert_eq!(
+            attenuate_at(&mut table, h, Capability::DebugPrint, Some(101), 10),
+            Err(IpcError::Eperm as i64)
+        );
+        assert_eq!(table.count(), 1);
+    }
+
+    #[test]
+    fn attenuate_expiring_parent_equal_request_ok() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_expiring_token(1, Capability::DebugPrint, 100))
+            .unwrap();
+        let child_h = attenuate_at(&mut table, h, Capability::DebugPrint, Some(100), 10).unwrap();
+        assert_eq!(table.get(child_h).unwrap().expires_at_tick, Some(100));
+    }
+
+    #[test]
+    fn attenuate_expiring_parent_earlier_request_ok() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_expiring_token(1, Capability::DebugPrint, 100))
+            .unwrap();
+        let child_h = attenuate_at(&mut table, h, Capability::DebugPrint, Some(50), 10).unwrap();
+        assert_eq!(table.get(child_h).unwrap().expires_at_tick, Some(50));
+    }
+
+    #[test]
+    fn attenuate_expiring_parent_none_request_inherits() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_expiring_token(1, Capability::DebugPrint, 100))
+            .unwrap();
+        let child_h = attenuate_at(&mut table, h, Capability::DebugPrint, None, 10).unwrap();
+        assert_eq!(table.get(child_h).unwrap().expires_at_tick, Some(100));
+    }
+
+    #[test]
+    fn attenuate_never_expiring_parent_allows_any_expiry() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_token(1, Capability::DebugPrint, 1))
+            .unwrap();
+        for (requested, id) in [(u64::MAX, 2), (11, 3)] {
+            let child_h = table
+                .attenuate(
+                    h,
+                    Capability::DebugPrint,
+                    Some(requested),
+                    ProcessId(1),
+                    CapabilityTokenId(id),
+                    10,
+                )
+                .unwrap();
+            assert_eq!(table.get(child_h).unwrap().expires_at_tick, Some(requested));
+        }
+    }
+
+    #[test]
+    fn attenuate_never_expiring_parent_none_request_never_expires() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_token(1, Capability::DebugPrint, 1))
+            .unwrap();
+        let child_h = attenuate_at(&mut table, h, Capability::DebugPrint, None, 10).unwrap();
+        assert_eq!(table.get(child_h).unwrap().expires_at_tick, None);
+    }
+
+    #[test]
+    fn attenuate_expired_parent_eperm() {
+        let mut table = CapabilityTable::new();
+        let h = table
+            .grant(make_expiring_token(1, Capability::DebugPrint, 100))
+            .unwrap();
+        // At its expiry tick and after it, with or without a requested expiry.
+        for now in [100, 200] {
+            assert_eq!(
+                attenuate_at(&mut table, h, Capability::DebugPrint, None, now),
+                Err(IpcError::Eperm as i64)
+            );
+            assert_eq!(
+                attenuate_at(&mut table, h, Capability::DebugPrint, Some(100), now),
+                Err(IpcError::Eperm as i64)
+            );
+        }
+        assert_eq!(table.count(), 1);
+    }
+
+    // --- CapabilityTable: mint_child ---
+
+    #[test]
+    fn mint_child_sets_parent_delegatable_and_expiry() {
+        let mut table = CapabilityTable::new();
+        let mut parent = make_expiring_token(1, Capability::ChannelCreate, 900);
+        parent.delegatable = true;
+        parent.created_at_tick = 5;
+        table.grant(parent).unwrap();
+
+        // A Create parent mints the Access child that attenuation refuses.
+        let h = table
+            .mint_child(
+                CapabilityTokenId(1),
+                chan_access(4),
+                ProcessId(1),
+                CapabilityTokenId(2),
+                40,
+            )
+            .unwrap();
+        let child = table.get(h).unwrap();
+        assert_eq!(child.id, CapabilityTokenId(2));
+        assert_eq!(child.capability, chan_access(4));
+        assert_eq!(child.holder, ProcessId(1));
+        assert_eq!(child.parent_token, Some(CapabilityTokenId(1)));
+        assert!(child.delegatable);
+        assert!(!child.revoked);
+        assert_eq!(child.expires_at_tick, Some(900));
+        assert_eq!(child.created_at_tick, 40);
+        assert_eq!(child.usage_count, 0);
+        assert_eq!(table.count(), 2);
+
+        // A non-delegatable parent that never expires passes both on.
+        table
+            .grant(make_token(3, Capability::SharedMemoryCreate, 1))
+            .unwrap();
+        let access = Capability::SharedMemoryAccess(SharedMemoryId::new(2, ID_GEN_FIRST));
+        let h = table
+            .mint_child(
+                CapabilityTokenId(3),
+                access,
+                ProcessId(1),
+                CapabilityTokenId(4),
+                41,
+            )
+            .unwrap();
+        let child = table.get(h).unwrap();
+        assert!(!child.delegatable);
+        assert_eq!(child.expires_at_tick, None);
+        assert_eq!(child.parent_token, Some(CapabilityTokenId(3)));
+    }
+
+    #[test]
+    fn mint_child_revoke_parent_revokes_child_and_grandchild() {
+        let mut table = CapabilityTable::new();
+        table
+            .grant(make_token(1, Capability::ChannelCreate, 1))
+            .unwrap();
+        let child = table
+            .mint_child(
+                CapabilityTokenId(1),
+                Capability::ChannelCreate,
+                ProcessId(1),
+                CapabilityTokenId(2),
+                0,
+            )
+            .unwrap();
+        let grandchild = table
+            .mint_child(
+                CapabilityTokenId(2),
+                chan_access(9),
+                ProcessId(1),
+                CapabilityTokenId(3),
+                0,
+            )
+            .unwrap();
+        assert_eq!(table.count(), 3);
+
+        table.revoke(CapabilityTokenId(1));
+        assert!(table.get(child).is_none());
+        assert!(table.get(grandchild).is_none());
+        assert!(table.is_revoked(CapabilityTokenId(2)));
+        assert!(table.is_revoked(CapabilityTokenId(3)));
+        assert_eq!(table.count(), 0);
+    }
+
+    #[test]
+    fn mint_child_revoked_expired_or_missing_parent_eperm() {
+        let mut table = CapabilityTable::new();
+        table
+            .grant(make_token(1, Capability::ChannelCreate, 1))
+            .unwrap();
+        table
+            .grant(make_expiring_token(2, Capability::ChannelCreate, 100))
+            .unwrap();
+        table.revoke(CapabilityTokenId(1));
+        let eperm = Err(IpcError::Eperm as i64);
+
+        let mut mint = |parent: u64, now: u64| {
+            table.mint_child(
+                CapabilityTokenId(parent),
+                chan_access(1),
+                ProcessId(1),
+                CapabilityTokenId(10),
+                now,
+            )
+        };
+        assert_eq!(mint(1, 0), eperm, "revoked parent");
+        assert_eq!(mint(2, 100), eperm, "parent at its expiry tick");
+        assert_eq!(mint(2, 200), eperm, "parent past its expiry");
+        assert_eq!(mint(99, 0), eperm, "missing parent");
+        assert_eq!(table.free_slots(), MAX_CAPS_PER_PROCESS - 2);
+    }
+
+    #[test]
+    fn mint_child_full_table_enospc() {
+        let mut table = CapabilityTable::new();
+        for i in 0..MAX_CAPS_PER_PROCESS as u64 {
+            table
+                .grant(make_token(i + 1, Capability::ChannelCreate, 1))
+                .unwrap();
+        }
+        assert_eq!(table.free_slots(), 0);
+        assert_eq!(
+            table.mint_child(
+                CapabilityTokenId(1),
+                chan_access(0),
+                ProcessId(1),
+                CapabilityTokenId(1000),
+                0,
+            ),
+            Err(IpcError::Enospc as i64)
+        );
+    }
+
+    // --- CapabilityTable: free_slots, is_revoked, revoke_all, clear ---
+
+    #[test]
+    fn free_slots_counts_revoked_as_occupied() {
+        let mut table = CapabilityTable::new();
+        assert_eq!(table.free_slots(), MAX_CAPS_PER_PROCESS);
+        table
+            .grant(make_token(1, Capability::DebugPrint, 1))
+            .unwrap();
+        table
+            .grant(make_token(2, Capability::SpawnAgent, 1))
+            .unwrap();
+        assert_eq!(table.free_slots(), MAX_CAPS_PER_PROCESS - 2);
+        table.revoke(CapabilityTokenId(1));
+        assert_eq!(table.free_slots(), MAX_CAPS_PER_PROCESS - 2);
+        assert_eq!(table.count(), 1);
+    }
+
+    #[test]
+    fn is_revoked_missing_live_and_cascaded() {
+        let mut table = CapabilityTable::new();
+        table
+            .grant(make_token(1, Capability::ChannelCreate, 1))
+            .unwrap();
+        table
+            .mint_child(
+                CapabilityTokenId(1),
+                chan_access(2),
+                ProcessId(1),
+                CapabilityTokenId(2),
+                0,
+            )
+            .unwrap();
+        assert!(table.is_revoked(CapabilityTokenId(99)), "missing id");
+        assert!(!table.is_revoked(CapabilityTokenId(1)), "live parent");
+        assert!(!table.is_revoked(CapabilityTokenId(2)), "live child");
+
+        table.revoke(CapabilityTokenId(1));
+        assert!(table.is_revoked(CapabilityTokenId(1)));
+        assert!(
+            table.is_revoked(CapabilityTokenId(2)),
+            "child of a revoked parent"
+        );
+    }
+
+    #[test]
+    fn revoke_all_counts_newly_revoked() {
+        let mut table = CapabilityTable::new();
+        for i in 1..=4 {
+            table
+                .grant(make_token(i, Capability::DebugPrint, 1))
+                .unwrap();
+        }
+        table.revoke(CapabilityTokenId(2));
+        assert_eq!(table.revoke_all(), 3);
+        assert_eq!(table.count(), 0);
+        assert_eq!(table.free_slots(), MAX_CAPS_PER_PROCESS - 4);
+        for i in 1..=4 {
+            assert!(table.is_revoked(CapabilityTokenId(i)));
+        }
+        assert!(!table.has_capability(&Capability::DebugPrint, 0));
+        assert_eq!(table.revoke_all(), 0);
+    }
+
+    #[test]
+    fn revoke_all_empty_table() {
+        let mut table = CapabilityTable::new();
+        assert_eq!(table.revoke_all(), 0);
+        assert_eq!(table.count(), 0);
+    }
+
+    #[test]
+    fn clear_leaves_empty_table() {
+        let mut table = CapabilityTable::new();
+        table
+            .grant(make_token(1, Capability::DebugPrint, 1))
+            .unwrap();
+        table
+            .grant(make_token(2, Capability::SpawnAgent, 1))
+            .unwrap();
+        table.revoke(CapabilityTokenId(1));
+        table.clear();
+
+        assert_eq!(table.count(), 0);
+        assert_eq!(table.free_slots(), MAX_CAPS_PER_PROCESS);
+        assert!(table.tokens().iter().all(Option::is_none));
+        assert!(table.is_revoked(CapabilityTokenId(2)));
+        // The next grant takes slot 0 again.
+        let h = table
+            .grant(make_token(3, Capability::DebugPrint, 1))
+            .unwrap();
+        assert_eq!(h, CapabilityHandle(0));
+        assert_eq!(table.count(), 1);
     }
 
     // --- CapabilityTable: list ---
@@ -1052,8 +1481,8 @@ mod tests {
     // --- GPU capability attenuation tests ---
 
     #[test]
-    fn attenuate_gpu_buffer_create_to_access() {
-        assert!(Capability::GpuBufferCreate.can_attenuate_to(&Capability::GpuBufferAccess(42)));
+    fn attenuate_denies_gpu_buffer_create_to_access() {
+        assert!(!Capability::GpuBufferCreate.can_attenuate_to(&Capability::GpuBufferAccess(42)));
     }
 
     #[test]

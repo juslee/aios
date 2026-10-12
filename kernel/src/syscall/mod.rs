@@ -329,12 +329,15 @@ fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
 
 /// CapabilityAttenuate (nr=15): x0=cap_handle, x1=new_cap_type, x2=new_expiry, x3=resource_id.
 ///
-/// Create a narrower child capability from an existing one.
+/// Create a child capability from an existing one. Attenuation is identity
+/// only: types 1 and 3 work from an Access token for the same full id, never
+/// from a Create token.
 /// x3 is required when new_cap_type is ChannelAccess(1) or SharedMemoryAccess(3).
+/// x2 = 0 requests no expiry, which gives the child the parent's expiry.
 /// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, an unknown
 /// new_cap_type or an x3 that does not fit in u32; EPERM for an in-range
-/// handle whose slot is empty or revoked, or a type the parent cannot
-/// attenuate to.
+/// handle whose slot is empty or revoked, a parent that has expired, a type
+/// the parent cannot attenuate to, or an expiry later than the parent's.
 fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     let handle = match cap_handle_arg(tf.x[0]) {
         Ok(h) => h,
@@ -376,9 +379,10 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     };
 
     let new_id = crate::cap::new_token_id();
+    let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     match proc
         .cap_table
-        .attenuate(handle, new_cap, new_expiry, pid, new_id)
+        .attenuate(handle, new_cap, new_expiry, pid, new_id, now)
     {
         Ok(h) => h.0 as i64,
         Err(e) => e,

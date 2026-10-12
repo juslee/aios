@@ -54,7 +54,8 @@ pub(super) fn stale_id_test(my_tid: ThreadId) {
 /// still answers `ipc_reply` with EPROTO (no pending call).
 ///
 /// A wrong-slot B gets no grant: it is destroyed unchecked, like the other
-/// kernel channels a self-test frees.
+/// kernel channels a self-test frees. If the checked destroy of A fails, A is
+/// destroyed unchecked and the case reports check 0 failed without trying B.
 fn stale_channel_case(pid: ProcessId) {
     let a = channel_create_unchecked(pid);
     if crate::cap::grant_to_process(pid, Capability::ChannelAccess(a), false).is_err() {
@@ -62,7 +63,15 @@ fn stale_channel_case(pid: ProcessId) {
         let _ = channel_destroy_unchecked(a);
         return;
     }
-    let destroyed = channel_destroy(a).is_ok();
+    if channel_destroy(a).is_err() {
+        // A is still live, so no create can take its slot and the retry would
+        // only log `slot moved`. Free A unchecked and report check 0 (the
+        // destroy) failed; the bit after it is this cleanup.
+        let cleaned_up = channel_destroy_unchecked(a).is_ok();
+        revoke_all(pid, Capability::ChannelAccess(a));
+        report("Stale-id", &[false], cleaned_up);
+        return;
+    }
 
     let reused = (0..ATTEMPTS).find_map(|_| {
         let b = channel_create_unchecked(pid);
@@ -86,7 +95,8 @@ fn stale_channel_case(pid: ProcessId) {
         kind: SelectKind::Channel(a),
     }];
     let checks = [
-        destroyed,
+        // Check 0, the destroy of A, passed above.
+        true,
         granted,
         b != a,
         ipc_recv(a, &mut buf, 0) == Err(epipe),
@@ -114,9 +124,10 @@ fn stale_channel_case(pid: ProcessId) {
 /// SharedMemoryCreate, so the temporary grant T is the only one the creates
 /// can use. Create R1, map it and unmap it, which frees it (its creator
 /// token stays); create R2 in R1's slot (a wrong-slot R2 is freed the same
-/// way). With R1's token still held, `shared_memory_map` and a self-share of
-/// R1 return EPIPE, and `shared_memory_map` of R2 succeeds. R2 is then
-/// unmapped, which frees it.
+/// way, and a failure to free one fails the cleanup bit). With R1's token
+/// still held, `shared_memory_map` and a self-share of R1 return EPIPE, and
+/// `shared_memory_map` of R2 succeeds. R2 is then unmapped, which frees it.
+/// A create that fails, R1's or a retry's, logs `shm_create failed`.
 fn stale_shm_case(pid: ProcessId) {
     if holds_live(pid, &Capability::SharedMemoryCreate) {
         crate::kwarn!(Ipc, "Stale-shm test: holds SharedMemoryCreate");
@@ -131,24 +142,26 @@ fn stale_shm_case(pid: ProcessId) {
     // the end.
     let mut created = [None; ATTEMPTS + 1];
     let r1 = shmem::shared_memory_create(pid, 4096, SHM_FLAGS);
-    let checks = r1.ok().map(|r1| {
+    // None if any create failed, R1's or a retry's; Some(None) if no retry
+    // reused R1's slot.
+    let checks = r1.ok().and_then(|r1| {
         created[0] = Some(r1);
         let r1_freed = map_and_unmap(pid, r1);
 
         let mut r2 = None;
+        // Whether every wrong-slot R2 was freed: part of the cleanup bit.
+        let mut wrong_slots_freed = true;
         for slot in created[1..].iter_mut() {
-            let Ok(region) = shmem::shared_memory_create(pid, 4096, SHM_FLAGS) else {
-                break;
-            };
+            let region = shmem::shared_memory_create(pid, 4096, SHM_FLAGS).ok()?;
             *slot = Some(region);
             if region.index() == r1.index() {
                 r2 = Some(region);
                 break;
             }
-            map_and_unmap(pid, region);
+            wrong_slots_freed &= map_and_unmap(pid, region);
         }
 
-        r2.map(|r2| {
+        Some(r2.map(|r2| {
             let epipe = Err(IpcError::Epipe as i64);
             let mapped = shmem::shared_memory_map(pid, r2, SHM_FLAGS);
             let checks = [
@@ -159,8 +172,8 @@ fn stale_shm_case(pid: ProcessId) {
                 mapped.is_ok(),
             ];
             let r2_freed = mapped.is_ok() && shmem::shared_memory_unmap(pid, r2).is_ok();
-            (checks, r2_freed)
-        })
+            (checks, r2_freed && wrong_slots_freed)
+        }))
     });
 
     revoke_all(pid, Capability::SharedMemoryCreate);
@@ -171,7 +184,7 @@ fn stale_shm_case(pid: ProcessId) {
     match checks {
         None => crate::kwarn!(Ipc, "Stale-shm test: shm_create failed"),
         Some(None) => crate::kwarn!(Ipc, "Stale-shm test: slot moved"),
-        Some(Some((checks, r2_freed))) => report("Stale-shm", &checks, r2_freed),
+        Some(Some((checks, cleaned_up))) => report("Stale-shm", &checks, cleaned_up),
     }
 }
 

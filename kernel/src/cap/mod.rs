@@ -267,12 +267,27 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         Err(CapabilityError::NotGranted { requested: *action })
     }
 
+    /// Grant `cap` to `holder` as a parentless, delegatable token.
+    ///
+    /// Refuses the object-bound capabilities (`ChannelAccess`,
+    /// `SharedMemoryAccess`, `GpuBufferAccess`) with `NotGranted`, before any
+    /// lock: a token for one object comes only from minting at creation or
+    /// from delegation (capability-lifetime ADR §3), never from a Kit grant.
     fn grant(
         &mut self,
         holder: ProcessId,
         cap: Capability,
         granted_by: ProcessId,
     ) -> Result<CapabilityHandle, CapabilityError> {
+        if matches!(
+            cap,
+            Capability::ChannelAccess(_)
+                | Capability::SharedMemoryAccess(_)
+                | Capability::GpuBufferAccess(_)
+        ) {
+            return Err(CapabilityError::NotGranted { requested: cap });
+        }
+
         let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
         let mut table = PROCESS_TABLE.lock();
         let proc = process_mut(&mut table, holder)
@@ -338,18 +353,20 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         Ok(())
     }
 
+    /// Attenuate with no requested expiry: the child takes the parent's.
     fn attenuate(
         &mut self,
         holder: ProcessId,
         handle: CapabilityHandle,
         narrowed: Capability,
     ) -> Result<CapabilityHandle, CapabilityError> {
+        let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
         let mut table = PROCESS_TABLE.lock();
         let proc = process_mut(&mut table, holder)
             .map_err(|_| CapabilityError::InvalidHandle { handle })?;
 
         proc.cap_table
-            .attenuate(handle, narrowed, None, holder, new_token_id())
+            .attenuate(handle, narrowed, None, holder, new_token_id(), now)
             .map_err(|_| CapabilityError::InvalidAttenuation {
                 reason: "parent does not permit narrowing to requested capability",
             })
