@@ -347,7 +347,8 @@
       "Bash(sh .claude/hooks/aios checkpoint*)",
       "Bash(sh */.claude/hooks/aios checkpoint*)",
       "Bash(target/tools/installed/aios checkpoint*)",
-      "Bash(*/target/tools/installed/aios checkpoint*)"
+      "Bash(*/target/tools/installed/aios checkpoint*)",
+      "Bash(*/aios checkpoint*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
