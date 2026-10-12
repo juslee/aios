@@ -350,7 +350,7 @@ Conventions for every task:
     - Verify: T(`--test agent_support script_commands_`) = 1; T(`--test agent_support outside_repo_`) = 1; T(`--test agent_support checkpoint_wip_identity_is_pinned`) = 1; T(`--test agent_support`) = 14; G.
   - [x] 1g: The worker commits Task 1 in one commit: the harness, `gh.rs`, `git.rs`, `agent.rs` and the `parallel_map` move.
     - Verify (in the writer's worktree): `git show --name-only --format= HEAD | grep -cE '^tools/(src/(gh|git)\.rs|tests/common/(agent|fake_gh|jail)\.rs)$'` = 5; G.
-  - [ ] 1h: **Prove the harness on CI.** The lead places the range, pushes, and opens a draft PR: `gh pr create --draft --label team-build --title "Tools R3: aios brief and aios checkpoint" --body "R3 in progress: shared API and harness first; plan in docs/knowledge/plans"`.
+  - [x] 1h: **Prove the harness on CI.** The lead places the range, pushes, and opens a draft PR: `gh pr create --draft --label team-build --title "Tools R3: aios brief and aios checkpoint" --body "R3 in progress: shared API and harness first; plan in docs/knowledge/plans"`.
     - Verify: `gh pr checks <n>` shows "Tools (host)" passing, and `gh run view <run-id> --log | grep -cE 'test (oracle_smoke_brief_and_checkpoint|jail_covers_every_script_command) \.\.\. ok'` = 2, so both ran on ubuntu-26.04 and were not skipped. A tool missing on that image fails here. It is resolved by a contract amendment to the tool lists, never by a skip.
   - [ ] 1i: **The merge-order gate** (contract §1 with A4; R3 is the only filer). The lead runs this as soon as both draft PRs exist, right after whichever opens second (R3 1h or R2 0d).
     - First: `gh issue list --label needs-human --state open --limit 1000 --json number,title --jq '[.[] | select(.title | startswith("Gate: merge PR #<R2> "))] | length'`. File only when it prints 0; otherwise record the existing number.
@@ -361,12 +361,12 @@ Conventions for every task:
       - the existing-gate check (the first command of this sub-task) now prints 1.
 
 - [ ] **Task 5: `tools/src/merge_ready.rs`, the verdict brief and R2 share** (worker, background; runs second and completes the freeze)
-  - [ ] 5a: `tools/src/merge_ready.rs` (`pub mod merge_ready;` between `git` and `paths`).
+  - [x] 5a: `tools/src/merge_ready.rs` (`pub mod merge_ready;` between `git` and `paths`).
     - Exactly contract §3: `PR_FIELDS`, `NEEDS_HUMAN_ISSUES_ARGS`, `clean`, `refs`, `alt`, `check_name`, `CheckState`, `check_state`, `gates`, `labelled_needs_human`, `blockers` and `pr_lines`.
     - The blocker order is brief.sh's 11 (W234 L201-241), with `labelled needs-human` (D10) in position 4.
     - The module doc is the contract's provenance sentence (`former scripts/agent/brief.sh (blob at <BRIEF_ORACLE>, L201-241)`).
     - Verify: `git grep -hcE 'former `?scripts/agent/brief\.sh`? \(blob at' -- tools/src/merge_ready.rs` prints `1`, the one allowed provenance mention (10f's grep exempts exactly this form).
-  - [ ] 5b: Unit tables:
+  - [x] 5b: Unit tables:
     - every blocker alone and all together (12);
     - conclusion `""` is pending; `false` vs `null`; 0 threads printed as 0; `#0012` → 12;
     - a value beyond 2^53 parsed exactly (D4);

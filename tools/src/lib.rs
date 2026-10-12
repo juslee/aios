@@ -10,6 +10,7 @@
 pub mod cmd;
 pub mod gh;
 pub mod git;
+pub mod merge_ready;
 pub mod paths;
 pub mod proc;
 pub mod pyre;
