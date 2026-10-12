@@ -17,6 +17,8 @@
 //! - D2: the unreachable branches are gone ("jq is not installed", "docs-check
 //!   unavailable", the docs-error preference for the shim's `aios: ` line);
 //! - D3 and D7: collation is bytewise, and a soak tie keeps the first run;
+//! - D4 and D10: the merge-ready verdict is [`crate::merge_ready`]'s: `#<n>` references
+//!   beyond 2^53 are exact, and a PR labelled `needs-human` is not merge-ready;
 //! - D6: the stale-binary note comes from `AIOS_SHIM_STALE=1`.
 //!
 //! Kept bug for bug: the epoch fallback of the date formatting ([`clock`]), the `Boots` row
@@ -31,6 +33,7 @@
 mod clock;
 mod docs;
 mod git_section;
+mod github;
 mod local;
 mod phase;
 mod soak;
@@ -43,6 +46,7 @@ use std::time::SystemTime;
 
 use anyhow::{bail, Result};
 
+use crate::gh::{GhCli, GhEnv};
 use crate::git;
 use crate::paths::normpath;
 
@@ -228,9 +232,17 @@ pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Wri
     section(out, "Git")?;
     git_section::print(&ctx, fetch, out)?;
 
-    // The GitHub sections follow in the next step; their headings keep the report's order.
+    // The probe, the needs-human issues and the review threads come before the first
+    // GitHub section, which prints them.
+    let mut github = github::Github::open(GhCli {
+        cwd: ctx.root.clone(),
+        env: GhEnv::INHERIT,
+    });
     section(out, "Open pull requests")?;
+    github.pull_requests(out)?;
+
     section(out, "Main CI")?;
+    github.main_ci(&ctx.root, out)?;
 
     section(out, "Soak")?;
     soak::print(&ctx, out)?;
@@ -248,10 +260,12 @@ pub fn run(args: &[OsString], cwd: &Path, out: &mut dyn Write, err: &mut dyn Wri
     local::knowledge(&ctx, newest_handoff.as_deref(), &ctx.marker(), out)?;
 
     section(out, "Needs human")?;
+    github.needs_human(out)?;
 
     section(out, "Next phase-doc step")?;
-    // The pull-request lookup for this milestone follows with the GitHub sections.
-    let _milestone = phase::print(&ctx.root, out)?;
+    if let Some(milestone) = phase::print(&ctx.root, out)? {
+        github.milestone_pr(&milestone, out)?;
+    }
 
     section(out, "Docs drift")?;
     docs::print(docs, docs::stale_from_env(), out)?;

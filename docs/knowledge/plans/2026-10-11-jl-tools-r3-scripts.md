@@ -485,7 +485,7 @@ Conventions for every task:
     - Verify: under each mutation, `cargo test -p aios-tools --test checkpoint_parity <one named test>` exits non-zero; afterwards `git status --porcelain -- tools/src` prints nothing. The writer lists the seven results in its report.
   - [x] 3g: Verify: T(`--test checkpoint_parity`) = 55 (52 per-scenario tests + `oracle_reproduces_checkpoint_goldens` + 2 differentials); T(`--lib checkpoint::`) ≥ 9; `git grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only files under `tools/src/cmd/checkpoint/`; G.
 
-- [ ] **Task 4: Brief scenarios, gh fixtures and goldens recorded from the oracle (no port code)** (worker, background; 4e partly lead)
+- [x] **Task 4: Brief scenarios, gh fixtures and goldens recorded from the oracle (no port code)** (worker, background; 4e partly lead)
   - [x] 4a: Fixtures under `tools/tests/fixtures/brief/<scenario>/`:
     - `gh/<label>.{out,err,rc}`, with labels from `BRIEF_GH_FIXTURES`;
     - `docs/{out,err,rc,stale}`;
@@ -545,7 +545,7 @@ Conventions for every task:
     - Result (2026-10-12): the lead ran `capture_real_gh_shapes` in a scratch clone at eaf4a64 and it passed (committed fixtures compared: pr-list 67, graphql-suites 66, run-list 66, the two queue counts 67 each; StatusContext fixtures not compared, because no real PR has a StatusContext check), and PR #257's CI on eaf4a64 logged `test oracle_reproduces_brief_goldens ... ok` on ubuntu-26.04.
     - An identity or sha mismatch (an author other than `aios-test`, or a commit sha that differs between twins or between macOS and CI) is never a `PLATFORM_SCENARIOS` case: it is a harness bug in `twin_command`'s identity env or date pinning (Task 1e), fixed there in a follow-up worker commit.
 
-- [ ] **Task 6: `aios brief`, the local sections** (worker, background)
+- [x] **Task 6: `aios brief`, the local sections** (worker, background)
   - [x] 6a: `tools/src/cmd/brief/mod.rs`: `run(args, cwd, out, err) -> anyhow::Result<u8>`.
     - Parse the arguments in order. `-h`/`--help` prints new help text naming `aios brief [--no-fetch]` and its side effects (D1). Outside a repo, print `brief: not inside a git repository` and exit 2; otherwise exit 0.
     - Find the toplevel (`git rev-parse --show-toplevel` from `cwd`), the common dir and the main worktree (`git::worktrees`). **Every later git, gh, docs-check and file call runs with the toplevel as cwd**, as brief.sh's `cd "$ROOT"` does (L56): the phase-doc glob, `-- docs/knowledge`, the soak dirs.
@@ -590,20 +590,20 @@ Conventions for every task:
   - [x] 6f: Wire `Command::Brief` (the first variant; raw `args_os`, `disable_help_flag`) and `pub mod brief;`. Update the lib.rs crate doc, and add `brief, ` to the `tools/Cargo.toml` description.
     - Verify: `cargo run -q -p aios-tools -- brief --bogus; test $? = 2`; `grep -c 'the aios binary (brief, checkpoint, docs-check, hook, soak; agent-loop commands in later PRs)' tools/Cargo.toml` = 1; G.
 
-- [ ] **Task 7: `aios brief`, the GitHub sections, full goldens and the differential** (worker, background)
-  - [ ] 7a: `github.rs`. Every call goes through `GhCli { cwd: <toplevel>, env: GhEnv::INHERIT }`.
+- [x] **Task 7: `aios brief`, the GitHub sections, full goldens and the differential** (worker, background)
+  - [x] 7a: `github.rs`. Every call goes through `GhCli { cwd: <toplevel>, env: GhEnv::INHERIT }`.
     - The probe is `gh api rate_limit --jq .resources.core.remaining`: `Failed` → `first_stderr_line`, or `unknown error` when that line is empty (L161); `0` → exhausted; `Missing` → `gh is not installed`.
     - The needs-human issues (`merge_ready::NEEDS_HUMAN_ISSUES_ARGS`), the threads GraphQL (the same query text) and the PR list (`--limit 30`, `--json merge_ready::PR_FIELDS`), rendered by `merge_ready::pr_lines`. A failed PR list prints `- GitHub unavailable: <its first stderr line>` (L243) and makes the Phase section's lookup `unknown (GitHub unavailable)` (L601).
     - Main CI: the suites GraphQL, issued only when `refs/remotes/origin/main` resolves, then `run list`, **issued only when the suites query did not fail** (L267-285); either failure prints `- GitHub unavailable: <that call's first stderr line>` (L301). Suites are appended after runs, grouped by workflow, with the last maximum by `createdAt`, then sorted by name. The not-tip suffix appears only when there is a tip.
     - Needs human and its queue counts (a failed count prints `?`, L551-552); the `open PR for M<n>` lookup.
     - The argv, cwd and env of every gh call equal the oracle's; the differential compares the call logs.
     - Verify: T(`--lib brief::github::`) ≥ 1.
-  - [ ] 7b: Delete `NOT_YET_PORTED` and the interim test.
+  - [x] 7b: Delete `NOT_YET_PORTED` and the interim test.
     - Add the 76 per-scenario `#[test]`s, each checking the whole output against its golden, aios only.
     - Bless the aios-only goldens one scenario at a time (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test brief_parity cli_help`, then `pr_labelled_needs_human`), and review them by hand.
     - Add `brief_differential_against_oracle`: twin repos over the 74 non-divergent scenarios, with `PLATFORM_SCENARIOS` handled as defined. It compares stdout, exit, gh calls (so the call sequence), docs calls, the marker and remote refs, using `parallel_map`.
     - Verify: `ls tools/tests/golden/brief/*.golden | wc -l` = 76; `git grep -c NOT_YET_PORTED -- tools` prints nothing.
-  - [ ] 7c: Mutation checks (uncommitted):
+  - [x] 7c: Mutation checks (uncommitted):
     - `alt` falls through on 0 → `threads_zero_is_known` fails;
     - `max_by` takes the first maximum → `main_ci_tie` fails;
     - the gate regex matches a body as a title → `prs_every_blocker` fails;
@@ -612,7 +612,7 @@ Conventions for every task:
     - issue `run list` after a suites failure → `main_ci_suites_fail` fails;
     - print `0` instead of `?` for a failed queue count → `queue_counts_unknown` fails.
     - Verify: each named test exits non-zero under its mutation; `git status --porcelain -- tools/src` prints nothing afterwards.
-  - [ ] 7d: Verify: T(`--test brief_parity`) = 79 (76 per-scenario tests + `oracle_reproduces_brief_goldens` + `brief_fixtures_label_needs_human_only_in_d10` + the differential); `cargo test -p aios-tools` passes in full; G.
+  - [x] 7d: Verify: T(`--test brief_parity`) = 79 (76 per-scenario tests + `oracle_reproduces_brief_goldens` + `brief_fixtures_label_needs_human_only_in_d10` + the differential); `cargo test -p aios-tools` passes in full; G.
 
 - [ ] **Task 8: Shim: `AIOS_SHIM_STALE`, and checkpoint's exit 3 on a failed stale rebuild** (worker, **foreground**: `.claude/hooks/aios` is protected; contract §6; R2 edits the shim only after R3 is on main)
   - [ ] 8a: `.claude/hooks/aios`, exactly the contract §6 R3 rows:

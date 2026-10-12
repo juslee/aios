@@ -1,5 +1,4 @@
-//! `aios brief` parity with the former script of `/justin:brief` (R3, Task 4: scenarios,
-//! fixtures and goldens; the port arrives in Tasks 6 and 7).
+//! `aios brief` parity with the former script of `/justin:brief` (R3, Tasks 4, 6 and 7).
 //!
 //! The oracle is the script's blob at `agent::BRIEF_ORACLE`, read from git history and run
 //! as `<bash> <script> <args>` in a twin repository under the PATH jail, with the fake
@@ -13,7 +12,8 @@
 //! brief_parity -- --ignored record_brief_goldens`), through `agent::oracle_renames()` (the
 //! documented D1 rename) and `agent::normalize()`. 74 scenarios are differential.
 //! `cli_help` (D1) and `pr_labelled_needs_human` (D10, `agent::DIVERGENT_SCENARIOS`) are
-//! aios-only: their goldens are blessed from the port in Task 7.
+//! aios-only: their goldens were blessed from the port, one scenario at a time, and
+//! reviewed by hand.
 //!
 //! A golden holds these sections, in order: `exit`, `stdout`, `stderr`, `gh calls` (the
 //! rendered argv, the cwd and the environment of every fake-gh call), `docs calls` (the
@@ -23,17 +23,17 @@
 //!
 //! The tests:
 //!
-//! - `oracle_reproduces_brief_goldens`: the oracle against the 74 goldens;
+//! - one `#[test]` per scenario, named after it: `aios brief` against the scenario's
+//!   golden (`cargo test -p aios-tools --test brief_parity <name>` runs one);
+//! - `oracle_reproduces_brief_goldens`: the oracle against the 74 differential goldens;
+//! - `brief_differential_against_oracle`: the oracle and aios in twin repositories over
+//!   the 74 differential scenarios, comparing everything a golden holds;
 //! - `brief_fixtures_label_needs_human_only_in_d10`: only the D10 scenario serves a PR
 //!   labelled `needs-human`, so every other scenario stays differential;
-//! - `brief_local_sections_match_goldens` (Task 6, interim): `aios brief` against the 74
-//!   goldens, section by section, for every section except the three GitHub ones
-//!   ([`NOT_YET_PORTED`]) and the pull-request lookup of the phase section;
 //! - `record_brief_goldens` and `capture_real_gh_shapes`, both `#[ignore]`.
 //!
 //! Every scenario also runs `assert_not_vacuous` and the fake gh's `BRIEF_GH_ALLOW`
-//! allowlist (the shared checks, [`check_outcome`]). Task 7 adds one `#[test]` per
-//! scenario (aios against its golden) and the differential. Test data builds nothing
+//! allowlist (the shared checks, [`check_outcome`]). Test data builds nothing
 //! token-shaped (contract §10).
 
 mod common;
@@ -53,9 +53,8 @@ struct Case {
 }
 
 /// The scenario table. Each `scenario!(<name>, [<args>], <builder>[, <check>])` at
-/// column 0 declares one entry; the builder takes the scenario's name. (Task 7 extends the
-/// macro to also generate one `#[test]` of the same name, which runs aios on it against
-/// its golden.)
+/// column 0 declares one entry (the builder takes the scenario's name) and one `#[test]` of
+/// the same name, which runs aios on it against its golden.
 macro_rules! scenarios {
     (@check) => {
         None
@@ -70,6 +69,13 @@ macro_rules! scenarios {
             build: $build,
             check: scenarios!(@check $($check)?),
         }),*];
+
+        $(
+            #[test]
+            fn $name() {
+                aios_matches_golden(stringify!($name));
+            }
+        )*
     };
 }
 
@@ -279,9 +285,10 @@ fn every_blocker(outcome: &Outcome) {
     );
 }
 
-fn labelled_pr_still_ready(outcome: &Outcome) {
-    // The oracle does not read the label: D10 is aios's, and its golden is aios-only.
-    stdout_has(outcome, &["merge-ready: yes"]);
+fn labelled_pr_is_not_ready(outcome: &Outcome) {
+    // The oracle does not read the label (it would print `merge-ready: yes` for this
+    // fixture): D10 is aios's, and its golden is aios-only.
+    stdout_has(outcome, &["merge-ready: no (labelled needs-human)"]);
 }
 
 fn suites_query_fails_so_runs_are_never_listed(outcome: &Outcome) {
@@ -462,7 +469,7 @@ scenario!(no_prs, ["--no-fetch"], base);
 // step is in a milestone, so the Phase section cannot look for its PR.
 scenario!(pr_list_fails, ["--no-fetch"],
     |n| phase_doc(base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
-scenario!(pr_labelled_needs_human, ["--no-fetch"], base, labelled_pr_still_ready);
+scenario!(pr_labelled_needs_human, ["--no-fetch"], base, labelled_pr_is_not_ready);
 
 // Main CI (6).
 scenario!(main_ci, ["--no-fetch"], base);
@@ -994,21 +1001,22 @@ fn oracle_reproduces_brief_goldens() {
     let cases = differential_cases();
     assert_eq!(cases.len(), 74, "the non-divergent scenarios");
 
-    let known: Vec<String> = cases
+    // Every scenario has a golden: the oracle's 74 and the two aios-only ones.
+    let known: Vec<String> = CASES
         .iter()
         .map(|case| format!("{}.golden", case.name))
         .collect();
+    let mut files = 0;
     for entry in std::fs::read_dir(&dir).expect("read the golden directory") {
         let file = entry
             .expect("a directory entry")
             .file_name()
             .to_string_lossy()
             .into_owned();
-        assert!(
-            known.contains(&file),
-            "{file} is no differential scenario's golden"
-        );
+        assert!(known.contains(&file), "{file} is no scenario's golden");
+        files += 1;
     }
+    assert_eq!(files, CASES.len(), "a golden for every scenario");
 
     let failures: Vec<String> = parallel_map(&cases, |case| {
         if !agent::oracle_runs_here(case.name) {
@@ -1069,120 +1077,75 @@ fn brief_fixtures_label_needs_human_only_in_d10() {
     }
 }
 
-// --- the local sections (Task 6) ---------------------------------------------------------
+// --- aios against the goldens and against the oracle ---------------------------------------
 
-/// The sections the next step ports (the GitHub ones): until then `aios brief` prints their
-/// headings and nothing under them, and the interim test compares the heading only.
-const NOT_YET_PORTED: &[&str] = &["Open pull requests", "Main CI", "Needs human"];
-
-/// The titles of a golden's blocks, in order.
-const GOLDEN_BLOCKS: [&str; 7] = [
-    "exit",
-    "stdout",
-    "stderr",
-    "gh calls",
-    "docs calls",
-    "marker touched",
-    "remote refs",
-];
-
-/// A golden split into its blocks (`== title ==` and what follows).
-fn golden_blocks(golden: &str) -> Vec<(&'static str, &str)> {
-    let mut marks = Vec::new();
-    let mut from = 0;
-    for title in GOLDEN_BLOCKS {
-        let mark = format!("== {title} ==\n");
-        let at = from
-            + golden[from..]
-                .find(&mark)
-                .unwrap_or_else(|| panic!("no `{title}` block in:\n{golden}"));
-        marks.push((title, at, at + mark.len()));
-        from = at + mark.len();
-    }
-    marks
+fn case_named(name: &str) -> &'static Case {
+    CASES
         .iter()
-        .enumerate()
-        .map(|(i, (title, _, body))| {
-            let end = marks.get(i + 1).map_or(golden.len(), |next| next.1);
-            (*title, &golden[*body..end])
-        })
-        .collect()
+        .find(|case| case.name == name)
+        .unwrap_or_else(|| panic!("no scenario named {name}"))
 }
 
-/// The lines of a report section the interim test compares: the pull-request lookup of the
-/// phase section is a GitHub answer, so it waits with the GitHub sections.
-fn comparable(section: &str) -> String {
-    section
-        .split_inclusive('\n')
-        .filter(|row| !row.starts_with("- open PR for M"))
-        .collect()
-}
-
-/// What differs between the oracle's golden and an aios run, section by section; `None`
-/// when only the not-yet-ported sections differ.
-fn local_difference(want: &str, got: &str) -> Option<String> {
-    let (want, got) = (golden_blocks(want), golden_blocks(got));
-    for ((title, w), (_, g)) in want.iter().zip(&got) {
-        // The gh calls are the GitHub sections' (none yet).
-        if *title == "gh calls" {
-            continue;
-        }
-        if *title != "stdout" {
-            if w != g {
-                return Some(format!("{title}: {}", first_difference(w, g)));
-            }
-            continue;
-        }
-        let (wp, gp): (Vec<&str>, Vec<&str>) =
-            (w.split("\n## ").collect(), g.split("\n## ").collect());
-        if wp.len() != gp.len() {
-            return Some(format!(
-                "stdout: {} sections, expected {}",
-                gp.len(),
-                wp.len()
-            ));
-        }
-        for (ws, gs) in wp.iter().zip(&gp) {
-            let name = ws.lines().next().unwrap_or_default();
-            if NOT_YET_PORTED.contains(&name) {
-                if gs.lines().next() != Some(name) {
-                    return Some(format!("section {name}: heading missing"));
-                }
-            } else if comparable(ws) != comparable(gs) {
-                return Some(format!(
-                    "section {name}: {}",
-                    first_difference(&comparable(ws), &comparable(gs))
-                ));
-            }
-        }
+/// aios on scenario `name` against its golden. The goldens of the two aios-only scenarios
+/// are blessed from this run (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test
+/// brief_parity <name>`, one scenario at a time, reviewed by hand); the 74 differential
+/// goldens are recorded from the oracle only, so a bless run leaves them.
+fn aios_matches_golden(name: &str) {
+    let case = case_named(name);
+    let scenario = (case.build)(case.name);
+    let outcome = agent::run_aios(&scenario, "brief", case.args);
+    check_outcome(case, &outcome);
+    let got = String::from_utf8_lossy(&render_golden(&outcome, false)).into_owned();
+    let path = golden_dir().join(format!("{name}.golden"));
+    if is_divergent(name) && common::soak::bless() {
+        std::fs::create_dir_all(golden_dir()).expect("create the golden directory");
+        std::fs::write(&path, &got).expect("write an aios-only golden");
     }
-    None
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e} (an aios-only golden is blessed with AIOS_BLESS_GOLDENS=1 cargo test -p \
+             aios-tools --test brief_parity {name})",
+            path.display()
+        )
+    });
+    assert!(
+        want == got,
+        "{name}: aios no longer matches its golden: {}\n--- stdout\n{}\n--- stderr\n{}",
+        first_difference(&want, &got),
+        outcome.stdout_str(),
+        outcome.stderr_str()
+    );
 }
 
-/// The local sections of `aios brief` equal the oracle's golden, section by section, for
-/// every differential scenario; the GitHub sections arrive in the next step, which deletes
-/// this test for the per-scenario tests and the differential.
+/// The oracle and aios, in twin repositories, over the 74 differential scenarios: the
+/// exit status, stdout and stderr, the `gh` calls (so the call sequence, argv, cwd and
+/// environment), the docs-check calls, the marker and the remote refs.
 #[test]
-fn brief_local_sections_match_goldens() {
+fn brief_differential_against_oracle() {
     assert_table_is_sound();
-    let dir = golden_dir();
     let cases = differential_cases();
+    assert_eq!(cases.len(), 74, "the non-divergent scenarios");
     let failures: Vec<String> = parallel_map(&cases, |case| {
-        let outcome = agent::run_aios(&(case.build)(case.name), "brief", case.args);
-        agent::assert_origin_invariants(&outcome);
-        common::jail::assert_no_command_not_found(&outcome.stderr);
-        common::jail::assert_no_command_not_found(&outcome.fake_stderr);
-        let got = String::from_utf8_lossy(&render_golden(&outcome, false)).into_owned();
-        let want = std::fs::read_to_string(dir.join(format!("{}.golden", case.name)))
-            .unwrap_or_else(|e| panic!("{}: {e}", case.name));
-        local_difference(&want, &got).map(|difference| format!("{}: {difference}", case.name))
+        if !agent::oracle_runs_here(case.name) {
+            return None;
+        }
+        let scenario = (case.build)(case.name);
+        let oracle = agent::run_oracle(&scenario, case.args);
+        check_outcome(case, &oracle);
+        let aios = agent::run_aios(&scenario, "brief", case.args);
+        check_outcome(case, &aios);
+        let (want, got) = (
+            String::from_utf8_lossy(&render_golden(&oracle, true)).into_owned(),
+            String::from_utf8_lossy(&render_golden(&aios, false)).into_owned(),
+        );
+        (want != got).then(|| format!("{}: {}", case.name, first_difference(&want, &got)))
     })
     .into_iter()
     .flatten()
     .collect();
     assert!(
         failures.is_empty(),
-        "aios brief differs from the oracle's goldens in:\n{}",
+        "aios differs from the oracle in these scenarios:\n{}",
         failures.join("\n")
     );
 }
