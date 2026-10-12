@@ -706,7 +706,7 @@ Conventions for every task:
       - before the change, on the parent commit (`<tip>`): `git grep -nE 'scripts/agent/(brief|checkpoint)\.sh' <tip> -- tools ':!tools/tests/common/agent.rs' | grep -vE 'former `?scripts/agent/(brief|checkpoint)\.sh`? \(blob at'` prints nothing, so no test reads a script from disk;
       - after `git rm` and before the commit: T(`--test soak_interleave`) passes with the scripts gone from the work tree (`test ! -e scripts/agent/brief.sh`), and G passes (so `cargo test -p aios-tools` and DG hold without the scripts);
       - after the commit: `git ls-files scripts/agent` lists only `scripts/agent/qemu-lock.sh`.
-  - [ ] 10e: **Owner-run settings change** (contract §11 with A6 and A8; owner decision 4). The classifier refuses agent writes (#244).
+  - [x] 10e: **Owner-run settings change** (contract §11 with A6 and A8; owner decision 4). The classifier refuses agent writes (#244).
     - **Base.** The lead fetches and pins `SETTINGS_BASE=$(git -C <BW> rev-parse HEAD:.claude/settings.json)`, and checks that it equals `git rev-parse origin/main:.claude/settings.json`. If it does not, a worker merges `origin/main` first (Progress conventions; a clean merge, since the branch has no settings edit), and the lead re-pins.
     - **Script.** The lead writes `<scratch>/r3-settings.sh`. It exits 1 unless `git hash-object .claude/settings.json` = `SETTINGS_BASE`. Then, with jq into a temp file and `mv`, it:
       - removes `"Bash(bash -n scripts/agent/brief.sh)"` and `"Bash(bash -n scripts/agent/checkpoint.sh)"` (W234 L125-126) from `allow`;
