@@ -377,9 +377,9 @@ Conventions for every task:
 
     `PR_FIELDS` and `NEEDS_HUMAN_ISSUES_ARGS` are spelled as brief.sh's argv (W234 L198, L166). Lib tests cannot read the oracle, so the Task 7 differential, which compares the gh argv logs, proves them.
     - Verify: T(`--lib merge_ready::`) ≥ 15; G.
-  - [ ] 5c: **Freeze.** After placement, the lead records `R3_API_FREEZE=<BW tip>` under Decisions Made of both plans, in the next worker commit on each branch.
+  - [x] 5c: **Freeze.** After placement, the lead records `R3_API_FREEZE=<BW tip>` under Decisions Made of both plans, in the next worker commit on each branch.
     - Verify, all in worker worktrees, with no commit:
-      1. Reset to the freeze sha: `cargo test -p aios-tools` passes, and T(`--test agent_support`) = 14.
+      1. Reset to the freeze sha: `cargo test -p aios-tools` passes, and T(`--test agent_support`) = 15 (14 at Task 1; the lead review fix added fake_gh_ordinals_follow_the_contract_rule).
       2. **Vendorability (A3)**, in a worker worktree reset to `origin/main`:
          - run `git checkout <R3_API_FREEZE> -- tools/src/gh.rs tools/src/git.rs tools/src/merge_ready.rs tools/tests/common/fake_gh.rs tools/tests/common/jail.rs`;
          - add `pub mod gh; pub mod git; pub mod merge_ready;` to `tools/src/lib.rs` and `pub mod fake_gh; pub mod jail;` to `tools/tests/common/mod.rs`;
@@ -995,6 +995,7 @@ Every R3 and "both" gap of the three critics (journal `wf_fc95b75d-ac8`) and of 
     - The first counted run (kept as `probes-run1-inconclusive.tsv`) failed. Three spellings ran: `sh .claude/hooks/aios checkpoint` (r15), `cargo r -q -p aios-tools -- checkpoint` (r17) and, once the prompt was fixed, `just 'checkpoint'` (r07). r07 and r08 were inconclusive: inline in the prompt, `just 'checkpoint'` reads as English, and the model ran a bare `checkpoint`. The harness fix puts the command in a fenced block, to be run verbatim. The harness was re-saved and re-checksummed, and every row re-run.
     - `asks.txt`, and so Task 10e's owner ask delta, gains five rules: `Bash(just 'checkpoint'*)`, `Bash(just "checkpoint"*)`, `Bash(cargo r *checkpoint*)`, `Bash(sh .claude/hooks/aios checkpoint*)` and `Bash(sh */.claude/hooks/aios checkpoint*)`. It now holds 12 asks, among them the contract §11 four.
     - Known limit (no stop): settings patterns match the command text, so no rule set covers every shell quoting of the recipe name (`just che'ck'point`). Decision 4 makes the asks a control against accidents by cooperative agents, not a guard deny, so this is recorded, not fixed. The Monitor, background-Bash and background-agent rows are all refused, so every probed kind is covered by settings.
+- **R3_API_FREEZE = 3296e1d2fb8f7538c2fe292ca6d80699cd001068** (2026-10-12): Task 1 (ecef063), its lead review fix (59afd73: fake gh ordinals follow contract §5) and Task 5 (5c24fab), merged with origin/main 5f97b57 (#256 Cargo.lock, #259 nightly-2026-10-12). Task 1h passed on PR #257's CI (Tools (host) on ubuntu-26.04; jail_covers_every_script_command and oracle_smoke_brief_and_checkpoint ran and passed). R2 vendors gh.rs, git.rs, merge_ready.rs, tests/common/fake_gh.rs and tests/common/jail.rs from this sha.
 
 ## Lessons Learned
 
