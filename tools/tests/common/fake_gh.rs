@@ -17,8 +17,10 @@
 //!
 //! Fixtures are tried in `<NN>` order and the first whose regex matches the rendered
 //! argv line serves the call. The K-th call to a fixture serves `out.K`, `err.K` and
-//! `rc.K`; for a stream with no file for K, the highest K' below K that has one (so a
-//! changing state sticks at its last value); then the unsuffixed file. An unknown call
+//! `rc.K`. Each stream (out, err, rc) is picked on its own: the exact `.K` file if there
+//! is one; else the highest `.K'` that stream has, for any K'; else the unsuffixed file;
+//! else the default. So a changing state sticks at its last value, and a fixture with
+//! only `out.2` serves `out.2` on call 1 as well. An unknown call
 //! is logged with an empty fixture, prints `fake gh: no fixture for: <line>` on stderr
 //! and exits 99, which is reserved for harness bugs: a gh failure is a fixture with a
 //! non-zero `rc`. A missing `gh` is simply no `<root>/bin/gh`.
@@ -124,15 +126,22 @@ k=$((k + 1))
 printf '%s\n' "$k" >"$root/gh-state/$label.n"
 
 pick() {
-    j=$k
-    while [ "$j" -ge 1 ]; do
-        if [ -f "$dir/$1.$j" ]; then
-            printf '%s\n' "$dir/$1.$j"
-            return
+    if [ -f "$dir/$1.$k" ]; then
+        printf '%s\n' "$dir/$1.$k"
+        return
+    fi
+    best=0
+    for c in "$dir/$1".[0-9]*; do
+        [ -f "$c" ] || continue
+        j=${c##*.}
+        case "$j" in *[!0-9]*) continue ;; esac
+        if [ "$j" -gt "$best" ]; then
+            best=$j
         fi
-        j=$((j - 1))
     done
-    if [ -f "$dir/$1" ]; then
+    if [ "$best" -gt 0 ]; then
+        printf '%s\n' "$dir/$1.$best"
+    elif [ -f "$dir/$1" ]; then
         printf '%s\n' "$dir/$1"
     fi
 }

@@ -410,6 +410,7 @@ fn fake_gh_ordinals_advance() {
     rig.fake
         .fixture("pr-list", "^pr list ")
         .out("default\n")
+        .nth(1, "default\n", "", 0)
         .nth(2, "second\n", "", 0)
         .nth(3, "", "boom\n", 4);
     let run = |args: &[&str]| rig.gh(&rig.dir, args, |_| {});
@@ -447,6 +448,59 @@ fn fake_gh_ordinals_advance() {
         rig.fake.assert_calls_match(&["^run list "]);
     }));
     assert!(outside.is_err());
+}
+
+#[test]
+fn fake_gh_ordinals_follow_the_contract_rule() {
+    let first_rig = rig("fakegh-rule");
+    let run = || first_rig.gh(&first_rig.dir, &["pr", "list"], |_| {});
+    // Only `.2` files: call 1 serves them too, not the unsuffixed file.
+    first_rig
+        .fake
+        .fixture("only-two", "^pr list ")
+        .out("unsuffixed\n")
+        .nth(2, "two\n", "", 0);
+    let first = run();
+    assert_eq!(first.stdout, b"two\n", "call 1 serves out.2, not out");
+    let second = run();
+    assert_eq!(second.stdout, b"two\n");
+
+    // `.1` and `.3`: call 2 has no file of its own and serves the highest, `.3`.
+    let gap_rig = rig("fakegh-rule-gap");
+    let run = || gap_rig.gh(&gap_rig.dir, &["pr", "list"], |_| {});
+    gap_rig
+        .fake
+        .fixture("gap", "^pr list ")
+        .nth(1, "one\n", "", 0)
+        .nth(3, "three\n", "", 0);
+    assert_eq!(run().stdout, b"one\n");
+    assert_eq!(run().stdout, b"three\n", "call 2 serves the highest, out.3");
+    assert_eq!(run().stdout, b"three\n");
+    assert_eq!(run().stdout, b"three\n");
+
+    // Each stream is picked on its own: `err.2` alone leaves out and rc on the
+    // unsuffixed files, and `err.2` serves from call 1.
+    let streams_rig = rig("fakegh-rule-streams");
+    let run = || streams_rig.gh(&streams_rig.dir, &["pr", "list"], |_| {});
+    streams_rig
+        .fake
+        .fixture("streams", "^pr list ")
+        .out("out\n")
+        .rc(3);
+    std::fs::write(
+        streams_rig.fake.root().join("gh/00-streams/err.2"),
+        "late\n",
+    )
+    .expect("write err.2");
+    let first = run();
+    assert_eq!(
+        (
+            first.status.code(),
+            first.stdout.as_slice(),
+            first.stderr.as_slice()
+        ),
+        (Some(3), &b"out\n"[..], &b"late\n"[..])
+    );
 }
 
 #[test]
