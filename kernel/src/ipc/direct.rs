@@ -109,7 +109,11 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
         ) == BlockAction::Sleep;
         if !receiver_blocked || !sender_blocks {
             drop(table);
-            // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
+            // SAFETY: This function masked IRQs at entry and THREAD_TABLE is
+            // dropped, so clearing PSTATE.I restores the state its one
+            // caller, ipc_call at thread level, entered with. Unmasking
+            // with THREAD_TABLE still held would let this CPU's tick, whose
+            // schedule() takes THREAD_TABLE too, panic "lock re-entry:".
             unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
             return false;
         }

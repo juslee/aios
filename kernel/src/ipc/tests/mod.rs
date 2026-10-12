@@ -455,10 +455,10 @@ fn ipc_caller_entry() -> ! {
 /// (`notify_loop_test`, `select_loop_test`, `sleep_loop_test`,
 /// `recv_loop_test`, `call_loop_test`, with the wake helper pinned to CPU 2;
 /// their timed-out cases take about 2 s each, so the lines after them print
-/// after the bench). Last, it calls IpcCall on a channel
-/// with no receiver (expects ETIMEDOUT): the call holds the channel's minted
-/// ChannelAccess, so it blocks until its 100-tick timeout, and a late timeout
-/// wake can hide only that line.
+/// after the bench). Last, it calls IpcCall on a channel with no receiver
+/// (expects ETIMEDOUT): the call holds the channel's minted ChannelAccess,
+/// so it blocks until its 100-tick timeout, and a late timeout wake can hide
+/// only that line.
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no

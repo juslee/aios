@@ -515,8 +515,8 @@ pub fn block_current(new_state: ThreadState) {
 /// `ubdead`, `ubnone`, `ubtok`, `ubpend`, `ubmove` by source). The returned
 /// outcome is what `unblock` did, with the target's call or receive phase
 /// for the reply, send and call wakers; it is instrumentation only, and
-/// callers that do not classify a wake ignore it. An out-of-range `tid` counts `badtid` and
-/// `ubnone` and returns, like an empty slot.
+/// callers that do not classify a wake ignore it. An out-of-range `tid`
+/// counts `badtid` and `ubnone` and returns, like an empty slot.
 pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
     // Save current DAIF state so we can restore it on exit.
     // SAFETY: Reading DAIF is a pure register read with no side effects.
@@ -552,7 +552,11 @@ pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
             if wake_action(&thread.sched.state, word) != WakeAction::Enqueue {
                 drop(table);
                 if !irqs_were_masked {
-                    // SAFETY: Restore IRQ state. Safe at EL1.
+                    // SAFETY: IRQs were unmasked on entry (the DAIF read
+                    // above) and THREAD_TABLE is dropped, so clearing
+                    // PSTATE.I restores the caller's state. Unmasking for a
+                    // caller that entered masked (an IRQ handler) would let
+                    // a nested IRQ into its critical section.
                     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
                 }
                 return outcome;

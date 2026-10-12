@@ -54,7 +54,8 @@ enum ReplyRead {
 /// is queued. 0 and `u64::MAX` both mean no timeout: the call waits until a
 /// reply, a cancel or the channel's destruction wakes it (capability-lifetime
 /// ADR §9 keeps 0 unbounded), and so does any value whose deadline would
-/// reach `u64::MAX`, so a value from a syscall register cannot overflow (#217). `DEFAULT_TIMEOUT_TICKS` is 5 s.
+/// reach `u64::MAX`, so a value from a syscall register cannot overflow
+/// (#217). `DEFAULT_TIMEOUT_TICKS` is 5 s.
 ///
 /// Returns bytes received on success, or negative error code.
 ///
@@ -725,10 +726,10 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
 /// `cancelled` if it is present, still the claimed call's (its `seq`
 /// matches; a caller that left the call and started its next one between
 /// the claim and the mark has a slot with another `seq`) and not `done`,
-/// then wakes the caller with `unblock`. The result comes from that state (capability-lifetime ADR §9),
-/// so no error code is written: the caller's next pass reads `cancelled`
-/// before it reads the claim, and a cancel landing between those reads
-/// leaves a token.
+/// then wakes the caller with `unblock`. The result comes from that state
+/// (capability-lifetime ADR §9), so no error code is written: the caller's
+/// next pass reads `cancelled` before it reads the claim, and a cancel
+/// landing between those reads leaves a token.
 pub fn ipc_cancel(channel: ChannelId) -> i64 {
     let Some(me) = sched::current_tid() else {
         return IpcError::Eperm as i64;

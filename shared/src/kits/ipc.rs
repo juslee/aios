@@ -172,8 +172,10 @@ impl From<IpcError> for IpcKitError {
     ///   capability. `select` and `wait` with no current thread report
     ///   `CapabilityDenied` too: `select` names its first channel entry (or
     ///   reports `InvalidArgument` for a set with none), and `wait` overrides
-    ///   nothing. The other EPERM paths listed above have no Kit wrapper, so
-    ///   a plain decode of their EPERM reads as `CapabilityDenied`.
+    ///   nothing (for an in-range id: an id at or above the notification
+    ///   limit fails with EINVAL first). The other EPERM paths listed above
+    ///   have no Kit wrapper, so a plain decode of their EPERM reads as
+    ///   `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
@@ -235,7 +237,7 @@ pub trait ChannelOps {
 
     /// Destroy an IPC channel; the caller needs `ChannelAccess(id)`. Wakes
     /// every thread blocked on it; a receive or call on it then fails with
-    /// EPIPE.
+    /// EPIPE (`InvalidChannel` through the Kit).
     fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError>;
 
     /// Fire-and-forget send of a message on a channel.
@@ -323,7 +325,8 @@ pub trait SharedMemoryOps {
     /// hold a live `SharedMemoryAccess(id)` token (otherwise
     /// `SharedMemoryError`, "not creator or no access"). It destroys the
     /// region even while other agents map it, removing their mappings; their
-    /// next map or unmap of it fails with EPIPE.
+    /// next map or unmap of it fails with EPIPE (`SharedMemoryError` through
+    /// the Kit).
     fn shmem_destroy(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>;
 }
 
