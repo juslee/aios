@@ -25,6 +25,7 @@ use anyhow::Result;
 
 use super::clock::{fmt_epoch, mtime};
 use super::git_section::branch_or_detached;
+use super::phase::status_of;
 use super::{line, Ctx};
 use crate::cmd::checkpoint::scan::lines;
 use crate::cmd::soak::classify::Class;
@@ -355,16 +356,8 @@ fn per_arm_line(arms: &Path, boots: &Path) -> Option<Vec<u8>> {
 
 fn print_interleaved(ctx: &Ctx, run: &Run, out: &mut dyn Write) -> Result<()> {
     let branch = branch_or_detached(&run.worktree);
-    let status = std::fs::read(run.dir.join("summary.md"))
-        .ok()
-        .and_then(|md| {
-            first_with_prefix(&md, b"**Status:**").map(|row| {
-                let rest = &row[b"**Status:**".len()..];
-                let start = rest.iter().position(|&b| b != b' ').unwrap_or(rest.len());
-                rest[start..].to_vec()
-            })
-        })
-        .unwrap_or_default();
+    let md = std::fs::read(run.dir.join("summary.md")).unwrap_or_default();
+    let status = status_of(&md);
     line(
         out,
         &[
@@ -380,7 +373,7 @@ fn print_interleaved(ctx: &Ctx, run: &Run, out: &mut dyn Write) -> Result<()> {
     let shown: &[u8] = if status.is_empty() {
         b"not recorded (no summary.md)"
     } else {
-        &status
+        status
     };
     line(out, &[b"  - status: ", shown])?;
     if let Some(per_arm) = per_arm_line(&run.dir.join("arms.tsv"), &run.dir.join("boots.tsv")) {
@@ -441,10 +434,8 @@ pub fn print(ctx: &Ctx, out: &mut dyn Write) -> Result<()> {
                 worktree: worktree.clone(),
                 mtime: stamp,
             };
-            let on_main = md.is_file() && {
-                let (_, clean) = soak_relation(&ctx.root, tip.as_deref(), &soak_commit(&run.dir));
-                clean
-            };
+            let on_main =
+                md.is_file() && soak_relation(&ctx.root, tip.as_deref(), &soak_commit(&run.dir)).1;
             Run::take_if_newer(if on_main { &mut main } else { &mut other }, run);
         }
     }

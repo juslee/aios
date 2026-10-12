@@ -13,8 +13,9 @@ use anyhow::Result;
 use super::line;
 use crate::cmd::checkpoint::scan::lines;
 
-/// `grep -m 1 '^\*\*Status:\*\*' | sed 's/^\*\*Status:\*\* *//'`.
-fn status_of(doc: &[u8]) -> &[u8] {
+/// `grep -m 1 '^\*\*Status:\*\*' | sed 's/^\*\*Status:\*\* *//'`: also the status line
+/// of an interleaved soak's `summary.md`.
+pub fn status_of(doc: &[u8]) -> &[u8] {
     const PREFIX: &[u8] = b"**Status:**";
     lines(doc)
         .find(|row| row.starts_with(PREFIX))

@@ -4,6 +4,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -71,19 +72,23 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Brief(_) => brief(),
-        Command::Checkpoint(_) => checkpoint(),
-        Command::Soak(_) => soak(),
+        Command::Brief(_) => raw_command("brief", aios_tools::cmd::brief::run),
+        Command::Checkpoint(_) => raw_command("checkpoint", aios_tools::cmd::checkpoint::run),
+        Command::Soak(_) => raw_command("soak: error", aios_tools::cmd::soak::run),
     }
 }
 
-/// `aios brief`. The raw arguments after `brief` are parsed in argv order by the command
-/// itself (the soak pattern); clap only has to accept them.
-fn brief() -> ExitCode {
+/// The signature of a subcommand that parses its raw arguments itself.
+type RawRun = fn(&[OsString], &Path, &mut dyn Write, &mut dyn Write) -> anyhow::Result<u8>;
+
+/// Run a subcommand on the raw arguments after its name, parsed in argv order by the
+/// command itself: clap only has to accept them (and drops a leading `--`, which the
+/// soak command line treats as the end of its options). `prefix` starts every message.
+fn raw_command(prefix: &str, run: RawRun) -> ExitCode {
     let cwd = match std::env::current_dir() {
         Ok(dir) => dir,
         Err(err) => {
-            eprintln!("brief: cannot read the current directory: {err}");
+            eprintln!("{prefix}: cannot read the current directory: {err}");
             return ExitCode::from(2);
         }
     };
@@ -92,76 +97,16 @@ fn brief() -> ExitCode {
     let mut out = stdout.lock();
     let stderr = std::io::stderr();
     let mut err = stderr.lock();
-    let result = aios_tools::cmd::brief::run(&raw, &cwd, &mut out, &mut err);
+    let result = run(&raw, &cwd, &mut out, &mut err);
     let flushed = out.flush();
     match (result, flushed) {
         (Ok(code), Ok(())) => ExitCode::from(code),
         (Ok(_), Err(e)) => {
-            let _ = writeln!(err, "brief: cannot write output: {e}");
+            let _ = writeln!(err, "{prefix}: cannot write output: {e}");
             ExitCode::from(2)
         }
         (Err(e), _) => {
-            let _ = writeln!(err, "brief: {e:#}");
-            ExitCode::from(2)
-        }
-    }
-}
-
-/// `aios checkpoint`. The raw arguments after `checkpoint` are parsed in argv order
-/// by the command itself (the soak pattern); clap only has to accept them.
-fn checkpoint() -> ExitCode {
-    let cwd = match std::env::current_dir() {
-        Ok(dir) => dir,
-        Err(err) => {
-            eprintln!("checkpoint: cannot read the current directory: {err}");
-            return ExitCode::from(2);
-        }
-    };
-    let raw: Vec<OsString> = std::env::args_os().skip(2).collect();
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    let stderr = std::io::stderr();
-    let mut err = stderr.lock();
-    let result = aios_tools::cmd::checkpoint::run(&raw, &cwd, &mut out, &mut err);
-    let flushed = out.flush();
-    match (result, flushed) {
-        (Ok(code), Ok(())) => ExitCode::from(code),
-        (Ok(_), Err(e)) => {
-            let _ = writeln!(err, "checkpoint: cannot write output: {e}");
-            ExitCode::from(2)
-        }
-        (Err(e), _) => {
-            let _ = writeln!(err, "checkpoint: {e:#}");
-            ExitCode::from(2)
-        }
-    }
-}
-
-/// `aios soak`. clap drops a leading `--`, which the soak command line treats as
-/// the end of its options, so the raw arguments after `soak` are parsed instead.
-fn soak() -> ExitCode {
-    let cwd = match std::env::current_dir() {
-        Ok(dir) => dir,
-        Err(err) => {
-            eprintln!("soak: error: cannot read the current directory: {err}");
-            return ExitCode::from(2);
-        }
-    };
-    let raw: Vec<OsString> = std::env::args_os().skip(2).collect();
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    let stderr = std::io::stderr();
-    let mut err = stderr.lock();
-    let result = aios_tools::cmd::soak::run(&raw, &cwd, &mut out, &mut err);
-    let flushed = out.flush();
-    match (result, flushed) {
-        (Ok(code), Ok(())) => ExitCode::from(code),
-        (Ok(_), Err(e)) => {
-            let _ = writeln!(err, "soak: error: cannot write output: {e}");
-            ExitCode::from(2)
-        }
-        (Err(e), _) => {
-            let _ = writeln!(err, "soak: error: {e:#}");
+            let _ = writeln!(err, "{prefix}: {e:#}");
             ExitCode::from(2)
         }
     }

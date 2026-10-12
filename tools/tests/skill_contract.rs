@@ -19,7 +19,7 @@
 
 mod common;
 
-use common::agent::{Outcome, Scenario};
+use common::agent::{self, Outcome, Scenario};
 use common::fixture::repo_root;
 use regex::Regex;
 use std::io::Write;
@@ -39,42 +39,16 @@ fn pause_skill() -> String {
     skill(".claude/skills/justin/skills/pause/SKILL.md")
 }
 
-/// The brief scenario of `brief_parity.rs`'s `base`: the committed `gh` answers and the
-/// docs-check answer of `tests/fixtures/brief/<name>/`, a full report of 11 sections.
-fn brief_base(name: &str) -> Scenario {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/brief")
-        .join(name);
-    assert!(dir.is_dir(), "no fixture directory {}", dir.display());
-    let docs = dir.join("docs");
-    let read = |file: &str| std::fs::read(docs.join(file)).unwrap_or_default();
-    let rc = std::fs::read_to_string(docs.join("rc")).map_or(0, |text| {
-        text.trim()
-            .parse()
-            .unwrap_or_else(|_| panic!("{name}: docs/rc is not a number"))
-    });
-    assert!(!docs.join("stale").exists(), "{name}: not a stale scenario");
-    Scenario::brief(name)
-        .gh_fixtures_from_dir(&dir.join("gh"))
-        .docs(read("out"), read("err"), rc)
-        .expects_sections(11)
-}
-
-/// `checkpoint_parity.rs`'s `on_x`: a `claude/x` branch checked out from `main`.
-fn on_x(name: &str) -> Scenario {
-    Scenario::checkpoint(name).branch("claude/x")
-}
-
 fn run_brief(name: &str) -> Outcome {
-    let outcome = common::agent::run_aios(&brief_base(name), "brief", &["--no-fetch"]);
-    common::agent::assert_not_vacuous(&outcome);
+    let outcome = agent::run_aios(&agent::brief_base(name), "brief", &["--no-fetch"]);
+    agent::assert_not_vacuous(&outcome);
     assert_eq!(outcome.code, 0, "{}", outcome.stderr_str());
     outcome
 }
 
 fn run_checkpoint(scenario: &Scenario, args: &[&str]) -> Outcome {
-    let outcome = common::agent::run_aios(scenario, "checkpoint", args);
-    common::agent::assert_not_vacuous(&outcome);
+    let outcome = agent::run_aios(scenario, "checkpoint", args);
+    agent::assert_not_vacuous(&outcome);
     outcome
 }
 
@@ -217,7 +191,7 @@ fn pause_skill_names_just_checkpoint_and_line_formats() {
     assert_eq!(kept, "/clear keeps all of it on disk; ...");
 
     // The clean run: first line in the skill's format, last line the first form.
-    let saved = run_checkpoint(&on_x("handoff_saved"), &["--handoff", "saved"]);
+    let saved = run_checkpoint(&agent::on_x("handoff_saved"), &["--handoff", "saved"]);
     assert_eq!(saved.code, 0, "{}", saved.stderr_str());
     let stdout = saved.stdout_str();
     let first_line = stdout.lines().next().expect("a first line");
@@ -232,11 +206,7 @@ fn pause_skill_names_just_checkpoint_and_line_formats() {
     // A run that leaves work in another worktree: the second last-line form, and the
     // `checkpoint it:` command in the form the skill quotes.
     let dirty = run_checkpoint(
-        &on_x("other_worktree_dirty_from_main")
-            .worktree(".claude/worktrees/w1", "claude/w1")
-            .file(".claude/worktrees/w1/work.txt", "work\n")
-            .commit_in(".claude/worktrees/w1", "w1 work")
-            .file(".claude/worktrees/w1/dirty.txt", "dirty\n"),
+        &agent::other_worktree_dirty_from_main("other_worktree_dirty_from_main"),
         &[],
     );
     assert_eq!(dirty.code, 1, "{}", dirty.stderr_str());
@@ -289,7 +259,7 @@ fn pause_skill_tells_the_two_exit_3s_apart() {
 
     // The secret stop: exit 3, the stdout cue, and no `aios: ` line on stderr.
     let stop = run_checkpoint(
-        &on_x("sensitive_name_new_doc").file("docs/deploy-secret.md", "how to deploy\n"),
+        &agent::sensitive_name_new_doc("sensitive_name_new_doc"),
         &[],
     );
     assert_eq!(stop.code, 3, "{}", stop.stderr_str());

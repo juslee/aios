@@ -32,10 +32,10 @@
 
 mod common;
 
-use common::agent::{self, Outcome, Scenario, Sub, Twin, DIVERGENT_SCENARIOS};
-use common::{isolated, parallel_map};
+use common::agent::{self, on_x, Outcome, Scenario, Sub, Twin, DIVERGENT_SCENARIOS};
+use common::parallel_map;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 /// One scenario: its name (also the golden's basename), the argv after `checkpoint`,
 /// how to build the repository, and an optional extra assertion on the run.
@@ -71,11 +71,6 @@ macro_rules! scenarios {
             }
         )*
     };
-}
-
-/// A `claude/x` branch checked out from `main`.
-fn on_x(name: &str) -> Scenario {
-    Scenario::checkpoint(name).branch("claude/x")
 }
 
 /// The wip hold's `gh pr list --head` call, answered with no ready PR (a draft PR is
@@ -215,9 +210,7 @@ fn subdirectory_commit(outcome: &Outcome) {
 
 scenarios! {
 // The 15 scenarios of #166.
-scenario!(sensitive_name_new_doc, [],
-    |n| on_x(n).file("docs/deploy-secret.md", "how to deploy\n"),
-    stopped_untouched);
+scenario!(sensitive_name_new_doc, [], agent::sensitive_name_new_doc, stopped_untouched);
 scenario!(pem_line_in_added_text, [],
     |n| on_x(n).file("notes/deploy-notes.txt", format!("{}\n", pem_header())),
     stopped_untouched);
@@ -239,12 +232,7 @@ scenario!(other_worktree_dirty_from_claude_worktree, [],
         .worktree(".claude/worktrees/w2", "claude/w2")
         .file(".claude/worktrees/w2/dirty.txt", "dirty\n")
         .run_in_worktree(".claude/worktrees/w1"));
-scenario!(other_worktree_dirty_from_main, [],
-    |n| on_x(n)
-        .worktree(".claude/worktrees/w1", "claude/w1")
-        .file(".claude/worktrees/w1/work.txt", "work\n")
-        .commit_in(".claude/worktrees/w1", "w1 work")
-        .file(".claude/worktrees/w1/dirty.txt", "dirty\n"));
+scenario!(other_worktree_dirty_from_main, [], agent::other_worktree_dirty_from_main);
 scenario!(gh_fails_holds_wip, [],
     |n| on_x(n)
         .file("notes.txt", "work in progress\n")
@@ -444,41 +432,8 @@ scenario!(scan_git_failure_on_clean_tree, [],
     failed_closed);
 }
 
-/// Whether the scenario's golden is aios-only (no oracle run records it).
-fn is_divergent(name: &str) -> bool {
-    DIVERGENT_SCENARIOS
-        .iter()
-        .any(|(divergent, _)| *divergent == name)
-}
-
 fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/checkpoint")
-}
-
-/// `git <args>` in `dir`, for what a golden records about the repository after the
-/// run. `None` when git fails (no repository, an unborn HEAD). The ceiling keeps a run
-/// directory outside every checkout from finding one above it.
-fn probe(dir: &Path, ceiling: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
-    isolated(&mut cmd)
-        .env("GIT_CEILING_DIRECTORIES", ceiling)
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null());
-    let out = cmd.output().expect("run git");
-    out.status.success().then(|| {
-        String::from_utf8_lossy(&out.stdout)
-            .trim_end_matches('\n')
-            .to_string()
-    })
-}
-
-fn section(out: &mut Vec<u8>, title: &str, body: &[u8]) {
-    out.extend_from_slice(format!("== {title} ==\n").as_bytes());
-    out.extend_from_slice(body);
-    if !body.is_empty() && !body.ends_with(b"\n") {
-        out.extend_from_slice(b"\n\\ no newline at end of output\n");
-    }
 }
 
 fn tree_line(tree: &Option<String>) -> &str {
@@ -498,7 +453,7 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
     let state = &outcome.repo_state;
     let twin = outcome.twin();
     let ceiling = twin.root().parent().expect("the twin root has a parent");
-    let git = |args: &[&str]| probe(twin.run_dir(), ceiling, args);
+    let git = |args: &[&str]| agent::probe(twin.run_dir(), ceiling, args);
     let head_message = git(&["log", "-1", "--format=%B"]);
     let upstream = git(&["symbolic-ref", "--short", "-q", "HEAD"])
         .and_then(|branch| git(&["config", "--get", &format!("branch.{branch}.merge")]));
@@ -507,40 +462,23 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
     for (name, sha) in &state.origin_refs_after {
         origin_refs.push_str(&format!("{name} {sha}\n"));
     }
-    let mut gh_calls = String::new();
-    for (i, call) in outcome.gh_calls.iter().enumerate() {
-        let env: Vec<String> = call
-            .env
-            .iter()
-            .map(|(k, v)| format!("{k}={}", v.as_deref().unwrap_or("<unset>")))
-            .collect();
-        gh_calls.push_str(&format!(
-            "{}: {}\n   cwd {}\n   env {}\n",
-            i + 1,
-            call.line().trim_end(),
-            call.cwd.display(),
-            env.join(" ")
-        ));
-    }
-    if gh_calls.is_empty() {
-        gh_calls.push_str("(none)\n");
-    }
+    let gh_calls = agent::gh_calls_text(outcome);
 
     let mut golden = Vec::new();
-    section(
+    agent::golden_section(
         &mut golden,
         "exit",
         format!("{}\n", outcome.code).as_bytes(),
     );
-    section(&mut golden, "stdout", &rename(&outcome.stdout));
-    section(&mut golden, "stderr", &rename(&outcome.stderr));
-    section(&mut golden, "origin refs", origin_refs.as_bytes());
-    section(
+    agent::golden_section(&mut golden, "stdout", &rename(&outcome.stdout));
+    agent::golden_section(&mut golden, "stderr", &rename(&outcome.stderr));
+    agent::golden_section(&mut golden, "origin refs", origin_refs.as_bytes());
+    agent::golden_section(
         &mut golden,
         "HEAD message",
         format!("{}\n", head_message.as_deref().unwrap_or("(none)")).as_bytes(),
     );
-    section(
+    agent::golden_section(
         &mut golden,
         "index",
         format!(
@@ -550,12 +488,12 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
         )
         .as_bytes(),
     );
-    section(
+    agent::golden_section(
         &mut golden,
         "upstream",
         format!("{}\n", upstream.as_deref().unwrap_or("(none)")).as_bytes(),
     );
-    section(&mut golden, "gh calls", gh_calls.as_bytes());
+    agent::golden_section(&mut golden, "gh calls", gh_calls.as_bytes());
     agent::normalize(&golden, outcome)
 }
 
@@ -583,25 +521,8 @@ fn run_case(case: &Case) -> Outcome {
 fn differential_cases() -> Vec<&'static Case> {
     CASES
         .iter()
-        .filter(|case| !is_divergent(case.name))
+        .filter(|case| !agent::is_divergent(case.name))
         .collect()
-}
-
-fn first_difference(want: &str, got: &str) -> String {
-    let want: Vec<&str> = want.split('\n').collect();
-    let got: Vec<&str> = got.split('\n').collect();
-    for i in 0..want.len().max(got.len()) {
-        let (w, g) = (want.get(i).copied(), got.get(i).copied());
-        if w != g {
-            return format!(
-                "line {}: expected {:?}, got {:?}",
-                i + 1,
-                w.unwrap_or("<end of output>"),
-                g.unwrap_or("<end of output>")
-            );
-        }
-    }
-    "the goldens differ".to_string()
 }
 
 fn assert_table_is_sound() {
@@ -661,7 +582,7 @@ fn oracle_reproduces_checkpoint_goldens() {
                 path.display()
             )
         });
-        (want != got).then(|| format!("{}: {}", case.name, first_difference(&want, &got)))
+        (want != got).then(|| format!("{}: {}", case.name, agent::first_difference(&want, &got)))
     })
     .into_iter()
     .flatten()
@@ -691,7 +612,7 @@ fn aios_matches_golden(name: &str) {
     check_outcome(case, &outcome);
     let got = String::from_utf8_lossy(&render_golden(&outcome, false)).into_owned();
     let path = golden_dir().join(format!("{name}.golden"));
-    if is_divergent(name) && common::soak::bless() {
+    if agent::is_divergent(name) && common::soak::bless() {
         std::fs::create_dir_all(golden_dir()).expect("create the golden directory");
         std::fs::write(&path, &got).expect("write an aios-only golden");
     }
@@ -705,7 +626,7 @@ fn aios_matches_golden(name: &str) {
     assert!(
         want == got,
         "{name}: aios no longer matches its golden: {}\n--- stdout\n{}\n--- stderr\n{}",
-        first_difference(&want, &got),
+        agent::first_difference(&want, &got),
         outcome.stdout_str(),
         outcome.stderr_str()
     );
@@ -716,7 +637,7 @@ fn aios_matches_golden(name: &str) {
 fn observed(outcome: &Outcome, oracle: bool) -> String {
     let twin = outcome.twin();
     let ceiling = twin.root().parent().expect("the twin root has a parent");
-    let head = probe(
+    let head = agent::probe(
         twin.run_dir(),
         ceiling,
         &["log", "-1", "--format=%H|%an <%ae>|%cn <%ce>"],
@@ -744,7 +665,7 @@ fn differential(bash: &Path) {
         let aios = agent::run_aios(&scenario, "checkpoint", case.args);
         check_outcome(case, &aios);
         let (want, got) = (observed(&oracle, true), observed(&aios, false));
-        (want != got).then(|| format!("{}: {}", case.name, first_difference(&want, &got)))
+        (want != got).then(|| format!("{}: {}", case.name, agent::first_difference(&want, &got)))
     })
     .into_iter()
     .flatten()

@@ -642,7 +642,7 @@ Conventions for every task:
   - [x] 9b: README Build Commands (next to L127-128) and its tools line (L87), and developer-guide §5.1 (`docs/project/developer-guide.md` L1546, rows near L1573): both rows. The `just-recipes` check (`tools/src/cmd/docs_check/checks/just_recipes.rs`) requires them.
     - Verify: DG; `cargo test -p aios-tools --test shim` passes; G.
 
-- [ ] **Task 10: Switch-over, contract test and deletion** (workers, background or foreground per commit; the owner applies settings; the lead verifies)
+- [x] **Task 10: Switch-over, contract test and deletion** (workers, background or foreground per commit; the owner applies settings; the lead verifies)
   - **Commit order and grouping.** Every commit passes G (with DG). The sub-tasks below are listed in this order:
     1. **10h** (worker, background), alone. On main, `tools/tests/soak_interleave.rs` (L739-749) runs `../scripts/agent/brief.sh` from disk, so no commit may delete the script before this port lands.
     2. **10a, 10b, 10c** (one worker, **foreground**: `.claude/**` is protected), one commit each, in that order. They remove every link and code-span path to the scripts (the CLAUDE.md rows, agent-loop.md L16/L18, the skills), so `md-links` and `repo-paths` stay clean when 10d deletes the files.
@@ -717,7 +717,7 @@ Conventions for every task:
     - **Recovery (A8).** If `origin/main`'s `settings.json` changes after the owner commit (a worker's merge of main aborts on it), the owner reverts the owner commit. A worker then merges `origin/main`, the lead re-pins `SETTINGS_BASE`, and the owner re-runs the script and commits again.
     - R2's settings delta comes only after R2's convergence (contract §11).
     - Verify: `while read -r a; do jq -e --arg a "$a" '.permissions.ask | index($a)' <BW>/.claude/settings.json >/dev/null || echo "MISSING $a"; done < $R/probe/asks.txt` prints nothing; `jq -e '[.permissions.allow[] | select(test("scripts/agent/(brief|checkpoint)"))] | length == 0' <BW>/.claude/settings.json`; `git -C <BW> log -1 --format=%an -- .claude/settings.json` names the owner.
-  - [ ] 10f: Verify the switch-over (lead, read-only on `<BW>`):
+  - [x] 10f: Verify the switch-over (lead, read-only on `<BW>`):
     - The contract §3 grep as amended by A10, verbatim: `git -C <BW> grep -n -e 'brief\.sh' -e 'checkpoint\.sh' -- . ':!docs/knowledge/plans' ':!docs/knowledge/lessons' ':!docs/knowledge/research' ':!docs/knowledge/decisions' ':!docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md' ':!tools/tests/common/agent.rs' ':!scripts/agent/evals/cases' | grep -vE 'former `?scripts/agent/(brief|checkpoint)\.sh`? \(blob at `?[0-9a-f]{7,40}'` prints nothing.
     - `git -C <BW> grep -n -e 'brief\.sh' -e 'checkpoint\.sh' -- .claude` prints nothing.
     - DG, run by a verifier worker reset to `<BW>`'s tip (exactly the two `plans-not-empty` lines; so repo-paths, md-links, just-recipes and harness-tables add nothing).
@@ -725,7 +725,7 @@ Conventions for every task:
     - The saved 0e harness, re-run as `$R/probe/run-probe.sh <generated from <BW>/.claude/settings.json, permissions only, no extra asks> $R/probe/spellings-r3.tsv <scratch>/probes-10f.tsv`: `wc -l < <scratch>/probes-10f.tsv` = 24; `awk -F'\t' '$3 == "inconclusive" || ($1 != "control" && $3 != "refused")' <scratch>/probes-10f.tsv | wc -l` = 0; the control row is `ran`.
 
 - [ ] **Task 11: Simplify and audit** (lead-run per rule 11)
-  - [ ] 11a: Spawn the simplifier over `merge-base(origin/main)..HEAD`, then Placement.
+  - [x] 11a: Spawn the simplifier over `merge-base(origin/main)..HEAD`, then Placement.
     - Verify: G; `git -C <BW> diff --stat <before>..HEAD -- tools/tests/golden` prints nothing.
   - [ ] 11b: `/audit-loop` (tools mode) until a clean round. A dead or empty auditor never counts as clean. A fix found later, in 12a-12c, comes back through 11b before 12d.
     - Verify: the ledger at `<git-common-dir>/aios-agent/audit/claude-tools-r3-scripts/<head>.json` shows a clean round for the current head.

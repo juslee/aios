@@ -269,11 +269,6 @@ impl<R: GhRunner> Github<R> {
         let Some(why) = &self.why else {
             return Ok(false);
         };
-        let why: &[u8] = if why.is_empty() {
-            b"unknown error"
-        } else {
-            why
-        };
         line(out, &[b"- GitHub unavailable: ", why])?;
         Ok(true)
     }
@@ -283,8 +278,9 @@ impl<R: GhRunner> Github<R> {
         if self.unavailable(out)? {
             return Ok(());
         }
-        let mut args = vec!["pr", "list", "--state", "open", "--limit", "30", "--json"];
-        args.push(PR_FIELDS);
+        let args = [
+            "pr", "list", "--state", "open", "--limit", "30", "--json", PR_FIELDS,
+        ];
         let prs = match self.gh.run(&args) {
             GhOutcome::Ok(stdout) => match array(&stdout) {
                 Some(prs) => prs,

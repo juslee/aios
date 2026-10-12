@@ -470,11 +470,8 @@ diff --git a/q.txt b/q.txt
     #[test]
     fn scan_fails_closed_on_each_git_call() {
         for failing in 1..=4 {
-            let mut issued = Vec::new();
             let mut run = |args: &[&str]| {
-                let n = which(args);
-                issued.push(n);
-                Ok(if n == failing {
+                Ok(if which(args) == failing {
                     output(128, "", "fatal: broken call\nsecond line\n")
                 } else {
                     output(0, "", "")

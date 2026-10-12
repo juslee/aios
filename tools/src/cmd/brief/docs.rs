@@ -170,14 +170,9 @@ fn summary(doc: &Value, note: &str) -> Option<String> {
             .and_then(Value::as_object)
             .into_iter()
             .flatten()
-            .filter(|(_, check)| {
-                above_zero(&or_zero(&check.get("new").cloned().unwrap_or(Value::Null)))
-            })
-            .map(|(name, check)| {
-                format!(
-                    "{name} {}",
-                    tostring(&check.get("new").cloned().unwrap_or(Value::Null))
-                )
+            .filter_map(|(name, check)| {
+                let new = check.get("new").unwrap_or(&Value::Null);
+                above_zero(&or_zero(new)).then(|| format!("{name} {}", tostring(new)))
             })
             .collect();
         line.push_str("; new in: ");
@@ -213,7 +208,7 @@ pub fn print(handle: JoinHandle<DocsRun>, stale: bool, out: &mut dyn Write) -> R
         .code
         .map_or_else(|| "?".to_string(), |code| code.to_string());
     let note = if stale { STALE_NOTE } else { "" };
-    if run.code != Some(0) && run.code != Some(1) {
+    if !matches!(run.code, Some(0 | 1)) {
         out.write_all(
             format!("- docs-check failed (exit {rc}, a checker error, not drift): ").as_bytes(),
         )?;

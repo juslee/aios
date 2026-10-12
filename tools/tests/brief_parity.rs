@@ -38,10 +38,12 @@
 
 mod common;
 
-use common::agent::{self, Outcome, Scenario, Sub, DIVERGENT_SCENARIOS, EPOCH_BASE};
-use common::{isolated, parallel_map};
+use common::agent::{
+    self, brief_base, brief_fixtures_dir, Outcome, Scenario, Sub, BRIEF_SECTIONS,
+    DIVERGENT_SCENARIOS, EPOCH_BASE,
+};
+use common::parallel_map;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 /// One scenario: its name (also the golden's and the fixture directory's name), the argv
 /// after `brief`, how to build the repository, and an optional extra assertion on the run.
@@ -84,39 +86,9 @@ macro_rules! scenarios {
 const T0: u64 = EPOCH_BASE;
 /// The mtime a scenario gives `last-brief` before the run: a touch by the brief changes it.
 const MARKER_PRESET: u64 = T0 + 2;
-/// The sections of a full report.
-const SECTIONS: usize = 11;
-
-fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/brief")
-}
 
 fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/brief")
-}
-
-/// A normal brief scenario: the committed `gh` answers of `tests/fixtures/brief/<name>/gh`
-/// (one `<label>.{out,err,rc}` per call the oracle makes in it) and the docs-check answer
-/// of `.../docs/{out,err,rc,stale}`, a full report of 11 sections and one docs-check call.
-fn base(name: &str) -> Scenario {
-    let dir = fixtures_dir().join(name);
-    assert!(dir.is_dir(), "no fixture directory {}", dir.display());
-    let docs = dir.join("docs");
-    let read = |file: &str| std::fs::read(docs.join(file)).unwrap_or_default();
-    let rc = std::fs::read_to_string(docs.join("rc")).map_or(0, |text| {
-        text.trim()
-            .parse()
-            .unwrap_or_else(|_| panic!("{name}: docs/rc is not a number"))
-    });
-    let scenario = Scenario::brief(name)
-        .gh_fixtures_from_dir(&dir.join("gh"))
-        .docs(read("out"), read("err"), rc)
-        .expects_sections(SECTIONS);
-    if docs.join("stale").exists() {
-        scenario.docs_stale()
-    } else {
-        scenario
-    }
 }
 
 /// A scenario that serves no fixture and ends before any section is printed.
@@ -364,16 +336,16 @@ fn stale_binary_is_flagged(outcome: &Outcome) {
 
 scenarios! {
 // GitHub reachability (6).
-scenario!(offline, ["--no-fetch"], base);
-scenario!(offline_empty_stderr, ["--no-fetch"], base, offline_without_a_reason);
-scenario!(gh_missing, ["--no-fetch"], |n| base(n).gh_missing());
-scenario!(rate_zero, ["--no-fetch"], base);
+scenario!(offline, ["--no-fetch"], brief_base);
+scenario!(offline_empty_stderr, ["--no-fetch"], brief_base, offline_without_a_reason);
+scenario!(gh_missing, ["--no-fetch"], |n| brief_base(n).gh_missing());
+scenario!(rate_zero, ["--no-fetch"], brief_base);
 // The origin's URL is gone, so `git fetch` fails; the run fetches (no --no-fetch).
 scenario!(fetch_fails, [],
-    |n| base(n).git(&["config", "--unset", "remote.origin.url"]));
+    |n| brief_base(n).git(&["config", "--unset", "remote.origin.url"]));
 // The origin deleted a branch the clone still tracks; the run fetches and prunes it.
 scenario!(fetch_prunes, [],
-    |n| base(n)
+    |n| brief_base(n)
         .branch("claude/gone")
         .file("gone.txt", "gone\n")
         .commit("Work on a branch the origin will delete")
@@ -384,7 +356,7 @@ scenario!(fetch_prunes, [],
 // Remote state (1): origin has only a claude/x branch, so there is no origin/main.
 scenario!(no_origin_main, ["--no-fetch"],
     |n| finished_run(
-        base(n)
+        brief_base(n)
             .no_origin_main()
             .branch("claude/x")
             .file("x.txt", "x\n")
@@ -400,7 +372,7 @@ scenario!(no_origin_main, ["--no-fetch"],
 // Working directory (2).
 scenario!(run_from_subdirectory, ["--no-fetch"],
     |n| handoff(
-        phase_doc(base(n), "01-sub.md", "In Progress", MILESTONE_DOC)
+        phase_doc(brief_base(n), "01-sub.md", "In Progress", MILESTONE_DOC)
             .file("docs/knowledge/lessons/sub-note.md", "a lesson\n")
             .commit("Add docs")
             .run_cwd("docs"),
@@ -415,7 +387,7 @@ scenario!(run_from_subdirectory, ["--no-fetch"],
 scenario!(run_from_linked_worktree, ["--no-fetch"],
     |n| handoff(
         handoff(
-            base(n)
+            brief_base(n)
                 .file(".git/aios-agent/qemu.lock/owner", DEAD_LOCK_OWNER)
                 .worktree("wt-x", "claude/x")
                 .remove("wt-x/scripts/agent/qemu-lock.sh")
@@ -438,7 +410,7 @@ scenario!(run_from_linked_worktree, ["--no-fetch"],
 // local main behind origin/main.
 scenario!(worktrees, ["--no-fetch"],
     |n| second_commit(
-        base(n)
+        brief_base(n)
             .git(&["worktree", "add", "-q", "--detach", ".claude/worktrees/w-det", "main"])
             .worktree(".claude/worktrees/w-local", "claude/local")
             .file(".claude/worktrees/w-local/l.txt", "local\n")
@@ -458,38 +430,38 @@ scenario!(worktrees, ["--no-fetch"],
     .git(&["reset", "-q", "--hard", "HEAD~1"]));
 
 // Pull requests (9).
-scenario!(prs_every_blocker, ["--no-fetch"], base, every_blocker);
-scenario!(merge_ready_yes, ["--no-fetch"], base);
-scenario!(threads_unknown, ["--no-fetch"], base);
-scenario!(threads_zero_is_known, ["--no-fetch"], base);
-scenario!(gates_unknown, ["--no-fetch"], base);
-scenario!(pr_beyond_50_threads_unknown, ["--no-fetch"], base);
-scenario!(no_prs, ["--no-fetch"], base);
+scenario!(prs_every_blocker, ["--no-fetch"], brief_base, every_blocker);
+scenario!(merge_ready_yes, ["--no-fetch"], brief_base);
+scenario!(threads_unknown, ["--no-fetch"], brief_base);
+scenario!(threads_zero_is_known, ["--no-fetch"], brief_base);
+scenario!(gates_unknown, ["--no-fetch"], brief_base);
+scenario!(pr_beyond_50_threads_unknown, ["--no-fetch"], brief_base);
+scenario!(no_prs, ["--no-fetch"], brief_base);
 // pr list fails after the probe, the issues and the threads succeed; the phase doc's next
 // step is in a milestone, so the Phase section cannot look for its PR.
 scenario!(pr_list_fails, ["--no-fetch"],
-    |n| phase_doc(base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
-scenario!(pr_labelled_needs_human, ["--no-fetch"], base, labelled_pr_is_not_ready);
+    |n| phase_doc(brief_base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
+scenario!(pr_labelled_needs_human, ["--no-fetch"], brief_base, labelled_pr_is_not_ready);
 
 // Main CI (6).
-scenario!(main_ci, ["--no-fetch"], base);
-scenario!(main_ci_tie, ["--no-fetch"], base);
-scenario!(main_ci_not_tip, ["--no-fetch"], base);
-scenario!(main_ci_empty, ["--no-fetch"], base);
-scenario!(main_ci_suites_fail, ["--no-fetch"], base, suites_query_fails_so_runs_are_never_listed);
-scenario!(main_ci_runs_fail, ["--no-fetch"], base);
+scenario!(main_ci, ["--no-fetch"], brief_base);
+scenario!(main_ci_tie, ["--no-fetch"], brief_base);
+scenario!(main_ci_not_tip, ["--no-fetch"], brief_base);
+scenario!(main_ci_empty, ["--no-fetch"], brief_base);
+scenario!(main_ci_suites_fail, ["--no-fetch"], brief_base, suites_query_fails_so_runs_are_never_listed);
+scenario!(main_ci_runs_fail, ["--no-fetch"], brief_base);
 
 // Needs human (1).
-scenario!(queue_counts_unknown, ["--no-fetch"], base, queue_is_unknown);
+scenario!(queue_counts_unknown, ["--no-fetch"], brief_base, queue_is_unknown);
 
 // Soak (17).
 scenario!(soak_main_tip, ["--no-fetch"],
-    |n| finished_run(base(n), "target/soak/r1-text", T0 + 5000, "{rev:origin/main}", 10));
+    |n| finished_run(brief_base(n), "target/soak/r1-text", T0 + 5000, "{rev:origin/main}", 10));
 scenario!(soak_behind, ["--no-fetch"],
-    |n| finished_run(second_commit(base(n)), "target/soak/r1-text", T0 + 5000, "{rev:origin/main~1}", 9));
+    |n| finished_run(second_commit(brief_base(n)), "target/soak/r1-text", T0 + 5000, "{rev:origin/main~1}", 9));
 scenario!(soak_not_on_main, ["--no-fetch"],
     |n| finished_run(
-        base(n)
+        brief_base(n)
             .branch("claude/side")
             .file("side.txt", "side\n")
             .commit("Side work")
@@ -500,32 +472,32 @@ scenario!(soak_not_on_main, ["--no-fetch"],
         7,
     ));
 scenario!(soak_dirty, ["--no-fetch"],
-    |n| finished_run(base(n), "target/soak/r1-text", T0 + 5000, "{rev:origin/main}-dirty", 10));
+    |n| finished_run(brief_base(n), "target/soak/r1-text", T0 + 5000, "{rev:origin/main}-dirty", 10));
 scenario!(soak_partial, ["--no-fetch"],
-    |n| soak_run(base(n), "target/soak/p1-text", T0 + 4000, None,
+    |n| soak_run(brief_base(n), "target/soak/p1-text", T0 + 4000, None,
         Some(summary_tsv("text", &["CLEAN", "CLEAN", "PCZERO"]))));
 scenario!(soak_no_rows, ["--no-fetch"],
-    |n| soak_run(base(n), "target/soak/r1-text", T0 + 5000,
+    |n| soak_run(brief_base(n), "target/soak/r1-text", T0 + 5000,
         Some(summary_md("{rev:origin/main}", BOOTS_ROW)), Some(summary_tsv("text", &[]))));
 scenario!(soak_legacy_wedge, ["--no-fetch"],
-    |n| soak_run(base(n), "target/soak/r1-gpu", T0 + 5000,
+    |n| soak_run(brief_base(n), "target/soak/r1-gpu", T0 + 5000,
         Some(summary_md("{rev:origin/main}", BOOTS_ROW)),
         Some(summary_tsv("gpu", &["CLEAN", "WEDGE", "WEDGE", "PANIC-LOCK", "WEDGE-STUCK", "DEGRADED"]))));
 scenario!(soak_interleaved_clean_per_arm, ["--no-fetch"],
-    |n| interleaved_run(second_commit(base(n)), "target/soak/ab-1", true));
+    |n| interleaved_run(second_commit(brief_base(n)), "target/soak/ab-1", true));
 scenario!(soak_interleaved_no_arms, ["--no-fetch"],
-    |n| base(n)
+    |n| brief_base(n)
         .file("target/soak/ab-1/arms.tsv", "arm\tcommit\n")
         .mtime("target/soak/ab-1/arms.tsv", T0 + 1000)
         .file("target/soak/ab-1/boots.tsv", "boot\tarm\tclass\n1\tA\tCLEAN\n")
         .mtime("target/soak/ab-1/boots.tsv", T0 + 2000));
 scenario!(soak_interleaved_no_summary, ["--no-fetch"],
-    |n| interleaved_run(second_commit(base(n)), "target/soak/ab-1", false));
+    |n| interleaved_run(second_commit(brief_base(n)), "target/soak/ab-1", false));
 // An interleaved run beside a main soak: both are listed, the interleaved one on its own,
 // and its arm-A/ directory (single-run files) is neither.
 scenario!(soak_interleaved_beside_main, ["--no-fetch"],
     |n| finished_run(
-        interleaved_run(second_commit(base(n)), "target/soak/ab-1", true)
+        interleaved_run(second_commit(brief_base(n)), "target/soak/ab-1", true)
             .file("target/soak/ab-1/arm-A/summary.md", "| Commit | `0000000` |\n")
             .file("target/soak/ab-1/arm-A/summary.tsv", summary_tsv("text", &["CLEAN"])),
         "target/soak/main-1-text",
@@ -535,21 +507,21 @@ scenario!(soak_interleaved_beside_main, ["--no-fetch"],
     ));
 // boots.tsv is missing: BSD awk stops at the missing file, gawk and mawk run END.
 scenario!(soak_interleaved_no_boots, ["--no-fetch"],
-    |n| second_commit(base(n))
+    |n| second_commit(brief_base(n))
         .file_revs("target/soak/ab-1/arms.tsv", "arm\tcommit\nA\t{rev:HEAD~1}\nB\t{rev:HEAD}\n")
         .mtime("target/soak/ab-1/arms.tsv", T0 + 1000)
         .file("target/soak/ab-1/summary.md", "# Interleaved soak\n\n**Status:** aborted before the first boot\n")
         .mtime("target/soak/ab-1/summary.md", T0 + 3000));
 // The Boots row has no closing ` |`: the sed does not match and the whole row is printed.
 scenario!(soak_boots_row_quirk, ["--no-fetch"],
-    |n| soak_run(base(n), "target/soak/r1-text", T0 + 5000,
+    |n| soak_run(brief_base(n), "target/soak/r1-text", T0 + 5000,
         Some(summary_md("{rev:origin/main}", "| Boots | 10 (text mode)")), None));
-scenario!(soak_none, ["--no-fetch"], base);
+scenario!(soak_none, ["--no-fetch"], brief_base);
 scenario!(soak_commit_is_branch_name, ["--no-fetch"],
-    |n| finished_run(base(n).git(&["branch", "claude/x"]), "target/soak/r1-text", T0 + 5000, "claude/x", 10));
+    |n| finished_run(brief_base(n).git(&["branch", "claude/x"]), "target/soak/r1-text", T0 + 5000, "claude/x", 10));
 scenario!(soak_equal_mtime_tie, ["--no-fetch"],
     |n| finished_run(
-        finished_run(base(n), "target/soak/r2-text", T0 + 6000, "{rev:origin/main}", 7),
+        finished_run(brief_base(n), "target/soak/r2-text", T0 + 6000, "{rev:origin/main}", 7),
         "target/soak/r1-text",
         T0 + 6000,
         "{rev:origin/main}",
@@ -558,7 +530,7 @@ scenario!(soak_equal_mtime_tie, ["--no-fetch"],
 scenario!(soak_equal_mtime_tie_across_worktrees, ["--no-fetch"],
     |n| finished_run(
         finished_run(
-            base(n).worktree("wt-x", "claude/x"),
+            brief_base(n).worktree("wt-x", "claude/x"),
             "wt-x/target/soak/run-text",
             T0 + 6000,
             "{rev:origin/main}",
@@ -571,14 +543,14 @@ scenario!(soak_equal_mtime_tie_across_worktrees, ["--no-fetch"],
     ));
 
 // QEMU lock (3).
-scenario!(qemu_lock_free, ["--no-fetch"], base);
+scenario!(qemu_lock_free, ["--no-fetch"], brief_base);
 scenario!(qemu_lock_dead_holder, ["--no-fetch"],
-    |n| base(n).file(".git/aios-agent/qemu.lock/owner", DEAD_LOCK_OWNER));
-scenario!(qemu_lock_missing, ["--no-fetch"], |n| base(n).no_qemu_lock());
+    |n| brief_base(n).file(".git/aios-agent/qemu.lock/owner", DEAD_LOCK_OWNER));
+scenario!(qemu_lock_missing, ["--no-fetch"], |n| brief_base(n).no_qemu_lock());
 
 // Routing log (3).
 scenario!(routing_log, ["--no-fetch"],
-    |n| base(n)
+    |n| brief_base(n)
         .env("AIOS_HOOK_STATE_DIR", "{root}/.git/hook-state")
         .file(".git/hook-state/route-shadow.jsonl", "{\"a\":1}\n{\"a\":2}\n\n{\"a\":3}\n")
         .file(
@@ -588,30 +560,30 @@ scenario!(routing_log, ["--no-fetch"],
         ));
 // An empty value counts as unset: the records are read from the default directory.
 scenario!(routing_log_empty_var, ["--no-fetch"],
-    |n| base(n)
+    |n| brief_base(n)
         .env("AIOS_HOOK_STATE_DIR", "")
         .file(".git/aios-agent/hooks/route-shadow.jsonl", "{\"a\":1}\n{\"a\":2}\n")
         .file(".git/aios-agent/hooks/route-outcome.jsonl", "{\"kind\":\"launched\"}\n"));
-scenario!(routing_log_missing, ["--no-fetch"], base);
+scenario!(routing_log_missing, ["--no-fetch"], brief_base);
 
 // Handoffs (2): two by mtime, a tie broken by name, no trailing newline, 61+ lines and
 // `handoff-.md`; a file that is not a handoff is ignored.
 scenario!(handoffs, ["--no-fetch"],
     |n| {
-        let s = handoff(base(n), "handoff-team-build.md", handoff_lines(65), T0 + 9000);
+        let s = handoff(brief_base(n), "handoff-team-build.md", handoff_lines(65), T0 + 9000);
         let s = handoff(s, "handoff-team-fix.md", "fix lane\nno trailing newline", T0 + 8000);
         let s = handoff(s, "handoff-solo-b.md", "solo b\n", T0 + 7000);
         let s = handoff(s, "handoff-solo-a.md", "solo a\n", T0 + 7000);
         let s = handoff(s, "handoff-.md", "no key\n", T0 + 6000);
         s.file(".remember/notes.md", "not a handoff\n")
     });
-scenario!(handoffs_none, ["--no-fetch"], base);
+scenario!(handoffs_none, ["--no-fetch"], brief_base);
 
 // Knowledge (6). Commit n is dated T0 + n.
 // The newest handoff (T0 + 2) bounds the window: the commit before it is out.
 scenario!(knowledge_since_handoff, ["--no-fetch"],
     |n| handoff(
-        base(n)
+        brief_base(n)
             .file("docs/knowledge/lessons/old-lesson.md", "old\n")
             .commit("Old lesson")
             .file("filler.txt", "filler\n")
@@ -627,7 +599,7 @@ scenario!(knowledge_since_handoff, ["--no-fetch"],
     ));
 // With no handoff, the marker's mtime (T0 + 2) bounds the window.
 scenario!(knowledge_since_marker, ["--no-fetch"],
-    |n| base(n)
+    |n| brief_base(n)
         .file("docs/knowledge/lessons/old-lesson.md", "old\n")
         .commit("Old lesson")
         .file("filler.txt", "filler\n")
@@ -639,14 +611,14 @@ scenario!(knowledge_since_marker, ["--no-fetch"],
 // Neither a handoff nor a marker: the last 7 days, and the commits are older, so only
 // uncommitted notes (a modified tracked one, an untracked one) are listed.
 scenario!(knowledge_7_days, ["--no-fetch"],
-    |n| base(n)
+    |n| brief_base(n)
         .file("docs/knowledge/README.md", "knowledge\n")
         .commit("Add the knowledge readme")
         .file("docs/knowledge/README.md", "knowledge, edited\n")
         .file("docs/knowledge/draft.md", "draft\n"));
 scenario!(knowledge_over_25, ["--no-fetch"],
     |n| {
-        let mut s = base(n);
+        let mut s = brief_base(n);
         for i in 1..=30 {
             s = s.file(&format!("docs/knowledge/lessons/l{i:02}.md"), format!("lesson {i}\n"));
         }
@@ -655,14 +627,14 @@ scenario!(knowledge_over_25, ["--no-fetch"],
 // A staged rename lists the new name; an untracked path with a space is quoted by git
 // and the awk keeps its last word. Both are kept as they are.
 scenario!(knowledge_uncommitted_rename_and_space, ["--no-fetch"],
-    |n| base(n)
+    |n| brief_base(n)
         .file("docs/knowledge/old-name.md", "old\n")
         .commit("Add a note")
         .git(&["mv", "docs/knowledge/old-name.md", "docs/knowledge/renamed.md"])
         .file("docs/knowledge/a b.md", "spaced\n"));
 scenario!(knowledge_template_filtered, ["--no-fetch"],
     |n| handoff(
-        base(n)
+        brief_base(n)
             .file("docs/knowledge/plans/_template.md", "template\n")
             .file("docs/knowledge/plans/real-plan.md", "plan\n")
             .commit("Add a plan"),
@@ -675,7 +647,7 @@ scenario!(knowledge_template_filtered, ["--no-fetch"],
 scenario!(phase_in_progress, ["--no-fetch"],
     |n| phase_doc(
         phase_doc(
-            phase_doc(base(n), "01-boot.md", "Complete (2026-01-01)", "## Milestone 1\n\n- [x] done\n"),
+            phase_doc(brief_base(n), "01-boot.md", "Complete (2026-01-01)", "## Milestone 1\n\n- [x] done\n"),
             "02-mm.md",
             "Not Started",
             "## Milestone 2\n\n- [ ] later\n",
@@ -687,7 +659,7 @@ scenario!(phase_in_progress, ["--no-fetch"],
     .commit("Add phase docs"));
 scenario!(phase_all_complete, ["--no-fetch"],
     |n| phase_doc(
-        phase_doc(base(n), "01-boot.md", "Complete", "## Milestone 1\n\n- [x] done\n"),
+        phase_doc(brief_base(n), "01-boot.md", "Complete", "## Milestone 1\n\n- [x] done\n"),
         "02-mm.md",
         "Complete (2026-01-02)",
         "## Milestone 2\n\n- [x] done\n",
@@ -695,7 +667,7 @@ scenario!(phase_all_complete, ["--no-fetch"],
     .commit("Add phase docs"));
 scenario!(phase_struck_task, ["--no-fetch"],
     |n| phase_doc(
-        base(n),
+        brief_base(n),
         "01-quality.md",
         "In Progress",
         "## Milestone 5 - Quality\n\n### Step 9: Cleanup\n\n- [ ] ~~dropped idea~~\n- [ ] the real open task\n",
@@ -703,33 +675,33 @@ scenario!(phase_struck_task, ["--no-fetch"],
     .commit("Add a phase doc"));
 scenario!(phase_no_step_heading, ["--no-fetch"],
     |n| phase_doc(
-        base(n),
+        brief_base(n),
         "01-hardening.md",
         "In Progress",
         "## Milestone 3 - Hardening\n\n- [ ] unstepped task\n",
     )
     .commit("Add a phase doc"));
 scenario!(phase_all_checked, ["--no-fetch"],
-    |n| phase_doc(base(n), "01-done.md", "In Progress", "## Setup\n\n- [x] a\n- [x] b\n")
+    |n| phase_doc(brief_base(n), "01-done.md", "In Progress", "## Setup\n\n- [x] a\n- [x] b\n")
         .commit("Add a phase doc"));
 scenario!(phase_open_pr_for_m, ["--no-fetch"],
-    |n| phase_doc(base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
+    |n| phase_doc(brief_base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
 scenario!(phase_open_pr_none, ["--no-fetch"],
-    |n| phase_doc(base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
+    |n| phase_doc(brief_base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
 scenario!(phase_open_pr_unknown, ["--no-fetch"],
-    |n| phase_doc(base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
+    |n| phase_doc(brief_base(n), "01-alpha.md", "In Progress", MILESTONE_DOC).commit("Add a phase doc"));
 
 // Docs (8). The docs-check answer is in each scenario's docs/ fixture.
-scenario!(docs_clean, ["--no-fetch"], base);
-scenario!(docs_new_drift_key_order, ["--no-fetch"], base);
-scenario!(docs_prune_hint, ["--no-fetch"], base);
-scenario!(docs_rc2, ["--no-fetch"], base);
-scenario!(docs_panic101, ["--no-fetch"], base);
-scenario!(docs_other_rc_last_line, ["--no-fetch"], base);
-scenario!(docs_unreadable_json, ["--no-fetch"], base);
+scenario!(docs_clean, ["--no-fetch"], brief_base);
+scenario!(docs_new_drift_key_order, ["--no-fetch"], brief_base);
+scenario!(docs_prune_hint, ["--no-fetch"], brief_base);
+scenario!(docs_rc2, ["--no-fetch"], brief_base);
+scenario!(docs_panic101, ["--no-fetch"], brief_base);
+scenario!(docs_other_rc_last_line, ["--no-fetch"], brief_base);
+scenario!(docs_unreadable_json, ["--no-fetch"], brief_base);
 // The oracle's fake docs-check prints the shim's stale-rebuild warning; aios gets
 // AIOS_SHIM_STALE=1 instead (D6): the note is the same.
-scenario!(docs_stale_note, ["--no-fetch"], base, stale_binary_is_flagged);
+scenario!(docs_stale_note, ["--no-fetch"], brief_base, stale_binary_is_flagged);
 
 // CLI (3).
 scenario!(cli_help, ["--help"], usage_error);
@@ -737,39 +709,6 @@ scenario!(cli_help, ["--help"], usage_error);
 // usage error (exit 2) and never prints the help text, which is new in aios (D1).
 scenario!(cli_unknown_after_help, ["--bogus", "--help"], usage_error);
 scenario!(outside_repo, ["--no-fetch"], |n| Scenario::outside_repo(Sub::Brief, n));
-}
-
-/// Whether the scenario's golden is aios-only (no oracle run records it).
-fn is_divergent(name: &str) -> bool {
-    DIVERGENT_SCENARIOS
-        .iter()
-        .any(|(divergent, _)| *divergent == name)
-}
-
-/// `git <args>` in `dir`, for what a golden records about the repository after the run.
-/// `None` when git fails (no repository). The ceiling keeps a run directory outside every
-/// checkout from finding one above it.
-fn probe(dir: &Path, ceiling: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
-    isolated(&mut cmd)
-        .env("GIT_CEILING_DIRECTORIES", ceiling)
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null());
-    let out = cmd.output().expect("run git");
-    out.status.success().then(|| {
-        String::from_utf8_lossy(&out.stdout)
-            .trim_end_matches('\n')
-            .to_string()
-    })
-}
-
-fn section(out: &mut Vec<u8>, title: &str, body: &[u8]) {
-    out.extend_from_slice(format!("== {title} ==\n").as_bytes());
-    out.extend_from_slice(body);
-    if !body.is_empty() && !body.ends_with(b"\n") {
-        out.extend_from_slice(b"\n\\ no newline at end of output\n");
-    }
 }
 
 /// Whether the run wrote `last-brief`: it exists and its mtime is not the one the
@@ -800,31 +739,14 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
     // `refs/remotes/origin/HEAD` is left out: a fetch creates it in recent git and not in
     // older git, and the brief never reads it.
     let remote_refs =
-        probe(twin.run_dir(), ceiling, &["for-each-ref", "refs/remotes"]).map(|refs| {
+        agent::probe(twin.run_dir(), ceiling, &["for-each-ref", "refs/remotes"]).map(|refs| {
             refs.lines()
                 .filter(|line| !line.ends_with("\trefs/remotes/origin/HEAD"))
                 .collect::<Vec<_>>()
                 .join("\n")
         });
 
-    let mut gh_calls = String::new();
-    for (i, call) in outcome.gh_calls.iter().enumerate() {
-        let env: Vec<String> = call
-            .env
-            .iter()
-            .map(|(k, v)| format!("{k}={}", v.as_deref().unwrap_or("<unset>")))
-            .collect();
-        gh_calls.push_str(&format!(
-            "{}: {}\n   cwd {}\n   env {}\n",
-            i + 1,
-            call.line().trim_end(),
-            call.cwd.display(),
-            env.join(" ")
-        ));
-    }
-    if gh_calls.is_empty() {
-        gh_calls.push_str("(none)\n");
-    }
+    let gh_calls = agent::gh_calls_text(outcome);
     let mut docs_calls = String::new();
     for call in &outcome.docs_calls {
         let argv: Vec<String> = call
@@ -843,16 +765,16 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
     }
 
     let mut golden = Vec::new();
-    section(
+    agent::golden_section(
         &mut golden,
         "exit",
         format!("{}\n", outcome.code).as_bytes(),
     );
-    section(&mut golden, "stdout", &rename(&outcome.stdout));
-    section(&mut golden, "stderr", &rename(&outcome.stderr));
-    section(&mut golden, "gh calls", gh_calls.as_bytes());
-    section(&mut golden, "docs calls", docs_calls.as_bytes());
-    section(
+    agent::golden_section(&mut golden, "stdout", &rename(&outcome.stdout));
+    agent::golden_section(&mut golden, "stderr", &rename(&outcome.stderr));
+    agent::golden_section(&mut golden, "gh calls", gh_calls.as_bytes());
+    agent::golden_section(&mut golden, "docs calls", docs_calls.as_bytes());
+    agent::golden_section(
         &mut golden,
         "marker touched",
         if marker_touched(outcome) {
@@ -861,7 +783,7 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
             b"no\n"
         },
     );
-    section(
+    agent::golden_section(
         &mut golden,
         "remote refs",
         format!("{}\n", remote_refs.as_deref().unwrap_or("(none)")).as_bytes(),
@@ -871,7 +793,7 @@ fn render_golden(outcome: &Outcome, oracle: bool) -> Vec<u8> {
 
 /// The labels of the `gh` fixtures a scenario's directory serves (none without a `gh/`).
 fn served_labels(name: &str) -> std::collections::BTreeSet<String> {
-    let Ok(entries) = std::fs::read_dir(fixtures_dir().join(name).join("gh")) else {
+    let Ok(entries) = std::fs::read_dir(brief_fixtures_dir().join(name).join("gh")) else {
         return std::collections::BTreeSet::new();
     };
     entries
@@ -911,8 +833,8 @@ fn check_outcome(case: &Case, outcome: &Outcome) {
     if outcome.code == 0 && sections > 0 {
         assert_eq!(
             sections,
-            SECTIONS,
-            "{}: a report has {SECTIONS} sections:\n{}",
+            BRIEF_SECTIONS,
+            "{}: a report has {BRIEF_SECTIONS} sections:\n{}",
             case.name,
             outcome.stdout_str()
         );
@@ -934,25 +856,8 @@ fn run_case(case: &Case) -> Outcome {
 fn differential_cases() -> Vec<&'static Case> {
     CASES
         .iter()
-        .filter(|case| !is_divergent(case.name))
+        .filter(|case| !agent::is_divergent(case.name))
         .collect()
-}
-
-fn first_difference(want: &str, got: &str) -> String {
-    let want: Vec<&str> = want.split('\n').collect();
-    let got: Vec<&str> = got.split('\n').collect();
-    for i in 0..want.len().max(got.len()) {
-        let (w, g) = (want.get(i).copied(), got.get(i).copied());
-        if w != g {
-            return format!(
-                "line {}: expected {:?}, got {:?}",
-                i + 1,
-                w.unwrap_or("<end of output>"),
-                g.unwrap_or("<end of output>")
-            );
-        }
-    }
-    "the goldens differ".to_string()
 }
 
 fn assert_table_is_sound() {
@@ -969,7 +874,7 @@ fn assert_table_is_sound() {
             "{divergent}: DIVERGENT_SCENARIOS and the table disagree"
         );
     }
-    let mut dirs: Vec<String> = std::fs::read_dir(fixtures_dir())
+    let mut dirs: Vec<String> = std::fs::read_dir(brief_fixtures_dir())
         .expect("read the fixture directory")
         .map(|entry| {
             entry
@@ -1031,7 +936,7 @@ fn oracle_reproduces_brief_goldens() {
                 path.display()
             )
         });
-        (want != got).then(|| format!("{}: {}", case.name, first_difference(&want, &got)))
+        (want != got).then(|| format!("{}: {}", case.name, agent::first_difference(&want, &got)))
     })
     .into_iter()
     .flatten()
@@ -1049,7 +954,7 @@ fn oracle_reproduces_brief_goldens() {
 fn brief_fixtures_label_needs_human_only_in_d10() {
     assert_table_is_sound();
     for case in CASES {
-        let path = fixtures_dir().join(case.name).join("gh/pr-list.out");
+        let path = brief_fixtures_dir().join(case.name).join("gh/pr-list.out");
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -1070,7 +975,7 @@ fn brief_fixtures_label_needs_human_only_in_d10() {
         });
         assert_eq!(
             labelled,
-            is_divergent(case.name),
+            agent::is_divergent(case.name),
             "{}: a PR labelled needs-human belongs to the D10 scenario only",
             case.name
         );
@@ -1097,7 +1002,7 @@ fn aios_matches_golden(name: &str) {
     check_outcome(case, &outcome);
     let got = String::from_utf8_lossy(&render_golden(&outcome, false)).into_owned();
     let path = golden_dir().join(format!("{name}.golden"));
-    if is_divergent(name) && common::soak::bless() {
+    if agent::is_divergent(name) && common::soak::bless() {
         std::fs::create_dir_all(golden_dir()).expect("create the golden directory");
         std::fs::write(&path, &got).expect("write an aios-only golden");
     }
@@ -1111,7 +1016,7 @@ fn aios_matches_golden(name: &str) {
     assert!(
         want == got,
         "{name}: aios no longer matches its golden: {}\n--- stdout\n{}\n--- stderr\n{}",
-        first_difference(&want, &got),
+        agent::first_difference(&want, &got),
         outcome.stdout_str(),
         outcome.stderr_str()
     );
@@ -1138,7 +1043,7 @@ fn brief_differential_against_oracle() {
             String::from_utf8_lossy(&render_golden(&oracle, true)).into_owned(),
             String::from_utf8_lossy(&render_golden(&aios, false)).into_owned(),
         );
-        (want != got).then(|| format!("{}: {}", case.name, first_difference(&want, &got)))
+        (want != got).then(|| format!("{}: {}", case.name, agent::first_difference(&want, &got)))
     })
     .into_iter()
     .flatten()
@@ -1420,7 +1325,7 @@ fn capture_real_gh_shapes() {
         std::fs::write(out_dir.join(format!("{label}.json")), &real).expect("write the capture");
         let real_json: Option<serde_json::Value> = serde_json::from_str(&real).ok();
         let mut fixtures = 0;
-        for entry in std::fs::read_dir(fixtures_dir()).expect("read the fixtures") {
+        for entry in std::fs::read_dir(brief_fixtures_dir()).expect("read the fixtures") {
             let path = entry
                 .expect("a directory entry")
                 .path()

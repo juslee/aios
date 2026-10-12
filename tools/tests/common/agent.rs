@@ -729,6 +729,60 @@ impl Scenario {
     }
 }
 
+// --- scenario builders that brief_parity.rs or checkpoint_parity.rs and skill_contract.rs share
+
+/// The sections of a full brief report.
+pub const BRIEF_SECTIONS: usize = 11;
+
+/// The committed fixtures of the brief scenarios: `tests/fixtures/brief/<scenario>/`.
+pub fn brief_fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/brief")
+}
+
+/// A normal brief scenario: the committed `gh` answers of `tests/fixtures/brief/<name>/gh`
+/// (one `<label>.{out,err,rc}` per call the oracle makes in it) and the docs-check answer
+/// of `.../docs/{out,err,rc,stale}`, a full report of 11 sections and one docs-check call.
+pub fn brief_base(name: &str) -> Scenario {
+    let dir = brief_fixtures_dir().join(name);
+    assert!(dir.is_dir(), "no fixture directory {}", dir.display());
+    let docs = dir.join("docs");
+    let read = |file: &str| std::fs::read(docs.join(file)).unwrap_or_default();
+    let rc = std::fs::read_to_string(docs.join("rc")).map_or(0, |text| {
+        text.trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{name}: docs/rc is not a number"))
+    });
+    let scenario = Scenario::brief(name)
+        .gh_fixtures_from_dir(&dir.join("gh"))
+        .docs(read("out"), read("err"), rc)
+        .expects_sections(BRIEF_SECTIONS);
+    if docs.join("stale").exists() {
+        scenario.docs_stale()
+    } else {
+        scenario
+    }
+}
+
+/// A `claude/x` branch checked out from `main`.
+pub fn on_x(name: &str) -> Scenario {
+    Scenario::checkpoint(name).branch("claude/x")
+}
+
+/// A new doc whose name looks like a secret, on `claude/x`.
+pub fn sensitive_name_new_doc(name: &str) -> Scenario {
+    on_x(name).file("docs/deploy-secret.md", "how to deploy\n")
+}
+
+/// On `claude/x` in the main checkout, a linked worktree `w1` with a commit not on origin
+/// and an uncommitted file.
+pub fn other_worktree_dirty_from_main(name: &str) -> Scenario {
+    on_x(name)
+        .worktree(".claude/worktrees/w1", "claude/w1")
+        .file(".claude/worktrees/w1/work.txt", "work\n")
+        .commit_in(".claude/worktrees/w1", "w1 work")
+        .file(".claude/worktrees/w1/dirty.txt", "dirty\n")
+}
+
 /// One materialised twin. Removed when dropped (set `AIOS_KEEP_TWINS=1` to keep it).
 pub struct TwinDir {
     base: PathBuf,
@@ -1476,4 +1530,82 @@ pub fn oracle_renames(text: &[u8], oracle: &Outcome) -> Vec<u8> {
 /// `fake_gh::line_allowed` for a sub's allowlist.
 pub fn gh_line_allowed(sub: Sub, line: &str) -> bool {
     fake_gh::line_allowed(sub.allow(), line)
+}
+
+// --- the golden helpers of brief_parity.rs and checkpoint_parity.rs ---------------------
+
+/// Whether the scenario's golden is aios-only (no oracle run records it).
+pub fn is_divergent(name: &str) -> bool {
+    DIVERGENT_SCENARIOS
+        .iter()
+        .any(|(divergent, _)| *divergent == name)
+}
+
+/// `git <args>` in `dir`, for what a golden records about the repository after the run.
+/// `None` when git fails (no repository, an unborn HEAD). The ceiling keeps a run
+/// directory outside every checkout from finding one above it.
+pub fn probe(dir: &Path, ceiling: &Path, args: &[&str]) -> Option<String> {
+    let mut cmd = Command::new("git");
+    isolated(&mut cmd)
+        .env("GIT_CEILING_DIRECTORIES", ceiling)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null());
+    let out = cmd.output().expect("run git");
+    out.status.success().then(|| {
+        String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches('\n')
+            .to_string()
+    })
+}
+
+/// One `== <title> ==` section of a golden.
+pub fn golden_section(out: &mut Vec<u8>, title: &str, body: &[u8]) {
+    out.extend_from_slice(format!("== {title} ==\n").as_bytes());
+    out.extend_from_slice(body);
+    if !body.is_empty() && !body.ends_with(b"\n") {
+        out.extend_from_slice(b"\n\\ no newline at end of output\n");
+    }
+}
+
+/// The body of a golden's `gh calls` section: the rendered argv, the cwd and the
+/// environment of every fake-gh call, or `(none)`.
+pub fn gh_calls_text(outcome: &Outcome) -> String {
+    let mut text = String::new();
+    for (i, call) in outcome.gh_calls.iter().enumerate() {
+        let env: Vec<String> = call
+            .env
+            .iter()
+            .map(|(k, v)| format!("{k}={}", v.as_deref().unwrap_or("<unset>")))
+            .collect();
+        text.push_str(&format!(
+            "{}: {}\n   cwd {}\n   env {}\n",
+            i + 1,
+            call.line().trim_end(),
+            call.cwd.display(),
+            env.join(" ")
+        ));
+    }
+    if text.is_empty() {
+        text.push_str("(none)\n");
+    }
+    text
+}
+
+/// The first line where two goldens differ.
+pub fn first_difference(want: &str, got: &str) -> String {
+    let want: Vec<&str> = want.split('\n').collect();
+    let got: Vec<&str> = got.split('\n').collect();
+    for i in 0..want.len().max(got.len()) {
+        let (w, g) = (want.get(i).copied(), got.get(i).copied());
+        if w != g {
+            return format!(
+                "line {}: expected {:?}, got {:?}",
+                i + 1,
+                w.unwrap_or("<end of output>"),
+                g.unwrap_or("<end of output>")
+            );
+        }
+    }
+    "the goldens differ".to_string()
 }
