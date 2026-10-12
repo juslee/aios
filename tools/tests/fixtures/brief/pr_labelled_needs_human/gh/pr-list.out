@@ -1,0 +1,1 @@
+[{"author":{"login":"alice"},"headRefName":"claude/widget","isDraft":false,"labels":[{"name":"team-build"},{"name":"needs-human"}],"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","number":7,"reviewDecision":"","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"SUCCESS","name":"Build","status":"COMPLETED","workflowName":"CI"}],"title":"Add the widget"}]

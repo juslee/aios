@@ -339,6 +339,12 @@ enum Step {
         bytes: Vec<u8>,
         mode: u32,
     },
+    /// A file whose `{rev:<rev>}` and `{short:<rev>}` placeholders become the commit
+    /// `git rev-parse` names at that point of the setup (40 and 7 hex digits).
+    WriteRevs {
+        rel: String,
+        template: String,
+    },
     Remove {
         rel: String,
     },
@@ -469,6 +475,18 @@ impl Scenario {
             rel: rel.to_string(),
             bytes: content.as_ref().to_vec(),
             mode,
+        });
+        self
+    }
+
+    /// A file (mode 644) whose text holds `{rev:<rev>}` and `{short:<rev>}` placeholders,
+    /// expanded when the step runs: the full sha, or its first 7 digits, of the commit
+    /// `git rev-parse <rev>` names in the root at that point (after the commits and
+    /// pushes written before this call). A soak summary naming a commit uses this.
+    pub fn file_revs(mut self, rel: &str, template: &str) -> Scenario {
+        self.steps.push(Step::WriteRevs {
+            rel: rel.to_string(),
+            template: template.to_string(),
         });
         self
     }
@@ -779,8 +797,9 @@ impl TwinDir {
 /// which strips every `AIOS_*` variable it inherits, so no allow list changes.
 pub const REAL_BIN_ENV: &str = "AIOS_TEST_REAL_BIN";
 
-/// 2026-01-01T00:00:00Z.
-const EPOCH_BASE: u64 = 1_767_225_600;
+/// 2026-01-01T00:00:00Z: the date of the base commits. A scenario's n-th commit is
+/// dated `EPOCH_BASE + n`, so a fixed mtime in a scenario can be set between two commits.
+pub const EPOCH_BASE: u64 = 1_767_225_600;
 /// The commit date `n` seconds after it that a run (a checkpoint `wip` commit) uses.
 const RUN_DATE: u64 = 100_000;
 
@@ -820,6 +839,38 @@ fn write_file(path: &Path, bytes: &[u8], mode: u32) {
     std::fs::write(path, bytes).expect("write a scenario file");
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
         .expect("chmod a scenario file");
+}
+
+/// `template` with each `{rev:<rev>}` and `{short:<rev>}` replaced by the commit
+/// `git rev-parse <rev>` prints in `root`. Any other brace is kept as it is.
+fn expand_revs(root: &Path, n: u64, template: &str) -> String {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let (before, tail) = rest.split_at(start);
+        out.push_str(before);
+        let placeholder = tail
+            .find('}')
+            .map(|end| (&tail[1..end], &tail[end + 1..]))
+            .and_then(|(inner, after)| inner.split_once(':').map(|kv| (kv, after)));
+        match placeholder {
+            Some((("rev", rev), after)) => {
+                out.push_str(setup_git(root, n, &["rev-parse", rev]).trim_end());
+                rest = after;
+            }
+            Some((("short", rev), after)) => {
+                let full = setup_git(root, n, &["rev-parse", rev]);
+                out.push_str(&full.trim_end()[..7]);
+                rest = after;
+            }
+            _ => {
+                out.push('{');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn origin_refs(origin: &Path) -> BTreeMap<String, String> {
@@ -985,6 +1036,10 @@ impl Scenario {
         for step in &self.steps {
             match step {
                 Step::Write { rel, bytes, mode } => write_file(&root.join(rel), bytes, *mode),
+                Step::WriteRevs { rel, template } => {
+                    let text = expand_revs(&root, n, template);
+                    write_file(&root.join(rel), text.as_bytes(), 0o644);
+                }
                 Step::Remove { rel } => {
                     std::fs::remove_file(root.join(rel)).expect("remove a scenario file");
                 }

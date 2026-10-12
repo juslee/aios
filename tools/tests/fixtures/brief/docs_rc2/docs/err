@@ -1,0 +1,3 @@
+   Compiling aios-tools
+docs-check: cannot read scripts/docs/baseline.json: missing
+sh: trailing noise
