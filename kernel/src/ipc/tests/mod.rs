@@ -455,7 +455,9 @@ fn ipc_caller_entry() -> ! {
 /// (`notify_loop_test`, `select_loop_test`, `sleep_loop_test`,
 /// `recv_loop_test`, `call_loop_test`, with the wake helper pinned to CPU 2;
 /// their timed-out cases take about 2 s each, so the lines after them print
-/// after the bench). Last, it calls IpcCall on a channel with no receiver
+/// after the bench), and that an `ipc_cancel` inside an `ipc_call` ends it
+/// with ECANCELED and leaves nothing behind (`cancel_loop_test`, after
+/// `call_loop_test`, with the helper's cancel). Last, it calls IpcCall on a channel with no receiver
 /// (expects ETIMEDOUT): the call holds the channel's minted ChannelAccess,
 /// so it blocks until its 100-tick timeout, and a late timeout wake can hide
 /// only that line.
@@ -537,6 +539,7 @@ fn ipc_timeout_entry() -> ! {
     wait_loops::sleep_loop_test(caller_tid);
     wait_loops::recv_loop_test(caller_tid);
     wait_loops::call_loop_test(caller_tid);
+    wait_loops::cancel_loop_test(caller_tid);
 
     // Timeout test, last. The channel has no server, so the call, authorised
     // by the minted ChannelAccess, can only time out.

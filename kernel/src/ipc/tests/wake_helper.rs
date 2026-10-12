@@ -15,8 +15,8 @@
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 use crate::arch::aarch64::timer::TICK_COUNT;
-use crate::ipc::channel::{ipc_recv, ipc_send};
-use crate::ipc::{notify, timeout};
+use crate::ipc::channel::{ipc_cancel, ipc_recv, ipc_send};
+use crate::ipc::{channel_mut, notify, timeout, CHANNEL_TABLE};
 use crate::sched;
 use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 use shared::tripwire::WakeSource;
@@ -44,6 +44,10 @@ pub(super) enum Command {
     Send { ch: ChannelId },
     /// `ipc_recv(ch, ..., timeout)`, blocking.
     RecvBlock { ch: ChannelId, timeout: u64 },
+    /// `ipc_cancel(ch)`. The helper waits until the due tick has passed and
+    /// a caller is published as `ch`'s `pending_caller`, so the cancel lands
+    /// inside that caller's `ipc_call`.
+    Cancel { ch: ChannelId },
 }
 
 /// What the helper did with a command.
@@ -54,8 +58,9 @@ pub(super) struct Outcome {
     pub(super) acted_at: Option<u64>,
     /// [`Command::Stale`] with `clear_timeout`: whether it removed an entry.
     pub(super) removed_entry: bool,
-    /// The call's result: 0 or an error code for `Signal` and `Send`, the
-    /// byte count or an error code for `RecvBlock`, 0 for `Stale`.
+    /// The call's result: 0 or an error code for `Signal`, `Send` and
+    /// `Cancel`, the byte count or an error code for `RecvBlock`, 0 for
+    /// `Stale`.
     pub(super) code: i64,
 }
 
@@ -79,6 +84,7 @@ const KIND_STALE: u32 = 0;
 const KIND_SIGNAL: u32 = 1;
 const KIND_SEND: u32 = 2;
 const KIND_RECV: u32 = 3;
+const KIND_CANCEL: u32 = 4;
 
 /// [`HELPER_TID`] before the helper exists.
 const NO_HELPER: u32 = u32::MAX;
@@ -147,6 +153,7 @@ pub(super) fn post(cmd: Command, due_in: u64) -> bool {
         Command::Signal { n, bits } => (KIND_SIGNAL, u64::from(n.0), bits),
         Command::Send { ch } => (KIND_SEND, u64::from(ch.raw()), 0),
         Command::RecvBlock { ch, timeout } => (KIND_RECV, u64::from(ch.raw()), timeout),
+        Command::Cancel { ch } => (KIND_CANCEL, u64::from(ch.raw()), 0),
     };
     let now = TICK_COUNT.load(Ordering::Relaxed);
     CMD_KIND.store(kind, Ordering::Relaxed);
@@ -290,6 +297,19 @@ fn run(kind: u32, a: u64, b: u64, due: u64) -> (u64, bool, i64) {
                 Err(e) => e,
             };
             (at, false, code)
+        }
+        KIND_CANCEL => {
+            let ch = ChannelId::from_raw(a as u32);
+            // CHANNEL_TABLE is not IRQ-class: no mask needed.
+            let pending = || {
+                let mut table = CHANNEL_TABLE.lock();
+                channel_mut(&mut table, ch).is_ok_and(|c| c.pending_caller.is_some())
+            };
+            if !wait_until(due, pending) {
+                return abandoned;
+            }
+            let at = TICK_COUNT.load(Ordering::Relaxed);
+            (at, false, ipc_cancel(ch))
         }
         _ => abandoned,
     }

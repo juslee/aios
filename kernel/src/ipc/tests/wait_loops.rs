@@ -123,35 +123,46 @@ struct Backstopped<R> {
     result: R,
     /// Whether it returned before its own deadline.
     early: bool,
-    /// Whether the backstop fired first: the wait's own entry was lost.
+    /// Whether the backstop fired first: the wake the case expects was lost.
     backstop_fired: bool,
-    /// The stale wake's outcome, from [`wake_helper::finish`].
+    /// The helper command's outcome, from [`wake_helper::finish`].
     helper: Option<wake_helper::Outcome>,
 }
 
+/// The stale wake of [`backstopped`]'s timed-out cases: one that first
+/// removes `me`'s TIMEOUT_QUEUE entry (`Command::Stale` with
+/// `clear_timeout`), so only the wait's re-insert of its entry can end it on
+/// time.
+fn stale_clear(me: ThreadId) -> Command {
+    Command::Stale {
+        target: me,
+        clear_timeout: true,
+    }
+}
+
 /// Run `wait`, a wait of `me` that times out after [`LOOP_TICKS`] through
-/// its TIMEOUT_QUEUE entry, with a stale wake at +5 that first removes that
-/// entry (`Command::Stale` with `clear_timeout`), so only the wait's
-/// re-insert of its entry can end it on time.
+/// its TIMEOUT_QUEUE entry, with the helper running `cmd` at +5: a stale
+/// wake ([`stale_clear`]) for a case that expects the timeout, or the event
+/// a case expects to end the wait.
 ///
 /// A backstop deadline (`arm_deadline`), [`BACKSTOP_TICKS`] after the
 /// wait's, is published first: an independent wake source, so a wait whose
-/// entry was lost returns instead of hanging. It fired if
+/// wake was lost returns instead of hanging. It fired if
 /// `NOTIFY_DEADLINES[me]` no longer holds it when the wait returns. It is
 /// cleared afterwards; one that fired has already woken the wait. `Err`
 /// names a setup failure.
-fn backstopped<R>(me: ThreadId, wait: impl FnOnce() -> R) -> Result<Backstopped<R>, &'static str> {
+fn backstopped<R>(
+    me: ThreadId,
+    cmd: Command,
+    wait: impl FnOnce() -> R,
+) -> Result<Backstopped<R>, &'static str> {
     // The wait's own deadline is at or after this one.
     let deadline = now().saturating_add(LOOP_TICKS);
     let backstop = deadline.saturating_add(BACKSTOP_TICKS);
     if arm_deadline(me, Some(backstop)) == DeadlineArm::Expired {
         return Err("backstop expired");
     }
-    let stale = Command::Stale {
-        target: me,
-        clear_timeout: true,
-    };
-    if !wake_helper::post(stale, DUE_TICKS) {
+    if !wake_helper::post(cmd, DUE_TICKS) {
         clear_deadline(me);
         return Err("helper busy");
     }
@@ -432,7 +443,7 @@ pub(super) fn sleep_loop_test(me: ThreadId) {
 
 /// The Sleep-loop case: the failure, if any.
 fn sleep_case(me: ThreadId) -> Option<&'static str> {
-    let end = match backstopped(me, || sleep_ticks(LOOP_TICKS)) {
+    let end = match backstopped(me, stale_clear(me), || sleep_ticks(LOOP_TICKS)) {
         Ok(end) => end,
         Err(failure) => return Some(failure),
     };
@@ -471,7 +482,7 @@ fn recv_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
         ipc_recv(ch, &mut buf, LOOP_TICKS)
     };
-    let end = match backstopped(me, receive) {
+    let end = match backstopped(me, stale_clear(me), receive) {
         Ok(end) => end,
         Err(failure) => return Some(failure),
     };
@@ -520,7 +531,7 @@ fn call_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
         let mut reply = [0u8; MAX_MESSAGE_SIZE];
         ipc_call(ch, b"CALL-LOOP", &mut reply, LOOP_TICKS)
     };
-    let end = match backstopped(me, call) {
+    let end = match backstopped(me, stale_clear(me), call) {
         Ok(end) => end,
         Err(failure) => return Some(failure),
     };
@@ -544,6 +555,75 @@ fn call_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
     }
     wake_helper::stale_failure(end.helper, true)
         .or_else(|| (!caller_is(ch, None)).then_some("caller left"))
+        .or_else(|| has_reply_slot(me).then_some("reply slot left"))
+        .or_else(|| has_timeout_entry(me).then_some("entry left"))
+        .or_else(|| (!drained).then_some("drain failed"))
+}
+
+/// `Cancel-loop test`: `ipc_call(ch, …, 2000)` on a pid-1 channel with no
+/// server ([`on_new_channel`]), run [`backstopped`] with `ipc_cancel(ch)` by
+/// the helper at +5 (`Command::Cancel`, once this thread is `ch`'s
+/// `pending_caller`). The cancel claims the call (takes `pending_caller`,
+/// the call's `PendingCall { tid, seq }`), marks this thread's reply slot
+/// `cancelled` (its `seq` matches the claimed call's) and wakes it; the
+/// call's next pass reads `cancelled` and the claim.
+///
+/// Pass: ECANCELED with the backstop not fired; the helper's `ipc_cancel`
+/// returned 0; and afterwards the channel's `pending_caller` and this
+/// thread's reply slot are `None` and no TIMEOUT_QUEUE entry is left. The
+/// request the cancel left queued is drained with `ipc_recv(ch, 0)`. Logs
+/// `Cancel-loop test: as expected`, or `Cancel-loop test: wake lost` (the
+/// backstop fired first), the wrong result by name, or a line naming the
+/// helper's, the leftover's or the drain's failure.
+///
+/// The `seq` mismatch path of `ipc_reply` and `ipc_cancel` (the claimed
+/// call's caller left it and posted its next call's slot between the claim
+/// and the slot write) cannot be forced at boot: the claim and the write run
+/// back to back in the replier or canceller, and only a preemption landing
+/// between them would let the caller run. The host model
+/// (`shared::sched`'s `call_model`) covers it.
+pub(super) fn cancel_loop_test(me: ThreadId) {
+    let failure = on_new_channel(me, cancel_case);
+    // A case that failed with the helper still in its command: the call it
+    // waited for has returned, so the command is abandoned.
+    wake_helper::reclaim();
+    report_one("Cancel-loop", failure);
+}
+
+/// The Cancel-loop case on channel `ch`: the failure, if any.
+fn cancel_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
+    let call = || {
+        let mut reply = [0u8; MAX_MESSAGE_SIZE];
+        ipc_call(ch, b"CANCEL-LOOP", &mut reply, LOOP_TICKS)
+    };
+    let end = match backstopped(me, Command::Cancel { ch }, call) {
+        Ok(end) => end,
+        Err(failure) => return Some(failure),
+    };
+    // The request is still queued: the cancel claimed the call, not its
+    // message. The poll pops it before any arm, so the drain takes no
+    // WAKEUP_ERRORS code.
+    let mut buf = [0u8; MAX_MESSAGE_SIZE];
+    let drained = ipc_recv(ch, &mut buf, 0).is_ok();
+    if end.backstop_fired {
+        return Some("wake lost");
+    }
+    match end.result {
+        e if e == IpcError::Ecanceled as i64 => {}
+        n if n >= 0 => return Some("Ok"),
+        e if e == IpcError::Etimedout as i64 => return Some("ETIMEDOUT"),
+        e if e == IpcError::Eagain as i64 => return Some("EAGAIN"),
+        e if e == IpcError::Epipe as i64 => return Some("EPIPE"),
+        _ => return Some("wrong error"),
+    }
+    match end.helper {
+        None => return Some("helper not done"),
+        Some(o) if o.acted_at.is_none() => return Some("cancel abandoned"),
+        Some(o) if o.code != 0 => return Some("cancel failed"),
+        Some(_) => {}
+    }
+    (!caller_is(ch, None))
+        .then_some("caller left")
         .or_else(|| has_reply_slot(me).then_some("reply slot left"))
         .or_else(|| has_timeout_entry(me).then_some("entry left"))
         .or_else(|| (!drained).then_some("drain failed"))
