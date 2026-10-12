@@ -233,7 +233,7 @@ impl<R: GhRunner> Github<R> {
         let mut threads = None;
         if why.is_none() {
             issues = match gh.run(&NEEDS_HUMAN_ISSUES_ARGS) {
-                GhOutcome::Ok(stdout) => array(&stdout).ok_or_else(Vec::new),
+                GhOutcome::Ok(stdout) => array(&stdout).ok_or_else(|| UNREADABLE.to_vec()),
                 failed => Err(failed.first_stderr_line().to_vec()),
             };
             let query = format!("query={THREADS_QUERY}");
@@ -591,6 +591,21 @@ mod tests {
         assert_eq!(
             rendered(|out| github.needs_human(out)),
             "- GitHub unavailable: boom\n- queue: 3 agent-ready, ? agent-working\n"
+        );
+    }
+
+    #[test]
+    fn unreadable_issues_name_the_reason() {
+        let gh = Fake::new(vec![
+            ("rate_limit", ok("10\n")),
+            ("label needs-human", ok("not json")),
+            ("graphql", ok("{}")),
+            ("agent-", ok("0\n")),
+        ]);
+        let github = Github::open(gh);
+        assert_eq!(
+            rendered(|out| github.needs_human(out)),
+            "- GitHub unavailable: unreadable gh output\n- queue: 0 agent-ready, 0 agent-working\n"
         );
     }
 

@@ -18,8 +18,10 @@
 //! messages start `checkpoint:`; new `--help` text), D5 (the `checkpoint it:` hint is a
 //! `just --justfile <main>/justfile --working-directory . checkpoint` command that
 //! works from any worktree), D8 (ASCII-only case folding in the path regex) and D9.
-//! Bug-for-bug: the exit status of `git add -A` is not checked, and the push is
-//! attempted after a failed commit.
+//! Bug-for-bug: the exit status of `git add -A` is not checked, the push is
+//! attempted after a failed commit, and a failed index restore (`git read-tree`) on the
+//! secret stop is not checked either: the output still says the index is as it was, and
+//! the staging stays in place.
 //!
 //! Exit status: 0 no worktree holds work that is not on origin; 1 uncommitted files or
 //! commits not on origin remain here or in another worktree, or the secret scan failed;
