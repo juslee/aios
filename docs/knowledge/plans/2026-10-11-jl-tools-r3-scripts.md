@@ -477,7 +477,7 @@ Conventions for every task:
   - [x] 3f: Mutation checks. These are uncommitted, in the writer's worktree; afterwards run `git checkout -- tools/src`.
     - Remove `--diff-filter=A` → `modified_tracked_creds_not_flagged` fails.
     - Drop the `wip:` hold → `ready_pr_holds_wip`, `gh_fails_holds_wip` and `gh_missing_holds_wip` fail.
-    - Build the refspec as `HEAD:refs/heads/<b>` → `tracking_origin_main_pushes_branch_only` fails.
+    - Push with no refspec (`git push -q -u origin`) → `tracking_origin_main_pushes_branch_only` fails. (`HEAD:refs/heads/<b>` is an equivalent mutant: git sets the same upstream and remote ref.)
     - Remove `read-tree` on a stop → `sensitive_name_new_doc` and `index_restored_exactly` fail.
     - Make a scan git failure return an empty scan → `scan_git_failure_fails_closed` fails.
     - Keep `cwd` instead of the toplevel → `run_from_subdirectory` fails.
@@ -538,25 +538,26 @@ Conventions for every task:
     - Verify: `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test brief_parity -- --ignored record_brief_goldens` exits 0; T(`--test brief_parity`) = 2; `ls tools/tests/golden/brief/*.golden | wc -l` = 74; `grep -c '^docs-check --json$' tools/tests/golden/brief/run_from_subdirectory.golden` = 1 and `grep -c '^docs-cwd <ROOT>$' tools/tests/golden/brief/run_from_subdirectory.golden` = 1; `grep -c 'run list' tools/tests/golden/brief/main_ci_suites_fail.golden` = 0; `grep -c '^- queue: ? agent-ready, ? agent-working$' tools/tests/golden/brief/queue_counts_unknown.golden` = 1; `grep -c '^- GitHub unavailable: unknown error$' tools/tests/golden/brief/offline_empty_stderr.golden` ≥ 1.
   - [x] 4d: `#[ignore] capture_real_gh_shapes`, run by the lead. It uses the network and read-only gh, outside the jail by design, and is pointed at the repository explicitly, so it works from any clone, whatever its `origin`: every repo-scoped call (`issue list`, `pr list`, `pr list --head`, `run list`) gets `-R juslee/aios`, and the two GraphQL calls get the literals `-F owner=juslee -F name=aios` in place of the `{owner}`/`{repo}` placeholders (which gh resolves only from a github.com remote). Every call goes through `aios_tools::gh::run_program(OsStr::new("gh"), …, &GhEnv::INHERIT)`, so `is_read` refuses anything but a read. It writes to `target/r3-gh-capture/` (uncommitted), and asserts, per call, that every committed fixture's JSON keys are a subset of the real response's keys.
     - Verify: `cargo test -p aios-tools --test brief_parity -- --list --ignored | grep -c capture_real_gh_shapes` = 1; `grep -cF '"juslee/aios"' tools/tests/brief_parity.rs` ≥ 1.
-  - [ ] 4e: Verify:
+  - [x] 4e: Verify:
     - `git grep -n -e /Users/ -e /home/ -e /private/ -- tools/tests/golden/brief tools/tests/fixtures/brief` prints nothing; the contract §10 token grep over `tools` prints nothing; G.
     - The lead, in a worker-free scratch clone of `<BW>` (never in `<BW>`; its `origin` is a local path, which 4d's `-R` and literals make irrelevant): `cargo test -p aios-tools --test brief_parity -- --ignored capture_real_gh_shapes` passes.
     - The lead, after the push: `gh run view <run-id> --log | grep -c 'test oracle_reproduces_brief_goldens ... ok'` = 1 (ubuntu-26.04). A failure adds the scenario to `PLATFORM_SCENARIOS` (tool and oracle line) in a follow-up worker commit.
+    - Result (2026-10-12): the lead ran `capture_real_gh_shapes` in a scratch clone at eaf4a64 and it passed (committed fixtures compared: pr-list 67, graphql-suites 66, run-list 66, the two queue counts 67 each; StatusContext fixtures not compared, because no real PR has a StatusContext check), and PR #257's CI on eaf4a64 logged `test oracle_reproduces_brief_goldens ... ok` on ubuntu-26.04.
     - An identity or sha mismatch (an author other than `aios-test`, or a commit sha that differs between twins or between macOS and CI) is never a `PLATFORM_SCENARIOS` case: it is a harness bug in `twin_command`'s identity env or date pinning (Task 1e), fixed there in a follow-up worker commit.
 
 - [ ] **Task 6: `aios brief`, the local sections** (worker, background)
-  - [ ] 6a: `tools/src/cmd/brief/mod.rs`: `run(args, cwd, out, err) -> anyhow::Result<u8>`.
+  - [x] 6a: `tools/src/cmd/brief/mod.rs`: `run(args, cwd, out, err) -> anyhow::Result<u8>`.
     - Parse the arguments in order. `-h`/`--help` prints new help text naming `aios brief [--no-fetch]` and its side effects (D1). Outside a repo, print `brief: not inside a git repository` and exit 2; otherwise exit 0.
     - Find the toplevel (`git rev-parse --show-toplevel` from `cwd`), the common dir and the main worktree (`git::worktrees`). **Every later git, gh, docs-check and file call runs with the toplevel as cwd**, as brief.sh's `cd "$ROOT"` does (L56): the phase-doc glob, `-- docs/knowledge`, the soak dirs.
     - Start docs-check first, on a `std::thread`, as a child: program `current_exe()`, argv exactly `docs-check --json`, cwd = the toplevel. Only the program can be overridden, by `AIOS_BRIEF_DOCS_CHECK=<program>`, and only `if cfg!(debug_assertions)` (the `AIOS_SOAK_LOADAVG` precedent, `tools/src/cmd/soak/host.rs` L129-133). The argv and cwd stay the same, so the `docs calls` golden section pins them.
     - Touch the marker last.
     - Verify: T(`--lib brief::tests::`) ≥ 1 (the parser table).
-  - [ ] 6b: `clock.rs`:
+  - [x] 6b: `clock.rs`:
     - `fmt_epoch(epoch, fmt)` tries `date -r`, then `date -d @`, and otherwise prints the raw epoch (kept bug-for-bug);
     - `header()` runs `date '+%Y-%m-%d %H:%M %Z'`;
     - epochs come from `SystemTime` and `metadata().modified()`, and are passed as `--since=@<epoch>`.
     - Verify: T(`--lib brief::clock::`) ≥ 2.
-  - [ ] 6c: Sections:
+  - [x] 6c: Sections:
     - `git_section.rs`: Git, with the fetch (`GIT_TERMINAL_PROMPT=0 git fetch --quiet --prune origin`), minus the GitHub probe. The origin/main lines appear only when `refs/remotes/origin/main` resolves. `unpushed_desc` uses `--remotes` (all remotes), unlike checkpoint (kept).
     - `soak.rs`:
       - run discovery: bytewise-sorted dirs per worktree, worktrees in porcelain order, strict `>` (D7);
@@ -576,9 +577,9 @@ Conventions for every task:
       - The error-line preference is `docs-check: ` → the panic header → the last line. The oracle's `^aios: ` step is gone (D2).
       - The stale note comes from `AIOS_SHIM_STALE` (D6).
     - Verify: T(`--lib brief::`) ≥ 4.
-  - [ ] 6d: An interim test, `brief_local_sections_match_goldens`. It compares section by section (split on `\n## `), plus the `docs calls` section, for every section except `Open pull requests`, `Main CI` and `Needs human`. Those three are listed in `const NOT_YET_PORTED`, which Task 7 deletes. The `## Git` comparison stops before the `GitHub unavailable` probe line.
+  - [x] 6d: An interim test, `brief_local_sections_match_goldens`. It compares section by section (split on `\n## `), plus the `docs calls` section, for every section except `Open pull requests`, `Main CI` and `Needs human`. Those three are listed in `const NOT_YET_PORTED`, which Task 7 deletes. The `## Git` comparison stops before the `GitHub unavailable` probe line.
     - Verify: T(`--test brief_parity brief_local_sections`) = 1.
-  - [ ] 6e: Mutation checks (uncommitted):
+  - [x] 6e: Mutation checks (uncommitted):
     - soak tie `>=` instead of `>` → `soak_equal_mtime_tie`;
     - drop the sed fall-through → `soak_boots_row_quirk`;
     - touch the marker first → `knowledge_since_marker`;
@@ -586,7 +587,7 @@ Conventions for every task:
     - keep the caller's `cwd` for the phase glob and the docs-check child → `run_from_subdirectory`;
     - read handoffs from the toplevel instead of the main worktree → `run_from_linked_worktree`.
     - Verify: under each mutation, `cargo test -p aios-tools --test brief_parity brief_local_sections` exits non-zero and its output names that scenario; `git status --porcelain -- tools/src` prints nothing afterwards.
-  - [ ] 6f: Wire `Command::Brief` (the first variant; raw `args_os`, `disable_help_flag`) and `pub mod brief;`. Update the lib.rs crate doc, and add `brief, ` to the `tools/Cargo.toml` description.
+  - [x] 6f: Wire `Command::Brief` (the first variant; raw `args_os`, `disable_help_flag`) and `pub mod brief;`. Update the lib.rs crate doc, and add `brief, ` to the `tools/Cargo.toml` description.
     - Verify: `cargo run -q -p aios-tools -- brief --bogus; test $? = 2`; `grep -c 'the aios binary (brief, checkpoint, docs-check, hook, soak; agent-loop commands in later PRs)' tools/Cargo.toml` = 1; G.
 
 - [ ] **Task 7: `aios brief`, the GitHub sections, full goldens and the differential** (worker, background)
@@ -920,6 +921,7 @@ All of R3's earlier questions are decided (see Decisions Made). Two items are st
 - **Final fixes (plan frozen, 2026-10-11):**
   - **No committer identity for the oracle and aios runs.** `common::git()` pins the identity for setup only, and `hermetic` keeps `isolated()`'s `GIT_CONFIG_GLOBAL=/dev/null`, so checkpoint's `wip` commit would fail on the CI runner ("unable to auto-detect email address") and record `juslee@<host>` on the Mac (machine-dependent shas, an identity leak). Task 1e's `twin_command` now sets the `aios-test` identity env after `hermetic`, `checkpoint_wip_identity_is_pinned` (1f) and the 3e differential check it, and 2d/4e rule out `PLATFORM_SCENARIOS` for an identity or sha mismatch.
   - **The amendment set disagreed with R2 v2** (eleven amendments here, twelve there; no A12 marker in 0f; §2, §8 and §11 not in the edit list; a renumbering step that R2 v2 had already applied). A12 is now in the list and 0f's marker loop, the renumbering step is dropped, and the contract carries §14.
+- **Found in Task 3 (2026-10-12): Task 10f's grep will hit more than the provenance form.** `git grep -n -e 'brief\.sh' -e 'checkpoint\.sh' -- tools` also matches mentions outside the exempt form. These are `tools/src/git.rs:1` (frozen: its fix waits for R2's convergence, or needs a contract amendment), `tools/tests/agent_support.rs` L17, L33 and L690, `tools/tests/common/jail.rs` L34 and L41 (frozen; their `former scripts/agent/...` form lacks `(blob at`), and `tools/tests/shim.rs:623`, besides the docs_check comments that 10b covers. Task 10 must reword these, or exempt them through the provenance form, before 10f's verify can pass.
 
 ### Rejected review points
 

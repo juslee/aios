@@ -26,6 +26,9 @@
 //! - `oracle_reproduces_brief_goldens`: the oracle against the 74 goldens;
 //! - `brief_fixtures_label_needs_human_only_in_d10`: only the D10 scenario serves a PR
 //!   labelled `needs-human`, so every other scenario stays differential;
+//! - `brief_local_sections_match_goldens` (Task 6, interim): `aios brief` against the 74
+//!   goldens, section by section, for every section except the three GitHub ones
+//!   ([`NOT_YET_PORTED`]) and the pull-request lookup of the phase section;
 //! - `record_brief_goldens` and `capture_real_gh_shapes`, both `#[ignore]`.
 //!
 //! Every scenario also runs `assert_not_vacuous` and the fake gh's `BRIEF_GH_ALLOW`
@@ -1064,6 +1067,124 @@ fn brief_fixtures_label_needs_human_only_in_d10() {
             case.name
         );
     }
+}
+
+// --- the local sections (Task 6) ---------------------------------------------------------
+
+/// The sections the next step ports (the GitHub ones): until then `aios brief` prints their
+/// headings and nothing under them, and the interim test compares the heading only.
+const NOT_YET_PORTED: &[&str] = &["Open pull requests", "Main CI", "Needs human"];
+
+/// The titles of a golden's blocks, in order.
+const GOLDEN_BLOCKS: [&str; 7] = [
+    "exit",
+    "stdout",
+    "stderr",
+    "gh calls",
+    "docs calls",
+    "marker touched",
+    "remote refs",
+];
+
+/// A golden split into its blocks (`== title ==` and what follows).
+fn golden_blocks(golden: &str) -> Vec<(&'static str, &str)> {
+    let mut marks = Vec::new();
+    let mut from = 0;
+    for title in GOLDEN_BLOCKS {
+        let mark = format!("== {title} ==\n");
+        let at = from
+            + golden[from..]
+                .find(&mark)
+                .unwrap_or_else(|| panic!("no `{title}` block in:\n{golden}"));
+        marks.push((title, at, at + mark.len()));
+        from = at + mark.len();
+    }
+    marks
+        .iter()
+        .enumerate()
+        .map(|(i, (title, _, body))| {
+            let end = marks.get(i + 1).map_or(golden.len(), |next| next.1);
+            (*title, &golden[*body..end])
+        })
+        .collect()
+}
+
+/// The lines of a report section the interim test compares: the pull-request lookup of the
+/// phase section is a GitHub answer, so it waits with the GitHub sections.
+fn comparable(section: &str) -> String {
+    section
+        .split_inclusive('\n')
+        .filter(|row| !row.starts_with("- open PR for M"))
+        .collect()
+}
+
+/// What differs between the oracle's golden and an aios run, section by section; `None`
+/// when only the not-yet-ported sections differ.
+fn local_difference(want: &str, got: &str) -> Option<String> {
+    let (want, got) = (golden_blocks(want), golden_blocks(got));
+    for ((title, w), (_, g)) in want.iter().zip(&got) {
+        // The gh calls are the GitHub sections' (none yet).
+        if *title == "gh calls" {
+            continue;
+        }
+        if *title != "stdout" {
+            if w != g {
+                return Some(format!("{title}: {}", first_difference(w, g)));
+            }
+            continue;
+        }
+        let (wp, gp): (Vec<&str>, Vec<&str>) =
+            (w.split("\n## ").collect(), g.split("\n## ").collect());
+        if wp.len() != gp.len() {
+            return Some(format!(
+                "stdout: {} sections, expected {}",
+                gp.len(),
+                wp.len()
+            ));
+        }
+        for (ws, gs) in wp.iter().zip(&gp) {
+            let name = ws.lines().next().unwrap_or_default();
+            if NOT_YET_PORTED.contains(&name) {
+                if gs.lines().next() != Some(name) {
+                    return Some(format!("section {name}: heading missing"));
+                }
+            } else if comparable(ws) != comparable(gs) {
+                return Some(format!(
+                    "section {name}: {}",
+                    first_difference(&comparable(ws), &comparable(gs))
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The local sections of `aios brief` equal the oracle's golden, section by section, for
+/// every differential scenario; the GitHub sections arrive in the next step, which deletes
+/// this test for the per-scenario tests and the differential.
+#[test]
+fn brief_local_sections_match_goldens() {
+    assert_table_is_sound();
+    let dir = golden_dir();
+    let cases = differential_cases();
+    let failures: Vec<String> = parallel_map(&cases, |case| {
+        let outcome = agent::run_aios(&(case.build)(case.name), "brief", case.args);
+        agent::assert_origin_invariants(&outcome);
+        common::jail::assert_no_command_not_found(&outcome.stderr);
+        common::jail::assert_no_command_not_found(&outcome.fake_stderr);
+        let got = String::from_utf8_lossy(&render_golden(&outcome, false)).into_owned();
+        let want = std::fs::read_to_string(dir.join(format!("{}.golden", case.name)))
+            .unwrap_or_else(|e| panic!("{}: {e}", case.name));
+        local_difference(&want, &got).map(|difference| format!("{}: {difference}", case.name))
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(
+        failures.is_empty(),
+        "aios brief differs from the oracle's goldens in:\n{}",
+        failures.join("\n")
+    );
 }
 
 /// Record the 74 differential goldens from the oracle. Review the diff.

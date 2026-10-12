@@ -1,5 +1,5 @@
-//! `aios`: AIOS host tooling: `aios checkpoint` (R3), `aios docs-check` (R1),
-//! `aios hook` (model routing) and `aios soak` (R4); later PRs add subcommands.
+//! `aios`: AIOS host tooling: `aios brief` and `aios checkpoint` (R3), `aios docs-check`
+//! (R1), `aios hook` (model routing) and `aios soak` (R4); later PRs add subcommands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -17,6 +17,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Deterministic session briefing for /justin:brief (see `aios brief --help`)
+    #[command(name = "brief", disable_help_flag = true)]
+    Brief(aios_tools::cmd::brief::Args),
     /// Commit and push the work in progress of a claude/* branch, for /justin:pause (see `aios checkpoint --help`)
     #[command(name = "checkpoint", disable_help_flag = true)]
     Checkpoint(aios_tools::cmd::checkpoint::Args),
@@ -68,8 +71,39 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::Brief(_) => brief(),
         Command::Checkpoint(_) => checkpoint(),
         Command::Soak(_) => soak(),
+    }
+}
+
+/// `aios brief`. The raw arguments after `brief` are parsed in argv order by the command
+/// itself (the soak pattern); clap only has to accept them.
+fn brief() -> ExitCode {
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("brief: cannot read the current directory: {err}");
+            return ExitCode::from(2);
+        }
+    };
+    let raw: Vec<OsString> = std::env::args_os().skip(2).collect();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
+    let result = aios_tools::cmd::brief::run(&raw, &cwd, &mut out, &mut err);
+    let flushed = out.flush();
+    match (result, flushed) {
+        (Ok(code), Ok(())) => ExitCode::from(code),
+        (Ok(_), Err(e)) => {
+            let _ = writeln!(err, "brief: cannot write output: {e}");
+            ExitCode::from(2)
+        }
+        (Err(e), _) => {
+            let _ = writeln!(err, "brief: {e:#}");
+            ExitCode::from(2)
+        }
     }
 }
 
