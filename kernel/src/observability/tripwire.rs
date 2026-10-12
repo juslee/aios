@@ -31,10 +31,11 @@
 //!   text bounds `kernel_main` captured ([`capture_text_layout`]).
 //! - Heartbeat scans (observability.md §6.5), right before each `src=hb`
 //!   line: scan A holds every run queue and THREAD_TABLE
-//!   (`sched::scan_snapshot`) and finds orphans (Runnable, not queued, not current), starved threads
-//!   (queued, not run for over 1000 ticks, by class), threads blocked or
-//!   Suspended with a wait word that is not Idle (`bw`), and the `dupq`,
-//!   `dupcur` and `qbad` (queued, neither Runnable nor Dead) checks; scan B try-locks each waker table alone
+//!   (`sched::scan_snapshot`) and finds orphans (Runnable, not queued, not
+//!   current), starved threads (queued, not run for over 1000 ticks, by
+//!   class), threads blocked or Suspended with a wait word that is not Idle
+//!   (`bw`), and the `dupq`, `dupcur` and `qbad` (queued, neither Runnable
+//!   nor Dead) checks; scan B try-locks each waker table alone
 //!   (`ipc::scan_wakers`) and splits threads blocked with no waker into
 //!   `nowaker` and `wakefl` (a wake in flight). Two strikes per kind
 //!   (`shared::tripwire::TwoStrike`) confirm a flag, and edge counting

@@ -259,8 +259,8 @@ pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
 /// Returns whether it removed one. For thread context only (process exit
 /// step C, a wait's exit removing its own entry, the self-tests' wake
 /// helper): unlike [`clear_timeout`], it never leaves an entry behind to
-/// fire later, so nothing fires into a later wait. The hold runs with IRQs masked, because TIMEOUT_QUEUE is an
-/// IRQ-class lock that this CPU's tick try-locks.
+/// fire into a later wait. The hold runs with IRQs masked, because
+/// TIMEOUT_QUEUE is an IRQ-class lock that this CPU's tick try-locks.
 pub(super) fn clear_timeout_blocking(tid: ThreadId) -> bool {
     daif::with_irqs_masked(|| {
         TIMEOUT_QUEUE
@@ -376,10 +376,10 @@ pub(super) fn arm_timeout(
 /// late `wake_with_error` from an earlier `ipc_call`) costs one pass, which
 /// re-inserts the entry, so the sleep never returns before its deadline.
 /// The exit removes the entry if a stale wake left it
-/// ([`clear_timeout_blocking`]) and then cancels the arm. `WAKEUP_ERRORS` is not taken: the entry's own
-/// wake carries 0, and a late non-zero code decides nothing (the next
-/// `wake_with_error` overwrites it, or the next `ipc_call`, `ipc_recv` or
-/// `ipc_select` exit discards it).
+/// ([`clear_timeout_blocking`]) and then cancels the arm. `WAKEUP_ERRORS` is
+/// not taken: the entry's own wake carries 0, and a late non-zero code
+/// decides nothing (the next `wake_with_error` overwrites it, or the next
+/// `ipc_call`, `ipc_recv` or `ipc_select` exit discards it).
 pub fn sleep_ticks(ticks: u64) {
     if ticks == 0 {
         return;

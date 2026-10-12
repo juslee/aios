@@ -5,11 +5,11 @@
 //!
 //! Outcome-only (owner, 2026-10-11, Q8): each case checks which wake source
 //! fired (the result the wait returned, and for a sleep, a receive or a call
-//! whether its backstop fired), the order of events (the helper's stale wake landed inside the
-//! wait, which the helper guarantees by waiting for the wait's record, and a
-//! timed-out wait did not return before its deadline) and the state left
-//! behind (no waiter record, registration, deadline or timeout entry). No
-//! elapsed tick is read as a pass band. Every wait uses a 2000-tick timeout,
+//! whether its backstop fired), the order of events (the helper's stale wake
+//! landed inside the wait, which the helper guarantees by waiting for the
+//! wait's record, and a timed-out wait did not return before its deadline)
+//! and the state left behind (no waiter record, registration, deadline or
+//! timeout entry). No elapsed tick is read as a pass band. Every wait uses a 2000-tick timeout,
 //! a backstop expires 2000 ticks after its wait's deadline, and every helper
 //! command is due 5 ticks after it is posted, so crowding on CPU 2 can delay
 //! a case but not change its outcome.

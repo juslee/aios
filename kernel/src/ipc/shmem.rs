@@ -9,10 +9,11 @@
 //! A region leaves its slot only through `region_detach`: at its last unmap,
 //! at process-exit cleanup, on its creator's destroy, or in the cascade when
 //! its creator revokes the `SharedMemoryCreate` token it was created under
-//! (capability-lifetime ADR §5). Kernel code reads region memory through the direct map only between
-//! `region_borrow` and `region_release`; a region detached while borrowed
-//! keeps its frames draining, and its slot out of use, until the last
-//! release. Frames are always freed with no table lock held.
+//! (capability-lifetime ADR §5). Kernel code reads region memory through the
+//! direct map only between `region_borrow` and `region_release`; a region
+//! detached while borrowed keeps its frames draining, and its slot out of
+//! use, until the last release. Frames are always freed with no table lock
+//! held.
 //!
 //! Per ipc.md §4.4–4.7, memory/virtual.md §7.
 //!
@@ -623,9 +624,10 @@ fn insert_mapping(
 /// `region_release`.
 ///
 /// Errors: EINVAL for an out-of-range id (or a ref_count already 0); EPIPE
-/// if the region does not exist, is draining or `region_id` is stale; EPERM if `pid` has
-/// no mapping of it, a right the caller lacks, like a missing capability. No
-/// capability is checked: holding the mapping is the authority to remove it.
+/// if the region does not exist, is draining or `region_id` is stale; EPERM
+/// if `pid` has no mapping of it, a right the caller lacks, like a missing
+/// capability. No capability is checked: holding the mapping is the
+/// authority to remove it.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
     let Some(idx) = region_id.index() else {
         return Err(IpcError::Einval as i64);
