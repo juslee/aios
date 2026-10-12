@@ -207,7 +207,12 @@ pub fn init() {
         );
         thread.sched.class = SchedulerClass::Normal;
         thread.sched.effective_class = SchedulerClass::Normal;
-        thread.sched.affinity = CpuSet::all();
+        // Pinned to CPU 2 from creation. A timeout wake from check_timeouts
+        // may run on any ticking CPU, and unblock queues the woken thread on
+        // the waking CPU when affinity allows; pinned, it always comes back
+        // to CPU 2, whose own tick preempts at slice expiry, instead of
+        // starving behind the Interactive bench threads on CPU 0.
+        thread.sched.affinity = CpuSet::single(2);
         thread.context.sp = stack_virt_top as u64;
         thread.owner_pid = Some(ProcessId(1));
 
@@ -429,9 +434,9 @@ fn ipc_caller_entry() -> ! {
     }
 }
 
-/// IPC timeout test thread: calls IpcCall on a channel with no receiver
-/// (expects ETIMEDOUT). It then checks EPIPE after channel destroy, EINVAL
-/// for out-of-range channel ids, EINVAL for out-of-range pids on the
+/// IPC timeout test thread, pinned to CPU 2. It checks EPIPE after channel
+/// destroy, EINVAL for out-of-range channel ids, EINVAL for out-of-range
+/// pids on the
 /// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
 /// check (`select_cap_test`), EINVAL for hostile syscall arguments,
 /// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
@@ -439,7 +444,8 @@ fn ipc_caller_entry() -> ! {
 /// `owned_a`), the IPC Kit's error variants through `KernelIpc`
 /// (`kit_errors_test`, on all three of `select_cap_test`'s channels), and
 /// EPIPE for stale channel and region ids whose slot was reused
-/// (`stale_id_test`).
+/// (`stale_id_test`). Last, it calls IpcCall on a channel with no receiver
+/// (expects ETIMEDOUT), so a late timeout wake can hide only that line.
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -453,36 +459,12 @@ fn ipc_timeout_entry() -> ! {
     // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
-    // Create a channel with no server — timeout is guaranteed.
     let caller_tid = match super::current_thread_id() {
         Some(t) => t,
         None => loop {
             sched::thread_yield();
         },
     };
-
-    let ch = match channel_create(caller_tid) {
-        Ok(c) => c,
-        Err(e) => {
-            crate::kwarn!(Ipc, "Timeout test: channel_create failed: {}", e);
-            loop {
-                sched::thread_yield();
-            }
-        }
-    };
-
-    let msg = b"TIMEOUT_TEST";
-    let mut reply_buf = [0u8; MAX_MESSAGE_SIZE];
-
-    // Use a short timeout (100 ticks = 100ms).
-    crate::kinfo!(Ipc, "Timeout test: calling with 100ms timeout...");
-    let result = ipc_call(ch, msg, &mut reply_buf, 100);
-
-    if result == IpcError::Etimedout as i64 {
-        crate::kinfo!(Ipc, "Timeout test: ETIMEDOUT as expected");
-    } else {
-        crate::kwarn!(Ipc, "Timeout test: unexpected result {}", result);
-    }
 
     // Test channel destroy → EPIPE.
     let ch2 = match channel_create(caller_tid) {
@@ -530,6 +512,31 @@ fn ipc_timeout_entry() -> ! {
     syscall_args::syscall_args_test(caller_tid, select_channels.map(|c| c.owned_a));
     kit_errors::kit_errors_test(caller_tid, select_channels);
     stale_id::stale_id_test(caller_tid);
+
+    // Timeout test, last. The channel has no server, so a granted call can
+    // only time out.
+    let ch = match channel_create(caller_tid) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::kwarn!(Ipc, "Timeout test: channel_create failed: {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    };
+
+    let msg = b"TIMEOUT_TEST";
+    let mut reply_buf = [0u8; MAX_MESSAGE_SIZE];
+
+    // Use a short timeout (100 ticks = 100ms).
+    crate::kinfo!(Ipc, "Timeout test: calling with 100ms timeout...");
+    let result = ipc_call(ch, msg, &mut reply_buf, 100);
+
+    if result == IpcError::Etimedout as i64 {
+        crate::kinfo!(Ipc, "Timeout test: ETIMEDOUT as expected");
+    } else {
+        crate::kwarn!(Ipc, "Timeout test: unexpected result {}", result);
+    }
 
     loop {
         sched::thread_yield();

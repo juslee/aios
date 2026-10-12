@@ -502,7 +502,12 @@ pub fn init() {
         );
         thread.sched.class = SchedulerClass::Interactive;
         thread.sched.effective_class = SchedulerClass::Interactive;
-        thread.sched.affinity = CpuSet::all();
+        // Pinned to CPU 0: its last wake is a timeout, which check_timeouts
+        // may deliver from any ticking CPU, and unblock queues it on the
+        // waking CPU when affinity allows. Parked in its wfe loop there, an
+        // Interactive thread would run ahead of every Normal thread on that
+        // CPU for the rest of the boot.
+        thread.sched.affinity = CpuSet::single(0);
         thread.context.sp = stack_virt_top as u64;
         thread.owner_pid = Some(ProcessId(8));
 
@@ -544,7 +549,9 @@ pub fn init() {
         );
         thread.sched.class = SchedulerClass::Interactive;
         thread.sched.effective_class = SchedulerClass::Interactive;
-        thread.sched.affinity = CpuSet::all();
+        // Pinned to CPU 0, as the bench server and for the same reason: a
+        // fired ipc_call timeout must not park it on another CPU.
+        thread.sched.affinity = CpuSet::single(0);
         thread.context.sp = stack_virt_top as u64;
         thread.owner_pid = Some(ProcessId(8));
 

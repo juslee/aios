@@ -1086,6 +1086,21 @@ mod tests {
         let h = table
             .grant(make_expiring_token(1, Capability::DebugPrint, 100))
             .unwrap();
+        // One tick before its expiry the parent is still live: both requests
+        // succeed, and the child keeps the parent's expiry.
+        for (new_id, requested) in [(2, None), (3, Some(100))] {
+            let child_h = table
+                .attenuate(
+                    h,
+                    Capability::DebugPrint,
+                    requested,
+                    ProcessId(1),
+                    CapabilityTokenId(new_id),
+                    99,
+                )
+                .unwrap();
+            assert_eq!(table.get(child_h).unwrap().expires_at_tick, Some(100));
+        }
         // At its expiry tick and after it, with or without a requested expiry.
         for now in [100, 200] {
             assert_eq!(
@@ -1097,7 +1112,35 @@ mod tests {
                 Err(IpcError::Eperm as i64)
             );
         }
-        assert_eq!(table.count(), 1);
+        // The parent and the two children from tick 99; the denials added none.
+        assert_eq!(table.count(), 3);
+    }
+
+    #[test]
+    fn attenuate_full_table_enospc() {
+        let mut table = CapabilityTable::new();
+        for i in 0..MAX_CAPS_PER_PROCESS as u64 {
+            table
+                .grant(make_token(i + 1, Capability::DebugPrint, 1))
+                .unwrap();
+        }
+        assert_eq!(table.free_slots(), 0);
+        // The parent is live and the identity attenuation is allowed, so only
+        // the missing slot refuses it.
+        let h = CapabilityHandle(0);
+        assert!(table.get(h).is_some());
+        assert_eq!(
+            table.attenuate(
+                h,
+                Capability::DebugPrint,
+                None,
+                ProcessId(1),
+                CapabilityTokenId(1000),
+                0,
+            ),
+            Err(IpcError::Enospc as i64)
+        );
+        assert_eq!(table.count(), MAX_CAPS_PER_PROCESS as u32);
     }
 
     // --- CapabilityTable: mint_child ---
