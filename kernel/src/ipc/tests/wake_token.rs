@@ -33,7 +33,8 @@ const SAFETY_TICKS: u64 = 2000;
 /// 2. `prepare_block(me)`, then `unblock(me)`: the word is Woken.
 ///    `cancel_block(me)` returns `true` and leaves it Idle.
 /// 3. `prepare_block(me)`, `unblock(me)`, then publish a 2000-tick safety
-///    entry in TIMEOUT_QUEUE (ETIMEDOUT) and `block_current(BlockedIpc)`.
+///    entry in TIMEOUT_QUEUE (ETIMEDOUT) and `block_current` as
+///    `BlockedTimer` on the entry's deadline, as `sleep_ticks` blocks.
 /// 4. Clean up under TIMEOUT_QUEUE: remove the entry if it is still there,
 ///    and record whether it was. If it is gone it fired, and its
 ///    `wake_with_error` set this thread's ETIMEDOUT code, which is taken back
@@ -83,7 +84,7 @@ pub(super) fn wake_token_test(me: ThreadId) {
     // 3. Arm, wake, publish the safety entry after the arm (rule 1), block.
     wake::prepare_block(me);
     sched::unblock(me, WakeSource::SelfTest);
-    daif::with_irqs_masked(|| {
+    let deadline = daif::with_irqs_masked(|| {
         let now = TICK_COUNT.load(Ordering::Relaxed);
         let deadline = deadline_after(now, SAFETY_TICKS).unwrap_or(u64::MAX);
         TIMEOUT_QUEUE.lock()[me.0 as usize] = Some(TimeoutEntry {
@@ -91,8 +92,9 @@ pub(super) fn wake_token_test(me: ThreadId) {
             wake_at_tick: deadline,
             error_code: IpcError::Etimedout as i64,
         });
+        deadline
     });
-    sched::block_current(ThreadState::BlockedIpc { channel: u64::MAX });
+    sched::block_current(ThreadState::BlockedTimer { wake_at: deadline });
 
     // 4. Clean up on either path. check_timeouts calls wake_with_error only
     // after it drops TIMEOUT_QUEUE, so after a fired entry the code can land
