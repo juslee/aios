@@ -186,7 +186,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 - [x] Implement `RingBuffer<RawMessage>` with fixed capacity (RING_CAPACITY = 16)
 - [x] Implement `RawMessage`: channel, message_type (u32), data pointer (`*const u8`) with length, capability and shared memory arrays (fixed-size, max 4 each) (ipc.md §4.3)
 - [x] Global `CHANNEL_TABLE`: bounded slab-allocated array of `Channel` objects
-- [x] `ChannelCreate` syscall: allocates Channel, returns `ChannelId` (ipc.md §3.1)
+- [x] `ChannelCreate` syscall: allocates Channel, returns `ChannelId` (ipc.md §3.1). Since the capability-lifetime work it also returns, in x1, the handle of the caller's minted `ChannelAccess(id)` token
 - [x] `ChannelDestroy` syscall: marks endpoint as `Dead`, unblocks peer with `EPIPE` (ipc.md §4.1)
 - [x] `IpcCall` syscall: validates channel, copies message from user buffer to kernel `RawMessage`. If receiver is `BlockedIpc` on this channel, trigger direct switch (Step 7). Otherwise enqueue message, block sender with mandatory timeout. On timeout expiry, unblock sender with `ETIMEDOUT` (ipc.md §4.2; deadlock-prevention.md §4)
 - [x] `IpcRecv` syscall: if message in queue, dequeue and copy to user buffer, return. Otherwise block with timeout (ipc.md §4.2)

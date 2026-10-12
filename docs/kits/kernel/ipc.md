@@ -39,7 +39,9 @@ pub struct Channel {
     pub id: ChannelId,
     /// The ring buffer backing this channel.
     ring: MessageRing,
-    /// Capability that created this channel (for cascade revocation).
+    /// Capability that created this channel (for cascade revocation):
+    /// revoking it destroys the channel. Creating a channel also mints the
+    /// creator's ChannelAccess(id) as a child of it.
     creation_cap: CapabilityHandle,
 }
 
@@ -60,7 +62,9 @@ pub struct MessageRing {
 /// immediately, without going through the scheduler. The reply switch
 /// is equally fast.
 ///
-/// Timeout is mandatory to prevent deadlocks.
+/// Timeout is mandatory to prevent deadlocks. (The kernel's `IpcCall`
+/// treats a timeout of 0 or `u64::MAX` ticks as none, a recorded
+/// exception: `docs/kernel/ipc.md` §3.1.)
 pub fn ipc_call(
     channel: ChannelId,
     request: &[u8],
@@ -155,17 +159,24 @@ impl SharedMemoryRegion {
     /// Create a new shared memory region.
     pub fn create(size: usize, flags: MemoryFlags) -> Result<Self, IpcKitError>;
 
-    /// Map the region into another agent's address space.
+    /// Map the region into another agent's address space. Creator only;
+    /// it delegates the creator's SharedMemoryAccess(id) token.
     pub fn share_with(&self, agent: AgentId, flags: MemoryFlags) -> Result<(), IpcKitError>;
 
     /// Get a pointer to the mapped region.
     pub fn as_ptr(&self) -> *const u8;
     pub fn as_mut_ptr(&self) -> *mut u8;
 
-    /// Unmap and destroy the region.
+    /// Unmap and destroy the region, even while other agents map it.
     pub fn destroy(self) -> Result<(), IpcKitError>;
 }
 ```
+
+The kernel-side Kit traits (`shared/src/kits/ipc.rs`, implemented by `KernelIpc` in `kernel/src/ipc/mod.rs`) return the minted access token with each new object:
+
+- `ChannelOps::channel_create(&mut self) -> Result<(ChannelId, CapabilityHandle), IpcKitError>`: the channel and the handle of the caller's `ChannelAccess(id)`, a child of the authorising `ChannelCreate` token.
+- `SharedMemoryOps::shmem_create(&mut self, size: usize, flags: u64) -> Result<(SharedMemoryId, CapabilityHandle), IpcKitError>`: the region and the handle of the caller's `SharedMemoryAccess(id)`, a child of the authorising `SharedMemoryCreate` token.
+- `SharedMemoryOps::shmem_destroy(&mut self, id)`: the caller must be the region's creator and hold a live `SharedMemoryAccess(id)` token (otherwise `SharedMemoryError`, "not creator or no access"); it destroys the region even while other agents map it, and their later map or unmap fails with `EPIPE`.
 
 ## 3. Usage Patterns
 
@@ -328,11 +339,11 @@ fn grant_storage_access(
 | Capability | What It Gates | Default Grant |
 | --- | --- | --- |
 | `ChannelCreate` | Creating new IPC channels | Granted to all agents |
-| `ChannelAccess(id)` | Sending/receiving on a specific channel | Per-channel, on creation |
+| `ChannelAccess(id)` | Sending/receiving on a specific channel | Per-channel, on creation: minted for the creator as a child of the authorising `ChannelCreate` |
 | `SharedMemoryCreate` | Creating shared memory regions | Granted to all agents |
 | `SharedMemoryAccess(id)` | Mapping a specific region (`shmem_map`) | Granted to the creator on creation; to another agent by the `SharedMemoryShare` syscall |
 
-Two operations are syscalls, not capabilities of their own. `SharedMemoryShare` lets a region's creator grant `SharedMemoryAccess(id)` to another agent (the target design requires both agents' consent). `CapabilityTransfer` moves a token over a channel and requires a delegatable token.
+Two operations are syscalls, not capabilities of their own. `SharedMemoryShare` lets a region's creator delegate its `SharedMemoryAccess(id)` to another agent, as a non-delegatable child of the creator's token (delegatable unless the target is the creator); the target is not asked to consent, and a target with 64 or fewer free capability slots is refused (`ENOSPC`). `CapabilityTransfer` moves a token over a channel and requires a delegatable token.
 
 ### Agent manifest example
 
@@ -430,7 +441,7 @@ The kernel returns the syscall-level codes of [`docs/kernel/ipc.md` §3.1](../..
 
 | Code | Default variant | Wrapper overrides |
 |---|---|---|
-| `EPERM` (missing capability or right) | `CapabilityDenied` (placeholder capability) | Every wrapper names the capability the kernel checks: `ChannelCreate` (`channel_create`), `ChannelAccess(id)` (`channel_destroy`, `send`, `recv`, `call`; `select` names the first channel entry the caller lacks, or the first channel entry if a grant lands between the kernel's check and the wrapper's lookup), `SharedMemoryCreate` (`shmem_create`), `SharedMemoryAccess(id)` (`shmem_map`). Where the kernel checks none: `reply` → `InvalidArgument` (no current thread), `notification_create` → `InvalidArgument` (no current process), `shmem_unmap` → `SharedMemoryError` (not mapped). The default is wrong wherever the `EPERM` is not a missing capability: these syscalls check no capability but return `EPERM` when the caller has no current thread or no process: `IpcReply`, `NotificationCreate`, `MemoryMap`, `MemoryUnmap`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList`, `ProcessExit`, `ProcessWait`, `AuditLog` and `SharedMemoryShare` (`NotificationSignal`, `DebugPrint` and `TimeGet` look up no thread or process, nor do `CapabilityTransfer` and the other syscalls not implemented yet, which return `ENOTSUP` to every caller; `TimeSleep` with no current thread returns 0 without sleeping, and `NotificationWait` returns `EINVAL` without one), and so does an unmap of a region the caller has not mapped (`MemoryUnmap` of a shared window address, or the in-kernel `shared_memory_unmap` behind `shmem_unmap`), `SharedMemoryShare` from a caller that is not the region's creator or to a target pid whose slot holds no process, and `ProcessWait` for a child pid whose slot holds no process or after a wake that finds no exit code ([`docs/kernel/ipc.md` §3.2](../../kernel/ipc.md)). Of the `EPERM` paths above, only those behind `reply`, `notification_create` and `shmem_unmap` have Kit wrappers; nothing overrides the others' `EPERM` |
+| `EPERM` (missing capability or right) | `CapabilityDenied` (placeholder capability) | Every wrapper names the capability the kernel checks: `ChannelCreate` (`channel_create`), `ChannelAccess(id)` (`channel_destroy`, `send`, `recv`, `call`; `select` names the first channel entry the caller lacks, or the first channel entry if a grant lands between the kernel's check and the wrapper's lookup), `SharedMemoryCreate` (`shmem_create`), `SharedMemoryAccess(id)` (`shmem_map`). Where the kernel checks none: `reply` → `InvalidArgument` (no current thread), `notification_create` → `InvalidArgument` (no current process), `shmem_unmap` → `SharedMemoryError` (not mapped). The default is wrong wherever the `EPERM` is not a missing capability: these syscalls check no capability but return `EPERM` when the caller has no current thread or no process: `IpcReply`, `NotificationCreate`, `MemoryMap`, `MemoryUnmap`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList`, `ProcessExit`, `ProcessWait`, `AuditLog` and `SharedMemoryShare` (`NotificationSignal`, `DebugPrint` and `TimeGet` look up no thread or process, nor do `CapabilityTransfer` and the other syscalls not implemented yet, which return `ENOTSUP` to every caller; `TimeSleep` with no current thread returns 0 without sleeping; `IpcSelect` and `NotificationWait` return `EPERM` with no current thread too, which only in-kernel callers can meet), and so does an unmap of a region the caller has not mapped (`MemoryUnmap` of a shared window address, or the in-kernel `shared_memory_unmap` behind `shmem_unmap`), `SharedMemoryShare` from a caller that is not the region's creator, with a token that is not delegatable for another target, or to a target pid whose slot holds no live process, and `ProcessWait` for a child pid whose slot is Empty or that is not the caller's child ([`docs/kernel/ipc.md` §3.2](../../kernel/ipc.md)). Of the `EPERM` paths above, only those behind `reply`, `notification_create` and `shmem_unmap` have Kit wrappers; nothing overrides the others' `EPERM` |
 | `EACCES` (SUSPENDED) | `Suspended` | — |
 | `EINVAL` | `InvalidArgument` | Channel wrappers → `InvalidChannel { id }` (an out-of-range id) |
 | `EPIPE` (the named object is gone) | `ObjectGone` | Channel wrappers → `InvalidChannel { id }` with the real `id`; shared memory wrappers → `SharedMemoryError` (region not found). The default names no id, so it is correct on the channel paths and on the region paths (`SharedMemoryMap`, `SharedMemoryShare`, `MemoryUnmap` of a shared window address and the in-kernel `shared_memory_unmap` behind `shmem_unmap`). `SharedMemoryShare` has no Kit wrapper, so a plain decode of its `EPIPE` reads as `ObjectGone` |
@@ -444,7 +455,7 @@ The kernel returns the syscall-level codes of [`docs/kernel/ipc.md` §3.1](../..
 | `ECAPDORMANT` | `CapabilityDenied` | — |
 | `EEXIST` | `SharedMemoryError` (only `shmem_map` returns it) | — |
 
-A wrapper whose calling thread has no process reports the variant it reports for the kernel's `EPERM`: `CapabilityDenied` for the capability the operation checks, `InvalidArgument` for `notification_create` and `SharedMemoryError` for `shmem_unmap`, which check none. The syscalls return `EPERM` for a caller with no process ([`docs/kernel/ipc.md` §3.2](../../kernel/ipc.md)), so an EL0 wrapper applies the `EPERM` overrides above. (`ipc_select` and `notification_wait` called with no current thread at all, which only in-kernel code can do, return `EINVAL`, so `select` and `wait` then report `InvalidArgument`.) `KernelIpc` reports the same variants, whether the kernel function returns `EPERM` or the wrapper finds no process itself. The reverse conversion, `From<IpcKitError> for IpcError`, maps `CapabilityDenied` to `EPERM`, `Suspended` to `EACCES`, `InvalidChannel` and `ObjectGone` to `EPIPE` and `SharedMemoryError` to `EINVAL`; `InvalidChannel`, `ChannelFull`, `MessageTooLarge` and `SharedMemoryError` do not survive a round trip, because their codes decode to the less specific `ObjectGone`, `WouldBlock`, `ResourceExhausted` and `InvalidArgument`.
+A wrapper whose calling thread has no process reports the variant it reports for the kernel's `EPERM`: `CapabilityDenied` for the capability the operation checks, `InvalidArgument` for `notification_create` and `SharedMemoryError` for `shmem_unmap`, which check none. The syscalls return `EPERM` for a caller with no process ([`docs/kernel/ipc.md` §3.2](../../kernel/ipc.md)), so an EL0 wrapper applies the `EPERM` overrides above. (`ipc_select` and `notification_wait` called with no current thread at all, which only in-kernel code can do, return `EPERM`: `select` then reports `CapabilityDenied` for its first channel entry, or `InvalidArgument` for a set with none, and `wait`, which overrides nothing, the table's `CapabilityDenied`.) `KernelIpc` reports the same variants, whether the kernel function returns `EPERM` or the wrapper finds no process itself. The reverse conversion, `From<IpcKitError> for IpcError`, maps `CapabilityDenied` to `EPERM`, `Suspended` to `EACCES`, `InvalidChannel` and `ObjectGone` to `EPIPE` and `SharedMemoryError` to `EINVAL`; `InvalidChannel`, `ChannelFull`, `MessageTooLarge` and `SharedMemoryError` do not survive a round trip, because their codes decode to the less specific `ObjectGone`, `WouldBlock`, `ResourceExhausted` and `InvalidArgument`.
 
 ## 7. Platform & AI Availability
 

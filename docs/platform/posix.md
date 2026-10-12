@@ -652,9 +652,11 @@ sequenceDiagram
     PTL->>Kernel: ProcessCreate (new image, inherited caps)
 
     Note over Shell,Kernel: Data flows: ls writes to IPC channel, grep reads from it
-    Shell->>PTL: waitpid(-1)
-    PTL->>Kernel: ProcessWait
+    Shell->>PTL: waitpid(ls_pid), waitpid(grep_pid)
+    PTL->>Kernel: ProcessWait (one per child pid)
 ```
+
+`ProcessWait` takes one child pid, is parent-only and reaps the child ([ipc.md](../kernel/ipc.md) §3.1); it has no wait-any form. So the translation layer can serve `waitpid(pid)` for a known child, but `waitpid(-1)` (any child) is unsupported until a wait-any design exists.
 
 ### 7.6 Thread Translation
 
@@ -703,20 +705,14 @@ fn translate_pthread_create(
 
 ```rust
 fn translate_pthread_join(thread: pthread_t, retval: *mut *mut c_void) -> i32 {
-    let tid = thread as u32;
-
-    // Block until the target thread exits.
-    // Uses ProcessWait with the thread's ID — the kernel blocks the
-    // calling thread in BlockedProcessWait state until the target
-    // thread transitions to Dead.
-    let exit_value = syscall(Syscall::ProcessWait {
-        pid: tid,
-    })?;
-
-    if !retval.is_null() {
-        unsafe { *retval = exit_value as *mut c_void; }
-    }
-    0
+    // Block until the target thread exits, then store its exit value in
+    // *retval. This needs a thread-join primitive, which the kernel does
+    // not have: ProcessWait takes only a child process's pid, is
+    // parent-only and reaps the child (ipc.md §3.1), so it cannot wait for
+    // a thread of the caller's own process. Until a thread-join primitive
+    // is designed, pthread_join is unsupported.
+    let _ = (thread, retval);
+    ENOSYS
 }
 
 fn translate_pthread_detach(thread: pthread_t) -> i32 {
