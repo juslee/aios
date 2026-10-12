@@ -44,8 +44,9 @@ pub enum IpcKitError {
     CapabilityDenied { required: Capability },
     /// A shared memory operation failed: the region does not exist, the
     /// caller has no mapping of it, it is already mapped, the caller is not
-    /// its creator holding a live access token (`shmem_destroy`), or the
-    /// calling thread has no process.
+    /// its creator holding a live access token (`shmem_destroy`), the region
+    /// id names a malformed slot (`shmem_destroy`'s EINVAL, "invalid region
+    /// id"), or the calling thread has no process.
     SharedMemoryError { reason: &'static str },
     /// The message payload exceeds the maximum size.
     MessageTooLarge { size: usize, max: usize },
@@ -168,8 +169,11 @@ impl From<IpcError> for IpcKitError {
     ///   or that is not the caller's child. `reply`, `notification_create`
     ///   and `shmem_unmap` override it, and so does `shmem_destroy`, whose
     ///   EPERM (not the creator, or no live access token) names no single
-    ///   capability; the other EPERM paths listed above have no Kit wrapper,
-    ///   so a plain decode of their EPERM reads as `CapabilityDenied`.
+    ///   capability. `select` and `wait` with no current thread report
+    ///   `CapabilityDenied` too: `select` names its first channel entry (or
+    ///   reports `InvalidArgument` for a set with none), and `wait` overrides
+    ///   nothing. The other EPERM paths listed above have no Kit wrapper, so
+    ///   a plain decode of their EPERM reads as `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
