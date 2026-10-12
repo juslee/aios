@@ -61,9 +61,9 @@ Claude Code 2.1.296, both leads launched from the main checkout on 2d4a9f7 (post
 **OP2 (the ExitPlanMode Fable plan gate on main), result: pass.**
 
 - The probe was re-run on main with the Tools R3 working plan (about 160 KB), in a session launched with `--debug-file`.
-- The gate returned `FABLE-PLAN-GATE pass 1/2: no must-fix finding under the plan lens`.
+- The gate passed with no block, and the approval dialog appeared. The only trace was in the debug file, where the gate agent's own verdict text read `FABLE-PLAN-GATE pass 1/2: no must-fix finding under the plan lens`. That wording is the agent's, not a string the hook defines (the hook defines only `FABLE-PLAN-GATE block <n>/2:`), so do not search for it as a pass marker.
 - The debug counts were 22 for `dispatching to firstParty model=claude-fable-5-1`, 0 for `not_found_error` and 3 for `planFilePath`.
 - A non-working note went straight to the approval dialog.
-- The gate leaves no transcript or log entry in the lead's session, so a plan exit can only be confirmed as gated with `--debug-file`.
+- The gate leaves nothing in the lead's session transcript, and the `--debug-file` log is the only place it shows, so a plan exit can only be confirmed as gated with `--debug-file`.
 
 **OP3**: not yet run; `status` stays `in-progress`.
