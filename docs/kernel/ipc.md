@@ -74,6 +74,16 @@ pub enum Syscall {
     /// A service that does not reply within the timeout returns ETIMEDOUT.
     /// The kernel cleans up the pending call state on timeout.
     /// See deadlock-prevention.md §4 for how this bounds circular wait and prevents unbounded waits.
+    /// Implementation: x5 = 0 and x5 = u64::MAX both mean no timeout, a
+    /// recorded exception to the mandatory timeout (capability-lifetime
+    /// ADR §9). The call returns only on a reply, a cancel (ECANCELED), the
+    /// channel's destruction or a Dead endpoint (EPIPE), or its own
+    /// deadline (ETIMEDOUT); a written reply wins over a concurrent timeout,
+    /// cancel or destroy. A reply or cancel that claimed an earlier call of
+    /// the same thread never reaches its next call (per-call `seq`, §4.1).
+    /// The request itself stays in the channel's ring after a timeout,
+    /// cancel or EPIPE, so a server that receives it later replies to
+    /// whichever call is pending then (#265).
     IpcCall {
         channel: ChannelId,
         send_buf: *const u8,
@@ -124,8 +134,9 @@ pub enum Syscall {
 
     /// Wait on multiple sources (channels and/or notifications).
     /// Each entry specifies either a channel or a notification+mask.
-    /// Returns the index of the first ready entry and matched bits
-    /// (non-zero only for notification entries).
+    /// Returns the index of the lowest-index ready entry and matched bits
+    /// (non-zero only for notification entries). Like every blocking IPC
+    /// call, it returns only on its condition, an error or its own deadline.
     /// Wire format: an array of `RawSelectEntry` in `shared/src/ipc.rs`,
     /// `#[repr(C)] { kind: u32, id: u32, mask: u64 }`, 16 bytes each, any
     /// alignment. kind 0 = channel (`id` is a ChannelId, `mask` ignored),
@@ -135,9 +146,13 @@ pub enum Syscall {
     /// Raw syscall ABI: x0=entries_ptr, x1=entry_count, x2=timeout_ticks (u64::MAX = indefinite)
     /// Returns: x0=ready_index (or negative error), x1=matched_bits (notification bits; 0 for channels)
     /// EINVAL: entry_count 0 or > 8, an array that is not a valid user
-    /// range (§8.1), an unknown kind, or an entry id out of range.
-    /// An in-range notification id whose slot is empty is not an error:
-    /// that entry never becomes ready (ETIMEDOUT if nothing else does).
+    /// range (§8.1), an unknown kind, an entry id out of range, or a
+    /// notification entry whose slot is empty (destroyed).
+    /// EPERM: a channel entry the caller holds no ChannelAccess for.
+    /// EPIPE: a destroyed or stale channel id, or a Dead endpoint.
+    /// EAGAIN: another thread is already the waiting receiver of a channel
+    /// entry. ENOMEM: a notification entry's waiter list is full.
+    /// ETIMEDOUT: the deadline passed with no entry ready.
     IpcSelect {
         entries: *const RawSelectEntry, // array of RawSelectEntry
         entry_count: usize,             // max: MAX_SELECT_ENTRIES (8)
@@ -146,7 +161,13 @@ pub enum Syscall {
 
     // === Channel Management ===
 
-    /// Create a new IPC channel pair
+    /// Create a new IPC channel pair.
+    /// Raw syscall ABI: needs ChannelCreate (EPERM without it). Returns:
+    /// x0 = channel id, x1 = handle of the ChannelAccess(id) token minted
+    /// for the caller as a child of the authorising ChannelCreate token, so
+    /// revoking that token destroys the channel (§4.1). ENOSPC when the
+    /// channel table or the caller's capability table is full; on an error
+    /// x1 is not written. The flags form below is the target design.
     ChannelCreate {
         flags: ChannelFlags,
     },
@@ -189,7 +210,8 @@ pub enum Syscall {
     },
 
     /// Wait until any bit in mask is set. Returns the set bits and
-    /// atomically clears them. Blocks if no bits are set.
+    /// atomically clears them. Blocks if no bits are set, until a signal,
+    /// the notification's destruction (EINVAL) or the deadline (ETIMEDOUT).
     NotificationWait {
         id: NotificationId,
         mask: u64,
@@ -218,16 +240,23 @@ pub enum Syscall {
     /// Raw syscall ABI: x0=capability handle (a slot of the caller's table,
     /// below MAX_CAPS_PER_PROCESS = 256), x1=type (0=ChannelCreate,
     /// 1=ChannelAccess(x3), 2=SharedMemoryCreate, 3=SharedMemoryAccess(x3),
-    /// 4=SpawnAgent, 5=DebugPrint), x2=expiry tick (0 = none), x3=resource
-    /// id. Returns: x0=new handle or negative error. The source/restrictions
+    /// 4=SpawnAgent, 5=DebugPrint), x2=expiry tick (0 = none requested: the
+    /// child inherits the parent's expiry), x3=resource id. Attenuation is
+    /// identity only: ChannelCreate never attenuates to ChannelAccess, nor
+    /// SharedMemoryCreate to SharedMemoryAccess (EPERM). An expired parent,
+    /// or an x2 expiry later than the parent's, is EPERM too.
+    /// Returns: x0=new handle or negative error. The source/restrictions
     /// form below is the target design.
     CapabilityAttenuate {
         source: CapabilityTokenId,
         restrictions: AttenuationSpec,
     },
 
-    /// Revoke a capability.
+    /// Revoke a capability and its same-table descendants.
     /// Raw syscall ABI: x0=capability handle (below MAX_CAPS_PER_PROCESS).
+    /// Revoking a ChannelCreate or SharedMemoryCreate token also destroys
+    /// the channels or regions the caller created under it or under a
+    /// same-table descendant (§4.1, §4.5).
     CapabilityRevoke {
         capability: CapabilityTokenId,
     },
@@ -259,8 +288,11 @@ pub enum Syscall {
     },
 
     /// Create a shared memory region.
-    /// Raw syscall ABI: x0=size, x1=flags. Returns: x0=region id or negative error.
-    /// A region is one buddy block, so a size above 4 MiB is EINVAL (§4.7).
+    /// Raw syscall ABI: x0=size, x1=flags. Returns: x0=region id and
+    /// x1=handle of the SharedMemoryAccess(id) token minted for the caller
+    /// as a child of the authorising SharedMemoryCreate token, or x0=negative
+    /// error with x1 not written. A region is one buddy block, so a size
+    /// above 4 MiB is EINVAL (§4.7).
     SharedMemoryCreate {
         size: usize,
         flags: MemoryFlags,            // the region's maximum permissions (W^X enforced)
@@ -275,9 +307,13 @@ pub enum Syscall {
 
     /// Transfer shared memory access to another agent via IPC.
     /// Raw syscall ABI: x0=region, x1=target pid. The caller must be the
-    /// region's creator; the target process is granted
-    /// SharedMemoryAccess(region). The channel/flags form below is the
-    /// target design.
+    /// region's creator and hold a live SharedMemoryAccess(region) token,
+    /// delegatable unless the target is the caller. The share delegates
+    /// it: the target gets a non-delegatable child of that token. A target
+    /// that already holds one gets nothing new and the call returns 0 (a
+    /// repeat share, and every self-share). ENOSPC when another target has
+    /// 64 or fewer free capability slots (the foreign reserve). The
+    /// channel/flags form below is the target design.
     SharedMemoryShare {
         region: SharedMemoryId,
         channel: ChannelId,
@@ -300,12 +336,22 @@ pub enum Syscall {
         resource_limits: KernelResourceLimits,
     },
 
-    /// Terminate the calling process
+    /// Terminate the calling process. Does not return on success. The exit
+    /// revokes every token the process holds, destroys every channel and
+    /// region it created (a region even while others map it), marks Dead
+    /// every channel with an endpoint it owns, and ends its threads.
+    /// Raw syscall ABI: x0=exit code; EPERM with no process.
     ProcessExit {
         code: i32,
     },
 
-    /// Wait for a child process to exit
+    /// Wait for a child process to exit, then reap it.
+    /// Raw syscall ABI: x0=child pid, the only input. Returns x0=0 and
+    /// x1=exit code (sign-extended), or x0=negative error with x1 not
+    /// written. Parent only: EPERM for a pid that is not the caller's
+    /// child, or whose slot is empty (a wait after the reap included).
+    /// EEXIST when another thread already waits on the child. The
+    /// `timeout` below is not implemented: the wait has none.
     ProcessWait {
         pid: ProcessId,
         timeout: Option<Duration>,
@@ -365,8 +411,15 @@ pub enum IpcError {
 }
 
 /// IPC channel identifier. Uniquely identifies a channel endpoint.
-/// Inner type is u32 (matching `shared/src/ipc.rs`).
-pub struct ChannelId(pub u32);
+/// Inner type is u32 (matching `shared/src/ipc.rs`), private there.
+/// Encoding (also `SharedMemoryId`): raw = slot | generation << 8, the
+/// table slot in bits 0-7 and the slot's generation in bits 8-31. A slot's
+/// first object has generation 1; each free advances it, and a slot freed at
+/// the highest generation is retired (generation 0, never issued), so no
+/// valid id is below 256. An id whose generation no longer matches its slot
+/// is stale: every call that names it returns EPIPE and never touches the
+/// object now in the slot. Ids print as `slot.generation`.
+pub struct ChannelId(u32);
 
 /// Ring buffer channel identifier (returned by RingChannelCreate).
 pub struct RingChannelId(pub u32);
@@ -414,15 +467,15 @@ Syscall convention (aarch64):
 - A capability handle (x0 of `CapabilityAttenuate` and `CapabilityRevoke`) is a slot of the caller's capability table and goes through `shared::syscall::cap_handle_arg`: a value at or above `MAX_CAPS_PER_PROCESS` (256) names a slot no process has and is `EINVAL`, before any table lookup. An in-range slot that is empty or revoked is a capability the caller does not hold: `EPERM`.
 - Memory flags (`MemoryMap`, `SharedMemoryCreate` and `SharedMemoryMap`, all in x1) go through `shared::syscall::flags_arg` and `VmFlags::from_caller_bits`. The caller may set only READ (bit 0), WRITE (bit 1) and EXECUTE (bit 2), `MEMORY_FLAGS_MASK`; any other bit, bits 32-63 included, is `EINVAL`. `VmFlags::USER` (bit 3) is not caller-settable: every user mapping is user-accessible, so the kernel adds USER itself. WRITE together with EXECUTE is a W^X violation and is also `EINVAL`.
 - User buffers are checked with `validate_user_va` (§8.1) and copied through `copy_from_user` / `copy_to_user` in `kernel/src/syscall/user.rs`, with no lock held. A null, page-0, kernel-half or overflowing range is `EINVAL`. The check alone does not make the copy safe on today's TTBR0 (§8.1).
-- Timeouts are timer ticks (1 ms each) in the implementation: `IpcCall` x5, `IpcRecv` x3, `IpcSelect` x2 and `NotificationWait` x2. Every value is accepted. `u64::MAX` means no timeout. Any other value sets a deadline of the current tick plus the timeout (`shared::ipc::deadline_after`); a deadline that would reach `u64::MAX`, a tick never reached, counts as no timeout too, so no register value can overflow it or put it in the past (#217). 0 differs by call: a poll for `IpcRecv`; no timeout for `IpcCall`, which the capability-lifetime ADR (§9) keeps as a recorded deviation from the mandatory timeout of §3.1; and for `IpcSelect` and `NotificationWait` a deadline that the next tick passes, after a non-blocking check.
-- `ProcessExit` is the one exception: its exit code is `x0 as i32`, so bits 32-63 are ignored, not rejected (`ProcessExit(0x1_0000_0000)` exits with code 0). Exit-code handling belongs to the process-lifecycle work (#189).
+- Timeouts are timer ticks (1 ms each) in the implementation: `IpcCall` x5, `IpcRecv` x3, `IpcSelect` x2 and `NotificationWait` x2. Every value is accepted. `u64::MAX` means no timeout. Any other value sets a deadline of the current tick plus the timeout (`shared::ipc::deadline_after`); a deadline that would reach `u64::MAX`, a tick never reached, counts as no timeout too, so no register value can overflow it or put it in the past (#217). 0 differs by call: a poll for `IpcRecv`; no timeout for `IpcCall`, which the capability-lifetime ADR (§9) keeps as a recorded deviation from the mandatory timeout of §3.1; and for `IpcSelect` and `NotificationWait` a deadline already reached, so after a non-blocking check they return `ETIMEDOUT` without blocking.
+- `ProcessExit` is the one exception: its exit code is `x0 as i32`, so bits 32-63 are ignored, not rejected (`ProcessExit(0x1_0000_0000)` exits with code 0). `ProcessWait` returns the code sign-extended in x1.
 
-**Errno policy: `EINVAL` versus `EPERM`.** `EPERM` means the caller lacks a right the request needs; `EINVAL` means the request is malformed for every caller. The IPC Kit decodes `EPERM` as `CapabilityDenied` (Kit doc §6), so a malformed request must never return it. Three kinds of `EPERM` are not a missing right. Eleven syscalls that check no capability return `EPERM` when the caller has no current thread or no process (the list is in the Kit doc §6; `NotificationSignal`, `DebugPrint` and `TimeGet` look up no thread or process, nor do `CapabilityTransfer` and the other syscalls not implemented yet, which return `ENOTSUP` to every caller; `TimeSleep` with no current thread returns 0 without sleeping, and `NotificationWait` returns `EINVAL` without one); the Kit's `reply` and `notification_create` wrappers override it. A target pid whose slot holds no process (the `SharedMemoryShare` target, the `ProcessWait` child) gets `EPERM` from the process accessors (`process_mut`, `process_ref` in `kernel/src/task/process.rs`), which report an empty slot that way today. `ProcessWait` also returns `EPERM` when its wake finds no exit code recorded for the child. The process-lifecycle work (#185/#189) reworks the last two, and neither of their syscalls has a Kit wrapper. A wrapper on any of these paths must override the `EPERM` rather than report `CapabilityDenied`, which is what a plain `IpcKitError::from_code` decode gives.
+**Errno policy: `EINVAL` versus `EPERM`.** `EPERM` means the caller lacks a right the request needs; `EINVAL` means the request is malformed for every caller. The IPC Kit decodes `EPERM` as `CapabilityDenied` (Kit doc §6), so a malformed request must never return it. Three kinds of `EPERM` are not a missing right. Eleven syscalls that check no capability return `EPERM` when the caller has no current thread or no process (the list is in the Kit doc §6; `NotificationSignal`, `DebugPrint` and `TimeGet` look up no thread or process, nor do `CapabilityTransfer` and the other syscalls not implemented yet, which return `ENOTSUP` to every caller; `TimeSleep` with no current thread returns 0 without sleeping; `IpcSelect` and `NotificationWait`, which only in-kernel callers can reach with no current thread, return `EPERM` then too); the Kit's `reply` and `notification_create` wrappers override it. A target pid whose slot holds no live process (the `SharedMemoryShare` target) gets `EPERM` from the process accessors (`process_mut`, `process_ref` in `kernel/src/task/process.rs`), which accept only an Alive process, and `ProcessWait` returns `EPERM` for a child pid whose slot is Empty (never installed, or already reaped) or that is not the caller's child (`wait_step`). Neither syscall has a Kit wrapper. A wrapper on any of these paths must override the `EPERM` rather than report `CapabilityDenied`, which is what a plain `IpcKitError::from_code` decode gives.
 
 | Code | Returned for |
 |---|---|
-| `EINVAL` | An id out of range or above `u32::MAX`; a capability handle at or above `MAX_CAPS_PER_PROCESS`; an undefined flag bit, USER included; WRITE together with EXECUTE (W^X) in `MemoryMap`, `SharedMemoryCreate` or `SharedMemoryMap`; `SharedMemoryMap` flags beyond the region's `max_flags`; a `SharedMemoryCreate` size above 4 MiB or a `MemoryMap` size above 64 pages (§4.7); a bad user buffer; an unknown `CapabilityAttenuate` type or `IpcSelect` entry kind; a `MemoryUnmap` address that is not exactly one of the caller's `MemoryMap` allocations (§4.7); a `NotificationSignal` or `NotificationWait` id whose slot is empty (`IpcSelect` checks only the range: a notification entry whose slot is empty is never ready, so the call waits for its other entries or the timeout) |
-| `EPERM` | A missing capability (`ChannelCreate`, `ChannelAccess`, `SharedMemoryCreate`, `SharedMemoryAccess`); an in-range capability handle whose slot is empty or revoked, or whose capability cannot attenuate to the requested type; a caller with no current thread, or no process, on a path that needs the one it lacks: every capability check fails closed this way, and the Kit doc §6 lists the eleven syscalls that check no capability but return it (`TimeSleep` with no current thread instead returns 0 without sleeping, and `IpcSelect` and `NotificationWait` with no current thread, in-kernel callers only, return `EINVAL`); a target pid whose slot holds no process, and a `ProcessWait` whose wake finds no exit code (neither a missing right, see above); a `SharedMemoryShare` caller that is not the region's creator; an unmap of a region the caller has not mapped, by `MemoryUnmap` of a shared-window address or by the in-kernel `shared_memory_unmap` behind the Kit's `shmem_unmap` (holding the mapping is the right to remove it) |
+| `EINVAL` | An id out of range or above `u32::MAX`; a capability handle at or above `MAX_CAPS_PER_PROCESS`; an undefined flag bit, USER included; WRITE together with EXECUTE (W^X) in `MemoryMap`, `SharedMemoryCreate` or `SharedMemoryMap`; `SharedMemoryMap` flags beyond the region's `max_flags`; a `SharedMemoryCreate` size above 4 MiB or a `MemoryMap` size above 64 pages (§4.7); a bad user buffer; an unknown `CapabilityAttenuate` type or `IpcSelect` entry kind; a `MemoryUnmap` address that is not exactly one of the caller's `MemoryMap` allocations (§4.7); a `NotificationSignal`, `NotificationWait` or `IpcSelect` notification id whose slot is empty, also when the notification is destroyed while the call waits |
+| `EPERM` | A missing capability (`ChannelCreate`, `ChannelAccess`, `SharedMemoryCreate`, `SharedMemoryAccess`); an in-range capability handle whose slot is empty or revoked, or whose capability cannot attenuate to the requested type (`ChannelCreate` to `ChannelAccess` and `SharedMemoryCreate` to `SharedMemoryAccess` included), whose token has expired, or below an x2 expiry later than its own; a caller whose process has exited; a caller with no current thread, or no process, on a path that needs the one it lacks: every capability check fails closed this way, and the Kit doc §6 lists the eleven syscalls that check no capability but return it (`TimeSleep` with no current thread instead returns 0 without sleeping, and `IpcSelect` and `NotificationWait` with no current thread, in-kernel callers only, return it too); a target pid whose slot holds no live process, and a `ProcessWait` child pid whose slot is Empty or that is not the caller's child (neither a missing right, see above); a `SharedMemoryShare` caller that is not the region's creator, or whose token is not delegatable when the target is another process; an unmap of a region the caller has not mapped, by `MemoryUnmap` of a shared-window address or by the in-kernel `shared_memory_unmap` behind the Kit's `shmem_unmap` (holding the mapping is the right to remove it) |
 | `EACCES` | Reserved for the behavioral gate's SUSPENDED state (§9.1); no kernel path returns it yet |
 
 ### 3.3 Kernel Resource Limits
@@ -471,10 +524,15 @@ IPC channels are the communication primitive. A channel is a bidirectional pipe 
 /// still work at thread granularity with direct switch, through
 /// `waiting_receiver` and `pending_caller` below.
 pub struct Channel {
+    /// The channel's full id (slot and generation, §3.1), as issued at
+    /// creation. The table slot also holds the slot's generation, so a
+    /// stale id never matches the channel now in the slot.
     id: ChannelId,
     /// State of each endpoint. When a process dies, `process_exit` sets
     /// both endpoints of each channel it owns an endpoint of to Dead, and
     /// wakes the channel's blocked receiver and pending caller with EPIPE.
+    /// One exit delivers at most 16 such wakes; a waiter past the 16th is
+    /// left blocked with no waker (#262).
     /// Any later IpcCall/IpcSend/IpcRecv on the channel returns EPIPE.
     /// This is the IPC equivalent of TCP RST — immediate, unambiguous.
     state_a: EndpointState,
@@ -495,13 +553,27 @@ pub struct Channel {
     ring: MessageRing,
     /// Thread currently blocked in IpcRecv on this channel.
     waiting_receiver: Option<ThreadId>,
-    /// Thread currently blocked in IpcCall on this channel.
-    pending_caller: Option<ThreadId>,
-    /// The capability token that authorized this channel's creation.
-    /// On revocation, the kernel walks all channels and destroys any whose
-    /// creation_cap has been revoked (zero trust: §10.3 Gap 1 in
-    /// security.md). This ensures cached channel access cannot outlive
-    /// the credential that granted it. None for kernel-internal channels.
+    /// Thread currently blocked in IpcCall on this channel, with the
+    /// call's sequence number (`PendingCall { tid, seq }`). The caller's
+    /// reply slot carries the same `seq`; a replier or canceller writes
+    /// the slot only on a match, so a late one never reaches the
+    /// caller's next call.
+    pending_caller: Option<PendingCall>,
+    /// Process whose checked `channel_create` made this channel, or None
+    /// for a kernel-internal channel (`channel_create_unchecked`). Not
+    /// `owner_a`, which kernel channels also set. Its exit destroys the
+    /// channel (`process_exit` step C).
+    creator: Option<ProcessId>,
+    /// The ChannelCreate token in `creator`'s capability table that
+    /// authorized this channel's creation. `channel_create` mints the
+    /// creator's ChannelAccess(id) as a child of it, in the same
+    /// PROCESS_TABLE hold that publishes the channel. When a token in that
+    /// table is revoked, the kernel destroys every channel the process
+    /// created whose creation_cap is now revoked, which includes a revoke of
+    /// a same-table ancestor (zero trust: §10.3 Gap 1 in security.md). The
+    /// cascade reaches only the creator's table. This ensures cached channel
+    /// access cannot outlive the credential that granted it. None for
+    /// kernel-internal channels, which never cascade.
     creation_cap: Option<CapabilityTokenId>,
 
     // --- Target design fields (not yet implemented) ---
@@ -654,7 +726,7 @@ Without shared memory (slow):
   Round trip: ~500 microseconds (memory copy dominates)
 
 With shared memory (fast):
-  Agent: SharedMemoryCreate(1 MB) → region_id
+  Agent: SharedMemoryCreate(1 MB) → (region_id, handle)
   Agent: write data to shared region (direct memory access)
   Agent: IpcCall(space_svc, {region: region_id, offset: 0, len: 1MB})
   Space: reads from shared region (direct memory access)
@@ -668,11 +740,13 @@ Shared memory regions are mapped into both address spaces. The kernel manages ac
 
 **Agent-to-agent shared memory.** Two agents can share memory if they have an IPC channel between them:
 ```text
-Agent A: SharedMemoryCreate(size) → region_id
+Agent A: SharedMemoryCreate(size) → (region_id, handle)
 Agent A: SharedMemoryShare(region_id, channel_to_B, READ_WRITE)
 Agent B: receives region_id, calls SharedMemoryMap(region_id, READ_WRITE)
 Both agents now read/write the same physical pages.
 ```
+
+As implemented, `SharedMemoryShare` takes the target's pid, not a channel, and has no flags (§3.1): it delegates A's `SharedMemoryAccess(region_id)` token, minted at creation, so B's token is a non-delegatable child of A's. A revoke reaches only the revoker's own table, so revoking A's access token leaves B's. B loses the region when A destroys it, revokes the `SharedMemoryCreate` token it was created under, or exits: the region is destroyed even while B maps it, and B's next `SharedMemoryMap` or unmap returns `EPIPE` (§4.5).
 This is the fastest inter-agent data path — no kernel involvement after setup. The kernel enforces that permissions never exceed what was granted: if A shares as read-only, B cannot map as read-write.
 
 **Exception: AIRS.** AIRS does not accept shared memory from agents. All agent→AIRS data is kernel-copied to prevent TOCTOU attacks on adversarial prompts. See §5.2 for details. Other system services (Space Storage, Compositor, Audio) use shared memory normally because they process structured data with known formats, not adversarial natural-language input.
@@ -688,17 +762,27 @@ pub struct SharedMemoryRegion {
     physical_pages: PageRange,
     /// Reference count: incremented on SharedMemoryMap, decremented on
     /// MemoryUnmap of the region's window address (§4.7) or process death. When it reaches 0, the
-    /// physical pages are freed.
+    /// region is destroyed and its physical pages are freed.
     ref_count: AtomicU32,
-    /// The process that created the region. Only the creator (or
-    /// kernel) can destroy it explicitly.
+    /// The process that created the region. Only the creator, holding a
+    /// live SharedMemoryAccess(id) token, can destroy it explicitly (the
+    /// Kit's `shmem_destroy`), and only the creator can share it.
     creator: ProcessId,
     /// Maximum permissions granted at creation time.
     max_flags: MemoryFlags,
-    /// Capability required to access this shared region.
-    capability: CapabilityTokenId,
+    /// The SharedMemoryCreate token in `creator`'s table that authorized
+    /// the create, and the parent of the creator's SharedMemoryAccess(id)
+    /// token, minted in the same PROCESS_TABLE hold that publishes the
+    /// region. Revoking it, or a same-table ancestor, destroys the region
+    /// (the region cascade).
+    creation_cap: CapabilityTokenId,
     /// Per-mapping permissions (may be more restrictive than max_flags).
     mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
+    /// Live kernel borrows (`region_borrow` not yet matched by
+    /// `region_release`). EL1 code reads region memory only through a
+    /// borrow; a region destroyed while borrowed keeps its frames, and its
+    /// slot out of use, until the last release.
+    kernel_borrows: u32,
 }
 
 pub struct SharedMapping {
@@ -712,10 +796,13 @@ const MAX_SHARED_MAPPINGS: usize = 8;  // bounded: no heap growth
 
 **Process death cleanup.** When a process dies (exit, kill, OOM):
 
-1. Kernel iterates the process's mapped shared memory regions
-2. For each region: unmap from the dying process's page table, decrement `ref_count`
-3. If `ref_count` reaches 0: free the physical pages (no other process uses them)
-4. If `ref_count` > 0: other mappings remain valid — no use-after-free
+1. Kernel destroys every region the process created, even while others map it: its exit revokes every token it holds, and the region cascade then detaches each region whose `creation_cap` is revoked, which removes every mapping of it. The other mappers' later `SharedMemoryMap` and unmap calls return `EPIPE`.
+2. Kernel iterates the process's mappings of other processes' regions
+3. For each region: unmap from the dying process's page table, decrement `ref_count`
+4. If `ref_count` reaches 0: free the physical pages (no other process uses them)
+5. If `ref_count` > 0: other mappings remain valid — no use-after-free
+
+**Destruction.** A region also leaves its slot when its creator destroys it (the Kit's `shmem_destroy`) or revokes the `SharedMemoryCreate` token it was created under, and at its last unmap. Every path goes through one detach, which removes all mappings at once and advances the slot's generation, so the region's id goes stale (`EPIPE`, §3.1). A region that was never mapped is freed by these paths too. The frames are freed with no table lock held; while a kernel `RegionBorrow` holds the region, they stay draining, and the slot out of use, until the last `region_release`. There is no `MemoryRevoked` event: a mapper sees the loss as `EPIPE` on its next call.
 
 **No dangling references.** A process can never access a shared memory region after its mapping is removed. The page table entry is cleared atomically. Even if the physical pages are later freed and reused, the process cannot reach them — its virtual mapping is gone.
 
@@ -747,7 +834,7 @@ fn transfer_capability(channel: ChannelId, cap: CapabilityTokenId) -> Result<()>
 - **Address returned.** No process has a user address space yet (every process has `address_space: None`), and `SharedMemoryMap` returns its region's window VA without mapping it, so no page table is written: §4.5's per-process mapping and death-time page-table unmap describe the design, not today's code. That window (`SHM_VA_BASE` + *r* × `SHM_VA_STRIDE` in `kernel/src/ipc/shmem.rs`) starts at `USER_HEAP_BASE` and gives region *r* the slot at *r* × 4 MiB, the largest block the buddy allocator hands out (`MAX_ORDER`), so every region fits its slot. `MemoryMap` follows the same model. Slot *i* has a fixed address in the **private VA window** that follows the shared memory window: `PRIVATE_VA_BASE` = `USER_HEAP_BASE` + 64 × 4 MiB (256 MiB), plus *i* × 256 KiB (`MAX_PRIVATE_PAGES` pages). `MemoryMap` returns that user address and maps nothing into TTBR0. The address stands for the whole allocation: it is the key `MemoryUnmap` takes, and because the block is contiguous, `[addr, addr + size)` will map onto it as one range when processes get address spaces. EL1 code would reach the block through the direct map (`DIRECT_MAP_BASE` + base); no EL1 code uses the memory `MemoryMap` allocates (the #188 boot self-test only maps and unmaps it). It never returns the direct-map address: that would disclose a physical address to the caller, and as an `i64` in x0 it is negative, so it would read as an error. The slots are shared by all processes and `MemoryMap` takes the lowest free one, so the address a caller receives shows that the slots below it are in use. This layout is interim and deviates from [memory/virtual.md §3.1](./memory/virtual.md), which puts shared memory at `0x1_0000_0000`, above the agent heap at `USER_HEAP_BASE`: both windows, 256 MiB for shared memory and 16 MiB for private allocations, lie in the range §3.1 gives the heap. They move when processes get user address spaces.
 - **Free.** `MemoryUnmap(addr, size)` with `addr` in the shared memory window unmaps that region (`size` unused). Otherwise it frees only an allocation that matches exactly: `addr` is a slot's base address in the private window, the slot belongs to the caller, and `size` rounds up to the same page count. Anything else returns `EINVAL` and frees nothing: another process's allocation (the address names an allocation only for the process it was returned to, so for any other caller it is like any address that is not one of its allocations), an address inside or past an allocation, and any direct-map or other kernel address. `MemoryUnmap` can therefore never return a page it did not hand out, such as a kernel page or a region's frames, to the buddy allocator.
 - **Limits.** One allocation is at most 256 KiB, and only a whole allocation can be freed. The POSIX translation ([posix.md](../platform/posix.md) §7.6 and §10.4) sends 2 MiB pthread stacks and every anonymous or private file-backed (`MAP_PRIVATE`) `mmap`, of any length, to `MemoryMap`, and any `munmap` range to `MemoryUnmap`. Until `MemoryMap` can allocate more than one block and defines what a partial unmap does, such a stack, any of those mappings above 256 KiB and a partial `munmap` of a `MemoryMap` allocation return `EINVAL`. A `munmap` of any address in the shared memory window (a `MAP_SHARED` mapping) is different: `MemoryUnmap` ignores `size` and the offset into the region's slot and unmaps the whole region, so a partial `munmap` there succeeds and drops the entire mapping. A shared memory region is likewise one buddy block: `SharedMemoryCreate` rounds its size up to whole pages (at least one, so a size of 0 creates a one-page region) and rejects a size above 4 MiB (`2^MAX_ORDER` pages) with `EINVAL`, before the capability check: no caller can create a larger region, and `SharedMemoryCreate`'s `ENOSPC` keeps its one meaning, a full region table.
-- **Not yet.** Process exit does not free a process's private allocations. `process_exit` (`kernel/src/task/process.rs`) calls `process_cleanup_shared_memory`, which removes only the process's region mappings and frees a region when that was its last mapping; a region the process created but never mapped is not freed. The process lifecycle work frees both.
+- **Not yet.** Process exit does not free a process's private allocations. `process_exit` (`kernel/src/task/process.rs`) destroys every region the process created, mapped or not (§4.5), and `process_cleanup_shared_memory` removes its mappings of other processes' regions, freeing a region when that was its last mapping; nothing walks `PRIVATE_ALLOC_TABLE` for the exiting pid.
 
 -----
 
@@ -900,7 +987,7 @@ Event loop:
 
 **Exceptions.** AIRS uses an internal thread pool for inference requests (airs.md §2.1). The inference engine runs on dedicated CPU cores (scheduler.md §6). The AIRS main thread accepts requests via `IpcSelect` and dispatches to inference worker threads. The worker threads signal completion via internal synchronization (not IPC). Long-running inference does not block short requests like `SemanticSearch` or `ToolRegister`.
 
-**Fairness.** `IpcSelect` returns the *oldest* ready channel (FIFO). A client that sends many requests does not starve other clients — each client's channel has its own queue (bounded by `queue_depth`), and `IpcSelect` round-robins across ready channels.
+**Fairness.** `IpcSelect` returns the *oldest* ready channel (FIFO). A client that sends many requests does not starve other clients — each client's channel has its own queue (bounded by `queue_depth`), and `IpcSelect` round-robins across ready channels. This is the target design: today's `IpcSelect` returns the lowest-index ready entry (§3.1), so a service that wants this fairness rotates the order of its entries itself.
 
 ### 5.5 Service Restart and Reconnection
 
@@ -911,8 +998,9 @@ Service crash → recovery sequence:
 
 1. KERNEL: Detects service process death
    ├── All channels to the dead service: endpoint set to Dead
-   ├── All blocked IpcCalls from clients: unblock with EPIPE
-   ├── All shared memory regions: ref_count decremented, pages freed if 0
+   ├── All blocked IpcCalls from clients: unblock with EPIPE (at most 16 per exit, #262)
+   ├── Regions the service created: destroyed, every mapping removed (§4.5)
+   ├── Its mappings of other regions: ref_count decremented, pages freed if 0
    └── Service Manager notified via AgentEvent notification
 
 2. SERVICE MANAGER: Restarts the service
@@ -962,19 +1050,24 @@ pub struct NotificationObject {
 struct Waiter {
     tid: ThreadId,
     mask: u64,
+    /// Wait: a `NotificationWait`'s record. Select: one per notification
+    /// an `IpcSelect` names, its mask the OR of every entry naming it.
+    kind: WaitKind,
+    /// Bits a signal consumed for a Wait record (0: not fired).
+    fired: u64,
 }
 
 const MAX_NOTIFICATIONS: usize = 64;
 const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
 ```
 
-**Signaling** (`NotificationSignal`): Acquires the `NOTIFICATION_TABLE` lock (an `IrqSpinLock`), atomically ORs `bits` into the notification word, then wakes any waiters whose mask intersects the new value. The matched bits are atomically cleared before the waiter is woken. An id `>= MAX_NOTIFICATIONS` or a notification that does not exist returns `EINVAL` and signals nothing, the same errors `NotificationWait` returns. The Mutex acquisition dominates cost; the atomic OR itself is cheap but the lock + waiter scan makes this roughly comparable to other locked IPC operations.
+**Signaling** (`NotificationSignal`): Acquires the `NOTIFICATION_TABLE` lock (an `IrqSpinLock`, with IRQs masked), atomically ORs `bits` into the notification word, then acts on each waiter record whose mask intersects the new value: a Wait record that has not fired gets the matched bits, cleared from the word, in its `fired` word and stays for its waiter to remove; a Select record is removed (claimed) and the bits stay in the word for the select's next pass. After the release it wakes each thread whose record it acted on. A waiter that has already removed its own record is not found, so a completed wait never loses bits. An id `>= MAX_NOTIFICATIONS` or a notification that does not exist returns `EINVAL` and signals nothing, the same errors `NotificationWait` returns. The Mutex acquisition dominates cost; the atomic OR itself is cheap but the lock + waiter scan makes this roughly comparable to other locked IPC operations.
 
-**Waiting** (`NotificationWait`): If any bits matching `mask` are already set, returns+clears them immediately (fast path). Otherwise blocks until signaled or timeout expires. Double-checks after re-acquiring the table lock to prevent races.
+**Waiting** (`NotificationWait`): If any bits matching `mask` are already set, returns+clears them immediately (fast path). Otherwise each pass, in one table critical section, returns `EINVAL` if the notification has been destroyed, returns its own record's bits once it has fired, or takes matching bits from the word; else it arms its wake token, inserts its Wait record (`ENOMEM` when the waiter list is full) and, after the release, publishes its deadline and blocks. A wake re-runs the pass, so the wait returns only on bits, the notification's destruction or its own deadline; a fired record wins over the deadline, because its bits were already consumed.
 
-**Timeout support**: Deadline stored per-thread; checked from the timer tick handler using `try_lock` for IRQ safety. Timed-out waiters are cleaned up and unblocked with no result (caller sees `Etimedout`).
+**Timeout support**: Deadline stored per-thread (`NOTIFY_DEADLINES`, shared with `IpcSelect`); every tick, on every CPU, `check_notification_timeouts` try-locks it for IRQ safety, collects the expired threads, resets their deadlines and wakes them after the release. The woken wait's next pass finds its deadline passed, removes its record and returns `Etimedout`.
 
-**IpcSelect integration**: Notifications are first-class `IpcSelect` sources via `SelectKind::Notification(id, mask)`. A thread can wait on a mix of channels and notifications simultaneously. When a notification fires and a select-blocked thread has a matching entry, the select path wakes the thread with the entry index and matched bits.
+**IpcSelect integration**: Notifications are first-class `IpcSelect` sources via `SelectKind::Notification(id, mask)`. A thread can wait on a mix of channels and notifications simultaneously. A select registers a Select record on each notification it names; a signal that matches it claims the record and wakes the thread, whose next pass consumes the bits and returns the entry index and matched bits.
 
 ### 6.2 Service-Level Notifications (Target Design)
 
@@ -1371,7 +1464,7 @@ This subsection summarizes relevant findings from recent OS research that inform
 | Per-process kernel resource limits | Hubris, general | **Integrated** (§3.3) | Medium |
 | POSIX shim caching | QNX, Fuchsia | **Specified** (§12.2) | High |
 | **Reliability and correctness (this revision)** | | | |
-| Mandatory `IpcCall` timeout | QNX, general | **Integrated** (§3.1) | Critical |
+| Mandatory `IpcCall` timeout | QNX, general | **Integrated** (§3.1), with one recorded exception: x5 = 0 or `u64::MAX` is no timeout (capability-lifetime ADR §9) | Critical |
 | Peer death signaling (`EPIPE`) | Fuchsia, POSIX | **Integrated** (§4.1) | Critical |
 | `IpcCancel` syscall | Fuchsia | **Integrated** (§3.1) | High |
 | Service restart/reconnection protocol | QNX, Fuchsia | **Integrated** (§5.5) | Critical |
@@ -1916,7 +2009,7 @@ IPC fast paths can skip full context switch for same-isolation-class communicati
 pub struct SqEntry {
     opcode: u8,           // IPC operation type
     flags: u8,            // IOSQE_* flags
-    channel_id: u16,      // target channel
+    channel_id: u32,      // target channel (a full ChannelId, §3.1)
     user_data: u64,       // opaque, returned in CqEntry
     msg_ptr: u64,         // pointer to message data
     msg_len: u32,         // message length
@@ -1930,7 +2023,7 @@ This is particularly valuable for the AIRS inference pipeline: an agent can subm
 
 **Source:** seL4 MCS — reply capabilities are first-class kernel objects. When a server receives a call, the kernel creates a one-use reply capability. The server must hold this capability to reply. If the server crashes, the reply capability is revoked and the client is unblocked with an error.
 
-**Opportunity for AIOS.** Current implementation uses `pending_caller: Option<ThreadId>` in the Channel struct. This works but has a subtle issue: if the server thread is reused (exits and a new thread gets the same ThreadId), the new thread could accidentally reply to a stale caller. Reply capabilities eliminate this class of bug:
+**Opportunity for AIOS.** Current implementation uses `pending_caller: Option<PendingCall>` (the caller's ThreadId and its call's sequence number) in the Channel struct. This works but has a subtle issue: if the server thread is reused (exits and a new thread gets the same ThreadId), the new thread could accidentally reply to a stale caller. Reply capabilities eliminate this class of bug:
 
 - `ipc_recv` returns a `ReplyCapability` alongside the message
 - `ipc_reply` consumes the `ReplyCapability` (one-shot)

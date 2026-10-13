@@ -381,7 +381,7 @@ pub enum ThreadState {
     Running,
     /// Blocked waiting for IPC message
     BlockedIpc { channel: u64 },
-    /// Blocked waiting for timer
+    /// Blocked waiting for timer (`sleep_ticks`, the TimeSleep syscall)
     BlockedTimer { wake_at: u64 },
     /// Blocked waiting for I/O
     BlockedIo,
@@ -395,7 +395,7 @@ pub enum ThreadState {
     Suspended,
     // --- Target design (not yet implemented) ---
     // BlockedAccelerator { device: AcceleratorId, job: JobId },
-    /// Thread has exited
+    /// Thread has exited. Terminal (§3.4)
     Dead,
 }
 
@@ -431,6 +431,22 @@ pub enum ContextHint {
     LowBattery,
 }
 ```
+
+### 3.4 Blocking, Waking and Thread Exit
+
+As implemented in `kernel/src/sched/` and `shared/src/sched.rs` ([capability-lifetime ADR](../knowledge/decisions/2026-09-24-jl-capability-lifetime.md) §7 and §8):
+
+**Dead is terminal.** `ThreadState::may_become` allows every change except one out of `Dead`, and every kernel write that could overwrite `Dead` checks it: the Running writes of `thread_yield` and the scheduler's pick, `unblock`'s Runnable write, `block_current`'s write, and the direct and reply switches. `schedule()` never re-enqueues a Dead thread and the pick drops one, so a Dead thread never runs again, and no wake revives it. A thread ends itself with `sched::exit_current()`, which blocks it as `Dead` and cannot return. A process exit marks its other threads Dead in one IRQ-masked walk (`sched::kill_process_threads`, exit step B); the calling thread is left out and keeps running until it calls `exit_current()` itself. A victim running on another CPU at that point stops at its next switch.
+
+**The wake token.** Each thread slot has a wait word (`sched::wake`, `WaitState`: Idle, Armed or Woken), an atomic array rather than a lock. Every waiting site follows three rules:
+
+1. Arm (`prepare_block`) inside, or before, the critical section that publishes the first record a waker can find it by (a `TIMEOUT_QUEUE` entry, a notification deadline, `pending_caller`, `waiting_receiver`, a notification or select waiter record, or a `PROCESS_WAITERS` entry), using its own tid read with IRQs masked (`current_tid()`, or `current_thread_and_pid()` for the `ProcessWait` syscall).
+2. Once armed, call `block_current` or `cancel_block`.
+3. After `block_current` returns, re-check the condition under its own lock and loop; each pass re-arms before it republishes a record.
+
+`unblock` decides under `THREAD_TABLE` from the target's state and word (`shared::wake_action`): a Dead target gets nothing; an Armed Running or Runnable target gets the token (the word becomes Woken, with no state change and no enqueue); a Woken one or an Idle one (a stale wake) is skipped; a Blocked or Suspended target is made Runnable and queued, as before. `block_current` swaps the word to Idle under the same lock (`shared::block_action`): a Woken word means a wake landed between the publish and the block, so it returns at once without switching (the token is consumed), and the caller re-checks. A debug build asserts that every other block was armed. `try_direct_switch` refuses to switch away from a sender that is Dead or holds a token, so that sender's own `block_current` consumes it; otherwise it swaps the sender's Armed word to Idle in the same critical section that blocks it. Dead threads never take or consume a token, and exit step B resets each victim's word. The token adds no lock and no `DAIFClr` site.
+
+So a blocking wait returns only on its condition, an error or its own deadline, and a stale wake costs one more pass, never a lost wakeup or an early return. `sleep_ticks` (TimeSleep) follows the same rules: it arms, publishes its `TIMEOUT_QUEUE` entry and blocks as `BlockedTimer` until its deadline has passed.
 
 -----
 

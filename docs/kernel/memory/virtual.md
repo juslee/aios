@@ -688,10 +688,15 @@ pub struct SharedMemoryRegion {
     pub creator: ProcessId,
     /// Maximum permissions granted at creation time
     pub max_flags: MemoryFlags,
-    /// Capability required to access
-    pub capability: CapabilityTokenId,
+    /// The SharedMemoryCreate token that authorized the create: the parent
+    /// of the creator's minted SharedMemoryAccess(id) token. Revoking it
+    /// destroys the region.
+    pub creation_cap: CapabilityTokenId,
     /// Per-mapping permissions (bounded; MAX_SHARED_MAPPINGS = 8)
     pub mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
+    /// Live kernel borrows: EL1 reads region memory only between
+    /// `region_borrow` and `region_release` (ipc.md §4.5)
+    kernel_borrows: u32,
 }
 
 pub struct SharedMapping {
@@ -707,16 +712,23 @@ Creation flow:
 Agent A wants to share 1 MB with Agent B:
 
 1. Agent A: syscall SharedMemoryCreate { size: 1 MB }
+   -> Kernel checks A holds SharedMemoryCreate
    -> Kernel allocates frames from user pool
    -> Kernel maps into Agent A at 0x1_0000_0000
-   -> Returns SharedMemoryId and CapabilityTokenId
+   -> Returns the SharedMemoryId (x0) and the handle of A's
+      SharedMemoryAccess(id) token (x1), minted as a child of the
+      SharedMemoryCreate token
 
 2. Agent A: writes data to shared region (direct memory access)
 
 3. Agent A: syscall SharedMemoryShare { region, channel_to_B, flags: READ }
-   -> Kernel verifies A holds the capability
-   -> Kernel creates a read-only mapping capability for B
+   -> Kernel verifies A created the region and holds a live
+      SharedMemoryAccess(region) token, delegatable unless B is A
+   -> Kernel creates a read-only mapping capability for B: a
+      non-delegatable child of A's token
    -> Transfers capability to B over the IPC channel
+   -> A repeat share is a no-op; ENOSPC if B has 64 or fewer free
+      capability slots (the foreign reserve)
 
 4. Agent B: syscall SharedMemoryMap { region, flags: READ }
    -> Kernel verifies B holds the received capability
@@ -727,6 +739,10 @@ Agent A wants to share 1 MB with Agent B:
    -> Kernel unmaps from that agent's address space
    -> When all mappings removed, frames freed
 ```
+
+As implemented today ([ipc.md](../ipc.md) §3.1, §4.5 and §4.7), `SharedMemoryCreate` and `SharedMemoryMap` map nothing yet (no process has a user address space; the region's window address is returned), and `SharedMemoryShare` takes B's pid, not a channel, and no flags.
+
+A region is also destroyed, even while others map it, when its creator destroys it (the Kit's `shmem_destroy`), revokes the `SharedMemoryCreate` token it was created under (or a same-table ancestor), or exits. Destruction removes every mapping at once and makes the region's id stale: the other mappers see `EPIPE` on their next `SharedMemoryMap` or unmap, and no `MemoryRevoked` event is sent. Frames that a kernel borrow still holds are freed at the last `region_release`.
 
 Both agents access the same physical memory. The kernel enforces that the receiver's mapping flags are at most as permissive as what the sender granted. If the sender shares as read-only, the receiver cannot write.
 

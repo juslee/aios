@@ -1182,7 +1182,7 @@ AIOS kernel booting
 [bench] === Gate 1 Benchmark ===
 [tripwire] v=1 src=hb cpu=0 t=1000 ncpu=4 tick=1000,0,0,0 n2=0,1,0,0 ubrbl=0,1,0,0,0,0,0,0,0,0,0,0,0,0,0 nowaker=1 twc=9 twn=1 twmax=50 n=12
 [heartbeat] tick=1000
-[tripwire] v=2 src=hb cpu=0 t=2000 ncpu=4 newkey=1,2 nowaker=1 n=7
+[tripwire] v=99 src=hb cpu=0 t=2000 ncpu=4 newkey=1,2 nowaker=1 n=7
 [heartbeat] tick=2000
 
 [soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=-1 hb_count=3 hb_last_advance=74 hb_max_gap=-1 stall_limit=15 load1=0.75

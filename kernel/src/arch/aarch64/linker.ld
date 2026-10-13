@@ -67,9 +67,10 @@ SECTIONS
     __bss_end = .;
 
     /* Boot stack: 128 KiB, 16-byte aligned (ABI requirement).
-       ipc::init() alone uses ~62 KiB (ProcessControl temporaries +
-       Thread construction) and nested calls (channel_create ~4.5 KiB)
-       push total past 64 KiB. 128 KiB gives ample headroom.
+       ipc::init() once used ~62 KiB, mostly ProcessControl temporaries
+       (process_install now resets the fixed table slots in place), plus
+       Thread construction and nested calls (channel_create ~4.5 KiB),
+       past 64 KiB in total. 128 KiB gives ample headroom.
 
        The stack is an output section, not a bare location-counter
        advance, so it falls inside the RW PT_LOAD segment's memsz. The

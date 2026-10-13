@@ -78,15 +78,15 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 | Pos | Lock | Location | Type | Notes |
 |---|---|---|---|---|
-| 1 | `PROCESS_TABLE` | `task/process.rs` | `Mutex<[Option<ProcessControl>; 32]>` | Top of hierarchy |
-| 2 | `THREAD_TABLE` | `task/mod.rs` | `IrqSpinLock<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
-| 3 | `SERVICE_MANAGER` | `service/mod.rs` | `Mutex<ServiceManager>` | Released before `AUDIT_RING` |
-| 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[Option<SharedMemoryRegion>; 64]>` | Released before `PROCESS_TABLE` re-acquire |
-| 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `IrqSpinLock<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
-| 6 | `CHANNEL_TABLE` | `ipc/mod.rs` | `Mutex<[Option<Channel>; 128]>` | After `THREAD_TABLE` |
-| 7 | `SELECT_WAITERS` | `ipc/select.rs` | `IrqSpinLock<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
+| 1 | `PROCESS_TABLE` | `task/process.rs` | `Mutex<[ProcessControl; 32]>` | Top of hierarchy; a fixed slot per pid, reset in place by install and reap |
+| 2 | `PROCESS_WAITERS` | `task/process.rs` | `Mutex<[Option<ThreadId>; 32]>` | Leaf lock, taken only under `PROCESS_TABLE` (install, `wait_step`, exit step E): nothing is taken under it, and it is never held across `unblock`; the heartbeat scan try-locks it alone (below) |
+| 3 | `THREAD_TABLE` | `task/mod.rs` | `IrqSpinLock<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
+| 4 | `SERVICE_MANAGER` | `service/mod.rs` | `Mutex<ServiceManager>` | Released before `AUDIT_RING` |
+| 5 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[RegionSlot; 64]>` | Nested under `PROCESS_TABLE` by create, map, share, destroy, the revoke cascade, exit step A and the attach check (`check_shared_memory_access`); alone for unmap, exit cleanup and borrows |
+| 6 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `IrqSpinLock<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE`; holds both kinds of waiter record, a `notification_wait`'s and an `ipc_select`'s; wakers collect under it and call `unblock` after the release |
+| 7 | `CHANNEL_TABLE` | `ipc/mod.rs` | `Mutex<[ChannelSlot; 128]>` | After `THREAD_TABLE`; nested under `PROCESS_TABLE` by `channel_create` and the revoke cascade's channel collection, never together with `SHARED_REGION_TABLE` |
 | 8 | `TIMEOUT_QUEUE` | `ipc/timeout.rs` | `IrqSpinLock<[Option<TimeoutEntry>; 64]>` | Collect expired, wake outside lock |
-| 9 | `REPLY_SLOTS` | `ipc/timeout.rs` | `Mutex<[Option<ReplySlot>; 64]>` | Per-thread reply buffer |
+| 9 | `REPLY_SLOTS` | `ipc/timeout.rs` | `Mutex<[Option<ReplySlot>; 64]>` | Per-thread reply slot (buffer, `done`, `cancelled`, the call's `seq`). Taken alone by `ipc_call`, `ipc_reply`, `ipc_cancel` and exit step C, never nested |
 | 10 | `WAKEUP_ERRORS` | `ipc/timeout.rs` | `IrqSpinLock<[i64; 64]>` | Leaf lock, short hold |
 | 11 | `BLOCK_ENGINE` | `storage/block_engine.rs` | `Mutex<Option<BlockEngine>>` | Calls VirtIO internally |
 | 12 | `VIRTIO_BLK` | `drivers/virtio_blk.rs` | `Mutex<Option<VirtioBlk>>` | Bottom of storage stack |
@@ -94,25 +94,28 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 **Code evidence** for the ordering:
 
-- `shmem.rs:10` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
-- `shmem.rs:192-193` (`shared_memory_create`) — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
-- `shmem.rs:488` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
-- `process.rs:159-160` (`process_exit`) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
-- `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
-- `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
-- `timeout.rs:88` — *"avoid lock ordering issues (TIMEOUT_QUEUE → THREAD_TABLE)."*
-- `block_engine.rs:153` — *"Lock ordering: BLOCK_ENGINE > VIRTIO_BLK."*
-- `service/mod.rs:106` — *"Drop the manager lock before calling audit_log to avoid potential lock ordering issues."*
+- `shmem.rs:20` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
+- `cap/mod.rs:86-87` (`create_with_access`) — *"It nests `CHANNEL_TABLE` or `SHARED_REGION_TABLE` under `PROCESS_TABLE` (both allowed edges), never takes `PROCESS_TABLE`"*.
+- `shmem.rs:742-744` (`shared_memory_share`) — *"Everything after step 1 runs in one `PROCESS_TABLE` hold with `SHARED_REGION_TABLE` nested (an allowed edge), the grant included (`cap::mint_share_token`, on the held table)"*. `shared_memory_map` (`insert_mapping`) and `shared_memory_destroy` take the same pair.
+- `process.rs:341-342` (`exit_channels`, exit step C) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
+- `process.rs:257` (`process_exit`) — *"**E** (`PROCESS_TABLE → PROCESS_WAITERS`)"*; `process_install` and `wait_step` take the same pair, and `PROCESS_WAITERS` is never held across `unblock`.
+- `notify.rs:116-117` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
+- `select.rs` (`ipc_select`) — takes `CHANNEL_TABLE` and `NOTIFICATION_TABLE` one source at a time, never together, and neither while its capability check takes `THREAD_TABLE` and `PROCESS_TABLE`.
+- `timeout.rs:159` — *"avoid lock ordering issues (TIMEOUT_QUEUE → THREAD_TABLE)."*
+- `block_engine.rs:133` — *"Lock ordering: BLOCK_ENGINE > VIRTIO_BLK."*
+- `service/mod.rs:105` — *"Drop the manager lock before calling audit_log to avoid potential lock ordering issues."*
 
 ```mermaid
 graph TD
-    PT[PROCESS_TABLE] --> TT[THREAD_TABLE]
+    PT[PROCESS_TABLE] --> PW[PROCESS_WAITERS]
+    PT --> TT[THREAD_TABLE]
     PT --> SM[SERVICE_MANAGER]
     TT --> SRT[SHARED_REGION_TABLE]
     TT --> CT[CHANNEL_TABLE]
+    PT --> SRT
+    PT --> CT
     SRT --> NT[NOTIFICATION_TABLE]
     NT --> CT
-    CT --> SW[SELECT_WAITERS]
     TQ[TIMEOUT_QUEUE] -.->|collect then wake| TT
     SM --> AR[AUDIT_RING]
     BE[BLOCK_ENGINE] --> VB[VIRTIO_BLK]
@@ -127,10 +130,8 @@ graph TD
 
 | Lock | Location | Notes |
 |---|---|---|
-| `PROCESS_WAITERS` | `task/process.rs` | Process wait/reap, leaf lock |
 | `CURRENT_THREAD[N]` | `task/mod.rs` | Per-CPU, no cross-CPU acquisition |
-| `NOTIFY_RESULTS` | `ipc/notify.rs` | Per-thread notification result, leaf |
-| `NOTIFY_DEADLINES` | `ipc/notify.rs` | Timeout scheduling, leaf |
+| `NOTIFY_DEADLINES` | `ipc/notify.rs` | Notification and select deadlines, leaf: nothing is taken under it; `check_notification_timeouts` collects the expired threads under it and wakes them after the release |
 | `ECHO_CHANNEL` | `service/mod.rs` | Test infrastructure, leaf |
 | `SAMPLE_BUF` | `bench.rs` | Benchmark data collection, leaf |
 | `ASID_ALLOC` | `mm/uspace.rs` | ASID allocation, leaf |
@@ -138,9 +139,9 @@ graph TD
 | `RUN_QUEUES[N]` | `sched/mod.rs` | Per-CPU, ascending CPU ID order (§3.2) |
 | `BOOT_LOG` | `observability/mod.rs` | Boot log ring, leaf; IRQ-class (below) |
 
-**IRQ-class locks (crash-fix step 1b).** The timer IRQ path shares 9 lock statics with thread code: `THREAD_TABLE`, `CURRENT_THREAD[N]`, `RUN_QUEUES[N]`, `WAKEUP_ERRORS`, `TIMEOUT_QUEUE`, `NOTIFY_DEADLINES`, `NOTIFICATION_TABLE`, `SELECT_WAITERS` and `BOOT_LOG`. They are `IrqSpinLock` (`kernel/src/sync/irq_spin_lock.rs`), not `spin::Mutex`. It is a detect-only type: it excludes exactly as `spin::Mutex` does and keeps every position and rule above. Its lock word is the holder's owner stamp (CPU and per-CPU switch generation, `shared::lock`). A `lock()` whose word holds its own stream's stamp can never succeed; for example, a timer IRQ that takes `THREAD_TABLE` while the thread it interrupted holds it with IRQs on. Such a `lock()` panics with a `lock re-entry:` message (one line, printed after the `PANIC: panicked at` location line) instead of spinning forever. Other contention is counted in the tripwire's per-lock `lk*` keys. [observability.md](./observability.md) §6.5 has the message format, how to decode a lock word, and the keys. The type reports this same-CPU deadlock; it does not prevent it. A thread that holds one of these locks with IRQs on can still meet its own CPU's timer IRQ. Masking IRQs around such holds is a later crash-fix step.
+**IRQ-class locks (crash-fix step 1b).** The timer IRQ path shares 8 lock statics with thread code: `THREAD_TABLE`, `CURRENT_THREAD[N]`, `RUN_QUEUES[N]`, `WAKEUP_ERRORS`, `TIMEOUT_QUEUE`, `NOTIFY_DEADLINES`, `NOTIFICATION_TABLE` and `BOOT_LOG`. Capability-lifetime step 11 deleted the ninth, the per-thread select table, with the select wake path. `NOTIFICATION_TABLE` is no longer on the timer's wake path (`check_notification_timeouts` takes only `NOTIFY_DEADLINES`), but it stays IRQ-class because CPU 0's heartbeat scan reads its waiter records from the timer IRQ (owner, 2026-10-11). They are `IrqSpinLock` (`kernel/src/sync/irq_spin_lock.rs`), not `spin::Mutex`. It is a detect-only type: it excludes exactly as `spin::Mutex` does and keeps every position and rule above. Its lock word is the holder's owner stamp (CPU and per-CPU switch generation, `shared::lock`). A `lock()` whose word holds its own stream's stamp can never succeed; for example, a timer IRQ that takes `THREAD_TABLE` while the thread it interrupted holds it with IRQs on. Such a `lock()` panics with a `lock re-entry:` message (one line, printed after the `PANIC: panicked at` location line) instead of spinning forever. Other contention is counted in the tripwire's per-lock `lk*` keys. [observability.md](./observability.md) §6.5 has the message format, how to decode a lock word, and the keys. The type reports this same-CPU deadlock; it does not prevent it. A thread that holds one of these locks with IRQs on can still meet its own CPU's timer IRQ. Masking IRQs around such holds is a later crash-fix step.
 
-**IRQ-context exception for `CHANNEL_TABLE` (crash-fix step 1b).** The IRQ path takes only IRQ-class locks, with one exception. The heartbeat scans that CPU 0's timer tick runs take `CHANNEL_TABLE`, a `spin::Mutex`, but only with `try_lock`, alone, and release it before the next table. A try-lock never waits, so it cannot deadlock: when the table is busy, the scan is skipped and counted (`skipb`). Heartbeat scans take the IRQ-class locks with `try_lock_quiet` only.
+**IRQ-context exceptions for `CHANNEL_TABLE` and `PROCESS_WAITERS` (crash-fix step 1b; capability lifetime).** The IRQ path takes only IRQ-class locks, with two exceptions. The heartbeat scans that CPU 0's timer tick runs take `CHANNEL_TABLE` and, when a thread is blocked in `process_wait`, `PROCESS_WAITERS`, both `spin::Mutex`, but only with `try_lock`, each alone, and release each before the next table. A try-lock never waits, so it cannot deadlock: when a table is busy, the scan is skipped and counted (`skipb`). Heartbeat scans take the IRQ-class locks with `try_lock_quiet` only.
 
 ### 3.4 Memory Allocator Locks
 
@@ -166,13 +167,15 @@ A recurring pattern in the AIOS kernel avoids lock ordering violations when an o
 
 Examples in the codebase:
 
-- **`process_exit`** (`task/process.rs`): Marks its threads Dead under `THREAD_TABLE` and releases it, then marks Dead the channels with an endpoint owned by the process and collects their blocked threads under `CHANNEL_TABLE`, releases it, and only then wakes those threads with EPIPE (which acquires `WAKEUP_ERRORS` and scheduler locks).
+- **`process_exit`** (`task/process.rs`, steps A–E): (A) under `PROCESS_TABLE`, marks the process exited and revokes every token, then, with `SHARED_REGION_TABLE` nested and released, detaches the regions it created; the frames are freed after both are released. (B) Marks its threads Dead, except the calling thread, in `sched::kill_process_threads`, which reads the caller from `CURRENT_THREAD` and releases it, then walks `THREAD_TABLE` and releases it, all with IRQs masked. (C) Under `CHANNEL_TABLE`, clears victims' `waiting_receiver` records, marks Dead the channels with an endpoint owned by the process and collects their blocked threads, and collects the channels it created; releases it, and only then wakes those threads with EPIPE (which acquires `WAKEUP_ERRORS` and scheduler locks; at most 16 wakes per exit, and a waiter past the 16th is left with no waker, #262) and destroys the collected channels; then clears each victim's timeout, reply slot, notification deadline and waiter records (a wait's or a select's), each lock alone (the IRQ-class ones with IRQs masked). (D) Cleans up its mappings under `SHARED_REGION_TABLE` alone, then marks the service dead under `SERVICE_MANAGER`, released before `audit_log`. (E) Under `PROCESS_TABLE → PROCESS_WAITERS`, publishes the exit code and reads the registered waiter, releases both, and only then wakes it.
 
-- **`check_timeouts`** (`ipc/timeout.rs`): Collects expired entries under `TIMEOUT_QUEUE`, releases the lock, then wakes threads (which acquire `THREAD_TABLE` and scheduler locks).
+- **`check_timeouts`** (`ipc/timeout.rs`): First runs `check_notification_timeouts` (`ipc/notify.rs`), which collects the expired notification and select deadlines in a thread mask under `NOTIFY_DEADLINES` (a try-lock), resets them, releases the lock, then wakes those threads. Then collects expired entries under `TIMEOUT_QUEUE`, releases the lock, then wakes threads (which acquire `THREAD_TABLE` and scheduler locks).
 
-- **`process_cleanup_shared_memory`** (`ipc/shmem.rs`): Collects shared region IDs under `SHARED_REGION_TABLE`, releases the lock, then cleans up mappings. Similarly, `shared_memory_share` drops `SHARED_REGION_TABLE` before calling `grant_to_process` (which may acquire `PROCESS_TABLE`).
+- **`notification_signal`** (`ipc/notify.rs`): Under `NOTIFICATION_TABLE`, sets the bits and acts on the waiter records (a wait record gets its bits, a select record is removed), collecting their threads; releases the lock, then wakes them.
 
-- **`revoke_channels_for_cap`** (`cap/mod.rs`): Collects channel IDs associated with a revoked capability under `CHANNEL_TABLE`, then destroys them after releasing the lock.
+- **`process_cleanup_shared_memory` and the last `shared_memory_unmap`** (`ipc/shmem.rs`): Under `SHARED_REGION_TABLE` alone, remove the mappings and detach each region whose last mapping went (`region_detach`), then free the detached regions' frames after releasing the lock, so a region free never nests `FRAME_ALLOC` under the table. A region that a kernel `RegionBorrow` still holds keeps its frames draining until the last `region_release`, which also frees them after the lock. `shared_memory_destroy` detaches its region the same way, under `PROCESS_TABLE` with `SHARED_REGION_TABLE` nested, and frees the frames after releasing both.
+
+- **The region and channel cascades of `revoke_in_process` and the Capability Kit's `revoke`** (`cap/mod.rs`): In the revoking `PROCESS_TABLE` hold, with `SHARED_REGION_TABLE` nested and then released (an allowed edge), detach the regions the process created under a token that is now revoked; then, with `CHANNEL_TABLE` nested and then released, collect the IDs of such channels. The two tables are never held together. After `PROCESS_TABLE` is released, the regions' frames are freed and the channels destroyed, because a destroy wakes the threads blocked on them.
 
 This pattern trades strict atomicity for deadlock freedom. The window between collecting and acting is microseconds — acceptable because the kernel is preemptive (§9) and operations are idempotent or guarded by generation counters.
 
@@ -216,11 +219,15 @@ IpcCall {
 
 When the timeout elapses, the kernel returns `ETIMEDOUT` and cleans up the pending call state. The caller can retry, fall back, or propagate the error.
 
+**Implementation exception.** In the implementation the timeout is `IpcCall`'s x5, in ticks, and two values leave the call unbounded: x5 = 0 and x5 = `u64::MAX` both mean no timeout, so the call waits until a reply, a cancel, or the channel's destruction or a Dead endpoint ends it. The capability-lifetime ADR (§9) records this as a deviation from "no API to block indefinitely": it keeps the existing `ipc_call` semantics, on which a crash-fix acceptance check relies. The cleanup on a timeout removes the pending caller and the reply slot, but not the request: it stays in the channel's ring, and a server that receives it later replies to whichever call is pending then (#265). Within these limits a call returns only on its reply, an error or its own deadline ([ipc.md §3.1](./ipc.md)).
+
 *Source: [ipc.md §3.1 — Syscall Table](./ipc.md) (mandatory timeout field), [ipc.md §4.2 — Synchronous IPC](./ipc.md) (call-reply pattern)*
 
 ### 4.3 Complementary: IpcCancel
 
 Agents can also explicitly cancel a pending call via `IpcCancel`, which returns `ECANCELED` to the blocked caller. The kernel uses this during process teardown to release all pending IPC state for a dying process — preventing zombie dependencies.
+
+In the implementation, a reply written before the cancel wins (the call returns it), and a cancel that claimed an earlier call of the same thread never reaches its next call. Process teardown does not call `IpcCancel` yet: exit step C (§3.5) wakes the threads blocked on the dying process's channels with `EPIPE` and leaves a dying caller's pending call for the server to reply to.
 
 ### 4.4 Why This Works
 

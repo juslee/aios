@@ -1,7 +1,8 @@
 //! IpcSelect capability self-test, run from the ipc-timeout thread.
 
 use crate::ipc::channel::{ipc_recv, ipc_send};
-use crate::ipc::select::{ipc_select, SELECT_WAITERS};
+use crate::ipc::notify::has_waiter_record;
+use crate::ipc::select::ipc_select;
 use crate::ipc::{channel_create_unchecked, channel_mut, CHANNEL_TABLE};
 use crate::syscall::IpcError;
 use crate::task::ThreadId;
@@ -29,11 +30,14 @@ pub(super) struct SelectCapChannels {
 /// in the set, like ipc_recv, and must reject a set with any inaccessible
 /// channel before it observes or registers on any source.
 ///
-/// Runs in the ipc-timeout thread (process 1). The three channels come from
-/// channel_create_unchecked; creating a channel grants no ChannelAccess, so
-/// process 1 is granted ChannelAccess to `owned_a` and `owned_b` only. The
-/// channels stay allocated for the rest of the boot, like the other test
-/// channels, so the grants never point at a reused channel slot.
+/// Runs in the ipc-timeout thread (process 1). The three channels stay on
+/// channel_create_unchecked, which mints no token (a checked create would
+/// mint ChannelAccess for `denied` too), so process 1 is granted
+/// ChannelAccess to `owned_a` and `owned_b` only: ambient self-test grants,
+/// under the interim exception of capability-lifetime ADR §11 (see
+/// `cap::grant_to_process`). The channels and both grants stay live for the
+/// rest of the boot: the Syscall-arg and Kit-error tests use the channels
+/// after this one, and no revocation reaches the grants.
 ///
 /// The denied and mixed cases each pin one ordering regression:
 /// - `denied` first holds a queued message, so a check that ran after the
@@ -120,7 +124,8 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<SelectCapChannels> {
 
     // A mixed set with nothing ready. The accessible channel comes first, so
     // a check made while registering would already have claimed its
-    // waiting_receiver slot (or the SELECT_WAITERS entry) before failing.
+    // waiting_receiver slot before failing. No registration may be left: no
+    // waiting_receiver on either channel and no Select waiter record.
     let mixed = ipc_select(&[chan(owned_a), chan(denied)], SELECT_TIMEOUT_TICKS);
     let on_channel = {
         let mut table = CHANNEL_TABLE.lock();
@@ -128,11 +133,7 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<SelectCapChannels> {
             .into_iter()
             .any(|id| channel_mut(&mut table, id).is_ok_and(|ch| ch.waiting_receiver.is_some()))
     };
-    let in_waiters = SELECT_WAITERS
-        .lock()
-        .get(my_tid.0 as usize)
-        .is_some_and(Option::is_some);
-    let waiter_left = on_channel || in_waiters;
+    let waiter_left = on_channel || has_waiter_record(my_tid);
     if mixed != eperm || waiter_left {
         passed = false;
         crate::kwarn!(
@@ -162,7 +163,7 @@ pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<SelectCapChannels> {
 
     // An out-of-range id is EINVAL, whether the rest of the set is
     // accessible or not: the range check runs before any capability check.
-    let bad_id = ChannelId(MAX_CHANNELS as u32);
+    let bad_id = ChannelId::from_raw(MAX_CHANNELS as u32);
     let bad_owned = ipc_select(&[chan(owned_a), chan(bad_id)], SELECT_TIMEOUT_TICKS);
     let bad_denied = ipc_select(&[chan(denied), chan(bad_id)], SELECT_TIMEOUT_TICKS);
     if bad_owned != einval || bad_denied != einval {

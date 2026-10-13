@@ -125,15 +125,24 @@ impl SharedMemoryRegion {
     pub fn create(size: usize, flags: MemoryFlags) -> Result<Self, MemoryError>;
 
     /// Map the region into another agent's address space.
-    /// Both agents must consent (capability-gated).
+    /// Capability-gated on the creator's side only: the target gives no
+    /// consent. The kernel delegates the creator's SharedMemoryAccess(id)
+    /// token (delegatable, unless the target is the creator) as a
+    /// non-delegatable child; a repeat share is a no-op, and a target with
+    /// 64 or fewer free capability slots (the foreign reserve) is refused,
+    /// which bounds how far sharing can fill another agent's table.
     pub fn share_with(&self, agent: AgentId, flags: MemoryFlags) -> Result<(), MemoryError>;
 
     /// Get a pointer to the mapped region in this agent's address space.
     pub fn as_ptr(&self) -> *const u8;
     pub fn as_mut_ptr(&self) -> *mut u8;
 
-    /// Unmap and destroy the region. All mappings in other agents
-    /// are invalidated (they receive a MemoryRevoked event).
+    /// Unmap and destroy the region. Creator only, with a live
+    /// SharedMemoryAccess(id) token. All mappings in other agents are
+    /// invalidated at once, even while they map it. There is no
+    /// MemoryRevoked event: a mapper sees EPIPE on its next map or unmap.
+    /// A revoke of the SharedMemoryCreate token the region was created
+    /// under, and the creator's exit, destroy it the same way.
     pub fn destroy(self) -> Result<(), MemoryError>;
 }
 
@@ -308,7 +317,7 @@ fn upload_texture(
 | `MemoryQuery` | Querying pressure levels and pool stats | Granted to all agents |
 | `LargeAllocation` | Allocations above 1 MiB in the user pool | Prompt user on first use |
 
-`SharedMemoryShare` is a syscall, not a capability of its own: it lets a region's creator grant `SharedMemoryAccess(id)` to another agent (the target design requires both agents' consent). See the [IPC Kit](./ipc.md) §5.
+`SharedMemoryShare` is a syscall, not a capability of its own: it lets a region's creator delegate its `SharedMemoryAccess(id)` to another agent, which gets a non-delegatable child of the creator's token; the target is not asked to consent, and the 64-slot foreign reserve bounds how many such tokens it can be given. See the [IPC Kit](./ipc.md) §5.
 
 ### Agent manifest example
 

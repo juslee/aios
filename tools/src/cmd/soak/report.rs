@@ -12,21 +12,27 @@
 //! Crash-fix step 1a: where the script printed a CLEAN boot's detail, a
 //! DEGRADED boot shows why it is not CLEAN, from its [`Ipc`] figures, ahead of
 //! that detail. `summary.tsv` gains [`STEP_1A_COLUMNS`], then one `tw_<key>`
-//! column per tripwire key in [`Key::ALL`] order, then [`LINE_COLUMNS`], after
-//! the script's 22 ([`SCRIPT_COLUMNS`]), so positional readers of the first 22
+//! column per tripwire key of [`union_keys`] (the keys of every schema version
+//! joined by name, `v=1`'s order first), then [`LINE_COLUMNS`], after the
+//! script's 22 ([`SCRIPT_COLUMNS`]), so positional readers of the first 22
 //! keep working. `summary.md` gains a Gate 1 IPC line, the "Tripwire counters
 //! by class" table and a `Tripwire` column in the per-boot table. A soak and
 //! `--classify --out` both write through [`tsv_row`], [`summary_head`] and
 //! [`summary_tail`], fed by a [`Tally`].
+//!
+//! Capability-lifetime step 11: a `v=1` and a `v=2` line are decoded with
+//! their own catalogues ([`Schema`]), and everything that puts boots of both
+//! side by side (the `tw_<key>` columns, the tripwire tables) joins them by
+//! key name and index name: a `v=1` log's `ubrun[cancel]` and a `v=2` log's
+//! are one row, though the index is 14 in one and 10 in the other.
 
-use shared::lock::LockClass;
-use shared::sched::SchedulerClass;
-use shared::tripwire::{BadchanSite, Key, N2Kind, WakeSource, Width, CLASS_COUNT};
+use shared::tripwire::{Key, Width};
 
 use super::awk::to_num;
+use super::catalogue::{union_keys, Schema};
 use super::classify::{Base, Class, Classification, Ipc, Reentry};
 use super::stats::wilson;
-use super::tripwire::{Line, V1};
+use super::tripwire::{Decoded, Line};
 
 /// The script's `summary.tsv` columns.
 pub const SCRIPT_COLUMNS: [&str; 22] = [
@@ -78,7 +84,9 @@ pub const STEP_1A_COLUMNS: [&str; 14] = [
 /// `elrmm`, then the whole lines, last because they are long.
 pub const LINE_COLUMNS: [&str; 3] = ["g1_elrmm", "g1_line", "tw_line"];
 
-/// The number of `summary.tsv` columns.
+/// The number of `summary.tsv` columns. The `tw_<key>` columns number
+/// `Key::COUNT` because the union of the schemas' keys is `Key::ALL` (a test
+/// in `catalogue` pins it).
 pub const TSV_COLUMNS: usize =
     SCRIPT_COLUMNS.len() + STEP_1A_COLUMNS.len() + Key::COUNT + LINE_COLUMNS.len();
 
@@ -89,7 +97,7 @@ pub fn tsv_header() -> Vec<u8> {
         .chain(&STEP_1A_COLUMNS)
         .map(|s| s.to_string())
         .collect();
-    names.extend(Key::ALL.iter().map(|k| format!("tw_{}", k.name())));
+    names.extend(union_keys().iter().map(|k| format!("tw_{}", k.name)));
     names.extend(LINE_COLUMNS.iter().map(|s| s.to_string()));
     let mut header = names.join("\t").into_bytes();
     header.push(b'\n');
@@ -260,21 +268,26 @@ fn line_cell(line: Option<&Line>) -> Vec<u8> {
 }
 
 /// The `tw_v` to `tw_ncpu` and `tw_<key>` cells of the last complete
-/// tripwire line: decoded for `v=1`; for another schema version, its `v=`
-/// and `-` for the rest; `-` throughout without a line.
+/// tripwire line: decoded for `v=1` and `v=2` (a key the line's schema does
+/// not have is `-`); for another schema version, its `v=` and `-` for the
+/// rest; `-` throughout without a line.
 fn tripwire_cells(line: Option<&Line>) -> Vec<Vec<u8>> {
-    let width = 5 + Key::COUNT;
+    let width = 5 + union_keys().len();
     let Some(line) = line else {
         return vec![b"-".to_vec(); width];
     };
     let mut cells = vec![text_cell(line.version.as_deref())];
-    match &line.v1 {
-        Some(v1) => {
+    match &line.decoded {
+        Some(d) => {
             cells.push(text_cell(line.src.as_deref()));
-            cells.push(text_cell(v1.cpu.as_deref()));
-            cells.push(text_cell(v1.t.as_deref()));
-            cells.push(text_cell(v1.ncpu.as_deref()));
-            cells.extend(Key::ALL.iter().map(|&k| v1.value(k).to_vec()));
+            cells.push(text_cell(d.cpu.as_deref()));
+            cells.push(text_cell(d.t.as_deref()));
+            cells.push(text_cell(d.ncpu.as_deref()));
+            cells.extend(
+                union_keys()
+                    .iter()
+                    .map(|k| d.get(k.name).map_or_else(|| b"-".to_vec(), <[u8]>::to_vec)),
+            );
         }
         None => cells.resize(width, b"-".to_vec()),
     }
@@ -331,8 +344,8 @@ pub fn tsv_row(
         c.tripwire
             .g1
             .as_ref()
-            .and_then(|l| l.v1.as_ref())
-            .map(|v1| v1.value(Key::Elrmm)),
+            .and_then(|l| l.decoded.as_ref())
+            .map(|d| d.value(Key::Elrmm)),
     ));
     cells.push(line_cell(c.tripwire.g1.as_ref()));
     cells.push(line_cell(c.tripwire.last.as_ref()));
@@ -347,7 +360,7 @@ pub fn tsv_row(
 pub fn tripwire_src(line: Option<&Line>) -> Vec<u8> {
     match line {
         None => b"-".to_vec(),
-        Some(l) if l.v1.is_some() => text_cell(l.src.as_deref()),
+        Some(l) if l.decoded.is_some() => text_cell(l.src.as_deref()),
         Some(l) => [&b"v="[..], &text_cell(l.version.as_deref())].concat(),
     }
 }
@@ -397,8 +410,9 @@ pub struct Tally {
     loads: Vec<Vec<u8>>,
     /// Each CLEAN boot's `ipc_avg_us`.
     clean_ipc: Vec<Option<u64>>,
-    /// Each boot's class and its last complete line, if that line is `v=1`.
-    tripwire: Vec<(Class, Option<V1>)>,
+    /// Each boot's class and its last complete line, if that line is `v=1`
+    /// or `v=2`.
+    tripwire: Vec<(Class, Option<Decoded>)>,
     /// The per-boot table's rows.
     rows: Vec<u8>,
 }
@@ -413,8 +427,8 @@ impl Tally {
         if c.class == Class::Clean {
             self.clean_ipc.push(c.ipc.avg_us);
         }
-        let v1 = c.tripwire.last.as_ref().and_then(|l| l.v1.clone());
-        self.tripwire.push((c.class, v1));
+        let decoded = c.tripwire.last.as_ref().and_then(|l| l.decoded.clone());
+        self.tripwire.push((c.class, decoded));
         self.rows.extend(md_row(idx, c));
     }
 
@@ -532,30 +546,6 @@ pub fn summary_head(info: &SummaryInfo, tally: &Tally) -> Vec<u8> {
     md
 }
 
-/// The scheduler classes in `starved`'s index order (`SchedulerClass as
-/// usize`), named as `shared` declares them.
-const SCHEDULER_CLASSES: [SchedulerClass; CLASS_COUNT] = [
-    SchedulerClass::Idle,
-    SchedulerClass::Normal,
-    SchedulerClass::Interactive,
-    SchedulerClass::RealTime,
-];
-
-/// The name of index `i` of a key of `width`: `CPU i`, or the index set's
-/// name from `shared`; the bare number past the end of a set.
-fn index_name(width: Width, i: usize) -> String {
-    let name = match width {
-        Width::Cpu => return format!("CPU {i}"),
-        Width::One => None,
-        Width::Source => WakeSource::ALL.get(i).map(|s| s.name().to_string()),
-        Width::Lock => LockClass::ALL.get(i).map(|l| l.name().to_string()),
-        Width::Class => SCHEDULER_CLASSES.get(i).map(|c| format!("{c:?}")),
-        Width::N2 => N2Kind::ALL.get(i).map(|k| k.name().to_string()),
-        Width::Badchan => BadchanSite::ALL.get(i).map(|b| b.name().to_string()),
-    };
-    name.unwrap_or_else(|| i.to_string())
-}
-
 /// A comma list as numbers; a value that is not a decimal `u64` counts as 0.
 fn values(list: &[u8]) -> Vec<u128> {
     list.split(|&b| b == b',')
@@ -569,22 +559,54 @@ fn values(list: &[u8]) -> Vec<u128> {
 }
 
 /// One row of the tripwire table: its label, and each boot's value (`None`
-/// for a boot without a `v=1` line).
+/// for a boot without a decoded line, or whose schema has no such counter).
 struct CounterRow {
     label: String,
     gauge: bool,
     per_boot: Vec<Option<u128>>,
 }
 
+/// One boot's values of one key: the schema its line was decoded with, the
+/// key's width in that schema, and the comma list as numbers.
+struct KeyValues {
+    schema: Schema,
+    width: Width,
+    list: Vec<u128>,
+}
+
+impl KeyValues {
+    /// The value at the index `label` names in the boot's schema: 0 past the
+    /// end of the list, `None` when the schema has no such index among the
+    /// first `reach` (the longest list any boot of the schema printed).
+    fn at_label(&self, label: &str, reach: usize) -> Option<u128> {
+        (0..reach)
+            .find(|&i| self.schema.index_name(self.width, i) == label)
+            .map(|i| self.list.get(i).copied().unwrap_or(0))
+    }
+}
+
 /// The rows of a tripwire table for every key, zero rows included, from
-/// each boot's `v=1` line (`None` without one).
-fn counter_rows(boots: &[Option<&V1>]) -> Vec<CounterRow> {
+/// each boot's decoded line (`None` without one).
+///
+/// The boots may be of both schema versions. A key's rows are joined by index
+/// name, not position: `ubrun[cancel]` is one row for a `v=1` boot (index 14)
+/// and a `v=2` boot (index 10). The rows come in `v=1`'s index order, then
+/// those only `v=2` has (`ubrun[selcall]` has a value in `v=1` boots only).
+fn counter_rows(boots: &[Option<&Decoded>]) -> Vec<CounterRow> {
     let mut rows = Vec::new();
-    for &key in &Key::ALL {
-        let gauge = key.is_gauge();
-        let lists: Vec<Option<Vec<u128>>> = boots
+    for def in union_keys() {
+        let gauge = def.gauge;
+        let per: Vec<Option<KeyValues>> = boots
             .iter()
-            .map(|v1| v1.map(|v| values(v.value(key))))
+            .map(|d| {
+                let d = (*d)?;
+                let i = d.schema.position(def.name.as_bytes())?;
+                Some(KeyValues {
+                    schema: d.schema,
+                    width: d.schema.keys().get(i)?.width,
+                    list: values(d.value_at(i)),
+                })
+            })
             .collect();
         let combine = |vs: &[u128]| -> u128 {
             if gauge {
@@ -593,30 +615,67 @@ fn counter_rows(boots: &[Option<&V1>]) -> Vec<CounterRow> {
                 vs.iter().sum()
             }
         };
-        let width = key.width();
+        let width = def.width;
         if width == Width::Cpu {
             rows.push(CounterRow {
-                label: key.name().to_string(),
+                label: def.name.to_string(),
                 gauge,
-                per_boot: lists.iter().map(|l| l.as_deref().map(combine)).collect(),
+                per_boot: per
+                    .iter()
+                    .map(|k| k.as_ref().map(|k| combine(&k.list)))
+                    .collect(),
             });
         }
-        let n = lists.iter().flatten().map(Vec::len).max().unwrap_or(1);
+        let n = per
+            .iter()
+            .flatten()
+            .map(|k| k.list.len())
+            .max()
+            .unwrap_or(1);
         if width == Width::One && n == 1 {
             rows.push(CounterRow {
-                label: key.name().to_string(),
+                label: def.name.to_string(),
                 gauge,
-                per_boot: lists.iter().map(|l| l.as_ref().map(|v| v[0])).collect(),
+                per_boot: per
+                    .iter()
+                    .map(|k| k.as_ref().map(|k| k.list.first().copied().unwrap_or(0)))
+                    .collect(),
             });
             continue;
         }
-        for i in 0..n {
+        // The index labels: each schema's, over the longest list a boot of it
+        // printed, in `Schema::ALL` order, a label once.
+        let mut labels: Vec<String> = Vec::new();
+        let mut reach = [0usize; Schema::ALL.len()];
+        for (r, schema) in reach.iter_mut().zip(Schema::ALL) {
+            *r = per
+                .iter()
+                .flatten()
+                .filter(|k| k.schema == schema)
+                .map(|k| k.list.len())
+                .max()
+                .unwrap_or(0);
+            let Some(shape) = per.iter().flatten().find(|k| k.schema == schema) else {
+                continue;
+            };
+            for i in 0..*r {
+                let label = schema.index_name(shape.width, i);
+                if !labels.contains(&label) {
+                    labels.push(label);
+                }
+            }
+        }
+        for label in labels {
             rows.push(CounterRow {
-                label: format!("{}[{}]", key.name(), index_name(width, i)),
+                label: format!("{}[{label}]", def.name),
                 gauge,
-                per_boot: lists
+                per_boot: per
                     .iter()
-                    .map(|l| l.as_ref().map(|v| v.get(i).copied().unwrap_or(0)))
+                    .map(|k| {
+                        let k = k.as_ref()?;
+                        let slot = Schema::ALL.iter().position(|&s| s == k.schema)?;
+                        k.at_label(&label, *reach.get(slot)?)
+                    })
                     .collect(),
             });
         }
@@ -625,17 +684,24 @@ fn counter_rows(boots: &[Option<&V1>]) -> Vec<CounterRow> {
 }
 
 /// A table of tripwire counters with one column per group of boots, or
-/// `None` when no boot has a `v=1` line. `boots` gives each boot's column
-/// (an index into `columns`) and its `v=1` line. The rows: the boots per
-/// column, those with a `v=1` line, then one row per counter value that is
-/// non-zero in some boot. A cell is "boots with a non-zero value / sum over
-/// the column's boots", or "/ max" for a gauge.
-pub fn counter_table(columns: &[String], boots: &[(usize, Option<&V1>)]) -> Option<Vec<u8>> {
-    if boots.iter().all(|(_, v1)| v1.is_none()) {
+/// `None` when no boot has a decoded line. `boots` gives each boot's column
+/// (an index into `columns`) and its decoded `v=1` or `v=2` line. The rows:
+/// the boots per column, those with a decoded line (named by the versions
+/// present, "a `v=1` line", "a `v=1` or `v=2` line"), then one row per counter
+/// value that is non-zero in some boot, joined across versions by key and
+/// index name ([`counter_rows`]). A cell is "boots with a non-zero value /
+/// sum over the column's boots", or "/ max" for a gauge.
+pub fn counter_table(columns: &[String], boots: &[(usize, Option<&Decoded>)]) -> Option<Vec<u8>> {
+    if boots.iter().all(|(_, d)| d.is_none()) {
         return None;
     }
+    let versions: Vec<String> = Schema::ALL
+        .into_iter()
+        .filter(|&s| boots.iter().any(|(_, d)| d.is_some_and(|d| d.schema == s)))
+        .map(|s| format!("`v={}`", s.version()))
+        .collect();
     let line = |label: &str, cells: Vec<String>| format!("| {label} | {} |\n", cells.join(" | "));
-    // Each column's boots, all of them or those with a `v=1` line.
+    // Each column's boots, all of them or those with a decoded line.
     let per_column = |with_line: bool| -> Vec<String> {
         (0..columns.len())
             .map(|col| {
@@ -650,8 +716,9 @@ pub fn counter_table(columns: &[String], boots: &[(usize, Option<&V1>)]) -> Opti
     let mut md = line("Counter", columns.to_vec()).into_bytes();
     md.extend(format!("|---|{}\n", "---:|".repeat(columns.len())).into_bytes());
     md.extend(line("Boots", per_column(false)).into_bytes());
-    md.extend(line("Boots with a `v=1` line", per_column(true)).into_bytes());
-    let lines: Vec<Option<&V1>> = boots.iter().map(|&(_, v1)| v1).collect();
+    let with_line = format!("Boots with a {} line", versions.join(" or "));
+    md.extend(line(&with_line, per_column(true)).into_bytes());
+    let lines: Vec<Option<&Decoded>> = boots.iter().map(|&(_, d)| d).collect();
     for row in counter_rows(&lines) {
         if !row.per_boot.iter().any(|v| v.is_some_and(|v| v > 0)) {
             continue;
@@ -698,15 +765,15 @@ pub fn tripwire_table(tally: &Tally) -> Vec<u8> {
         .filter(|&c| tally.count(c) > 0)
         .collect();
     let names: Vec<String> = classes.iter().map(|c| c.name().to_string()).collect();
-    let boots: Vec<(usize, Option<&V1>)> = tally
+    let boots: Vec<(usize, Option<&Decoded>)> = tally
         .tripwire
         .iter()
-        .map(|(class, v1)| {
+        .map(|(class, decoded)| {
             let col = classes
                 .iter()
                 .position(|c| c == class)
                 .expect("every counted class has a column");
-            (col, v1.as_ref())
+            (col, decoded.as_ref())
         })
         .collect();
     match counter_table(&names, &boots) {
@@ -938,8 +1005,13 @@ mod tests {
     /// A complete `v=1` tripwire line with the prefix and the `key=value`
     /// tokens `keys`.
     fn tw(src: &str, keys: &str) -> String {
+        tw_v(1, src, keys)
+    }
+
+    /// The same with schema version `v`.
+    fn tw_v(v: u64, src: &str, keys: &str) -> String {
         let n = 5 + keys.split_whitespace().count();
-        format!("[tripwire] v=1 src={src} cpu=0 t=5000 ncpu=4 {keys} n={n}")
+        format!("[tripwire] v={v} src={src} cpu=0 t=5000 ncpu=4 {keys} n={n}")
     }
 
     /// `base` with the log lines `lines` observed, as the classifier's scan does.
@@ -977,7 +1049,8 @@ mod tests {
              reentry_ctx\treentry_holder_irqs\tev_ph\tev_self\tev_self_irq\tev_stuck\ttw_v\ttw_src\t\
              tw_cpu\ttw_t\ttw_ncpu\ttw_tick\ttw_irqsw\t"
         ));
-        assert!(header.ends_with("\ttw_twmax\tg1_elrmm\tg1_line\ttw_line\n"));
+        assert!(header
+            .ends_with("\ttw_twmax\ttw_ubtok\ttw_ubpend\ttw_bw\tg1_elrmm\tg1_line\ttw_line\n"));
 
         let row = text(tsv_row("07", "text", &c(WEDGE), &timing(), "run-07.log"));
         let without_tripwire = "-\t".repeat(5 + Key::COUNT + 3);
@@ -1077,43 +1150,67 @@ mod tests {
 
     #[test]
     fn another_schema_version_fills_tw_v_and_tw_line_only() {
-        let v2 = "[tripwire] v=2 src=hb\tcpu=0 t=5000 ncpu=4 newkey=7 n=6";
-        let w = with_lines(c(WEDGE), &[tw("g1", "twc=1 twn=1 twmax=1"), v2.to_string()]);
+        let other = "[tripwire] v=99 src=hb\tcpu=0 t=5000 ncpu=4 newkey=7 n=6";
+        let w = with_lines(
+            c(WEDGE),
+            &[tw("g1", "twc=1 twn=1 twmax=1"), other.to_string()],
+        );
         let row = text(tsv_row("07", "text", &w, &timing(), "run-07.log"));
         assert_eq!(
             row.split('\t').count(),
             TSV_COLUMNS,
             "a tab in a line stays inside its cell"
         );
-        assert_eq!(cell(&row, "tw_v"), "2");
+        assert_eq!(cell(&row, "tw_v"), "99");
         for &key in &Key::ALL {
             assert_eq!(cell(&row, &format!("tw_{}", key.name())), "-");
         }
         for name in ["tw_src", "tw_cpu", "tw_t", "tw_ncpu"] {
             assert_eq!(cell(&row, name), "-", "{name}");
         }
-        assert_eq!(cell(&row, "tw_line"), v2.replace('\t', " "));
+        assert_eq!(cell(&row, "tw_line"), other.replace('\t', " "));
         // The g1 line is v=1, with no `elrmm`: 0.
         assert_eq!(cell(&row, "g1_elrmm"), "0");
-        assert_eq!(text(md_row("07", &w)).split(" | ").nth(6), Some("v=2"));
+        assert_eq!(text(md_row("07", &w)).split(" | ").nth(6), Some("v=99"));
         assert_eq!(text(md_row("07", &c(WEDGE))).split(" | ").nth(6), Some("-"));
     }
 
     #[test]
-    fn index_names_come_from_shared() {
-        for (i, class) in SCHEDULER_CLASSES.iter().enumerate() {
-            assert_eq!(*class as usize, i, "{class:?}");
+    fn a_v2_line_fills_the_same_columns_as_a_v1_line() {
+        let v1 = with_lines(
+            c(WEDGE),
+            &[tw(
+                "hb",
+                "elrmm=1,0,0,0 ubrun=0,0,0,0,0,0,0,0,0,0,0,0,0,0,7 twc=9",
+            )],
+        );
+        let v2 = with_lines(
+            c(WEDGE),
+            &[tw_v(
+                2,
+                "hb",
+                "elrmm=1,0,0,0 ubrun=0,0,0,0,0,0,0,0,0,0,7,0 twc=9",
+            )],
+        );
+        let (a, b) = (
+            text(tsv_row("01", "text", &v1, &timing(), "a.log")),
+            text(tsv_row("01", "text", &v2, &timing(), "a.log")),
+        );
+        assert_eq!(a.split('\t').count(), TSV_COLUMNS);
+        assert_eq!(b.split('\t').count(), TSV_COLUMNS);
+        assert_eq!((cell(&a, "tw_v"), cell(&b, "tw_v")), ("1", "2"));
+        for name in [
+            "tw_src", "tw_cpu", "tw_t", "tw_ncpu", "tw_elrmm", "tw_twc", "tw_bw",
+        ] {
+            assert_eq!(cell(&a, name), cell(&b, name), "{name}");
         }
-        assert_eq!(index_name(Width::Cpu, 3), "CPU 3");
-        assert_eq!(index_name(Width::Source, 1), "reply");
-        assert_eq!(index_name(Width::Source, 14), "cancel");
-        assert_eq!(index_name(Width::Lock, 0), "THREAD_TABLE");
-        assert_eq!(index_name(Width::Lock, 3), "WAKEUP_ERRORS");
-        assert_eq!(index_name(Width::Class, 1), "Normal");
-        assert_eq!(index_name(Width::N2, 1), "rblk");
-        assert_eq!(index_name(Width::Badchan, 2), "slot");
-        // Past the end of a set (a later kernel), the bare number.
-        assert_eq!(index_name(Width::Badchan, 3), "3");
+        // The per-source values are each version's own list as printed.
+        assert_eq!(cell(&a, "tw_ubrun"), "0,0,0,0,0,0,0,0,0,0,0,0,0,0,7");
+        assert_eq!(cell(&b, "tw_ubrun"), "0,0,0,0,0,0,0,0,0,0,7,0");
+        // No `src=g1` line in either.
+        assert_eq!((cell(&a, "g1_elrmm"), cell(&b, "g1_elrmm")), ("-", "-"));
+        assert_eq!(text(md_row("01", &v1)).split(" | ").nth(6), Some("hb"));
+        assert_eq!(text(md_row("01", &v2)).split(" | ").nth(6), Some("hb"));
     }
 
     #[test]
@@ -1174,7 +1271,7 @@ mod tests {
             of_class("INCONCLUSIVE"),
             with_lines(
                 of_class("PANIC-LOCK"),
-                &["[tripwire] v=2 src=panic elrmm=7 n=3".to_string()],
+                &["[tripwire] v=99 src=panic elrmm=7 n=3".to_string()],
             ),
         ];
         assert_eq!(
@@ -1205,6 +1302,95 @@ mod tests {
             text(tripwire_table(&tally(&[of_class("CLEAN")]))),
             "\n### Tripwire counters by class\n\nNo boot has a complete `v=1` tripwire line.\n"
         );
+    }
+
+    fn decoded(line: &str) -> Decoded {
+        crate::cmd::soak::tripwire::parse_line(line.as_bytes())
+            .expect("complete")
+            .decoded
+            .expect("decoded")
+    }
+
+    #[test]
+    fn a_table_joins_v1_and_v2_boots_by_key_and_index_name() {
+        // `cancel` is source 14 of 16 in v=1 and 10 of 12 in v=2; BOOT_LOG is
+        // lock 8 of 9 and 7 of 8; `selcall` and SELECT_WAITERS are v=1 only.
+        let a = decoded(&tw_v(
+            1,
+            "hb",
+            "ubrun=0,0,0,2,0,0,0,0,0,0,0,0,0,0,7 lkph=0,0,0,0,0,0,0,1,5 twc=1",
+        ));
+        let b = decoded(&tw_v(
+            2,
+            "hb",
+            "ubrun=0,0,0,0,0,0,0,0,0,0,4,3 lkph=0,0,0,0,0,0,0,6 twc=1",
+        ));
+        let cols = vec!["A".to_string(), "B".to_string()];
+        assert_eq!(
+            text(counter_table(&cols, &[(0, Some(&a)), (1, Some(&b))]).expect("a table")),
+            "| Counter | A | B |\n\
+             |---|---:|---:|\n\
+             | Boots | 1 | 1 |\n\
+             | Boots with a `v=1` or `v=2` line | 1 | 1 |\n\
+             | `ubrun[selcall]` | 1/2 | 0/0 |\n\
+             | `ubrun[cancel]` | 1/7 | 1/4 |\n\
+             | `ubrun[selftest]` | 0/0 | 1/3 |\n\
+             | `lkph[SELECT_WAITERS]` | 1/1 | 0/0 |\n\
+             | `lkph[BOOT_LOG]` | 1/5 | 1/6 |\n\
+             | `twc` | 1/1 | 1/1 |\n"
+        );
+        // The order of the boots does not change the rows' labels or cells.
+        let swapped = text(counter_table(&cols, &[(1, Some(&b)), (0, Some(&a))]).expect("a table"));
+        assert!(
+            swapped.contains("| `ubrun[cancel]` | 1/7 | 1/4 |\n"),
+            "{swapped}"
+        );
+        assert!(
+            swapped.contains("| `lkph[BOOT_LOG]` | 1/5 | 1/6 |\n"),
+            "{swapped}"
+        );
+        // One version alone names itself.
+        let only_v2 = text(counter_table(&cols[..1], &[(0, Some(&b))]).expect("a table"));
+        assert!(
+            only_v2.contains("| Boots with a `v=2` line | 1 |\n"),
+            "{only_v2}"
+        );
+        assert!(
+            only_v2.contains("| `ubrun[selftest]` | 1/3 |\n"),
+            "{only_v2}"
+        );
+        assert!(!only_v2.contains("selcall"), "{only_v2}");
+    }
+
+    #[test]
+    fn an_older_v1_boot_without_the_late_indices_reads_them_as_0_beside_a_v2_boot() {
+        // 15-wide sources (no `selftest`) and no `ubtok`: they read 0 and
+        // make no row of their own.
+        let a = decoded(&tw_v(1, "hb", "ubrun=0,0,0,0,0,0,0,0,0,0,0,0,0,0,7"));
+        let b = decoded(&tw_v(
+            2,
+            "hb",
+            "ubrun=0,0,0,0,0,0,0,0,0,0,0,0 ubtok=0,0,0,0,0,0,0,0,0,0,0,2",
+        ));
+        let cols = vec!["main".to_string(), "branch".to_string()];
+        let table = text(counter_table(&cols, &[(0, Some(&a)), (1, Some(&b))]).expect("a table"));
+        assert!(
+            table.contains("| `ubrun[cancel]` | 1/7 | 0/0 |\n"),
+            "{table}"
+        );
+        assert!(
+            table.contains("| `ubtok[selftest]` | 0/0 | 1/2 |\n"),
+            "{table}"
+        );
+    }
+
+    #[test]
+    fn a_table_of_lines_of_an_unknown_version_is_none() {
+        let line = crate::cmd::soak::tripwire::parse_line(tw_v(99, "hb", "twc=1").as_bytes())
+            .expect("complete");
+        assert_eq!(line.decoded, None);
+        let cols = vec!["A".to_string()];
+        assert_eq!(counter_table(&cols, &[(0, None)]), None);
     }
 
     #[test]

@@ -165,7 +165,7 @@ fn sys_time_sleep(tf: &TrapFrame) -> i64 {
 /// pointer in `REPLY_SLOTS`, so that pointer must be a kernel address.
 fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let send_ptr = tf.x[1] as usize;
@@ -207,7 +207,7 @@ fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
 /// IpcSend (nr=1): x0=channel, x1=send_ptr, x2=send_len.
 fn sys_ipc_send(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let send_ptr = tf.x[1] as usize;
@@ -234,7 +234,7 @@ fn sys_ipc_send(tf: &TrapFrame) -> i64 {
 /// `CHANNEL_TABLE`.
 fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let recv_ptr = tf.x[1] as usize;
@@ -264,7 +264,7 @@ fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
 /// IpcReply (nr=3): x0=channel, x1=reply_ptr, x2=reply_len.
 fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     let reply_ptr = tf.x[1] as usize;
@@ -285,20 +285,25 @@ fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
 /// IpcCancel (nr=4): x0=channel.
 fn sys_ipc_cancel(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     crate::ipc::ipc_cancel(channel)
 }
 
-/// ChannelCreate (nr=6): returns channel_id in x0.
-fn sys_channel_create(_tf: &TrapFrame) -> i64 {
+/// ChannelCreate (nr=6): returns the channel id in x0 (a zero-extended
+/// `u32`) and, in x1, the handle of the `ChannelAccess(id)` token minted for
+/// the caller. On error x0 is the errno and x1 is not written.
+fn sys_channel_create(tf: &mut TrapFrame) -> i64 {
     let tid = match crate::ipc::current_thread_id() {
         Some(t) => t,
         None => return IpcError::Eperm as i64,
     };
     match crate::ipc::channel_create(tid) {
-        Ok(ch) => ch.0 as i64,
+        Ok((ch, handle)) => {
+            tf.x[1] = u64::from(handle.0);
+            i64::from(ch.raw())
+        }
         Err(e) => e,
     }
 }
@@ -306,7 +311,7 @@ fn sys_channel_create(_tf: &TrapFrame) -> i64 {
 /// ChannelDestroy (nr=7): x0=channel_id.
 fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
-        Ok(id) => crate::ipc::ChannelId(id),
+        Ok(id) => crate::ipc::ChannelId::from_raw(id),
         Err(e) => return e,
     };
     match crate::ipc::channel_destroy(channel) {
@@ -329,12 +334,15 @@ fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
 
 /// CapabilityAttenuate (nr=15): x0=cap_handle, x1=new_cap_type, x2=new_expiry, x3=resource_id.
 ///
-/// Create a narrower child capability from an existing one.
+/// Create a child capability from an existing one. Attenuation is identity
+/// only: types 1 and 3 work from an Access token for the same full id, never
+/// from a Create token.
 /// x3 is required when new_cap_type is ChannelAccess(1) or SharedMemoryAccess(3).
+/// x2 = 0 requests no expiry, which gives the child the parent's expiry.
 /// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, an unknown
 /// new_cap_type or an x3 that does not fit in u32; EPERM for an in-range
-/// handle whose slot is empty or revoked, or a type the parent cannot
-/// attenuate to.
+/// handle whose slot is empty or revoked, a parent that has expired, a type
+/// the parent cannot attenuate to, or an expiry later than the parent's.
 fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     let handle = match cap_handle_arg(tf.x[0]) {
         Ok(h) => h,
@@ -354,12 +362,12 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     let new_cap = match new_cap_type {
         0 => shared::Capability::ChannelCreate,
         1 => match id_arg(tf.x[3]) {
-            Ok(id) => shared::Capability::ChannelAccess(shared::ChannelId(id)),
+            Ok(id) => shared::Capability::ChannelAccess(shared::ChannelId::from_raw(id)),
             Err(e) => return e,
         },
         2 => shared::Capability::SharedMemoryCreate,
         3 => match id_arg(tf.x[3]) {
-            Ok(id) => shared::Capability::SharedMemoryAccess(id),
+            Ok(id) => shared::Capability::SharedMemoryAccess(shared::SharedMemoryId::from_raw(id)),
             Err(e) => return e,
         },
         4 => shared::Capability::SpawnAgent,
@@ -376,9 +384,10 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     };
 
     let new_id = crate::cap::new_token_id();
+    let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     match proc
         .cap_table
-        .attenuate(handle, new_cap, new_expiry, pid, new_id)
+        .attenuate(handle, new_cap, new_expiry, pid, new_id, now)
     {
         Ok(h) => h.0 as i64,
         Err(e) => e,
@@ -387,8 +396,12 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
 
 /// CapabilityRevoke (nr=16): x0=cap_handle.
 ///
-/// Revoke a capability and cascade to all children. Destroys channels
-/// created under the revoked capability.
+/// Revoke a capability and its same-table descendants, then destroy every
+/// shared memory region and channel the caller created under a token that
+/// is now revoked (`cap::revoke_in_process`: the region cascade, then the
+/// channel cascade). A destroyed channel's blocked threads are woken with
+/// EPIPE; a destroyed region is unmapped from every process that maps it,
+/// and a later map or unmap of it fails with EPIPE.
 ///
 /// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, a slot no process
 /// has; EPERM for an in-range handle whose slot is empty or revoked.
@@ -523,7 +536,11 @@ fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
 /// EXECUTE only, EINVAL for any other bit (USER included). `size` is passed
 /// through unchanged; `shmem::shared_memory_create` bounds it (EINVAL above
 /// 4 MiB, ipc.md §4.7).
-fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
+///
+/// Returns the region id in x0 and, in x1, the handle of the
+/// `SharedMemoryAccess(id)` token minted for the caller. On error x0 is the
+/// errno and x1 is not written.
+fn sys_shared_memory_create(tf: &mut TrapFrame) -> i64 {
     let size = tf.x[0] as usize;
     let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
         Ok(f) => f,
@@ -536,7 +553,10 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
     };
 
     match crate::ipc::shmem::shared_memory_create(pid, size, flags) {
-        Ok(id) => id.0 as i64,
+        Ok((id, handle)) => {
+            tf.x[1] = u64::from(handle.0);
+            i64::from(id.raw())
+        }
         Err(e) => e,
     }
 }
@@ -548,7 +568,7 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
 /// EINVAL for any other bit (USER included).
 fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
     let region_id = match id_arg(tf.x[0]) {
-        Ok(id) => shared::SharedMemoryId(id),
+        Ok(id) => shared::SharedMemoryId::from_raw(id),
         Err(e) => return e,
     };
     let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
@@ -569,10 +589,12 @@ fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
 
 /// SharedMemoryShare (nr=22): x0=region_id, x1=target_pid.
 ///
-/// Share a region with another process by granting capability.
+/// Share a region by delegation: the target gets a non-delegatable child of
+/// the caller's SharedMemoryAccess token (`shmem::shared_memory_share`). A
+/// repeat share or a self-share returns 0 and grants nothing.
 fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
     let region_id = match id_arg(tf.x[0]) {
-        Ok(id) => shared::SharedMemoryId(id),
+        Ok(id) => shared::SharedMemoryId::from_raw(id),
         Err(e) => return e,
     };
     let target_pid = match id_arg(tf.x[1]) {
@@ -676,7 +698,7 @@ fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
     }
 
     let mut entries = [SelectEntry {
-        kind: SelectKind::Channel(shared::ChannelId(0)),
+        kind: SelectKind::Channel(shared::ChannelId::from_raw(0)),
     }; MAX_SELECT_ENTRIES];
     // wire_len is a whole number of entries, so there is no remainder.
     let (chunks, _) = wire[..wire_len].as_chunks::<{ RawSelectEntry::SIZE }>();
@@ -703,34 +725,49 @@ fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
 
 /// ProcessExit (nr=24): x0=exit_code.
 ///
-/// Exit the current process. Cleans up all threads, channels, and
-/// notifies the service manager.
+/// Exit the caller's own process (`process_exit`, steps A–E), then end the
+/// calling thread with `sched::exit_current()`: on success it does not
+/// return. The tid and pid come from `sched::current_thread_and_pid()`, one
+/// IRQ-masked read. EPERM in x0 when the thread has no process, and any
+/// `process_exit` error is returned with the thread still running, so pid
+/// 0's threads, which `process_exit` refuses, get EPERM rather than being
+/// killed.
 fn sys_process_exit(tf: &TrapFrame) -> i64 {
     let exit_code = tf.x[0] as i32;
 
-    let pid = match crate::cap::current_process_id() {
-        Some(p) => p,
-        None => return IpcError::Eperm as i64,
+    let Some((_, pid)) = crate::sched::current_thread_and_pid() else {
+        return IpcError::Eperm as i64;
     };
 
-    crate::task::process::process_exit(pid, exit_code);
-    0
+    match crate::task::process::process_exit(pid, exit_code) {
+        Ok(()) => crate::sched::exit_current(),
+        Err(e) => e,
+    }
 }
 
 /// ProcessWait (nr=25): x0=child_pid.
 ///
-/// Block until a child process exits, return its exit code.
-fn sys_process_wait(tf: &TrapFrame) -> i64 {
+/// Block until the caller's child `child_pid` has exited, then reap it:
+/// x0 = 0 and x1 = the exit code, sign-extended. On an error x0 is the errno
+/// and x1 is not written (EINVAL for a pid out of range; EPERM for no such
+/// child, a child that is not the caller's, or a caller with no process;
+/// EEXIST when another thread already waits on the child). The caller's tid
+/// and pid come from `sched::current_thread_and_pid()`, one IRQ-masked read,
+/// so the tid the wait arms is the caller's own (the own-tid rule of
+/// `wake::prepare_block`).
+fn sys_process_wait(tf: &mut TrapFrame) -> i64 {
     let child_pid = match id_arg(tf.x[0]) {
         Ok(pid) => shared::ProcessId(pid),
         Err(e) => return e,
     };
-    let tid = match crate::ipc::current_thread_id() {
-        Some(t) => t,
-        None => return IpcError::Eperm as i64,
+    let Some((tid, pid)) = crate::sched::current_thread_and_pid() else {
+        return IpcError::Eperm as i64;
     };
-    match crate::task::process::process_wait(tid, child_pid) {
-        Ok(code) => code as i64,
+    match crate::task::process::process_wait(tid, pid, child_pid) {
+        Ok(code) => {
+            tf.x[1] = i64::from(code) as u64;
+            0
+        }
         Err(e) => e,
     }
 }

@@ -19,12 +19,14 @@
 //!   is shown with U+FFFD for its invalid bytes.
 
 pub mod awk;
+pub mod catalogue;
 pub mod classify;
 pub mod host;
 pub mod interleave;
 pub mod pair;
 pub mod report;
 pub mod runner;
+pub mod schema_v1;
 pub mod signals;
 pub mod stats;
 pub mod tripwire;

@@ -28,7 +28,7 @@ use anyhow::{bail, Result};
 use super::classify::{Base, Class, Classification};
 use super::report::{self, BootTiming};
 use super::stats::{fisher_high, fisher_low, fisher_two};
-use super::tripwire::V1;
+use super::tripwire::Decoded;
 
 /// The significance level of the regression guard and the markers.
 pub const ALPHA: f64 = 0.05;
@@ -62,8 +62,8 @@ pub struct Boot {
     pub g1pass: bool,
     /// Whether the boot printed a complete tripwire line, of any version.
     pub has_line: bool,
-    /// The last complete tripwire line's fields, when that line is `v=1`.
-    pub v1: Option<V1>,
+    /// The last complete tripwire line's fields, when that line is `v=1` or `v=2`.
+    pub decoded: Option<Decoded>,
     /// The first fatal line or the detail ([`report::boot_text`]).
     pub text: Vec<u8>,
     /// The last complete line's `src` ([`report::tripwire_src`]).
@@ -84,7 +84,7 @@ impl Boot {
             ipc_avg_us: c.ipc.avg_us,
             g1pass: c.markers.split(|&b| b == b',').any(|m| m == b"G1PASS"),
             has_line: c.tripwire.last.is_some(),
-            v1: c.tripwire.last.as_ref().and_then(|l| l.v1.clone()),
+            decoded: c.tripwire.last.as_ref().and_then(|l| l.decoded.clone()),
             text: report::boot_text(c),
             tw_src: report::tripwire_src(c.tripwire.last.as_ref()),
             log,
@@ -517,7 +517,8 @@ fn tripwire_section(labels: &[&str], boots: &[Boot]) -> Vec<u8> {
     }
     md.extend(format!("\n{UNEXPLAINED_NOTE}\n\n").into_bytes());
     let columns: Vec<String> = labels.iter().map(|l| l.to_string()).collect();
-    let lines: Vec<(usize, Option<&V1>)> = boots.iter().map(|b| (b.arm, b.v1.as_ref())).collect();
+    let lines: Vec<(usize, Option<&Decoded>)> =
+        boots.iter().map(|b| (b.arm, b.decoded.as_ref())).collect();
     match report::counter_table(&columns, &lines) {
         None => md.extend_from_slice(b"No boot has a complete `v=1` tripwire line.\n"),
         Some(table) => {
@@ -629,7 +630,7 @@ mod tests {
             ipc_avg_us: (class == Class::Clean).then_some(6),
             g1pass: class == Class::Clean,
             has_line: false,
-            v1: None,
+            decoded: None,
             text: if fatal {
                 b"PANIC: x".to_vec()
             } else {

@@ -123,7 +123,7 @@ fn compositor_loop() -> ! {
         crate::sched::thread_yield();
     };
 
-    crate::kinfo!(Compositor, "Compositor: started, channel={}", ch.0);
+    crate::kinfo!(Compositor, "Compositor: started, channel={}", ch);
 
     let display = virtio_gpu::display_info().unwrap_or_else(DisplayInfo::default);
     let mut state = CompositorState::new(ch, display);
@@ -183,18 +183,8 @@ fn compositor_loop() -> ! {
         present_frame_if_due(&mut state);
     }
 
-    // Mark ourselves dead and yield forever (matches GPU Service exit path).
-    let cpu = crate::arch::aarch64::exceptions::core_id() as usize;
-    let my_tid = { *crate::task::CURRENT_THREAD[cpu].lock() };
-    if let Some(tid) = my_tid {
-        let mut table = crate::task::THREAD_TABLE.lock();
-        if let Some(thread) = &mut table[tid.0 as usize] {
-            thread.sched.state = crate::task::ThreadState::Dead;
-        }
-    }
-    loop {
-        crate::sched::thread_yield();
-    }
+    // The channel is gone: end this thread.
+    crate::sched::exit_current()
 }
 
 // ---------------------------------------------------------------------------
@@ -548,31 +538,25 @@ pub static COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// Lock ordering (M25 chain — extends the M24 invariant with the
 /// window-manager mutexes):
 /// `PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE >
-/// CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > WINDOW_Z_ORDER >
-/// DRAG_STATE > SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`.
+/// CHANNEL_TABLE > BLOCK_ENGINE > WINDOW_Z_ORDER > DRAG_STATE >
+/// SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`.
 /// `FOCUS_MANAGER`, `CURSOR_POS`, and `TITLE_FONT` are leaf-independent
 /// (alongside `INPUT_QUEUE` / `PENDING_POINTER`) — never co-held with
 /// `SURFACE_TABLE` or any of the chain rungs above. Each declaration
 /// site documents its position with a `// Lock ordering:` comment.
 pub fn init_compositor() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
+    use crate::task::process::{process_install, KernelResourceLimits};
     use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 
     // --- Create Process 10: compositor ---
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..10].copy_from_slice(b"compositor");
-        procs[10] = Some(ProcessControl {
-            pid: ProcessId(10),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(10),
+        None,
+        b"compositor",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 10 install");
 
     // Grant capabilities to the compositor process.
     let _ = cap::grant_to_process(ProcessId(10), shared::Capability::ChannelCreate, true);
@@ -631,7 +615,7 @@ pub fn init_compositor() {
     crate::kinfo!(
         Compositor,
         "Compositor service initialized (pid=10, ch={})",
-        ch.0
+        ch
     );
 }
 
@@ -791,10 +775,33 @@ fn handle_create_surface(
     }
 }
 
+/// Attach the client's region `req.shmem_id` to its surface. The region id
+/// comes from the client's message and ids are not secret, so the client
+/// must hold a live SharedMemoryAccess for it and the region must exist
+/// (`cap::check_shared_memory_access`, capability-lifetime ADR §4) before
+/// the surface records it; on EPERM, EPIPE or EINVAL the reply is the
+/// zeroed error event. Called with no compositor lock held: the check takes
+/// PROCESS_TABLE, which ranks above every compositor mutex.
+///
+/// An EPERM refusal is not logged here: the check itself logs `denied
+/// SharedMemoryAccess` for a missing token. EPIPE and EINVAL are.
 fn handle_attach_buffer(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
     let id = SurfaceId(req.surface_id);
     let damage = req.decode_damage();
-    let shmem = SharedMemoryId(req.shmem_id);
+    let shmem = SharedMemoryId::from_raw(req.shmem_id);
+    if let Err(code) = crate::cap::check_shared_memory_access(owner_pid, shmem) {
+        if code != crate::syscall::IpcError::Eperm as i64 {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: AttachBuffer surface={} pid={} region={} refused: {}",
+                id.0,
+                owner_pid.0,
+                shmem,
+                code
+            );
+        }
+        return CompositorEvent::zeroed();
+    }
     match surface::surface_attach_buffer(id, shmem, damage, owner_pid) {
         Ok(()) => CompositorEvent::buffer_released(id, shmem),
         Err(e) => {
