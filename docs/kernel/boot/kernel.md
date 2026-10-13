@@ -80,7 +80,7 @@ Scheduler          RUN_QUEUES: [IrqSpinLock<RunQueue>; MAX_CORES] sched/mod.rs
                    THREAD_TABLE: IrqSpinLock<[Option<Thread>; MAX_THREADS]> task/mod.rs
 IPC channels       CHANNEL_TABLE: Mutex<[ChannelSlot]>       ipc/mod.rs
 Capabilities       (per-process CapabilityTable)             cap/mod.rs
-Processes          PROCESS_TABLE: Mutex<[Option<ProcessControl>]> task/process.rs
+Processes          PROCESS_TABLE: Mutex<[ProcessControl; MAX_PROCESSES]> task/process.rs
 Services           SERVICE_MANAGER: Mutex<ServiceManager>    service/mod.rs
 ```
 

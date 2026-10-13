@@ -94,9 +94,9 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 **Code evidence** for the ordering:
 
-- `shmem.rs:19` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
+- `shmem.rs:20` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
 - `cap/mod.rs:86-87` (`create_with_access`) — *"It nests `CHANNEL_TABLE` or `SHARED_REGION_TABLE` under `PROCESS_TABLE` (both allowed edges), never takes `PROCESS_TABLE`"*.
-- `shmem.rs:740-742` (`shared_memory_share`) — *"Everything after step 1 runs in one `PROCESS_TABLE` hold with `SHARED_REGION_TABLE` nested (an allowed edge), the grant included (`cap::mint_share_token`, on the held table)"*. `shared_memory_map` (`insert_mapping`) and `shared_memory_destroy` take the same pair.
+- `shmem.rs:742-744` (`shared_memory_share`) — *"Everything after step 1 runs in one `PROCESS_TABLE` hold with `SHARED_REGION_TABLE` nested (an allowed edge), the grant included (`cap::mint_share_token`, on the held table)"*. `shared_memory_map` (`insert_mapping`) and `shared_memory_destroy` take the same pair.
 - `process.rs:341-342` (`exit_channels`, exit step C) — *"Release CHANNEL_TABLE before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler locks)."*
 - `process.rs:257` (`process_exit`) — *"**E** (`PROCESS_TABLE → PROCESS_WAITERS`)"*; `process_install` and `wait_step` take the same pair, and `PROCESS_WAITERS` is never held across `unblock`.
 - `notify.rs:116-117` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
