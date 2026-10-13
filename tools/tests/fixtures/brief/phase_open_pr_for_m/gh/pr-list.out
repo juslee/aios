@@ -1,0 +1,1 @@
+[{"author":{"login":"alice"},"headRefName":"claude/phase-9-m41","isDraft":false,"labels":[{"name":"team-build"}],"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","number":7,"reviewDecision":"","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"SUCCESS","name":"Build","status":"COMPLETED","workflowName":"CI"}],"title":"Phase 9 M41: Step 3 - alpha"}]

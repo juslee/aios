@@ -170,7 +170,7 @@ impl Check for MilestoneStatus {
                 let Some(&(lo, hi)) = sections.get(num) else {
                     continue;
                 };
-                // "- [ ] ~~task~~ — deferred to MK" is closed here, as in brief.sh.
+                // "- [ ] ~~task~~ — deferred to MK" is closed here, as in `aios brief`'s phase section.
                 let unchecked: Vec<usize> = (lo..=hi)
                     .filter(|&n| n >= 1 && lines.get(n - 1).copied().is_some_and(is_unchecked_task))
                     .collect();

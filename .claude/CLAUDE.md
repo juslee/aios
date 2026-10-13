@@ -284,9 +284,9 @@ Two attended lead sessions split by domain, `team-build` (harness, tools, CI, fe
 | Skill | Trigger | Purpose |
 | --- | --- | --- |
 | `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action |
-| `/justin:brief` | Where the project stands | Deterministic brief (`scripts/agent/brief.sh`): git, PRs + merge-ready, CI, soak, handoff, needs-human, next step, docs drift |
+| `/justin:brief` | Where the project stands | Deterministic brief (`aios brief`): git, PRs + merge-ready, CI, soak, handoff, needs-human, next step, docs drift |
 | `/justin:doctor` | Docs/harness health check | Drift report from `just docs-check --all`, grouped by who fixes it; read-only (bare `/doctor` is Claude Code's own) |
-| `/justin:pause` | Before a break or `/clear` (user only) | Writes this session's `.remember/handoff-<key>.md` (`team-build`, `team-fix` or `solo-<name>`), then the WIP checkpoint (`scripts/agent/checkpoint.sh`) |
+| `/justin:pause` | Before a break or `/clear` (user only) | Writes this session's `.remember/handoff-<key>.md` (`team-build`, `team-fix` or `solo-<name>`), then the WIP checkpoint (`aios checkpoint`) |
 | `/justin:team <build\|fix>` | Team mode, in each lead (user only) | Makes the session the team-build or team-fix lead: checks the session, restores state from its handoff file and team labels, greets the peer, runs the loop |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |

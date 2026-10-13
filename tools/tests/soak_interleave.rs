@@ -22,7 +22,7 @@
 //!   row append; `a_head_that_moves_during_a_build_is_refused` covers an arm
 //!   checkout switched after the arm-base check.
 //! - `brief_lists_an_interleaved_run_once_and_never_as_main_soak` runs
-//!   `scripts/agent/brief.sh` on a fixture `target/soak/`.
+//!   `aios brief` on a fixture `target/soak/`.
 
 mod common;
 
@@ -665,6 +665,11 @@ fn put(root: &Path, rel: &str, text: &str, stamp: &str) {
 
 #[test]
 fn brief_lists_an_interleaved_run_once_and_never_as_main_soak() {
+    if common::agent::skip_brief_in_release(
+        "brief_lists_an_interleaved_run_once_and_never_as_main_soak",
+    ) {
+        return;
+    }
     let repo = TestRepo::with_files("brief-soak", &[("README", "x\n")]);
     let root = repo.path();
     git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -736,17 +741,30 @@ fn brief_lists_an_interleaved_run_once_and_never_as_main_soak() {
         .status()
         .expect("chmod");
     assert!(chmod.success());
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/agent/brief.sh");
+    // The Docs drift section runs this stub in place of `aios docs-check --json`, so no
+    // real docs-check runs over the fixture.
+    let docs_check = bin.join("docs-check-stub");
+    std::fs::write(
+        &docs_check,
+        "#!/bin/sh\necho '{\"summary\":{\"new\":0,\"total\":0,\"baselined\":0,\"resolved\":0}}'\n",
+    )
+    .expect("docs-check stub");
+    let chmod = Command::new("chmod")
+        .arg("755")
+        .arg(&docs_check)
+        .status()
+        .expect("chmod");
+    assert!(chmod.success());
     let mut path = bin.into_os_string();
     path.push(":/usr/bin:/bin:/usr/sbin:/sbin");
-    let mut cmd = Command::new("bash");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aios"));
     let out = isolated(&mut cmd)
-        .arg(&script)
-        .arg("--no-fetch")
+        .args(["brief", "--no-fetch"])
         .current_dir(root)
         .env("PATH", &path)
+        .env("AIOS_BRIEF_DOCS_CHECK", &docs_check)
         .output()
-        .expect("run brief.sh");
+        .expect("run aios brief");
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
         out.status.success(),

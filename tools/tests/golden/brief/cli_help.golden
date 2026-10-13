@@ -1,0 +1,45 @@
+== exit ==
+0
+== stdout ==
+aios brief - deterministic session briefing for /justin:brief (no LLM)
+
+Usage: aios brief [--no-fetch]
+
+Prints, as Markdown: git state (branch, dirty files, worktrees, unpushed commits),
+open PRs with check status and a merge-ready verdict, main CI, the newest soak of a
+main commit, the newest other soak and the newest interleaved (aios soak --arm) soak,
+the per-session handoff files (.remember/handoff-<key>.md), the host QEMU lock, the
+routing-log count, knowledge notes changed since the last session, open needs-human
+issues, the next unchecked step of the current phase doc, and a one-line docs-check
+summary.
+
+merge-ready is "yes" only for a non-draft PR with at least one check, every check
+passed, GitHub mergeable with merge state CLEAN, no changes requested, no unresolved
+review threads, no open needs-human issue naming it (#N in the issue title gates the PR;
+#N in the body also blocks it) and no needs-human label on the PR. When the gates or the
+review threads cannot be read, the PR is not merge-ready. The Docs check never fails on
+drift, so a failing Docs check counts like any other failing check; drift is reported in
+the Docs drift section, from a local docs-check run.
+
+Every section degrades to a one-line notice when git, gh or the network is unavailable.
+Text from GitHub (titles, branch names) is printed as data with control characters
+replaced; it is never executed.
+
+Side effects: `git fetch --prune origin` (skip with --no-fetch), a timestamp marker in
+the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief), and `aios docs-check --json`
+run as a child. GitHub is only read.
+
+Options:
+  --no-fetch    do not fetch origin first
+  -h, --help    print this text
+
+Exit status: 0 after a report; 2 on a usage error or outside a git repository.
+== stderr ==
+== gh calls ==
+(none)
+== docs calls ==
+(none)
+== marker touched ==
+no
+== remote refs ==
+0ec8ffe013e36fa997f8e2859be98370c7247fd9 commit	refs/remotes/origin/main

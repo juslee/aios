@@ -1,0 +1,19 @@
+== exit ==
+3
+== stdout ==
+checkpoint: claude/x @ 9018fde | wip: not committed (possible secret) | pushed: no (possible secret) | handoff: not recorded
+Stopped before committing: these look like secrets (the repository is public):
+  - certs/server.pem (file name)
+Nothing was committed or pushed and the index is as it was. Remove or gitignore them. If the user confirms a listed path is safe to publish, rerun with --allow <path> for each confirmed path, exactly as listed (/justin:pause asks first).
+== stderr ==
+== origin refs ==
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+add certs
+== index ==
+before 4eb5e9853d57260c110e98b2a79168d0271e27da
+after 4eb5e9853d57260c110e98b2a79168d0271e27da
+== upstream ==
+(none)
+== gh calls ==
+(none)

@@ -1,0 +1,65 @@
+== exit ==
+0
+== stdout ==
+# AIOS brief - <DATE>
+
+## Git
+
+- checkout: (main checkout) on `main` @ 0ec8ffe Initial
+- uncommitted: 0 file(s); 0 unpushed, 0 behind origin/main
+- origin/main @ 0ec8ffe Initial (<AGO>)
+- worktrees:
+  - (main checkout): `main`, 0 uncommitted, 0 unpushed, 0 behind origin/main
+
+## Open pull requests
+
+- GitHub unavailable: error connecting to api.github.com
+
+## Main CI
+
+- GitHub unavailable: error connecting to api.github.com
+
+## Soak
+
+- no soak results (no summary.* under target/soak/ in any worktree); run `just soak` on main
+
+## Host QEMU lock
+
+- free
+
+## Routing log
+
+- route-shadow records: 0; launched dispatches: 0 (the Jev evaluation needs 200; agent-loop.md, Model routing)
+
+## Handoffs
+
+- no handoff files in <ROOT>/.remember (written by /justin:pause)
+
+## Knowledge notes changed since last session
+
+- since 7 days ago (no handoff or marker yet): <DATE>
+- none
+
+## Needs human
+
+- GitHub unavailable: error connecting to api.github.com
+
+## Next phase-doc step
+
+- no phase doc in progress (all docs/phases/*.md are Complete)
+
+## Docs drift
+
+- docs-check: 0 new vs baseline, 3 total (3 baselined, of which 1 accepted false positives; 0 resolved)
+== stderr ==
+== gh calls ==
+1: api rate_limit --jq .resources.core.remaining
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+== docs calls ==
+docs-check --json
+docs-cwd <ROOT>
+== marker touched ==
+yes
+== remote refs ==
+0ec8ffe013e36fa997f8e2859be98370c7247fd9 commit	refs/remotes/origin/main

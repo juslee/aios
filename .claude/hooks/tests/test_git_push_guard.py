@@ -1469,8 +1469,8 @@ class TeamRuleAttacks(TeamCase):
     # -- main-thread safety ---------------------------------------------------------
 
     def test_main_thread_everyday_commands_stay_allowed(self):
-        with open(os.path.join(REAL_ROOT, "scripts", "agent", "brief.sh")) as fh:
-            self.write("scripts/agent/brief.sh", fh.read())
+        # brief and checkpoint are aios subcommands run through just recipes: the guard
+        # gives no decision, and the settings asks are the control for checkpoint.
         commands = ["just check", "just test", "just build", "just disk", "just docs-check",
                     "AIOS_TOOLS_BIN=target/tools/installed/aios just docs-check",
                     "just tools", "cargo build", "cargo build --target aarch64-unknown-none",
@@ -1479,12 +1479,12 @@ class TeamRuleAttacks(TeamCase):
                     "git status", "git log --oneline -5", "rg qemu", "rg -n 'pkill|qemu' .claude",
                     "pgrep qemu", "pgrep -fl qemu-system-aarch64", "ps aux | grep qemu",
                     "kill 1234", "kill -TERM 1234", "rustup show", "rustup toolchain list",
-                    "bash scripts/agent/brief.sh", "sh scripts/agent/brief.sh",
+                    "just brief", "just brief --no-fetch", "just checkpoint --handoff saved",
                     "scripts/agent/qemu-lock.sh status"]
         for team in ["", "team-build"]:
             for command in commands:
                 self.check("none", None, command, team=team)
-        for command in ["just check", "cargo +nightly fmt", "kill 1234", "bash scripts/agent/brief.sh"]:
+        for command in ["just check", "cargo +nightly fmt", "kill 1234", "just brief --no-fetch"]:
             self.check_hook("none", None, command)
 
     def test_main_thread_wrapper_in_a_linked_branch_worktree(self):

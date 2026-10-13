@@ -86,9 +86,15 @@
 #                     freshness test.
 #   aios <other> ...  fresh or dirty: run. stale: rebuild in the foreground,
 #                     then run (a failed rebuild prints a warning and runs the
-#                     stale binary instead). missing: build, then run; exit 3
-#                     naming `just tools` if the build fails. Exit 3 when the
-#                     shim cannot find its own directory or the main checkout.
+#                     stale binary instead, with AIOS_SHIM_STALE=1 exported to
+#                     it: brief prints its stale note from that; `aios
+#                     checkpoint` exits 3 naming `just tools` instead of
+#                     running it). Every other path clears AIOS_SHIM_STALE,
+#                     including a value inherited from a parent stale run.
+#                     checkpoint still runs a dirty build and an AIOS_TOOLS_BIN
+#                     override. missing: build, then run; exit 3 naming `just
+#                     tools` if the build fails. Exit 3 when the shim cannot
+#                     find its own directory or the main checkout.
 #   aios --prebuild   (SessionStart) start a background build when the binary
 #                     is missing or stale; always exits 0.
 #
@@ -134,6 +140,10 @@ GIT_GRAFT_FILE=/dev/null/no-grafts
 export GIT_NO_REPLACE_OBJECTS GIT_GRAFT_FILE
 
 sub=${1:-}
+
+# Only the stale-run path below sets this; clear a value inherited from a parent
+# stale run, so every other path starts without it.
+unset AIOS_SHIM_STALE
 
 # `aios hook <program> [flags]`: the program, and for path-guard the agent
 # types its --agent-type values name (space-separated; agent type names hold
@@ -578,6 +588,14 @@ if ! runnable "$bin"; then
         exit 3
     fi
 elif [ "$(verdict "$bin")" = stale ]; then
-    build_fg || echo "aios: rebuilding $bin failed; running the stale binary (run: just tools)" >&2
+    if ! build_fg; then
+        if [ "$sub" = checkpoint ]; then
+            echo "aios: rebuilding $bin failed; aios checkpoint never commits or pushes with a stale binary (run: just tools)" >&2
+            exit 3
+        fi
+        echo "aios: rebuilding $bin failed; running the stale binary (run: just tools)" >&2
+        AIOS_SHIM_STALE=1
+        export AIOS_SHIM_STALE
+    fi
 fi
 exec "$bin" "$@"

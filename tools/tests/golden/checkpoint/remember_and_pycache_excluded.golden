@@ -1,0 +1,24 @@
+== exit ==
+0
+== stdout ==
+checkpoint: claude/x @ 81b413a | wip: committed 1 file(s) | pushed: yes | handoff: not recorded
+Safe to /clear — run /justin:start after
+== stderr ==
+== origin refs ==
+refs/heads/claude/x 81b413a80507daada1826f066251118b59d4e75a
+refs/heads/main 63bc52bb4634bac4cf4157c6065ee0961941cea7
+== HEAD message ==
+wip: checkpoint claude/x
+
+Paused with /justin:pause; not a finished step.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+== index ==
+before 9d3a8b5aa7318370d70e315a0ffc5c44bb652246
+after 7430d582a28f908399dab524022a6534094cea0d
+== upstream ==
+refs/heads/claude/x
+== gh calls ==
+1: pr list --head claude/x --state open --json number,isDraft --jq .[] | select(.isDraft | not) | "#\(.number)"
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=1 GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
