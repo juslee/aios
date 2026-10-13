@@ -2,8 +2,11 @@
 //!
 //! The GitHub probe is not here: it sits with the sections that need it.
 
+use std::ffi::OsStr;
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::process::Stdio;
 
 use anyhow::Result;
 
@@ -23,24 +26,46 @@ fn dirty_count(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// `git rev-list --count <args>`, or `?` when git fails.
-fn count(dir: &Path, args: &[&str]) -> Vec<u8> {
-    let mut full = vec!["rev-list", "--count"];
-    full.extend_from_slice(args);
-    git::out(dir, &full).unwrap_or_else(|| b"?".to_vec())
+/// `git rev-list --count <args>`, or `?` when git fails. The arguments are `OsStr`s so a
+/// ref built from a branch name that is not UTF-8 reaches git as it is.
+fn count(dir: &Path, args: &[&OsStr]) -> Vec<u8> {
+    git::command(dir)
+        .args(["rev-list", "--count"])
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            let mut stdout = output.stdout;
+            while stdout.last() == Some(&b'\n') {
+                stdout.pop();
+            }
+            stdout
+        })
+        .unwrap_or_else(|| b"?".to_vec())
 }
 
 /// How far `dir`'s branch is from origin. Unlike checkpoint, the commits on no remote
-/// count against all remotes (`--remotes`), as the script did.
+/// count against all remotes (`--remotes`), as the script did. Every ref git is asked
+/// about is built from the branch's raw bytes, as the script's `$b` was.
 pub fn unpushed_desc(dir: &Path) -> Vec<u8> {
     let Some(branch) = git::out(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"]) else {
         return b"detached HEAD".to_vec();
     };
-    let name = String::from_utf8_lossy(&branch);
-    let remote = format!("refs/remotes/origin/{name}");
-    if git::ok(dir, &["rev-parse", "-q", "--verify", &remote]) {
-        let ahead = count(dir, &[&format!("origin/{name}..HEAD")]);
-        let behind = count(dir, &[&format!("HEAD..origin/{name}")]);
+    let remote = [&b"refs/remotes/origin/"[..], &branch].concat();
+    let on_origin = git::command(dir)
+        .args(["rev-parse", "-q", "--verify"])
+        .arg(OsStr::from_bytes(&remote))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if on_origin {
+        let ahead = [&b"origin/"[..], &branch, b"..HEAD"].concat();
+        let behind = [&b"HEAD..origin/"[..], &branch].concat();
+        let ahead = count(dir, &[OsStr::from_bytes(&ahead)]);
+        let behind = count(dir, &[OsStr::from_bytes(&behind)]);
         [
             &ahead[..],
             b" unpushed, ",
@@ -50,7 +75,14 @@ pub fn unpushed_desc(dir: &Path) -> Vec<u8> {
         ]
         .concat()
     } else {
-        let n = count(dir, &["HEAD", "--not", "--remotes"]);
+        let n = count(
+            dir,
+            &[
+                OsStr::new("HEAD"),
+                OsStr::new("--not"),
+                OsStr::new("--remotes"),
+            ],
+        );
         [&b"not on origin; "[..], &n, b" commit(s) on no remote"].concat()
     }
 }
@@ -118,7 +150,7 @@ pub fn print(ctx: &Ctx, fetch: bool, out: &mut dyn Write) -> Result<()> {
             .unwrap_or_default();
         line(out, &[b"- origin/main @ ", &tip])?;
         if git::ok(root, &["rev-parse", "-q", "--verify", "refs/heads/main"]) {
-            let behind = count(root, &["main..origin/main"]);
+            let behind = count(root, &[OsStr::new("main..origin/main")]);
             if behind != b"0" {
                 line(
                     out,

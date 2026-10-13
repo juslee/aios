@@ -2,7 +2,7 @@
 //!
 //! The oracle is the script's blob at `agent::BRIEF_ORACLE`, read from git history and run
 //! as `<bash> <script> <args>` in a twin repository under the PATH jail, with the fake
-//! `gh` and the fake docs-check child (`agent::FAKE_DOCS`). The 76 scenarios of
+//! `gh` and the fake docs-check child (`agent::FAKE_DOCS`). The 77 scenarios of
 //! [`CASES`] each describe one repository state, one argv and the `gh` answers it gets.
 //! Their `gh` and docs-check answers are committed under
 //! `tests/fixtures/brief/<scenario>/{gh,docs}/` (synthetic values in the shapes of real
@@ -10,7 +10,7 @@
 //! the real thing). The goldens in `tests/golden/brief/<name>.golden` were recorded from
 //! the oracle on macOS (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test
 //! brief_parity -- --ignored record_brief_goldens`), through `agent::oracle_renames()` (the
-//! documented D1 rename) and `agent::normalize()`. 74 scenarios are differential.
+//! documented D1 rename) and `agent::normalize()`. 75 scenarios are differential.
 //! `cli_help` (D1) and `pr_labelled_needs_human` (D10, `agent::DIVERGENT_SCENARIOS`) are
 //! aios-only: their goldens were blessed from the port, one scenario at a time, and
 //! reviewed by hand.
@@ -25,9 +25,9 @@
 //!
 //! - one `#[test]` per scenario, named after it: `aios brief` against the scenario's
 //!   golden (`cargo test -p aios-tools --test brief_parity <name>` runs one);
-//! - `oracle_reproduces_brief_goldens`: the oracle against the 74 differential goldens;
+//! - `oracle_reproduces_brief_goldens`: the oracle against the 75 differential goldens;
 //! - `brief_differential_against_oracle`: the oracle and aios in twin repositories over
-//!   the 74 differential scenarios, comparing everything a golden holds;
+//!   the 75 differential scenarios, comparing everything a golden holds;
 //! - `brief_fixtures_label_needs_human_only_in_d10`: only the D10 scenario serves a PR
 //!   labelled `needs-human`, so every other scenario stays differential;
 //! - `record_brief_goldens` and `capture_real_gh_shapes`, both `#[ignore]`.
@@ -327,6 +327,31 @@ fn linked_worktree_pins_main_checkout_reads(outcome: &Outcome) {
     );
 }
 
+/// The checkout's line says the non-UTF-8 branch is on origin, one commit ahead and none
+/// behind, and never "not on origin" (the lossy name found no `origin/<branch>`). The two
+/// pushes leave two entries in the reftable origin's reflog of the branch, so the
+/// fast-forward check reads at least one pair.
+fn non_utf8_branch_is_on_origin(outcome: &Outcome) {
+    let counts = agent::assert_origin_invariants(outcome);
+    assert_eq!(
+        counts,
+        agent::ReflogCounts {
+            entries: 3,
+            pairs: 1
+        },
+        "main's push and the branch's two pushes, read from the reftable origin"
+    );
+    let stdout = outcome.stdout_str();
+    assert!(
+        stdout.contains("- uncommitted: 0 file(s); 1 unpushed, 0 behind origin/claude/caf"),
+        "the checkout line:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("; not on origin; "),
+        "the branch is on origin:\n{stdout}"
+    );
+}
+
 fn stale_binary_is_flagged(outcome: &Outcome) {
     stdout_has(
         outcome,
@@ -428,6 +453,36 @@ scenario!(worktrees, ["--no-fetch"],
             .git(&["-c", "alias.zap=!rm -rf .claude/worktrees/w-gone", "zap"]),
     )
     .git(&["reset", "-q", "--hard", "HEAD~1"]));
+// A branch name that is not UTF-8 (`claude/caf\xe9`), checked out and pushed: the Git section
+// asks git about `origin/<branch>` by its bytes, as the script did, so the branch is on
+// origin and one commit ahead; only the printed name is lossy. The branch is made by git
+// itself (an alias whose `printf` writes the 0xe9 byte), as a Rust string cannot hold it,
+// and the refs are reftable, because APFS refuses a file name that is not UTF-8.
+scenario!(non_utf8_claude_branch, ["--no-fetch"],
+    |n| brief_base(n)
+        .reftable()
+        .git(&[
+            "-c",
+            "alias.mk=!git checkout -q -b \"$(printf 'claude/caf\\351')\"",
+            "mk",
+        ])
+        .file("caf.txt", "one\n")
+        .commit("Work on the branch")
+        .git(&[
+            "-c",
+            "alias.pu=!git push -q -u origin \"$(printf 'claude/caf\\351')\"",
+            "pu",
+        ])
+        .file("caf2.txt", "two\n")
+        .commit("A second commit, pushed")
+        .git(&[
+            "-c",
+            "alias.pu=!git push -q -u origin \"$(printf 'claude/caf\\351')\"",
+            "pu",
+        ])
+        .file("caf3.txt", "three\n")
+        .commit("One commit not on origin"),
+    non_utf8_branch_is_on_origin);
 
 // Pull requests (9).
 scenario!(prs_every_blocker, ["--no-fetch"], brief_base, every_blocker);
@@ -861,7 +916,7 @@ fn differential_cases() -> Vec<&'static Case> {
 }
 
 fn assert_table_is_sound() {
-    assert_eq!(CASES.len(), 76, "the brief scenario table");
+    assert_eq!(CASES.len(), 77, "the brief scenario table");
     let mut names: Vec<&str> = CASES.iter().map(|case| case.name).collect();
     names.sort_unstable();
     names.dedup();
@@ -904,9 +959,9 @@ fn oracle_reproduces_brief_goldens() {
     assert_table_is_sound();
     let dir = golden_dir();
     let cases = differential_cases();
-    assert_eq!(cases.len(), 74, "the non-divergent scenarios");
+    assert_eq!(cases.len(), 75, "the non-divergent scenarios");
 
-    // Every scenario has a golden: the oracle's 74 and the two aios-only ones.
+    // Every scenario has a golden: the oracle's 75 and the two aios-only ones.
     let known: Vec<String> = CASES
         .iter()
         .map(|case| format!("{}.golden", case.name))
@@ -993,7 +1048,7 @@ fn case_named(name: &str) -> &'static Case {
 
 /// aios on scenario `name` against its golden. The goldens of the two aios-only scenarios
 /// are blessed from this run (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test
-/// brief_parity <name>`, one scenario at a time, reviewed by hand); the 74 differential
+/// brief_parity <name>`, one scenario at a time, reviewed by hand); the 75 differential
 /// goldens are recorded from the oracle only, so a bless run leaves them.
 fn aios_matches_golden(name: &str) {
     if agent::skip_brief_in_release(name) {
@@ -1025,7 +1080,7 @@ fn aios_matches_golden(name: &str) {
     );
 }
 
-/// The oracle and aios, in twin repositories, over the 74 differential scenarios: the
+/// The oracle and aios, in twin repositories, over the 75 differential scenarios: the
 /// exit status, stdout and stderr, the `gh` calls (so the call sequence, argv, cwd and
 /// environment), the docs-check calls, the marker and the remote refs.
 #[test]
@@ -1035,7 +1090,7 @@ fn brief_differential_against_oracle() {
     }
     assert_table_is_sound();
     let cases = differential_cases();
-    assert_eq!(cases.len(), 74, "the non-divergent scenarios");
+    assert_eq!(cases.len(), 75, "the non-divergent scenarios");
     let failures: Vec<String> = parallel_map(&cases, |case| {
         if !agent::oracle_runs_here(case.name) {
             return None;
@@ -1061,7 +1116,7 @@ fn brief_differential_against_oracle() {
     );
 }
 
-/// Record the 74 differential goldens from the oracle. Review the diff.
+/// Record the 75 differential goldens from the oracle. Review the diff.
 #[test]
 #[ignore = "rewrites the goldens from the oracle: AIOS_BLESS_GOLDENS=1 ... -- --ignored record_brief_goldens"]
 fn record_brief_goldens() {
@@ -1075,7 +1130,12 @@ fn record_brief_goldens() {
     let cases = differential_cases();
     let goldens = parallel_map(&cases, |case| render_golden(&run_case(case), true));
     for (case, golden) in cases.iter().zip(goldens) {
-        std::fs::write(dir.join(format!("{}.golden", case.name)), golden).expect("write a golden");
+        // Lossy, as the readers compare: a branch name that is not UTF-8 shows as U+FFFD.
+        std::fs::write(
+            dir.join(format!("{}.golden", case.name)),
+            String::from_utf8_lossy(&golden).as_bytes(),
+        )
+        .expect("write a golden");
     }
 }
 

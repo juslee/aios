@@ -78,7 +78,7 @@ Each item was checked against the repo on 2026-10-11.
 
   **Backward compatibility.** `GhRunner` and `is_read` keep their signatures, and every `&[&str]` caller of `run_program` or `GhRunner::run` compiles unchanged (`&str: AsRef<OsStr>`). The change only adds.
 
-  **Freeze.** `R3_API_FREEZE` moves to `b4c34596de0325e018cea460eccf01bfe3c98ad8`. The first freeze was `3296e1d2fb8f7538c2fe292ca6d80699cd001068`; R2 re-vendors `tools/src/gh.rs` from the new freeze (§1, re-vendoring).
+  **Freeze.** `R3_API_FREEZE` moves to `b4c34596de0325e018cea460eccf01bfe3c98ad8`. The first freeze was `3296e1d2fb8f7538c2fe292ca6d80699cd001068`; R2 re-vendors the five frozen files from the new freeze with the §1 re-vendoring command: `gh.rs` carries the signature change; `git.rs` and `jail.rs` carry Task 10f's provenance comments, which change no code.
 
 ## Approach
 
@@ -503,7 +503,7 @@ Conventions for every task:
 
     A scenario that serves no fixture (`cli_help`, `cli_unknown_after_help`, `outside_repo`) has no directory: git cannot commit an empty one. JSON shapes come from the Task 0d capture, never its values: statusCheckRollup mixes CheckRun and StatusContext; `conclusion ""`; null `mergeable`; `labels[{name}]`; `author{login}`. Only `pr_labelled_needs_human` carries a PR label `needs-human`.
     - Verify: `comm -23 <(ls tools/tests/fixtures/brief | sort) <(grep -oE '^scenario!\([a-z0-9_]+' tools/tests/brief_parity.rs | cut -d'(' -f2 | sort)` prints nothing, so every fixture directory names a scenario; `git grep -l '"needs-human"' -- 'tools/tests/fixtures/brief/*/gh/pr-list.out'` lists only `pr_labelled_needs_human`. A scenario whose fixture file is missing panics in the runner.
-  - [x] 4b: `tools/tests/brief_parity.rs`, using `scenario!` as in 2a (table entries now; the per-scenario `#[test]` arm arrives in Task 7). 76 scenarios; all run with `--no-fetch` except `fetch_fails` and `fetch_prunes`. Every failure scenario serves only the fixtures the oracle calls, so a port that issues a call the oracle skips hits the fake's exit 99, and the differential compares the call sequence:
+  - [x] 4b: `tools/tests/brief_parity.rs`, using `scenario!` as in 2a (table entries now; the per-scenario `#[test]` arm arrives in Task 7). 77 scenarios; all run with `--no-fetch` except `fetch_fails` and `fetch_prunes`. Every failure scenario serves only the fixtures the oracle calls, so a port that issues a call the oracle skips hits the fake's exit 99, and the differential compares the call sequence:
     - GitHub reachability (6): `offline` (rate_limit fails with a stderr line), `offline_empty_stderr` (rate_limit fails with empty stderr: `GitHub unavailable: unknown error`, W234 brief L161), `gh_missing`, `rate_zero`, `fetch_fails` (origin URL removed), `fetch_prunes` (origin deleted a branch; the brief runs with fetch);
     - remote state (1): `no_origin_main`. Origin has only a `claude/x` branch, and the clone has no `refs/remotes/origin/main`. It has soak runs with recorded commits and a `run-list` fixture, and **no** `graphql-suites` fixture: a port that issues the suites query hits the fake's exit 99. It covers:
       - the Git section without the origin/main and local-main lines (L125-131);
@@ -512,7 +512,7 @@ Conventions for every task:
     - working directory (2):
       - `run_from_subdirectory`. The run is from `docs/`, with a phase doc and knowledge notes. The phase and knowledge sections and the docs-check child's cwd (`<ROOT>`) must match the oracle's;
       - `run_from_linked_worktree`. The run is from a linked worktree `wt-x` (at `<main worktree>/wt-x`, so `rel_path` labels it `wt-x`) on `claude/x`, whose branch commit deletes `scripts/agent/qemu-lock.sh` and adds a phase doc. The main worktree (on `main`) keeps qemu-lock.sh and holds two handoff files in `.remember/`; the lock owner file (a dead pid) is in the shared common dir, where qemu-lock.sh keeps it (qemu-lock.sh L77-81). It pins what brief reads from `MAIN_WT` (handoffs, L492; the QEMU lock, L473-474: `state=dead`, not "no scripts/agent/qemu-lock.sh in the main checkout"), what it reads from ROOT (the phase doc only `wt-x` has; knowledge notes; docs-check's cwd), and the `rel_path` labels (`- checkout: wt-x on \`claude/x\` …`, the worktree list's `(main checkout)` line; L76-79, L123);
-    - `worktrees` (1): detached, missing, not on origin, behind origin/main, local main behind;
+    - Worktrees (2): `worktrees` (detached, missing, not on origin, behind origin/main, local main behind) and `non_utf8_claude_branch` (reftable refs, a branch `claude/caf\xe9` pushed and one commit ahead: the Git section asks about `origin/<branch>` with the raw bytes, audit round 5);
     - PRs (9):
       - `prs_every_blocker`: all 11 oracle blockers; control characters in title, branch and login; author null; team labels in label order; no team;
       - `merge_ready_yes`, `threads_unknown`, `threads_zero_is_known`, `gates_unknown`, `pr_beyond_50_threads_unknown`, `no_prs`;
@@ -540,12 +540,12 @@ Conventions for every task:
     - Docs (8): `docs_clean`, `docs_new_drift_key_order`, `docs_prune_hint`, `docs_rc2`, `docs_panic101`, `docs_other_rc_last_line`, `docs_unreadable_json`, `docs_stale_note` (the oracle gets FAKE_DOCS's `stale` file; aios gets `AIOS_SHIM_STALE=1`);
     - CLI (3): `cli_help` (D1, aios-only), `cli_unknown_after_help`, `outside_repo` (built with `Scenario::outside_repo()`, Task 1e).
     - Plus the test `brief_fixtures_label_needs_human_only_in_d10`: every scenario outside `DIVERGENT_SCENARIOS` serves a `pr-list` with no `needs-human` label, so it stays differential.
-    - Verify: `grep -c '^scenario!' tools/tests/brief_parity.rs` = 76.
+    - Verify: `grep -c '^scenario!' tools/tests/brief_parity.rs` = 77.
   - [x] 4c: Goldens in `tools/tests/golden/brief/<name>.golden`, with these sections: `exit`, `stdout`, `stderr`, `gh calls`, `docs calls` (per call, one line with the argv space-joined, then `docs-cwd <ROOT>`; normalised), `marker touched`, and `remote refs` (`git for-each-ref refs/remotes`).
-    - `#[ignore] record_brief_goldens` records the 74 non-divergent goldens from the oracle, through `oracle_renames()`.
+    - `#[ignore] record_brief_goldens` records the 75 non-divergent goldens from the oracle, through `oracle_renames()`.
     - The active tests are `oracle_reproduces_brief_goldens` and `brief_fixtures_label_needs_human_only_in_d10`.
     - Every scenario runs `assert_not_vacuous` and `fake.assert_calls_match(BRIEF_GH_ALLOW)`.
-    - Verify: `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test brief_parity -- --ignored record_brief_goldens` exits 0; T(`--test brief_parity`) = 2; `ls tools/tests/golden/brief/*.golden | wc -l` = 74; `grep -c '^docs-check --json$' tools/tests/golden/brief/run_from_subdirectory.golden` = 1 and `grep -c '^docs-cwd <ROOT>$' tools/tests/golden/brief/run_from_subdirectory.golden` = 1; `grep -c 'run list' tools/tests/golden/brief/main_ci_suites_fail.golden` = 0; `grep -c '^- queue: ? agent-ready, ? agent-working$' tools/tests/golden/brief/queue_counts_unknown.golden` = 1; `grep -c '^- GitHub unavailable: unknown error$' tools/tests/golden/brief/offline_empty_stderr.golden` ≥ 1.
+    - Verify: `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test brief_parity -- --ignored record_brief_goldens` exits 0; T(`--test brief_parity`) = 2; `ls tools/tests/golden/brief/*.golden | wc -l` = 75; `grep -c '^docs-check --json$' tools/tests/golden/brief/run_from_subdirectory.golden` = 1 and `grep -c '^docs-cwd <ROOT>$' tools/tests/golden/brief/run_from_subdirectory.golden` = 1; `grep -c 'run list' tools/tests/golden/brief/main_ci_suites_fail.golden` = 0; `grep -c '^- queue: ? agent-ready, ? agent-working$' tools/tests/golden/brief/queue_counts_unknown.golden` = 1; `grep -c '^- GitHub unavailable: unknown error$' tools/tests/golden/brief/offline_empty_stderr.golden` ≥ 1.
   - [x] 4d: `#[ignore] capture_real_gh_shapes`, run by the lead. It uses the network and read-only gh, outside the jail by design, and is pointed at the repository explicitly, so it works from any clone, whatever its `origin`: every repo-scoped call (`issue list`, `pr list`, `pr list --head`, `run list`) gets `-R juslee/aios`, and the two GraphQL calls get the literals `-F owner=juslee -F name=aios` in place of the `{owner}`/`{repo}` placeholders (which gh resolves only from a github.com remote). Every call goes through `aios_tools::gh::run_program(OsStr::new("gh"), …, &GhEnv::INHERIT)`, so `is_read` refuses anything but a read. It writes to `target/r3-gh-capture/` (uncommitted), and asserts, per call, that every committed fixture's JSON keys are a subset of the real response's keys.
     - Verify: `cargo test -p aios-tools --test brief_parity -- --list --ignored | grep -c capture_real_gh_shapes` = 1; `grep -cF '"juslee/aios"' tools/tests/brief_parity.rs` ≥ 1.
   - [x] 4e: Verify:
@@ -609,10 +609,10 @@ Conventions for every task:
     - The argv, cwd and env of every gh call equal the oracle's; the differential compares the call logs.
     - Verify: T(`--lib brief::github::`) ≥ 1.
   - [x] 7b: Delete `NOT_YET_PORTED` and the interim test.
-    - Add the 76 per-scenario `#[test]`s, each checking the whole output against its golden, aios only.
+    - Add the 77 per-scenario `#[test]`s, each checking the whole output against its golden, aios only.
     - Bless the aios-only goldens one scenario at a time (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test brief_parity cli_help`, then `pr_labelled_needs_human`), and review them by hand.
-    - Add `brief_differential_against_oracle`: twin repos over the 74 non-divergent scenarios, with `PLATFORM_SCENARIOS` handled as defined. It compares stdout, exit, gh calls (so the call sequence), docs calls, the marker and remote refs, using `parallel_map`.
-    - Verify: `ls tools/tests/golden/brief/*.golden | wc -l` = 76; `git grep -c NOT_YET_PORTED -- tools` prints nothing.
+    - Add `brief_differential_against_oracle`: twin repos over the 75 non-divergent scenarios, with `PLATFORM_SCENARIOS` handled as defined. It compares stdout, exit, gh calls (so the call sequence), docs calls, the marker and remote refs, using `parallel_map`.
+    - Verify: `ls tools/tests/golden/brief/*.golden | wc -l` = 77; `git grep -c NOT_YET_PORTED -- tools` prints nothing.
   - [x] 7c: Mutation checks (uncommitted):
     - the call-site lookup of the open-thread count filters out 0 (`.filter(|n| *n > 0)` in `tools/src/cmd/brief/github.rs`; `pr_lines` takes an `Option<u64>`, so the count never passes through `merge_ready::alt`) → `threads_zero_is_known` fails;
     - `max_by` takes the first maximum → `main_ci_tie` fails;
@@ -623,7 +623,7 @@ Conventions for every task:
     - print `0` instead of `?` for a failed queue count → `queue_counts_unknown` fails.
     - Run 2026-10-12 as call-site mutations in github.rs (all 7 caught); merge_ready.rs is frozen, and the classifier refused editing it.
     - Verify: each named test exits non-zero under its mutation; `git status --porcelain -- tools/src` prints nothing afterwards.
-  - [x] 7d: Verify: T(`--test brief_parity`) = 79 (76 per-scenario tests + `oracle_reproduces_brief_goldens` + `brief_fixtures_label_needs_human_only_in_d10` + the differential); `cargo test -p aios-tools` passes in full; G.
+  - [x] 7d: Verify: T(`--test brief_parity`) = 80 (77 per-scenario tests + `oracle_reproduces_brief_goldens` + `brief_fixtures_label_needs_human_only_in_d10` + the differential); `cargo test -p aios-tools` passes in full; G.
 
 - [x] **Task 8: Shim: `AIOS_SHIM_STALE`, and checkpoint's exit 3 on a failed stale rebuild** (worker, **foreground**: `.claude/hooks/aios` is protected; contract §6; R2 edits the shim only after R3 is on main)
   - [x] 8a: `.claude/hooks/aios`, exactly the contract §6 R3 rows:
@@ -786,7 +786,7 @@ Conventions for every task:
   - [ ] 12e: The PR (the draft from 1h).
     - `gh pr edit <n> --body-file …`, with:
       - a Summary;
-      - Parity evidence: 53 + 76 scenarios (50 + 74 differential), the differentials including `/bin/bash` 3.2, `PLATFORM_SCENARIOS`, the mutation checks;
+      - Parity evidence: 53 + 77 scenarios (50 + 75 differential), the differentials including `/bin/bash` 3.2, `PLATFORM_SCENARIOS`, the mutation checks;
       - Divergences D1-D10, and what is kept bug-for-bug;
       - the Settings change (owner-applied) and the 0e probe;
       - the guard/pause answer;
@@ -874,7 +874,7 @@ Conventions for every task:
 - **A stale main binary committing.** Mitigation: the shim's checkpoint exit 3 on a failed stale rebuild (owner decision 5). A pre-R3 main binary has no `checkpoint` subcommand, exits 2 and writes nothing.
 - **main moves `settings.json` under the settings script.** Mitigation: the base check (tip blob = `origin/main` blob) and the A8 recovery, which only the owner performs.
 - **CI does not run the Python guard suite.** Mitigation: 10c and 10f run it locally; the PR test plan says so; a follow-up issue.
-- **Test runtime.** There are about 600 twin-repo runs (53 + 76 per-scenario runs, 50 + 74 oracle reproductions, 2 × (50 + 74) differential runs, and 2 × 50 for bash 3.2), counting the per-scenario tests, both differentials, the bash 3.2 pass and the oracle reproductions. Mitigation: `parallel_map`, with a budget under 90 s on this Mac.
+- **Test runtime.** There are about 600 twin-repo runs (53 + 77 per-scenario runs, 50 + 75 oracle reproductions, 2 × (50 + 75) differential runs, and 2 × 50 for bash 3.2), counting the per-scenario tests, both differentials, the bash 3.2 pass and the oracle reproductions. Mitigation: `parallel_map`, with a budget under 90 s on this Mac.
 - **Residual (not R3's):** #213 (the stamp is tied to local HEAD); #241 (guard rule 4 gaps, R5).
 
 ## Owner Questions

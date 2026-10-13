@@ -1421,10 +1421,42 @@ pub fn assert_sections_equal(oracle: &Outcome, aios: &Outcome) {
     );
 }
 
+/// What [`assert_origin_invariants`] read from the origin's reflogs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReflogCounts {
+    /// Reflog entries across every ref.
+    pub entries: usize,
+    /// Consecutive old-to-new pairs, each checked to be a fast-forward.
+    pub pairs: usize,
+}
+
+/// `git args` in the origin, with the ambient configuration masked; it must succeed.
+fn origin_git(origin: &Path, args: &[&OsStr]) -> std::process::Output {
+    let mut cmd = Command::new("git");
+    isolated(&mut cmd);
+    let out = cmd
+        .args(args)
+        .current_dir(origin)
+        .output()
+        .expect("run git in the origin");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed in the origin: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
 /// No scenario pushes anything that should not reach origin: `refs/heads/main` is
-/// unchanged, every origin reflog entry is a fast-forward (its old sha is zero or an
-/// ancestor of its new one), and every fake-gh call passes the sub's allowlist.
-pub fn assert_origin_invariants(outcome: &Outcome) {
+/// unchanged, every step of an origin reflog is a fast-forward (the older entry's commit
+/// is an ancestor of the newer one's), and every fake-gh call passes the sub's allowlist.
+///
+/// The reflogs are read through git, so a reftable origin (which has no `logs/`
+/// directory) is covered as well as a files one. The check cannot pass vacuously: when
+/// the run changed origin's refs, at least one reflog entry must exist.
+pub fn assert_origin_invariants(outcome: &Outcome) -> ReflogCounts {
+    use std::os::unix::ffi::OsStrExt;
+
     let state = &outcome.repo_state;
     assert_eq!(
         state.origin_refs_before.get("refs/heads/main"),
@@ -1432,50 +1464,79 @@ pub fn assert_origin_invariants(outcome: &Outcome) {
         "a run moved origin's refs/heads/main"
     );
     let origin = outcome.twin.origin();
-    let mut logs = Vec::new();
-    let mut pending = vec![origin.join("logs")];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                logs.push(path);
-            }
-        }
-    }
-    let zero = "0".repeat(40);
-    for log in logs {
-        let text = std::fs::read_to_string(&log).expect("read an origin reflog");
-        for line in text.lines() {
-            let mut fields = line.split(' ');
-            let (Some(old), Some(new)) = (fields.next(), fields.next()) else {
-                continue;
-            };
-            if old == zero {
-                continue;
-            }
-            let mut cmd = Command::new("git");
-            isolated(&mut cmd);
-            let ancestor = cmd
-                .args(["merge-base", "--is-ancestor", old, new])
-                .current_dir(origin)
-                .status()
-                .expect("run git")
-                .success();
+    // A scenario outside any repository (`Scenario::outside_repo`) has no origin to read.
+    let listed = if origin.is_dir() {
+        origin_git(
+            origin,
+            &[
+                OsStr::new("for-each-ref"),
+                OsStr::new("--format=%(refname)"),
+            ],
+        )
+        .stdout
+    } else {
+        Vec::new()
+    };
+    let mut counts = ReflogCounts {
+        entries: 0,
+        pairs: 0,
+    };
+    for name in listed
+        .split(|&b| b == b'\n')
+        .filter(|name| !name.is_empty())
+    {
+        let shown = origin_git(
+            origin,
+            &[
+                OsStr::new("reflog"),
+                OsStr::new("show"),
+                OsStr::new("--format=%H"),
+                OsStr::from_bytes(name),
+                OsStr::new("--"),
+            ],
+        );
+        // Newest first.
+        let shas: Vec<String> = String::from_utf8(shown.stdout)
+            .expect("hex object names")
+            .lines()
+            .map(str::to_string)
+            .collect();
+        counts.entries += shas.len();
+        for step in shas.windows(2) {
+            let (new, old) = (&step[0], &step[1]);
+            let ancestor = origin_git_status(origin, &["merge-base", "--is-ancestor", old, new]);
+            counts.pairs += 1;
             assert!(
                 ancestor,
                 "{}: {old} -> {new} is not a fast-forward",
-                log.display()
+                String::from_utf8_lossy(name)
             );
         }
+    }
+    if state.origin_refs_before != state.origin_refs_after {
+        assert!(
+            counts.entries > 0,
+            "the run changed origin's refs but no reflog entry was found, so the fast-forward \
+             check would pass without checking anything (before {:?}, after {:?})",
+            state.origin_refs_before,
+            state.origin_refs_after
+        );
     }
     if let Some(gh) = outcome.twin.fake_gh() {
         gh.assert_calls_match(outcome.expect.sub.allow());
     }
+    counts
+}
+
+/// Whether `git args` exits 0 in the origin.
+fn origin_git_status(origin: &Path, args: &[&str]) -> bool {
+    let mut cmd = Command::new("git");
+    isolated(&mut cmd);
+    cmd.args(args)
+        .current_dir(origin)
+        .status()
+        .expect("run git in the origin")
+        .success()
 }
 
 /// `normalize()`: replace exactly these named rules and compare everything else raw.

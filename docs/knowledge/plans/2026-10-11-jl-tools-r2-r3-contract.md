@@ -614,7 +614,7 @@ Also not taken: the critic's worktree names `tools-r2-loop`/`tools-r3-scripts`. 
 
 ## 14. Amendments (2026-10-11; A13 added 2026-10-13)
 
-One merged set, A1-A13, in one numbering, as both plans state it (R3's "Contract amendments A1-A12" list and R2's "merged amendments A1-A12" table). R3's revision-3 list (A1-A9) and R2's v2 list (A1-A7) were two sets under colliding numbers; this set is R3's A1-A9, with A1, A4 and A7 reconciled against R2's, plus R2's evals/cases exclusion (A10), R2's docs gate (A11) and R2's own rows (A12). A13 (2026-10-13) is the first amendment to the frozen API. Both plans already cite this numbering; neither is renumbered.
+One merged set, A1-A13, in one numbering, as both plans state it (R3's "Contract amendments A1-A13" list and R2's "merged amendments A1-A12" table). R3's revision-3 list (A1-A9) and R2's v2 list (A1-A7) were two sets under colliding numbers; this set is R3's A1-A9, with A1, A4 and A7 reconciled against R2's, plus R2's evals/cases exclusion (A10), R2's docs gate (A11) and R2's own rows (A12). A13 (2026-10-13) is the first amendment to the frozen API. Both plans already cite this numbering; neither is renumbered.
 
 **Precedence.** The A12 rows of §2, §8, §9 and §11 already match. For the other sections an item names, the team-build lead edits that section to match before either branch commits this file (R3 0f, R2 0b); until then, where an earlier section and §14 differ, §14 wins. Each item was checked against the repo on 2026-10-11.
 
@@ -662,4 +662,4 @@ One merged set, A1-A13, in one numbering, as both plans state it (R3's "Contract
 
   **Backward compatibility.** `GhRunner` and `is_read` keep their signatures, and every `&[&str]` caller of `run_program` or `GhRunner::run` compiles unchanged (`&str: AsRef<OsStr>`). The change only adds.
 
-  **Freeze.** `R3_API_FREEZE` moves to `b4c34596de0325e018cea460eccf01bfe3c98ad8`. The first freeze was `3296e1d2fb8f7538c2fe292ca6d80699cd001068`; R2 re-vendors `tools/src/gh.rs` from the new freeze (§1, re-vendoring).
+  **Freeze.** `R3_API_FREEZE` moves to `b4c34596de0325e018cea460eccf01bfe3c98ad8`. The first freeze was `3296e1d2fb8f7538c2fe292ca6d80699cd001068`; R2 re-vendors the five frozen files from the new freeze with the §1 re-vendoring command: `gh.rs` carries the signature change; `git.rs` and `jail.rs` carry Task 10f's provenance comments, which change no code.
