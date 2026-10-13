@@ -457,10 +457,10 @@ fn ipc_caller_entry() -> ! {
 /// their timed-out cases take about 2 s each, so the lines after them print
 /// after the bench), and that an `ipc_cancel` inside an `ipc_call` ends it
 /// with ECANCELED and leaves nothing behind (`cancel_loop_test`, after
-/// `call_loop_test`, with the helper's cancel). Last, it calls IpcCall on a channel with no receiver
-/// (expects ETIMEDOUT): the call holds the channel's minted ChannelAccess,
-/// so it blocks until its 100-tick timeout, and a late timeout wake can hide
-/// only that line.
+/// `call_loop_test`, with the helper's cancel). Last, it calls IpcCall on a
+/// channel with no receiver (expects ETIMEDOUT): the call holds the
+/// channel's minted ChannelAccess, so it blocks until its 100-tick timeout,
+/// and a late timeout wake can hide only that line.
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no

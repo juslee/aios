@@ -7,12 +7,13 @@
 //! fired (the result the wait returned, and for a sleep, a receive or a call
 //! whether its backstop fired), the order of events (the helper's stale wake
 //! landed inside the wait, which the helper guarantees by waiting for the
-//! wait's record, and a timed-out wait did not return before its deadline)
-//! and the state left behind (no waiter record, registration, deadline or
-//! timeout entry). No elapsed tick is read as a pass band. Every wait uses a 2000-tick timeout,
-//! a backstop expires 2000 ticks after its wait's deadline, and every helper
-//! command is due 5 ticks after it is posted, so crowding on CPU 2 can delay
-//! a case but not change its outcome.
+//! wait's record, a timed-out wait did not return before its deadline, and
+//! a cancelled call returned before it) and the state left behind (no
+//! waiter record, registration, deadline or timeout entry). No elapsed tick
+//! is read as a pass band. Every wait uses a 2000-tick timeout, a backstop
+//! expires 2000 ticks after its wait's deadline, and every helper command
+//! is due 5 ticks after it is posted, so crowding on CPU 2 can delay a case
+//! but not change its outcome.
 
 use core::sync::atomic::Ordering;
 
@@ -568,13 +569,15 @@ fn call_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
 /// `cancelled` (its `seq` matches the claimed call's) and wakes it; the
 /// call's next pass reads `cancelled` and the claim.
 ///
-/// Pass: ECANCELED with the backstop not fired; the helper's `ipc_cancel`
-/// returned 0; and afterwards the channel's `pending_caller` and this
-/// thread's reply slot are `None` and no TIMEOUT_QUEUE entry is left. The
-/// request the cancel left queued is drained with `ipc_recv(ch, 0)`. Logs
+/// Pass: ECANCELED before the call's deadline, with the backstop not fired;
+/// the helper's `ipc_cancel` returned 0; and afterwards the channel's
+/// `pending_caller` and this thread's reply slot are `None` and no
+/// TIMEOUT_QUEUE entry is left. The request the cancel left queued is
+/// drained with `ipc_recv(ch, 0)`. Logs
 /// `Cancel-loop test: as expected`, or `Cancel-loop test: wake lost` (the
-/// backstop fired first), the wrong result by name, or a line naming the
-/// helper's, the leftover's or the drain's failure.
+/// cancel's wake was lost: the call returned at or past its deadline, or the
+/// backstop fired), the wrong result by name, or a line naming the helper's,
+/// the leftover's or the drain's failure.
 ///
 /// The `seq` mismatch path of `ipc_reply` and `ipc_cancel` (the claimed
 /// call's caller left it and posted its next call's slot between the claim
@@ -615,6 +618,11 @@ fn cancel_case(me: ThreadId, ch: ChannelId) -> Option<&'static str> {
         e if e == IpcError::Eagain as i64 => return Some("EAGAIN"),
         e if e == IpcError::Epipe as i64 => return Some("EPIPE"),
         _ => return Some("wrong error"),
+    }
+    // ECANCELED at or past the deadline: the call's own timeout entry woke
+    // it, not the cancel, and its next pass read the claim.
+    if !end.early {
+        return Some("wake lost");
     }
     match end.helper {
         None => return Some("helper not done"),

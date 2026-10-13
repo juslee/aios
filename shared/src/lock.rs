@@ -1,9 +1,10 @@
 //! Owner-stamped spinlock core for the kernel's detect-only IRQ-class lock.
 //!
-//! Crash-fix step 1b wraps the IRQ-shared statics, 8 since cap-lifetime
-//! step 11 removed SELECT_WAITERS, in a detect-only lock
-//! (`kernel/src/sync/irq_spin_lock.rs`). This module holds the part of it that
-//! is pure protocol, so that host threads and `just miri` check it:
+//! Crash-fix step 1b wraps the IRQ-shared statics in a detect-only lock
+//! (`kernel/src/sync/irq_spin_lock.rs`); there are 8 of them since
+//! cap-lifetime step 11 removed SELECT_WAITERS. This module holds the part
+//! of that lock that is pure protocol, so that host threads and `just miri`
+//! check it:
 //!
 //! - [`OwnerStamp`]: the lock word is the owner stamp. A separate owner field
 //!   beside a spin flag cannot be kept consistent: clearing it before the
