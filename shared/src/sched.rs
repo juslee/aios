@@ -1158,8 +1158,13 @@ mod tests {
     ///   source, then publish the deadline and block. Every exit removes the
     ///   registrations, clears the deadline and cancels the arm. The
     ///   signaller claims (removes) the select record and leaves the bit;
-    ///   the sender queues the message and takes the receiver slot. Each
-    ///   calls `unblock` if it found a registration.
+    ///   the sender queues the message and takes the receiver slot. The
+    ///   destroyer (`channel_destroy_unchecked`, or exit's channel walk,
+    ///   which marks the endpoints Dead) frees the channel and takes the
+    ///   receiver slot under CHANNEL_TABLE, then `wake_with_error` calls
+    ///   `unblock` after the release; the scan and every pass find the
+    ///   channel gone (a lookup error, or a Dead endpoint) and return EPIPE.
+    ///   Each waker calls `unblock` if it found a registration.
     /// - [`Site::Sleep`] is `sleep_ticks`: passes that arm, then publish the
     ///   TIMEOUT_QUEUE entry (`arm_timeout`; Expired ends the sleep), and
     ///   block as BlockedTimer. Its only record is the entry, and its exit
@@ -1228,13 +1233,14 @@ mod tests {
             }
         }
 
-        /// The event waker: none, a notification signal, or a channel send
-        /// (Select and Recv).
+        /// The event waker: none, a notification signal, a channel send
+        /// (Select and Recv), or a channel destroy (Select).
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub(super) enum Event {
             None,
             Signal,
             Send,
+            Destroy,
         }
 
         #[derive(Clone, Copy, Debug)]
@@ -1265,6 +1271,10 @@ mod tests {
             /// Select only, negative control: each source is checked in one
             /// critical section and registered in a later one.
             pub(super) split: bool,
+            /// Select only: each pass checks the channel's lookup and Dead
+            /// endpoint before anything else (negative control: `false`,
+            /// only the fast scan checks them; #186).
+            pub(super) gone_check: bool,
         }
 
         /// The wait's result.
@@ -1275,6 +1285,8 @@ mod tests {
             Bits,
             /// The channel entry ready (Select).
             Msg,
+            /// The channel is gone: destroyed, or an endpoint Dead (Select).
+            Epipe,
             Timedout,
         }
 
@@ -1323,6 +1335,14 @@ mod tests {
             /// Select and Recv: the channel's `waiting_receiver` is the
             /// waiter.
             recv: bool,
+            /// Select: the channel is gone (destroyed, or an endpoint Dead).
+            gone: bool,
+            /// Select: the channel was gone at the waiter's latest check of
+            /// it (the fast scan's, or the latest pass's).
+            pub(super) gone_seen: bool,
+            /// Select: the destroyer took the registration of a blocked
+            /// waiter.
+            pub(super) woke_blocked: bool,
             /// The deadline entry is published.
             entry: bool,
             /// A pass has published the entry at least once.
@@ -1366,6 +1386,9 @@ mod tests {
                     slot: false,
                     msg: false,
                     recv: false,
+                    gone: false,
+                    gone_seen: false,
+                    woke_blocked: false,
                     entry: false,
                     inserted: false,
                     past: false,
@@ -1383,10 +1406,11 @@ mod tests {
                 }
             }
 
-            /// The waiter is blocked for good with its condition set, or
-            /// with its deadline passed: a lost wake.
+            /// The waiter is blocked for good with its condition set (a
+            /// gone channel included), or with its deadline passed: a lost
+            /// wake.
             pub(super) fn lost_wake(&self) -> bool {
-                let cond = self.bit || self.msg || self.rec == Rec::Fired || self.slot;
+                let cond = self.bit || self.msg || self.gone || self.rec == Rec::Fired || self.slot;
                 self.th == Th::Blocked && !self.queued && (cond || self.past)
             }
 
@@ -1490,9 +1514,15 @@ mod tests {
                         }
                     }
                     FAST => {
+                        // Index order: the notification entry, then the
+                        // channel entry (its lookup and Dead check first).
                         if self.bit {
                             self.bit = false;
                             self.res = Some(Res::Bits);
+                            self.pc = DONE;
+                        } else if cfg.site == Site::Select && self.gone {
+                            self.gone_seen = true;
+                            self.res = Some(Res::Epipe);
                             self.pc = DONE;
                         } else if cfg.site == Site::Select && self.msg {
                             self.res = Some(Res::Msg);
@@ -1534,7 +1564,12 @@ mod tests {
                         }
                     }
                     PASS_C => {
-                        if self.msg {
+                        // The channel entry's critical section: the lookup
+                        // and Dead check, then the ring, then registration.
+                        self.gone_seen = self.gone;
+                        if cfg.gone_check && self.gone {
+                            self.ret(Res::Epipe, cfg);
+                        } else if self.msg {
                             self.ret(Res::Msg, cfg);
                         } else if cfg.split {
                             self.pc = REG_N;
@@ -1632,6 +1667,22 @@ mod tests {
                             (Event::Send, _) => {
                                 self.msg = true;
                                 core::mem::take(&mut self.recv)
+                            }
+                            (Event::Destroy, Site::Select) => {
+                                // Under CHANNEL_TABLE: free the channel (or
+                                // mark its endpoints Dead) and take the
+                                // receiver slot. `wake_with_error`'s
+                                // WAKEUP_ERRORS write and TIMEOUT_QUEUE clear
+                                // touch nothing the select reads.
+                                self.gone = true;
+                                let found = core::mem::take(&mut self.recv);
+                                if found && self.th == Th::Blocked {
+                                    self.woke_blocked = true;
+                                }
+                                found
+                            }
+                            (Event::Destroy, _) => {
+                                panic!("only the select model has a destroy waker")
                             }
                             (_, Site::Select) => {
                                 // The claim: remove the record, keep the bit.
@@ -1787,6 +1838,7 @@ mod tests {
             late_arm: false,
             old_signal: false,
             split: false,
+            gone_check: true,
         });
         assert!(!finals.is_empty());
         for w in &finals {
@@ -1853,6 +1905,7 @@ mod tests {
             late_arm: false,
             old_signal: false,
             split: false,
+            gone_check: true,
         });
         assert!(finals.iter().any(|w| w.lost_wake()));
     }
@@ -1885,6 +1938,7 @@ mod tests {
             late_arm: true,
             old_signal: false,
             split: false,
+            gone_check: true,
         });
         assert!(finals.iter().any(|w| w.lost_wake()));
     }
@@ -1905,6 +1959,7 @@ mod tests {
             late_arm: false,
             old_signal: false,
             split: false,
+            gone_check: true,
         });
         assert!(finals.iter().any(|w| w.lost_wake()));
     }
@@ -1924,6 +1979,7 @@ mod tests {
             late_arm: false,
             old_signal: true,
             split: false,
+            gone_check: true,
         });
         assert!(finals.iter().any(|w| w.lost_bits()));
     }
@@ -1943,6 +1999,7 @@ mod tests {
             late_arm: false,
             old_signal: false,
             split: false,
+            gone_check: true,
         });
         assert!(finals.iter().any(|w| w.lost_wake()));
     }
@@ -1963,9 +2020,71 @@ mod tests {
                 late_arm: false,
                 old_signal: false,
                 split: true,
+                gone_check: true,
             });
             assert!(finals.iter().any(|w| w.lost_wake()), "{event:?}");
         }
+    }
+
+    /// A two-source select against a channel destroy (or exit's Dead
+    /// endpoints), with a stale `unblock` when `stale` is set.
+    fn select_destroy_config(deadline: bool, stale: bool, gone_check: bool) -> loop_model::Config {
+        loop_model::Config {
+            site: Site::Select,
+            event: Event::Destroy,
+            deadline,
+            stale,
+            stale_clear: false,
+            reinsert: true,
+            arm: true,
+            late_arm: false,
+            old_signal: false,
+            split: false,
+            gone_check,
+        }
+    }
+
+    #[test]
+    fn loop_model_select_destroy_returns_epipe() {
+        // #186: a select whose channel is destroyed, or whose endpoint goes
+        // Dead, returns EPIPE. ETIMEDOUT is right only when the destroy landed
+        // after the pass's check of the channel, so the deadline decided first.
+        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
+        for &deadline in deadlines {
+            let finals = loop_model::explore(select_destroy_config(deadline, true, true));
+            assert!(!finals.is_empty());
+            for w in &finals {
+                assert!(!w.lost_wake(), "lost wake: {w:?}");
+                assert!(!w.early_timeout(), "early ETIMEDOUT: {w:?}");
+                assert!(w.token_ok(), "token: {w:?}");
+                assert!(w.clean(), "left behind: {w:?}");
+                let late_timeout = deadline && w.res == Some(Res::Timedout) && !w.gone_seen;
+                assert!(
+                    w.res == Some(Res::Epipe) || late_timeout,
+                    "destroy not seen: {w:?}"
+                );
+            }
+            // The window is reached: the destroy woke a blocked selector,
+            // whose next pass returned EPIPE; and a destroy between the arm
+            // and the block left a token that the block consumed.
+            assert!(finals
+                .iter()
+                .any(|w| w.woke_blocked && w.res == Some(Res::Epipe)));
+            assert!(finals
+                .iter()
+                .any(|w| w.consumed_token && w.res == Some(Res::Epipe)));
+        }
+    }
+
+    #[test]
+    fn loop_model_select_without_the_gone_check_times_out() {
+        // Negative control (#186): the pass skips the lookup and Dead check,
+        // so a selector the destroy woke registers again on the gone channel
+        // and falls through to its deadline.
+        let finals = loop_model::explore(select_destroy_config(true, false, false));
+        assert!(finals
+            .iter()
+            .any(|w| w.woke_blocked && w.gone_seen && w.res == Some(Res::Timedout)));
     }
 
     // ── Wake token: the call model (capability-lifetime step 14) ────────
