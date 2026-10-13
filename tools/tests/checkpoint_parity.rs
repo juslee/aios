@@ -2,11 +2,11 @@
 //!
 //! The oracle is the script's blob at `agent::CHECKPOINT_ORACLE` (#166), read from git
 //! history and run as `<bash> <script>` in a twin repository under the PATH jail. The
-//! 52 scenarios of [`CASES`] each describe one repository state and one argv. The
+//! 53 scenarios of [`CASES`] each describe one repository state and one argv. The
 //! goldens in `tests/golden/checkpoint/<name>.golden` were recorded from the oracle on
 //! macOS (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test checkpoint_parity --
 //! --ignored record_checkpoint_goldens`), through `agent::oracle_renames()` (the
-//! documented D1 and D5 renames) and `agent::normalize()`. 49 scenarios are
+//! documented D1 and D5 renames) and `agent::normalize()`. 50 scenarios are
 //! differential. `cli_help`, `scan_git_failure_fails_closed` and
 //! `scan_git_failure_on_clean_tree` (`agent::DIVERGENT_SCENARIOS`) are aios-only: their
 //! goldens were blessed from the port, one scenario at a time, and reviewed by hand.
@@ -14,10 +14,10 @@
 //! The tests:
 //!
 //! - one `#[test]` per scenario, named after it: the aios binary against its golden;
-//! - `oracle_reproduces_checkpoint_goldens`: the oracle against the 49 goldens;
+//! - `oracle_reproduces_checkpoint_goldens`: the oracle against the 50 goldens;
 //! - `checkpoint_differential_against_oracle` and, where `/bin/bash` is 3.2 (macOS),
 //!   `checkpoint_differential_under_bin_bash_3_2`: the oracle and aios in twin
-//!   repositories over the 49 differential scenarios, comparing everything a golden
+//!   repositories over the 50 differential scenarios, comparing everything a golden
 //!   holds plus the HEAD sha and its author and committer.
 //!
 //! A golden holds these sections, in order: `exit`, `stdout`, `stderr`, `origin refs`
@@ -190,6 +190,49 @@ fn failed_closed(outcome: &Outcome) {
     assert!(
         stdout.contains("/clear keeps all of it on disk; run /justin:start after."),
         "{stdout}"
+    );
+}
+
+/// A branch name that is not UTF-8 (`claude/caf\xe9`) is a claude branch, as the script's
+/// `case` glob matched bytes: the checkpoint commits on it and pushes it under the same
+/// bytes. The golden shows the name lossily (U+FFFD); this check reads the refs as bytes.
+fn non_utf8_branch_pushed(outcome: &Outcome) {
+    const BRANCH: &[u8] = b"claude/caf\xe9";
+    let stdout = outcome.stdout_str();
+    assert_eq!(outcome.code, 0, "stdout:\n{stdout}");
+    assert_eq!(outcome.repo_state.status_after, "", "nothing is left dirty");
+    let refs = |dir: &Path| {
+        let out = Command::new("git")
+            .args(["for-each-ref", "--format=%(refname)"])
+            .current_dir(dir)
+            .output()
+            .expect("run git for-each-ref");
+        assert!(out.status.success(), "git for-each-ref failed in {dir:?}");
+        out.stdout
+            .split(|&b| b == b'\n')
+            .map(<[u8]>::to_vec)
+            .collect::<Vec<_>>()
+    };
+    let want = [b"refs/heads/".as_slice(), BRANCH].concat();
+    assert!(
+        refs(outcome.twin().origin()).contains(&want),
+        "origin lacks refs/heads/claude/caf\\xe9 (as bytes):\n{stdout}"
+    );
+    // The wip subject starts as the script's did. (git itself re-encodes the rest of the
+    // message when it is not UTF-8, the same for both implementations.)
+    let commit = Command::new("git")
+        .args(["cat-file", "commit", "HEAD"])
+        .current_dir(outcome.twin().run_dir())
+        .output()
+        .expect("run git cat-file");
+    let subject = b"\n\nwip: checkpoint claude/caf";
+    assert!(
+        commit
+            .stdout
+            .windows(subject.len())
+            .any(|window| window == subject),
+        "the wip subject names the branch:\n{}",
+        String::from_utf8_lossy(&commit.stdout)
     );
 }
 
@@ -408,6 +451,20 @@ scenario!(run_from_subdirectory, [],
             .file("docs/notes-sub.txt", "in docs\n")
             .run_cwd("docs")),
     subdirectory_commit);
+// The branch is made by git itself (an alias whose `printf` writes the 0xe9 byte), as a
+// Rust string cannot hold it, and the refs are reftable, because APFS refuses a file
+// name that is not UTF-8.
+scenario!(non_utf8_claude_branch, [],
+    |n| no_ready_pr(
+        Scenario::checkpoint(n)
+            .reftable()
+            .git(&[
+                "-c",
+                "alias.mk=!git checkout -q -b \"$(printf 'claude/caf\\351')\"",
+                "mk",
+            ])
+            .file("notes.txt", "work in progress\n")),
+    non_utf8_branch_pushed);
 
 // The six CLI scenarios (D1: messages say `checkpoint:`; `cli_help` is aios-only).
 scenario!(cli_allow_empty, ["--allow", ""], |n| Scenario::checkpoint(n));
@@ -526,7 +583,7 @@ fn differential_cases() -> Vec<&'static Case> {
 }
 
 fn assert_table_is_sound() {
-    assert_eq!(CASES.len(), 52, "the checkpoint scenario table");
+    assert_eq!(CASES.len(), 53, "the checkpoint scenario table");
     let mut names: Vec<&str> = CASES.iter().map(|case| case.name).collect();
     names.sort_unstable();
     names.dedup();
@@ -554,7 +611,7 @@ fn oracle_reproduces_checkpoint_goldens() {
     assert_table_is_sound();
     let dir = golden_dir();
     let cases = differential_cases();
-    assert_eq!(cases.len(), 49, "the non-divergent scenarios");
+    assert_eq!(cases.len(), 50, "the non-divergent scenarios");
 
     let known: Vec<String> = CASES
         .iter()
@@ -603,7 +660,7 @@ fn case_named(name: &str) -> &'static Case {
 
 /// aios on scenario `name` against its golden. The goldens of the three aios-only
 /// scenarios are blessed from this run (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools
-/// --test checkpoint_parity <name>`, one scenario at a time, reviewed by hand); the 49
+/// --test checkpoint_parity <name>`, one scenario at a time, reviewed by hand); the 50
 /// differential goldens are recorded from the oracle only, so a bless run leaves them.
 fn aios_matches_golden(name: &str) {
     let case = case_named(name);
@@ -649,12 +706,12 @@ fn observed(outcome: &Outcome, oracle: bool) -> String {
     )
 }
 
-/// The oracle (run by `bash`) and aios, in twin repositories, over the 49 differential
+/// The oracle (run by `bash`) and aios, in twin repositories, over the 50 differential
 /// scenarios.
 fn differential(bash: &Path) {
     assert_table_is_sound();
     let cases = differential_cases();
-    assert_eq!(cases.len(), 49, "the non-divergent scenarios");
+    assert_eq!(cases.len(), 50, "the non-divergent scenarios");
     let failures: Vec<String> = parallel_map(&cases, |case| {
         if !agent::oracle_runs_here(case.name) {
             return None;
@@ -700,7 +757,7 @@ fn checkpoint_differential_under_bin_bash_3_2() {
     differential(bash);
 }
 
-/// Record the 49 differential goldens from the oracle. Review the diff.
+/// Record the 50 differential goldens from the oracle. Review the diff.
 #[test]
 #[ignore = "rewrites the goldens from the oracle: AIOS_BLESS_GOLDENS=1 ... -- --ignored record_checkpoint_goldens"]
 fn record_checkpoint_goldens() {
@@ -714,6 +771,11 @@ fn record_checkpoint_goldens() {
     let cases = differential_cases();
     let goldens = parallel_map(&cases, |case| render_golden(&run_case(case), true));
     for (case, golden) in cases.iter().zip(goldens) {
-        std::fs::write(dir.join(format!("{}.golden", case.name)), golden).expect("write a golden");
+        // Lossy, as the readers compare: a branch name that is not UTF-8 shows as U+FFFD.
+        std::fs::write(
+            dir.join(format!("{}.golden", case.name)),
+            String::from_utf8_lossy(&golden).as_bytes(),
+        )
+        .expect("write a golden");
     }
 }

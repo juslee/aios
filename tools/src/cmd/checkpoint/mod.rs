@@ -41,7 +41,7 @@ use std::sync::OnceLock;
 use anyhow::{anyhow, bail, Result};
 use regex::bytes::Regex;
 
-use crate::gh::{GhCli, GhEnv, GhOutcome, GhRunner};
+use crate::gh::{GhCli, GhEnv, GhOutcome};
 use crate::git;
 
 use scan::{Hit, EXCLUDES};
@@ -104,26 +104,37 @@ pub struct Args {
     pub args: Vec<OsString>,
 }
 
-/// A branch name matching `claude/?*`: the only kind of branch checkpoint pushes.
+/// A branch name matching `claude/?*`: the only kind of branch checkpoint pushes. The
+/// match is on bytes, as the script's `case` glob was, so a name that is not UTF-8 is
+/// a claude branch too, and nothing here converts it through a lossy string.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaudeBranch(String);
+pub struct ClaudeBranch(Vec<u8>);
 
 impl ClaudeBranch {
-    /// `Some` only for `claude/` followed by at least one character.
-    pub fn new(name: &str) -> Option<ClaudeBranch> {
-        name.strip_prefix("claude/")
+    /// `Some` only for `claude/` followed by at least one byte.
+    pub fn new(name: &[u8]) -> Option<ClaudeBranch> {
+        name.strip_prefix(b"claude/")
             .filter(|rest| !rest.is_empty())
-            .map(|_| ClaudeBranch(name.to_string()))
+            .map(|_| ClaudeBranch(name.to_vec()))
     }
 
-    pub fn as_str(&self) -> &str {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn as_os_str(&self) -> &OsStr {
+        OsStr::from_bytes(&self.0)
     }
 }
 
 /// The push refspec: the branch under its own name, never `HEAD:` or a bare branch.
-fn push_refspec(branch: &ClaudeBranch) -> String {
-    format!("refs/heads/{0}:refs/heads/{0}", branch.as_str())
+fn push_refspec(branch: &ClaudeBranch) -> OsString {
+    OsString::from_vec(cat(&[
+        b"refs/heads/",
+        branch.as_bytes(),
+        b":refs/heads/",
+        branch.as_bytes(),
+    ]))
 }
 
 /// What the command line asked for.
@@ -311,7 +322,7 @@ impl Checkpoint<'_> {
         if branch.is_empty() {
             return Gate::Blocked(b"detached HEAD".to_vec());
         }
-        if let Some(claude) = std::str::from_utf8(branch).ok().and_then(ClaudeBranch::new) {
+        if let Some(claude) = ClaudeBranch::new(branch) {
             return match in_progress(self.root) {
                 Some(operation) => Gate::Blocked(operation),
                 None => Gate::Open(claude),
@@ -371,7 +382,7 @@ impl Checkpoint<'_> {
         } else {
             saved.wip = self.commit(branch, &saved.allowed, &pre_index)?;
         }
-        saved.pushed = self.push(branch.as_str())?;
+        saved.pushed = self.push(branch.as_bytes())?;
         Ok(saved)
     }
 
@@ -385,16 +396,12 @@ impl Checkpoint<'_> {
         let files = git::output(self.root, &["diff", "--cached", "--name-only"])
             .map(|output| output.stdout.iter().filter(|&&b| b == b'\n').count())
             .unwrap_or(0);
-        let subject = format!("wip: checkpoint {}", branch.as_str());
+        let subject = cat(&[b"wip: checkpoint ", branch.as_bytes()]);
         let mut command = git::command(self.root);
-        command.args([
-            "commit",
-            "-q",
-            "-m",
-            subject.as_str(),
-            "-m",
-            "Paused with /justin:pause; not a finished step.",
-        ]);
+        command
+            .args(["commit", "-q", "-m"])
+            .arg(OsStr::from_bytes(&subject))
+            .args(["-m", "Paused with /justin:pause; not a finished step."]);
         if !allowed.is_empty() {
             let paths: BTreeSet<&[u8]> = allowed.iter().map(|(path, _)| path.as_slice()).collect();
             let paths: Vec<&[u8]> = paths.into_iter().collect();
@@ -427,10 +434,14 @@ impl Checkpoint<'_> {
     /// Push the branch when it has commits that are not on origin, unless a wip commit
     /// would reach a PR that is ready for review (or `gh` cannot say). The `pushed:`
     /// text of the checkpoint line.
-    fn push(&mut self, branch: &str) -> Result<Vec<u8>> {
+    fn push(&mut self, branch: &[u8]) -> Result<Vec<u8>> {
         // The hard check behind the type: nothing but a claude/* branch is ever pushed.
-        let claude = ClaudeBranch::new(branch)
-            .ok_or_else(|| anyhow!("refusing to push {branch:?}: not a claude/* branch"))?;
+        let claude = ClaudeBranch::new(branch).ok_or_else(|| {
+            anyhow!(
+                "refusing to push {:?}: not a claude/* branch",
+                String::from_utf8_lossy(branch)
+            )
+        })?;
         if others::unpushed(self.root) == "0" {
             return Ok(b"no (nothing to push)".to_vec());
         }
@@ -480,17 +491,17 @@ impl Checkpoint<'_> {
             cwd: self.root.to_path_buf(),
             env: CHECKPOINT_GH_ENV,
         };
-        let outcome = gh.run(&[
-            "pr",
-            "list",
-            "--head",
-            branch.as_str(),
-            "--state",
-            "open",
-            "--json",
-            "number,isDraft",
-            "--jq",
-            READY_PRS_JQ,
+        let outcome = gh.run_os(&[
+            OsStr::new("pr"),
+            OsStr::new("list"),
+            OsStr::new("--head"),
+            branch.as_os_str(),
+            OsStr::new("--state"),
+            OsStr::new("open"),
+            OsStr::new("--json"),
+            OsStr::new("number,isDraft"),
+            OsStr::new("--jq"),
+            OsStr::new(READY_PRS_JQ),
         ]);
         Ok(match &outcome {
             GhOutcome::Missing => Some(b"PR state unknown: gh is not installed".to_vec()),
@@ -625,11 +636,7 @@ impl Checkpoint<'_> {
                     .as_bytes(),
                 ]);
                 self.line(&summary)?;
-                let claude = other
-                    .branch
-                    .strip_prefix(b"claude/")
-                    .is_some_and(|rest| !rest.is_empty());
-                let hint = if claude {
+                let hint = if ClaudeBranch::new(&other.branch).is_some() {
                     cat(&[
                         b"    checkpoint it: (cd '",
                         other.path.as_os_str().as_bytes(),
@@ -768,18 +775,34 @@ mod tests {
 
     #[test]
     fn claude_branch_matches_the_case_pattern() {
-        assert!(ClaudeBranch::new("claude/x").is_some());
-        assert!(ClaudeBranch::new("claude/phase-1/m2").is_some());
-        assert!(ClaudeBranch::new("claude/").is_none());
-        assert!(ClaudeBranch::new("claude").is_none());
-        assert!(ClaudeBranch::new("main").is_none());
-        assert!(ClaudeBranch::new("feature/claude/x").is_none());
-        assert!(ClaudeBranch::new("Claude/x").is_none());
-        let branch = ClaudeBranch::new("claude/x").expect("a claude branch");
+        assert!(ClaudeBranch::new(b"claude/x").is_some());
+        assert!(ClaudeBranch::new(b"claude/phase-1/m2").is_some());
+        assert!(ClaudeBranch::new(b"claude/").is_none());
+        assert!(ClaudeBranch::new(b"claude").is_none());
+        assert!(ClaudeBranch::new(b"main").is_none());
+        assert!(ClaudeBranch::new(b"feature/claude/x").is_none());
+        assert!(ClaudeBranch::new(b"Claude/x").is_none());
+        assert!(ClaudeBranch::new(b"claudeX/y").is_none());
+        let branch = ClaudeBranch::new(b"claude/x").expect("a claude branch");
         assert_eq!(
             push_refspec(&branch),
-            "refs/heads/claude/x:refs/heads/claude/x"
+            OsString::from("refs/heads/claude/x:refs/heads/claude/x")
         );
+    }
+
+    #[test]
+    fn claude_branch_matches_on_bytes_as_the_script_did() {
+        // `case "$branch" in claude/?*)` matched raw bytes: a name that is not UTF-8 is
+        // a claude branch, and its refspec carries the same bytes.
+        let branch = ClaudeBranch::new(b"claude/caf\xe9").expect("a non-UTF-8 claude branch");
+        assert_eq!(branch.as_bytes(), b"claude/caf\xe9");
+        assert_eq!(
+            push_refspec(&branch).as_bytes(),
+            b"refs/heads/claude/caf\xe9:refs/heads/claude/caf\xe9"
+        );
+        assert!(ClaudeBranch::new(b"claude/").is_none());
+        assert!(ClaudeBranch::new(b"main").is_none());
+        assert!(ClaudeBranch::new(b"claudeX/y").is_none());
     }
 
     #[test]

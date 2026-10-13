@@ -416,6 +416,7 @@ pub struct Scenario {
     outside: bool,
     qemu_lock: bool,
     origin_main: bool,
+    reftable: bool,
     gh_missing: bool,
     gh: Vec<GhSpec>,
     docs: Option<(Vec<u8>, Vec<u8>, i32)>,
@@ -438,6 +439,7 @@ impl Scenario {
             outside: false,
             qemu_lock: true,
             origin_main: true,
+            reftable: false,
             gh_missing: false,
             gh: Vec::new(),
             docs: None,
@@ -562,6 +564,14 @@ impl Scenario {
     /// Do not push `main`: there is no `origin/main`.
     pub fn no_origin_main(mut self) -> Scenario {
         self.origin_main = false;
+        self
+    }
+
+    /// Both repositories keep their refs in the reftable format, so a ref name that is
+    /// not valid UTF-8 can exist on a host file system that refuses such file names
+    /// (APFS): the default format stores each ref as a file of that name.
+    pub fn reftable(mut self) -> Scenario {
+        self.reftable = true;
         self
     }
 
@@ -1074,9 +1084,22 @@ impl Scenario {
         let origin = base.join("origin.git");
         std::fs::create_dir_all(&root).expect("create the twin root");
         std::fs::create_dir_all(&origin).expect("create the origin");
-        setup_git(&origin, 0, &["init", "-q", "--bare", "-b", "main"]);
+        let format: &[&str] = if self.reftable {
+            &["--ref-format=reftable"]
+        } else {
+            &[]
+        };
+        setup_git(
+            &origin,
+            0,
+            &[&["init", "-q", "--bare"], format, &["-b", "main"]].concat(),
+        );
         setup_git(&origin, 0, &["config", "core.logAllRefUpdates", "always"]);
-        setup_git(&root, 0, &["init", "-q", "-b", "main"]);
+        setup_git(
+            &root,
+            0,
+            &[&["init", "-q"], format, &["-b", "main"]].concat(),
+        );
         let origin_str = origin.to_str().expect("a UTF-8 origin path");
         setup_git(&root, 0, &["remote", "add", "origin", origin_str]);
 

@@ -360,7 +360,7 @@ Conventions for every task:
       - the same awk with `n='- #<R3> '`, piped to `grep -cE '(gated by|named in needs-human) #<GATE>([,;)]|$)'`, prints 0;
       - the existing-gate check (the first command of this sub-task) now prints 1.
 
-- [ ] **Task 5: `tools/src/merge_ready.rs`, the verdict brief and R2 share** (worker, background; runs second and completes the freeze)
+- [x] **Task 5: `tools/src/merge_ready.rs`, the verdict brief and R2 share** (worker, background; runs second and completes the freeze)
   - [x] 5a: `tools/src/merge_ready.rs` (`pub mod merge_ready;` between `git` and `paths`).
     - Exactly contract §3: `PR_FIELDS`, `NEEDS_HUMAN_ISSUES_ARGS`, `clean`, `refs`, `alt`, `check_name`, `CheckState`, `check_state`, `gates`, `labelled_needs_human`, `blockers` and `pr_lines`.
     - The blocker order is brief.sh's 11 (W234 L201-241), with `labelled needs-human` (D10) in position 4.
@@ -386,13 +386,13 @@ Conventions for every task:
          - T(`--lib gh::`) ≥ 5, T(`--lib git::`) ≥ 5 and T(`--lib merge_ready::`) ≥ 15 pass;
          - `cargo build -p aios-tools --tests` exits 0, and `cargo clippy -p aios-tools --all-targets -- -D warnings` exits 0;
          - then `git reset --hard origin/main`, and the lead removes the worktree (no commits to place).
-      3. After the next commit: `git -C <BW> show HEAD:docs/knowledge/plans/2026-10-11-jl-tools-r3-scripts.md | grep -cE 'R3_API_FREEZE = [0-9a-f]{40}'` prints `1`.
+      3. After the next commit: `git -C <BW> show HEAD:docs/knowledge/plans/2026-10-11-jl-tools-r3-scripts.md | grep -cE 'R3_API_FREEZE = [0-9a-f]{40}'` prints `2` (the Task 5c record and the freeze entry under Decisions Made).
 
-- [ ] **Task 2: Checkpoint scenarios and goldens recorded from the oracle (no port code)** (worker, background)
-  - [x] 2a: `tools/tests/checkpoint_parity.rs`, with a `scenario!` macro whose invocations each start at column 0 as `scenario!(<name>, …)` and declare one scenario-table entry. From Task 3 on, the macro also generates one `#[test]` named after the scenario, which runs `aios` on it and checks its golden. So `cargo test -p aios-tools --test checkpoint_parity <name>` runs one scenario. In this task it generates the table entry only. 52 scenarios:
+- [x] **Task 2: Checkpoint scenarios and goldens recorded from the oracle (no port code)** (worker, background)
+  - [x] 2a: `tools/tests/checkpoint_parity.rs`, with a `scenario!` macro whose invocations each start at column 0 as `scenario!(<name>, …)` and declare one scenario-table entry. From Task 3 on, the macro also generates one `#[test]` named after the scenario, which runs `aios` on it and checks its golden. So `cargo test -p aios-tools --test checkpoint_parity <name>` runs one scenario. In this task it generates the table entry only. 53 scenarios (the 53rd, `non_utf8_claude_branch`, is audit round 4's):
     - the 15 from #166: `sensitive_name_new_doc`, `pem_line_in_added_text`, `key_file_in_earlier_local_commit`, `allow_matches_flagged_path`, `allow_matches_nothing`, `allow_dot_slash_prefix`, `other_worktree_dirty_from_claude_worktree`, `other_worktree_dirty_from_main`, `gh_fails_holds_wip`, `gh_missing_holds_wip`, `ready_pr_holds_wip`, `draft_pr_pushes_wip`, `non_wip_commits_push_without_gh`, `merge_in_progress`, `detached_head`;
     - #166's 5 round-1 extras: `env_in_new_untracked_dir`, `pem_in_keys_dir`, `modified_tracked_creds_not_flagged`, `clean_tree_unpushed_pushes`, `real_conflict_merge`;
-    - 24 gaps:
+    - 25 gaps:
       - `commit_hook_fails`, `push_rejected_non_ff`, `non_claude_branch`, `on_main_dirty`;
       - `rebase_in_progress`, `cherry_pick_in_progress`, `revert_in_progress`, `bisect_in_progress`, `unmerged_paths`;
       - `remember_and_pycache_excluded`, `index_restored_exactly`, `quoted_non_ascii_paths`, `missing_other_worktree_dir`, `allow_override_paragraph`, `nothing_to_do_safe_to_clear`, `handoff_saved`, `handoff_not_saved`;
@@ -401,12 +401,13 @@ Conventions for every task:
       - `write_tree_fails`: a `<fake_bin>/git` wrapper that execs the real git by absolute path, except for `write-tree`;
       - `unborn_head` (`@ none`): the scan's `log` calls fail in the oracle and are skipped in the port;
       - `allow_duplicates_kept_in_unused`, `allow_on_blocked_branch_all_unused`;
+      - `non_utf8_claude_branch` (audit round 4, owner ruling on gate #271): a dirty tree on the branch `claude/caf\xe9`, which the script's `case "$branch" in claude/?*)` matched on bytes. The scenario is `reftable` (`Scenario::reftable()`: both repositories get `--ref-format=reftable`), because APFS refuses a file name that is not UTF-8, which the default ref format needs for the loose ref; the branch is made by a git alias whose `printf` writes the 0xe9 byte. It asserts the `wip` commit, a push of the byte-exact ref to origin and exit 0; the golden shows the name lossily (U+FFFD);
       - `run_from_subdirectory`: a dirty `notes-root.txt` at the root and a dirty `docs/notes-sub.txt`, with the run from `docs/`. It asserts that `git ls-tree -r --name-only HEAD` lists both and that `git status --porcelain` is empty after the run; it is differential.
     - 6 CLI: `cli_allow_empty`, `cli_allow_dash`, `cli_handoff_bad`, `cli_handoff_twice_last_wins`, `cli_unknown`, `cli_help` (D1, aios-only);
     - 2 divergences (D9, aios-only; each uses a `<fake_bin>/git` wrapper that execs the real git by absolute path except for the one failing call, which prints one stderr line and exits 128):
       - `scan_git_failure_fails_closed`: a dirty new file and one unpushed non-wip commit; the wrapper fails `log -p`. It pins: index unchanged (`write-tree` before = after), no new commit, origin refs unchanged (the unpushed commit is not pushed either), the D9 output (Code Structure D9), exit 1;
       - `scan_git_failure_on_clean_tree`: nothing to commit and nothing unpushed; the wrapper fails the first scan call, `diff --cached --name-only`. Here the script's own logic would print `Safe to /clear` and exit 0 (L276-278); it pins exit 1 and no `Safe to /clear` line.
-    - Verify: `grep -c '^scenario!' tools/tests/checkpoint_parity.rs` = 52.
+    - Verify: `grep -c '^scenario!' tools/tests/checkpoint_parity.rs` = 53.
   - [x] 2b: Golden format, `tools/tests/golden/checkpoint/<name>.golden`, with these sections:
     - `exit`, `stdout`, `stderr`;
     - `origin refs` (`git -C origin for-each-ref --format='%(refname) %(objectname)'`);
@@ -417,10 +418,10 @@ Conventions for every task:
 
     Every scenario also runs `assert_not_vacuous`, `assert_origin_invariants` and `fake.assert_calls_match(CHECKPOINT_GH_ALLOW)`.
     - Verify: `grep -c 'assert_origin_invariants' tools/tests/checkpoint_parity.rs` ≥ 1, inside the shared scenario runner (one call site covers all scenarios).
-  - [x] 2c: `#[ignore] record_checkpoint_goldens` writes the 49 non-divergent goldens from the **oracle** (`AIOS_BLESS_GOLDENS=1`, through `oracle_renames()`). The only active test this task adds is `oracle_reproduces_checkpoint_goldens`.
+  - [x] 2c: `#[ignore] record_checkpoint_goldens` writes the 50 non-divergent goldens from the **oracle** (`AIOS_BLESS_GOLDENS=1`, through `oracle_renames()`). The only active test this task adds is `oracle_reproduces_checkpoint_goldens`.
     - Verify: `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test checkpoint_parity -- --ignored record_checkpoint_goldens` exits 0; then T(`--test checkpoint_parity`) = 1.
   - [x] 2d: Hygiene and counts.
-    - Verify: `ls tools/tests/golden/checkpoint/*.golden | wc -l` = 49; `git grep -n -e /Users/ -e /home/ -e /private/ -- tools/tests/golden/checkpoint` prints nothing; the contract §10 token grep over `tools` prints nothing; G.
+    - Verify: `ls tools/tests/golden/checkpoint/*.golden | wc -l` = 50; `git grep -n -e /Users/ -e /home/ -e /private/ -- tools/tests/golden/checkpoint` prints nothing; the contract §10 token grep over `tools` prints nothing; G.
     - After placement and push, the lead checks `gh run view <run-id> --log | grep -c 'test oracle_reproduces_checkpoint_goldens ... ok'` = 1 (ubuntu-26.04). A failure there adds the scenario to `PLATFORM_SCENARIOS`, with its tool and oracle line, in a follow-up worker commit.
     - An identity or sha mismatch (a failed `wip` commit, an author other than `aios-test`, or a commit sha that differs between twins or between macOS and CI) is never a `PLATFORM_SCENARIOS` case: it is a harness bug in `twin_command`'s identity env or date pinning (Task 1e), fixed there in a follow-up worker commit.
 
@@ -469,11 +470,11 @@ Conventions for every task:
     - Update the `lib.rs` crate doc and the `tools/Cargo.toml` description (L7) to `… (checkpoint, docs-check, hook, soak; agent-loop commands in later PRs)`. Task 6f adds `brief, `, so the final line is the contract's `AIOS host tooling: the aios binary (brief, checkpoint, docs-check, hook, soak; agent-loop commands in later PRs)`.
     - Verify (run after 3e is written, in the same commit): T(`--test checkpoint_parity cli_unknown`) = 1; `git diff -U0 origin/main...HEAD -- tools/Cargo.toml | grep -cE '^[-+][^-+]'` = 2 (A5; run after the commit).
   - [x] 3e: Tests added in this commit:
-    - the 52 per-scenario `#[test]`s: the `scenario!` arm of 2a, aios only, against the golden; they need no bash or jq.
+    - the 53 per-scenario `#[test]`s: the `scenario!` arm of 2a, aios only, against the golden; they need no bash or jq.
     - The three aios-only goldens, blessed from aios one scenario at a time (`AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test checkpoint_parity cli_help`, then the same with `scan_git_failure_fails_closed`, then with `scan_git_failure_on_clean_tree`), and reviewed by hand in the commit against the D9 output in Code Structure Decisions. Besides the golden, both D9 scenarios assert in Rust that stdout has no `Safe to /clear` line and that the exit is 1, so a re-bless cannot weaken them.
-    - `checkpoint_differential_against_oracle`: twin repos, over the 49 non-divergent scenarios, comparing normalised stdout, exit, origin refs, HEAD message, HEAD sha and author/committer (`aios-test`, Task 1e's identity env), index, upstream and gh calls, run with `parallel_map`.
+    - `checkpoint_differential_against_oracle`: twin repos, over the 50 non-divergent scenarios, comparing normalised stdout, exit, origin refs, HEAD message, HEAD sha and author/committer (`aios-test`, Task 1e's identity env), index, upstream and gh calls, run with `parallel_map`.
     - `checkpoint_differential_under_bin_bash_3_2`: the same differential with the oracle run by `/bin/bash`, only where `/bin/bash --version` reports 3.2 (macOS). Elsewhere it prints "no /bin/bash 3.2 here" and returns.
-    - Verify: `ls tools/tests/golden/checkpoint/*.golden | wc -l` = 52; T(`--test checkpoint_parity scan_git_failure_`) = 2.
+    - Verify: `ls tools/tests/golden/checkpoint/*.golden | wc -l` = 53; T(`--test checkpoint_parity scan_git_failure_`) = 2.
   - [x] 3f: Mutation checks. These are uncommitted, in the writer's worktree; afterwards run `git checkout -- tools/src`.
     - Remove `--diff-filter=A` → `modified_tracked_creds_not_flagged` fails.
     - Drop the `wip:` hold → `ready_pr_holds_wip`, `gh_fails_holds_wip` and `gh_missing_holds_wip` fail.
@@ -483,7 +484,7 @@ Conventions for every task:
     - Keep `cwd` instead of the toplevel → `run_from_subdirectory` fails.
     - On a scan failure, fall through to the script's final-line logic (print `Safe to /clear` and exit 0 when nothing is dirty or unpushed) → `scan_git_failure_on_clean_tree` fails.
     - Verify: under each mutation, `cargo test -p aios-tools --test checkpoint_parity <one named test>` exits non-zero; afterwards `git status --porcelain -- tools/src` prints nothing. The writer lists the seven results in its report.
-  - [x] 3g: Verify: T(`--test checkpoint_parity`) = 55 (52 per-scenario tests + `oracle_reproduces_checkpoint_goldens` + 2 differentials); T(`--lib checkpoint::`) ≥ 9; `git grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only files under `tools/src/cmd/checkpoint/`; G.
+  - [x] 3g: Verify: T(`--test checkpoint_parity`) = 56 (53 per-scenario tests + `oracle_reproduces_checkpoint_goldens` + 2 differentials); T(`--lib checkpoint::`) ≥ 9; `git grep -n 'GH_PROMPT_DISABLED' -- tools/src` lists only files under `tools/src/cmd/checkpoint/`; G.
 
 - [x] **Task 4: Brief scenarios, gh fixtures and goldens recorded from the oracle (no port code)** (worker, background; 4e partly lead)
   - [x] 4a: Fixtures under `tools/tests/fixtures/brief/<scenario>/`:
@@ -776,7 +777,7 @@ Conventions for every task:
   - [ ] 12e: The PR (the draft from 1h).
     - `gh pr edit <n> --body-file …`, with:
       - a Summary;
-      - Parity evidence: 52 + 76 scenarios (49 + 74 differential), the differentials including `/bin/bash` 3.2, `PLATFORM_SCENARIOS`, the mutation checks;
+      - Parity evidence: 53 + 76 scenarios (50 + 74 differential), the differentials including `/bin/bash` 3.2, `PLATFORM_SCENARIOS`, the mutation checks;
       - Divergences D1-D10, and what is kept bug-for-bug;
       - the Settings change (owner-applied) and the 0e probe;
       - the guard/pause answer;
@@ -864,7 +865,7 @@ Conventions for every task:
 - **A stale main binary committing.** Mitigation: the shim's checkpoint exit 3 on a failed stale rebuild (owner decision 5). A pre-R3 main binary has no `checkpoint` subcommand, exits 2 and writes nothing.
 - **main moves `settings.json` under the settings script.** Mitigation: the base check (tip blob = `origin/main` blob) and the A8 recovery, which only the owner performs.
 - **CI does not run the Python guard suite.** Mitigation: 10c and 10f run it locally; the PR test plan says so; a follow-up issue.
-- **Test runtime.** There are about 600 twin-repo runs (52 + 76 per-scenario runs, 49 + 74 oracle reproductions, 2 × (49 + 74) differential runs, and 2 × 49 for bash 3.2), counting the per-scenario tests, both differentials, the bash 3.2 pass and the oracle reproductions. Mitigation: `parallel_map`, with a budget under 90 s on this Mac.
+- **Test runtime.** There are about 600 twin-repo runs (53 + 76 per-scenario runs, 50 + 74 oracle reproductions, 2 × (50 + 74) differential runs, and 2 × 50 for bash 3.2), counting the per-scenario tests, both differentials, the bash 3.2 pass and the oracle reproductions. Mitigation: `parallel_map`, with a budget under 90 s on this Mac.
 - **Residual (not R3's):** #213 (the stamp is tied to local HEAD); #241 (guard rule 4 gaps, R5).
 
 ## Owner Questions

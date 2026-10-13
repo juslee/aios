@@ -94,11 +94,26 @@ impl GhRunner for GhCli {
     }
 }
 
+impl GhCli {
+    /// [`GhRunner::run`] for an argv that may hold bytes that are not UTF-8 (a branch
+    /// name): the allowlist reads a lossy view of it, and `gh` gets the bytes as given.
+    pub fn run_os(&self, args: &[&OsStr]) -> GhOutcome {
+        run_program(OsStr::new("gh"), args, &self.cwd, &self.env)
+    }
+}
+
 /// The seam: `GhCli::run` is exactly this with `program` = "gh". It calls
 /// [`is_read`] first and returns `Refused` without spawning when that fails. Its
 /// `Command` gets its environment only through [`GhEnv::apply`].
-pub fn run_program(program: &OsStr, args: &[&str], cwd: &Path, env: &GhEnv) -> GhOutcome {
-    if let Err(reason) = is_read(args) {
+pub fn run_program<S: AsRef<OsStr>>(
+    program: &OsStr,
+    args: &[S],
+    cwd: &Path,
+    env: &GhEnv,
+) -> GhOutcome {
+    let lossy: Vec<_> = args.iter().map(|a| a.as_ref().to_string_lossy()).collect();
+    let view: Vec<&str> = lossy.iter().map(|a| &**a).collect();
+    if let Err(reason) = is_read(&view) {
         return GhOutcome::Refused { reason };
     }
     let mut cmd = Command::new(program);
