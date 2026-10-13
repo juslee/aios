@@ -15,7 +15,7 @@ Each plan's coordination section becomes a link to this file plus a short summar
 
 A change to anything here is a contract amendment. Both branches belong to team-build, so the same lead makes the amendment: it edits this file and both plans in one worker commit, and records it in its handoff file. No `HEADS-UP` message is sent, because there is no other lead to send it to.
 
-Revised 2026-10-11 after the critic round. §13 lists the points that were rejected and why. §14 lists the merged amendments A1-A12 that both plans cite.
+Revised 2026-10-11 after the critic round. §13 lists the points that were rejected and why. §14 lists the merged amendments A1-A13 that both plans cite (A13 was added 2026-10-13).
 
 ## 0. Basis
 
@@ -151,7 +151,14 @@ impl GhRunner for GhCli { /* run_program(OsStr::new("gh"), args, &self.cwd, &sel
 /// The seam: GhCli::run is exactly this with program = "gh". It calls
 /// `is_read(args)` first and returns `Refused` without spawning when that fails.
 /// Its Command gets its environment only through `env.apply`.
-pub fn run_program(program: &std::ffi::OsStr, args: &[&str], cwd: &std::path::Path, env: &GhEnv) -> GhOutcome;
+/// Generic over the argument type (A13): `is_read` reads a lossy UTF-8 view, gh gets the original bytes.
+pub fn run_program<S: AsRef<std::ffi::OsStr>>(program: &std::ffi::OsStr, args: &[S], cwd: &std::path::Path, env: &GhEnv) -> GhOutcome;
+
+impl GhCli {
+    /// `GhRunner::run` for an argv that may hold bytes that are not UTF-8 (a branch name, for
+    /// checkpoint's `pr list --head`): the allowlist reads a lossy view, gh gets the bytes as given (A13).
+    pub fn run_os(&self, args: &[&std::ffi::OsStr]) -> GhOutcome;
+}
 
 /// Ok(()) when `args` is a read; Err(reason) otherwise. An allowlist (fail closed):
 /// - `api <endpoint> …`, where <endpoint> is args[1] and does not start with `-`. It is refused when it has:
@@ -605,9 +612,9 @@ Every finding of the critic round was checked against W234, main and both plans.
 
 Also not taken: the critic's worktree names `tools-r2-loop`/`tools-r3-scripts`. Both plans create `.claude/worktrees/tools-r2` and `.claude/worktrees/tools-r3`, and §0 uses those.
 
-## 14. Amendments (2026-10-11)
+## 14. Amendments (2026-10-11; A13 added 2026-10-13)
 
-One merged set, A1-A12, in one numbering, as both plans state it (R3's "Contract amendments A1-A12" list and R2's "merged amendments A1-A12" table). R3's revision-3 list (A1-A9) and R2's v2 list (A1-A7) were two sets under colliding numbers; this set is R3's A1-A9, with A1, A4 and A7 reconciled against R2's, plus R2's evals/cases exclusion (A10), R2's docs gate (A11) and R2's own rows (A12). Both plans already cite this numbering; neither is renumbered.
+One merged set, A1-A13, in one numbering, as both plans state it (R3's "Contract amendments A1-A12" list and R2's "merged amendments A1-A12" table). R3's revision-3 list (A1-A9) and R2's v2 list (A1-A7) were two sets under colliding numbers; this set is R3's A1-A9, with A1, A4 and A7 reconciled against R2's, plus R2's evals/cases exclusion (A10), R2's docs gate (A11) and R2's own rows (A12). A13 (2026-10-13) is the first amendment to the frozen API. Both plans already cite this numbering; neither is renumbered.
 
 **Precedence.** The A12 rows of §2, §8, §9 and §11 already match. For the other sections an item names, the team-build lead edits that section to match before either branch commits this file (R3 0f, R2 0b); until then, where an earlier section and §14 differ, §14 wins. Each item was checked against the repo on 2026-10-11.
 
@@ -647,3 +654,12 @@ One merged set, A1-A12, in one numbering, as both plans state it (R3's "Contract
 - **A10 (§3, the 10f grep).** Add `':!scripts/agent/evals/cases'` to its exclusions: R2's eval cases are historical patch data that must name the scripts, like `tools/tests/common/agent.rs`. Both plans quote the amended grep verbatim (R3 10f, R2 23b); on R3's tree the extra pathspec matches nothing and changes nothing.
 - **A11 (§1, the docs gate DG).** docs-check's knowledge-hygiene check reports every file under `docs/knowledge/plans/` except `README.md` and `_template.md` as `plans-not-empty` (main `tools/src/cmd/docs_check/checks/knowledge.rs` L62-69), and these findings are not in `scripts/docs/baseline.json`. So from each branch's plan commit until its distil commit, "docs-check clean" means: `just docs-check --json` exits 1, and its new findings are exactly the two `knowledge-hygiene plans-not-empty` lines for that branch's plan copy and contract copy. From the distil commit on, `just docs-check` exits 0. The distil is R3 Task 12d and R2 Task 24c; each plan's DG gives the exact form.
 - **A12 (§2, §8, §11; R2's own rows, R2 tasks 4d, 13b, 20a, 20c, 21b).** It changes nothing R3 builds. §2's R2 typed reads are `pr_view`, `viewer_login`, `pr_checks`, `review_threads`, `issues_labelled`, `label_exists`, `run_log_failed` and the dedup `issue list --search` (no `rate_remaining`: nothing consumes it), and the supervised long read is `gh pr checks <n> --watch` over **every** check, never `--required`, bounded by `ci_wait_minutes` (the merge verdict counts every check; R2 D21 and `checks_reads_never_pass_required`). §11's R2 asks are the four path spellings plus `Bash(*/aios loop *)`, `Bash(cargo run *loop*)` and `Bash(cargo r *loop*)`, seven in all (R2 D22); §8's rule-03 R2 append names them. §9's R2 probe runs A7's saved harness over those spellings.
+- **A13 (§2; owner ruling 2026-10-13 on gate #271).** `gh::run_program` is generic over its argument type, and `GhCli` gains `run_os`:
+  - `pub fn run_program<S: AsRef<std::ffi::OsStr>>(program: &std::ffi::OsStr, args: &[S], cwd: &std::path::Path, env: &GhEnv) -> GhOutcome`: `is_read` reads a lossy UTF-8 view of the arguments for its allowlist, while gh receives the original bytes;
+  - `impl GhCli { pub fn run_os(&self, args: &[&std::ffi::OsStr]) -> GhOutcome }`: `GhRunner::run` for an argv that may hold bytes that are not UTF-8.
+
+  **Why.** `aios checkpoint` matches `claude/` branches on raw bytes, as `checkpoint.sh` did (audit round 4; the owner ordered the fix, committed as b4c3459), and its WIP hold passes the branch to `gh pr list --head <branch>`. A non-UTF-8 branch name must reach gh exactly.
+
+  **Backward compatibility.** `GhRunner` and `is_read` keep their signatures, and every `&[&str]` caller of `run_program` or `GhRunner::run` compiles unchanged (`&str: AsRef<OsStr>`). The change only adds.
+
+  **Freeze.** `R3_API_FREEZE` moves to `b4c34596de0325e018cea460eccf01bfe3c98ad8`. The first freeze was `3296e1d2fb8f7538c2fe292ca6d80699cd001068`; R2 re-vendors `tools/src/gh.rs` from the new freeze (§1, re-vendoring).
