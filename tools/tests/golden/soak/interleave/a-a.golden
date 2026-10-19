@@ -75,7 +75,7 @@ Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)
 
 ### Tripwire counters by class
 
-No boot has a complete `v=1` tripwire line.
+No boot has a complete `v=1` or `v=2` tripwire line.
 
 | Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
 |---:|---|---:|---:|---|---|---|---|
@@ -138,7 +138,7 @@ Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)
 
 ### Tripwire counters by class
 
-No boot has a complete `v=1` tripwire line.
+No boot has a complete `v=1` or `v=2` tripwire line.
 
 | Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
 |---:|---|---:|---:|---|---|---|---|
@@ -257,7 +257,7 @@ Each boot's avg= is whole us, as the kernel truncates it.
 
 That count is meaningful only for an arm whose kernel prints tripwire lines (step 1b, e211d6d, or later); an arm with no tripwire line in any boot shows n/a. INCONCLUSIVE boots (no kernel result) are never counted.
 
-No boot has a complete `v=1` tripwire line.
+No boot has a complete `v=1` or `v=2` tripwire line.
 
 ### Non-CLEAN boots
 

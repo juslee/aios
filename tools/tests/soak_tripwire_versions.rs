@@ -153,7 +153,7 @@ fn a_line_of_any_other_version_is_kept_whole_and_not_decoded() {
     assert_eq!(cell(&tsv, 0, "tw_line"), line);
     let md = read(&dir, "out/summary.md");
     assert!(
-        md.contains("No boot has a complete `v=1` tripwire line.\n"),
+        md.contains("No boot has a complete `v=1` or `v=2` tripwire line.\n"),
         "{md}"
     );
     assert!(

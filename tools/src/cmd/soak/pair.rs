@@ -520,7 +520,7 @@ fn tripwire_section(labels: &[&str], boots: &[Boot]) -> Vec<u8> {
     let lines: Vec<(usize, Option<&Decoded>)> =
         boots.iter().map(|b| (b.arm, b.decoded.as_ref())).collect();
     match report::counter_table(&columns, &lines) {
-        None => md.extend_from_slice(b"No boot has a complete `v=1` tripwire line.\n"),
+        None => md.extend_from_slice(b"No boot has a complete `v=1` or `v=2` tripwire line.\n"),
         Some(table) => {
             md.extend(
                 format!(
@@ -950,7 +950,7 @@ mod tests {
         assert!(md.contains("| Arm | Conclusive non-CLEAN boots with neither a complete tripwire line nor a fatal report |\n|---|---:|\n| A | 2 |\n| B | n/a (no tripwire line in any boot) |\n"), "{md}");
         assert!(md.contains(UNEXPLAINED_NOTE), "{md}");
         assert!(
-            md.contains("No boot has a complete `v=1` tripwire line.\n"),
+            md.contains("No boot has a complete `v=1` or `v=2` tripwire line.\n"),
             "{md}"
         );
     }

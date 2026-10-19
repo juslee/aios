@@ -195,10 +195,9 @@ IRQ-class locks (1b):         THREAD_TABLE, CURRENT_THREAD[N], RUN_QUEUES[N], WA
                               heartbeat scan only try_locks it, alone. In
                               deadlock-prevention.md §3.3 PROCESS_WAITERS is position 2, so THREAD_TABLE
                               (3), SERVICE_MANAGER (4), SHARED_REGION_TABLE (5), NOTIFICATION_TABLE (6)
-                              and CHANNEL_TABLE (7) moved down by one; removing SELECT_WAITERS (old 7)
-                              cancels the insertion, so TIMEOUT_QUEUE (8), REPLY_SLOTS (9),
-                              WAKEUP_ERRORS (10), BLOCK_ENGINE (11), VIRTIO_BLK (12) and AUDIT_RING (13)
-                              keep their old numbers.
+                              and CHANNEL_TABLE (7) moved down by one; TIMEOUT_QUEUE (8),
+                              REPLY_SLOTS (9), WAKEUP_ERRORS (10), BLOCK_ENGINE (11), VIRTIO_BLK (12)
+                              and AUDIT_RING (13) keep their numbers.
 ```
 
 ---

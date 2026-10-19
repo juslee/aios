@@ -777,7 +777,7 @@ pub fn tripwire_table(tally: &Tally) -> Vec<u8> {
         })
         .collect();
     match counter_table(&names, &boots) {
-        None => md.extend_from_slice(b"No boot has a complete `v=1` tripwire line.\n"),
+        None => md.extend_from_slice(b"No boot has a complete `v=1` or `v=2` tripwire line.\n"),
         Some(table) => {
             md.extend(
                 format!(
@@ -1002,7 +1002,7 @@ mod tests {
             .expect("a cell")
     }
 
-    /// A complete `v=1` tripwire line with the prefix and the `key=value`
+    /// A complete `v=1` or `v=2` tripwire line with the prefix and the `key=value`
     /// tokens `keys`.
     fn tw(src: &str, keys: &str) -> String {
         tw_v(1, src, keys)
@@ -1300,7 +1300,7 @@ mod tests {
         );
         assert_eq!(
             text(tripwire_table(&tally(&[of_class("CLEAN")]))),
-            "\n### Tripwire counters by class\n\nNo boot has a complete `v=1` tripwire line.\n"
+            "\n### Tripwire counters by class\n\nNo boot has a complete `v=1` or `v=2` tripwire line.\n"
         );
     }
 

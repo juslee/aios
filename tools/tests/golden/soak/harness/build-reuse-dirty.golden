@@ -83,7 +83,7 @@ Gate 1 IPC round trip, mean over CLEAN boots: n/a (no CLEAN boot)
 
 ### Tripwire counters by class
 
-No boot has a complete `v=1` tripwire line.
+No boot has a complete `v=1` or `v=2` tripwire line.
 
 | Run | Class | Last tick | Stall | Markers | LB last | Tripwire | First fatal line / detail |
 |---:|---|---:|---:|---|---|---|---|
