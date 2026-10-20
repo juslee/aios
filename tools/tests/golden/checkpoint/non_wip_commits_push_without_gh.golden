@@ -1,0 +1,18 @@
+== exit ==
+0
+== stdout ==
+checkpoint: claude/x @ 4aafdd5 | wip: clean | pushed: yes | handoff: not recorded
+Safe to /clear — run /justin:start after
+== stderr ==
+== origin refs ==
+refs/heads/claude/x 4aafdd588679da99110e0bb090a1945fd7b1486a
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+add feature
+== index ==
+before a0c4069e94b0c9dcf8a458452305bab202717eec
+after a0c4069e94b0c9dcf8a458452305bab202717eec
+== upstream ==
+refs/heads/claude/x
+== gh calls ==
+(none)

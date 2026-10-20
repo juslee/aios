@@ -1574,6 +1574,8 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just clean` | Remove build artifacts and disk image |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (exit 1 if any); `--all` lists every finding, `--update-baseline` accepts the current ones |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
+| `just brief` | Orient a session: git state, open PRs and their merge-ready verdicts, CI, soak results, handoff, next step and docs drift (`aios brief`, run through the checkout's shim, which runs the main checkout's build; `--no-fetch` skips the fetch) |
+| `just checkpoint` | Commit the work in progress and push the `claude/*` branch; `--handoff saved` records that a handoff was written (`aios checkpoint`, run through the checkout's shim, which runs the main checkout's build; the shim rebuilds a stale binary first and exits 3 only if that rebuild fails) |
 
 **Note:** `just run`, `just run-display`, and `just debug` depend on `create-data-disk` and include VirtIO data disk QEMU flags (`-drive if=none,id=data0,file=data.img,format=raw -device virtio-blk-device,drive=data0`).
 

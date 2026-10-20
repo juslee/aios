@@ -1,0 +1,18 @@
+== exit ==
+1
+== stdout ==
+checkpoint: claude/x @ 09d20ac | wip: not committed (merge in progress) | pushed: no (merge in progress) | handoff: not recorded
+Not fully saved: 1 uncommitted file(s) and 1 commit(s) not on origin remain only in <ROOT>.
+/clear keeps all of it on disk; run /justin:start after.
+== stderr ==
+== origin refs ==
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+x work
+== index ==
+before 38b43e0932bda92bf6a2f3f5155c4399fc1b709d
+after 38b43e0932bda92bf6a2f3f5155c4399fc1b709d
+== upstream ==
+(none)
+== gh calls ==
+(none)

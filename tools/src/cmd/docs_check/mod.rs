@@ -184,7 +184,7 @@ pub fn repo_root(cwd: &Path) -> anyhow::Result<String> {
 /// `out`, returns the exit code (0, or 1 when there is new drift; the caller in
 /// `main.rs` maps an `Err` to 2). A Rust panic unwinds past this and exits the
 /// process with code 101, where check.py's `__main__` catches every crash and
-/// exits 2 instead; every consumer (`docs.yml`, `brief.sh`) already treats any
+/// exits 2 instead; every consumer (`docs.yml`, `aios brief`) already treats any
 /// exit other than 0 or 1 as a checker error, so this divergence is not
 /// observable as different behaviour outside the process. A failed write to
 /// stdout is a second one, for example EPIPE when the reader closes the pipe

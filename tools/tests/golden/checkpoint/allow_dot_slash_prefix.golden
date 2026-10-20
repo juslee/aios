@@ -1,0 +1,28 @@
+== exit ==
+0
+== stdout ==
+checkpoint: claude/x @ bdc5865 | wip: committed 1 file(s) | pushed: yes | handoff: not recorded
+Allowed by --allow (confirmed safe by the user):
+  - docs/deploy-secret.md (file name)
+Safe to /clear — run /justin:start after
+== stderr ==
+== origin refs ==
+refs/heads/claude/x bdc58652682ca3afd38484ded40cd3ea014661e9
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+wip: checkpoint claude/x
+
+Paused with /justin:pause; not a finished step.
+
+Secret scan overridden with --allow (confirmed safe by the user): docs/deploy-secret.md
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+== index ==
+before 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+after 16b45a36398044b2977991118e0d5c6405303e57
+== upstream ==
+refs/heads/claude/x
+== gh calls ==
+1: pr list --head claude/x --state open --json number,isDraft --jq .[] | select(.isDraft | not) | "#\(.number)"
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=1 GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>

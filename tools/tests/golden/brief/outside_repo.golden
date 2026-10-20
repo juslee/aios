@@ -1,0 +1,13 @@
+== exit ==
+2
+== stdout ==
+== stderr ==
+brief: not inside a git repository
+== gh calls ==
+(none)
+== docs calls ==
+(none)
+== marker touched ==
+no
+== remote refs ==
+(none)

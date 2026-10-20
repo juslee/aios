@@ -1,0 +1,89 @@
+== exit ==
+0
+== stdout ==
+# AIOS brief - <DATE>
+
+## Git
+
+- checkout: (main checkout) on `claude/x` @ 0921693 Work on x
+- uncommitted: 0 file(s); 0 unpushed, 0 behind origin/claude/x
+- worktrees:
+  - (main checkout): `claude/x`, 0 uncommitted, 0 unpushed, 0 behind origin/claude/x
+
+## Open pull requests
+
+- #7 Add the widget [`claude/widget`, alice] {team-build}
+  checks: 3 pass, 0 fail, 0 pending; mergeable: MERGEABLE / CLEAN; review: none; unresolved threads: 1
+  merge-ready: no (1 unresolved review thread(s))
+
+## Main CI
+
+- CI: success @ 4444444 (push, 2026-01-01 00:20 UTC)
+
+## Soak
+
+- main soak: none (no finished run of a commit on origin/main without local changes)
+- newest other soak (not main's state): target/soak/r1-text (worktree on `claude/x`, 2026-01-01 01:23)
+  - commit 0921693bbfb2661e580cd391ac82d1e1aba3b67c (origin/main unknown); 10 (text mode)
+  - text mode: CLEAN 10/10, PCZERO 0, PANIC-LOCK 0, PANIC 0, EXCEPTION 0, WEDGE-STUCK 0, WEDGE-ALIVE 0, DEGRADED 0
+
+## Host QEMU lock
+
+- free
+
+## Routing log
+
+- route-shadow records: 0; launched dispatches: 0 (the Jev evaluation needs 200; agent-loop.md, Model routing)
+
+## Handoffs
+
+- no handoff files in <ROOT>/.remember (written by /justin:pause)
+
+## Knowledge notes changed since last session
+
+- since 7 days ago (no handoff or marker yet): <DATE>
+- none
+
+## Needs human
+
+- #41 Settings: decide the allow rules (updated 2025-12-30)
+- #60 Gate: merge PR #99 after the soak (updated 2026-01-02)
+- queue: 3 agent-ready, 1 agent-working
+
+## Next phase-doc step
+
+- no phase doc in progress (all docs/phases/*.md are Complete)
+
+## Docs drift
+
+- docs-check: 0 new vs baseline, 3 total (3 baselined, of which 1 accepted false positives; 0 resolved)
+== stderr ==
+== gh calls ==
+1: api rate_limit --jq .resources.core.remaining
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+2: issue list --state open --label needs-human --limit 1000 --json number,title,body,updatedAt
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+3: api graphql -F owner={owner} -F name={repo} -f query=         query($owner: String!, $name: String!) {           repository(owner: $owner, name: $name) {             pullRequests(states: OPEN, first: 50, orderBy: {field: CREATED_AT, direction: DESC}) {               nodes { number reviewThreads(first: 100) { nodes { isResolved } } }             }           }         } --jq [.data.repository.pullRequests.nodes[]                   | {key: (.number | tostring), value: ([.reviewThreads.nodes[] | select(.isResolved | not)] | length)}]                  | from_entries
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+4: pr list --state open --limit 30 --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author,labels
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+5: run list --branch main --event push --limit 40 --json workflowName,status,conclusion,headSha,createdAt,event
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+6: issue list --state open --label agent-ready --limit 1000 --json number --jq length
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+7: issue list --state open --label agent-working --limit 1000 --json number --jq length
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+== docs calls ==
+docs-check --json
+docs-cwd <ROOT>
+== marker touched ==
+yes
+== remote refs ==
+0921693bbfb2661e580cd391ac82d1e1aba3b67c commit	refs/remotes/origin/claude/x

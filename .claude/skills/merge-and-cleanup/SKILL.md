@@ -49,11 +49,12 @@ If any checks are failing or pending, report the status and wait. Do NOT attempt
 Then check whether the PR is gated:
 
 ```bash
-bash scripts/agent/brief.sh --no-fetch | awk -v n="- #<number> " 'index($0, n) == 1 {p = 1} p && /merge-ready:/ {print; exit}'
+just brief --no-fetch | awk -v n="- #<number> " 'index($0, n) == 1 {p = 1} p && /merge-ready:/ {print; exit}'
 ```
 
 - `merge-ready: no` naming `gated by #N` or `named in needs-human #N`: report the issue and stop. The owner closes or edits it first. Cross-team merge order exists only as these gate issues (rule 11).
-- No `merge-ready:` line for this PR (GitHub unavailable, the PR beyond brief.sh's `--limit 30`, or not listed): the gate is unknown. Report it and stop unless the user confirms.
+- `merge-ready: no` naming `labelled needs-human`: a hard stop like `gated by`. Report the loop's needs-human comment on the PR and stop. The owner removes the label after deciding (`gh pr edit <number> --remove-label needs-human`).
+- No `merge-ready:` line for this PR (GitHub unavailable, the PR beyond `aios brief`'s `--limit 30`, or not listed): the gate is unknown. Report it and stop unless the user confirms.
 - Other `no` reasons (draft, unresolved threads, changes requested): report them and stop unless the user confirms each by name.
 
 Then check the QEMU lock:

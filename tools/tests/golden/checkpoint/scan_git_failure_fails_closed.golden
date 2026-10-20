@@ -1,0 +1,18 @@
+== exit ==
+1
+== stdout ==
+checkpoint: claude/x @ 4aafdd5 | wip: not committed (secret scan failed: fatal: injected git failure) | pushed: no (secret scan failed) | handoff: not recorded
+Not fully saved: 1 uncommitted file(s) and 1 commit(s) not on origin remain only in <ROOT>.
+/clear keeps all of it on disk; run /justin:start after.
+== stderr ==
+== origin refs ==
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+add feature
+== index ==
+before a0c4069e94b0c9dcf8a458452305bab202717eec
+after a0c4069e94b0c9dcf8a458452305bab202717eec
+== upstream ==
+(none)
+== gh calls ==
+(none)

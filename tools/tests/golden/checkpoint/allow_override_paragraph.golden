@@ -1,0 +1,29 @@
+== exit ==
+0
+== stdout ==
+checkpoint: claude/x @ ab99683 | wip: committed 2 file(s) | pushed: yes | handoff: not recorded
+Allowed by --allow (confirmed safe by the user):
+  - docs/api-secret.md (file name)
+  - docs/other-secret.md (file name)
+Safe to /clear — run /justin:start after
+== stderr ==
+== origin refs ==
+refs/heads/claude/x ab996839cf2bdd26ab5dacfdb10c3ef1b5494907
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+wip: checkpoint claude/x
+
+Paused with /justin:pause; not a finished step.
+
+Secret scan overridden with --allow (confirmed safe by the user): docs/api-secret.md, docs/other-secret.md
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+== index ==
+before 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+after 19ca636639e066b9be33a481d2e057e585d9e50a
+== upstream ==
+refs/heads/claude/x
+== gh calls ==
+1: pr list --head claude/x --state open --json number,isDraft --jq .[] | select(.isDraft | not) | "#\(.number)"
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=1 GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>

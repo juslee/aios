@@ -1,0 +1,20 @@
+== exit ==
+0
+== stdout ==
+checkpoint: claude/x @ c29b34e | wip: clean | pushed: yes | handoff: not recorded
+Safe to /clear — run /justin:start after
+== stderr ==
+== origin refs ==
+refs/heads/claude/x c29b34e9d1cf1afa76a5301836f0d1538427ef18
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+wip: checkpoint claude/x
+== index ==
+before 91f1c56f5914175f283506746224679452a1cec8
+after 91f1c56f5914175f283506746224679452a1cec8
+== upstream ==
+refs/heads/claude/x
+== gh calls ==
+1: pr list --head claude/x --state open --json number,isDraft --jq .[] | select(.isDraft | not) | "#\(.number)"
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=1 GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>

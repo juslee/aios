@@ -239,7 +239,7 @@ Cargo workspace, four members (`tools` is host-only and not a default member). R
 aios/
 ├── Cargo.toml            workspace root (resolver = "2"; members: kernel, shared, uefi-stub, tools; default: kernel, shared)
 ├── rust-toolchain.toml   pinned nightly (aarch64-unknown-none + aarch64-unknown-uefi)
-├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
+├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / brief / checkpoint / clean
 ├── .claude/
 │   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
 │   ├── agents/           kernel-dev, worker, doc-writer, simplifier, verifier, code-reviewer,
@@ -286,8 +286,11 @@ aios/
 │                         programs: repeat-error, path-guard, route-shadow, route-outcome),
 │                         src/cmd/soak/ (boot soak harness, just soak: classify, tripwire, stats,
 │                         interleave --arm (2-4 checkouts; CI: soak-matrix.yml), pair report),
+│                         src/cmd/brief/ (aios brief: the session brief), src/cmd/checkpoint/
+│                         (aios checkpoint: WIP commit + push of a claude/* branch, secret scan),
+│                         src/gh.rs (read-only gh runner), src/git.rs, src/merge_ready.rs (verdict),
 │                         tests/ (goldens, fixtures); depends on shared/ (tripwire key catalogue)
-├── scripts/              agent/ (brief, checkpoint, qemu-lock: the host QEMU lock),
+├── scripts/              agent/ (qemu-lock.sh: the host QEMU lock),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```
@@ -318,9 +321,9 @@ Two attended lead sessions split by domain, `team-build` (harness, tools, CI, fe
 | Skill | Trigger | Purpose |
 | --- | --- | --- |
 | `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action |
-| `/justin:brief` | Where the project stands | Deterministic brief (`scripts/agent/brief.sh`): git, PRs + merge-ready, CI, soak, handoff, needs-human, next step, docs drift |
+| `/justin:brief` | Where the project stands | Deterministic brief (`aios brief`): git, PRs + merge-ready, CI, soak, handoff, needs-human, next step, docs drift |
 | `/justin:doctor` | Docs/harness health check | Drift report from `just docs-check --all`, grouped by who fixes it; read-only (bare `/doctor` is Claude Code's own) |
-| `/justin:pause` | Before a break or `/clear` (user only) | Writes this session's `.remember/handoff-<key>.md` (`team-build`, `team-fix` or `solo-<name>`), then the WIP checkpoint (`scripts/agent/checkpoint.sh`) |
+| `/justin:pause` | Before a break or `/clear` (user only) | Writes this session's `.remember/handoff-<key>.md` (`team-build`, `team-fix` or `solo-<name>`), then the WIP checkpoint (`aios checkpoint`) |
 | `/justin:team <build\|fix>` | Team mode, in each lead (user only) | Makes the session the team-build or team-fix lead: checks the session, restores state from its handoff file and team labels, greets the peer, runs the loop |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |

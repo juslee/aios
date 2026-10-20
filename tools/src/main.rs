@@ -1,9 +1,10 @@
-//! `aios`: AIOS host tooling: `aios docs-check` (R1), `aios hook` (model
-//! routing) and `aios soak` (R4); later PRs add subcommands.
+//! `aios`: AIOS host tooling: `aios brief` and `aios checkpoint` (R3), `aios docs-check`
+//! (R1), `aios hook` (model routing) and `aios soak` (R4); later PRs add subcommands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -17,6 +18,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Deterministic session briefing for /justin:brief (see `aios brief --help`)
+    #[command(name = "brief", disable_help_flag = true)]
+    Brief(aios_tools::cmd::brief::Args),
+    /// Commit and push the work in progress of a claude/* branch, for /justin:pause (see `aios checkpoint --help`)
+    #[command(name = "checkpoint", disable_help_flag = true)]
+    Checkpoint(aios_tools::cmd::checkpoint::Args),
     /// Deterministic docs drift check against scripts/docs/baseline.json (exit 1 on new drift)
     #[command(name = "docs-check", infer_long_args = true, args_override_self = true)]
     DocsCheck(aios_tools::cmd::docs_check::Args),
@@ -65,17 +72,23 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Soak(_) => soak(),
+        Command::Brief(_) => raw_command("brief", aios_tools::cmd::brief::run),
+        Command::Checkpoint(_) => raw_command("checkpoint", aios_tools::cmd::checkpoint::run),
+        Command::Soak(_) => raw_command("soak: error", aios_tools::cmd::soak::run),
     }
 }
 
-/// `aios soak`. clap drops a leading `--`, which the soak command line treats as
-/// the end of its options, so the raw arguments after `soak` are parsed instead.
-fn soak() -> ExitCode {
+/// The signature of a subcommand that parses its raw arguments itself.
+type RawRun = fn(&[OsString], &Path, &mut dyn Write, &mut dyn Write) -> anyhow::Result<u8>;
+
+/// Run a subcommand on the raw arguments after its name, parsed in argv order by the
+/// command itself: clap only has to accept them (and drops a leading `--`, which the
+/// soak command line treats as the end of its options). `prefix` starts every message.
+fn raw_command(prefix: &str, run: RawRun) -> ExitCode {
     let cwd = match std::env::current_dir() {
         Ok(dir) => dir,
         Err(err) => {
-            eprintln!("soak: error: cannot read the current directory: {err}");
+            eprintln!("{prefix}: cannot read the current directory: {err}");
             return ExitCode::from(2);
         }
     };
@@ -84,16 +97,16 @@ fn soak() -> ExitCode {
     let mut out = stdout.lock();
     let stderr = std::io::stderr();
     let mut err = stderr.lock();
-    let result = aios_tools::cmd::soak::run(&raw, &cwd, &mut out, &mut err);
+    let result = run(&raw, &cwd, &mut out, &mut err);
     let flushed = out.flush();
     match (result, flushed) {
         (Ok(code), Ok(())) => ExitCode::from(code),
         (Ok(_), Err(e)) => {
-            let _ = writeln!(err, "soak: error: cannot write output: {e}");
+            let _ = writeln!(err, "{prefix}: cannot write output: {e}");
             ExitCode::from(2)
         }
         (Err(e), _) => {
-            let _ = writeln!(err, "soak: error: {e:#}");
+            let _ = writeln!(err, "{prefix}: {e:#}");
             ExitCode::from(2)
         }
     }

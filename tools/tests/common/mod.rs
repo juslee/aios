@@ -2,7 +2,10 @@
 //! Shared helpers for the aios-tools integration tests: a temp directory per
 //! test, an isolated git environment, and a throwaway repository.
 
+pub mod agent;
+pub mod fake_gh;
 pub mod fixture;
+pub mod jail;
 pub mod soak;
 pub mod soak_fake;
 
@@ -146,4 +149,40 @@ pub fn run_aios(cwd: &std::path::Path, args: &[&str]) -> Run {
         stdout: out.stdout,
         stderr: out.stderr,
     }
+}
+
+/// Map `f` over `items` on one worker thread per available CPU, keeping input order.
+/// Each item spawns processes, so this bounds the wall-clock time of the callers'
+/// scenario sets with a debug-build `aios`.
+pub fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .clamp(1, items.len().max(1));
+    let next = AtomicUsize::new(0);
+    let (next, f) = (&next, &f);
+    let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(move || {
+                    let mut out = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break };
+                        out.push((i, f(item)));
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    done.sort_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, r)| r).collect()
 }
