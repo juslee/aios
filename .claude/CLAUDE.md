@@ -164,7 +164,7 @@ Id layout (cap-lifetime):     ChannelId and SharedMemoryId: slot bits 0-7, gener
 Waiting sites (cap-lifetime): every wait arms with sched::prepare_block before it publishes any
                               waker record (timeout entries and deadlines included), passes its
                               own tid read with IRQs masked (current_tid(), or
-                              current_thread_and_pid() for SVC 25), and block_current asserts
+                              current_thread_and_pid() for SVC 25), and block_current debug-asserts
                               the arm. unblock of an Armed Running/Runnable thread leaves a
                               token, which block_current consumes; Dead threads never take or
                               consume one. Call unblock only after releasing the lock.
