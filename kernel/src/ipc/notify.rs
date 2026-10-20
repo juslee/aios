@@ -490,9 +490,10 @@ fn inert_record(tid: ThreadId) -> Waiter {
 /// `tid`, through [`NotificationObject::insert`], in one NOTIFICATION_TABLE
 /// critical section with IRQs masked. Returns how many inserts succeeded (0
 /// when `id`'s table slot is empty, i.e. destroyed): the free slot count,
-/// unless `insert` takes a slot that is not free, which the bound of one insert past the list size shows. For
-/// self-tests: the caller removes the records with [`clear_inert_records`]
-/// before it destroys `id`, which would wake `tid`. `id` must be in range.
+/// unless `insert` takes a slot that is not free, which the bound of one
+/// insert past the list size shows. For self-tests: the caller removes the
+/// records with [`clear_inert_records`] before it destroys `id`, which would
+/// wake `tid`. `id` must be in range.
 pub(super) fn fill_inert_records(id: NotificationId, tid: ThreadId) -> usize {
     daif::with_irqs_masked(|| {
         let mut table = NOTIFICATION_TABLE.lock();
