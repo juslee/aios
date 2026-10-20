@@ -83,7 +83,7 @@ pub enum Syscall {
     /// the same thread never reaches its next call (per-call `seq`, §4.1).
     /// The request itself stays in the channel's ring after a timeout,
     /// cancel or EPIPE, so a server that receives it later replies to
-    /// whichever call is pending then (#265).
+    /// whichever call is pending then (tracked in #268).
     IpcCall {
         channel: ChannelId,
         send_buf: *const u8,
@@ -532,7 +532,7 @@ pub struct Channel {
     /// both endpoints of each channel it owns an endpoint of to Dead, and
     /// wakes the channel's blocked receiver and pending caller with EPIPE.
     /// One exit delivers at most 16 such wakes; a waiter past the 16th is
-    /// left blocked with no waker (#262).
+    /// left blocked with no waker (tracked in #268).
     /// Any later IpcCall/IpcSend/IpcRecv on the channel returns EPIPE.
     /// This is the IPC equivalent of TCP RST — immediate, unambiguous.
     state_a: EndpointState,
@@ -998,7 +998,7 @@ Service crash → recovery sequence:
 
 1. KERNEL: Detects service process death
    ├── All channels to the dead service: endpoint set to Dead
-   ├── All blocked IpcCalls from clients: unblock with EPIPE (at most 16 per exit, #262)
+   ├── All blocked IpcCalls from clients: unblock with EPIPE (at most 16 per exit, tracked in #268)
    ├── Regions the service created: destroyed, every mapping removed (§4.5)
    ├── Its mappings of other regions: ref_count decremented, pages freed if 0
    └── Service Manager notified via AgentEvent notification
