@@ -438,8 +438,8 @@ fn select_case_d(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
 /// Select-loop case (e): n1's waiter list is full, so the select fails
 /// ENOMEM (#186 item 2) after its arm, without blocking. A select that
 /// registered nothing and blocked instead would return ETIMEDOUT at its
-/// deadline. The inert records go before the leftover check, which then
-/// finds any `Select` record the select left.
+/// deadline. The inert records are removed before the leftover check, so it
+/// finds only a `Select` record the select left.
 fn select_case_e(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
     let filled = fill_inert_records(set.n1, me);
     let entries = [SelectEntry {

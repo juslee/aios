@@ -489,8 +489,8 @@ fn inert_record(tid: ThreadId) -> Waiter {
 /// Fill every free waiter slot of notification `id` with an inert record of
 /// `tid`, through [`NotificationObject::insert`], in one NOTIFICATION_TABLE
 /// critical section with IRQs masked. Returns how many inserts succeeded (0
-/// for an empty slot): the free slot count, unless `insert` takes a slot that
-/// is not free, which the bound of one insert past the list size shows. For
+/// when `id`'s table slot is empty, i.e. destroyed): the free slot count,
+/// unless `insert` takes a slot that is not free, which the bound of one insert past the list size shows. For
 /// self-tests: the caller removes the records with [`clear_inert_records`]
 /// before it destroys `id`, which would wake `tid`. `id` must be in range.
 pub(super) fn fill_inert_records(id: NotificationId, tid: ThreadId) -> usize {
