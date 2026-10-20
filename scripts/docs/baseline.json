@@ -6,7 +6,7 @@
     "section-refs": 4,
     "doc-map": 4,
     "just-recipes": 1,
-    "lock-order": 15,
+    "lock-order": 18,
     "milestone-status": 5,
     "phase-count": 1,
     "layout": 3,
@@ -306,11 +306,25 @@
       "message": "production lock PENDING_POINTER is not in §3.3/§3.4"
     },
     {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:STATUS_STRIP",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:STATUS_STRIP",
+      "message": "production lock STATUS_STRIP is not in §3.3/§3.4"
+    },
+    {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:SURFACE_TABLE",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:SURFACE_TABLE",
       "message": "production lock SURFACE_TABLE is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:TASKBAR",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:TASKBAR",
+      "message": "production lock TASKBAR is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:TITLE_FONT",
@@ -332,6 +346,13 @@
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:WINDOW_Z_ORDER",
       "message": "production lock WINDOW_Z_ORDER is not in §3.3/§3.4"
+    },
+    {
+      "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:WORKSPACE",
+      "check": "lock-order",
+      "file": "docs/kernel/deadlock-prevention.md",
+      "target": "undocumented:WORKSPACE",
+      "message": "production lock WORKSPACE is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|kernel/src/compositor/service.rs|unknown:VIRTIO_INPUT",
