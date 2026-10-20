@@ -475,6 +475,53 @@ pub(super) fn has_waiter_record(tid: ThreadId) -> bool {
     })
 }
 
+/// An inert waiter record of `tid`: a [`WaitKind::Wait`] record with mask 0,
+/// which no signal matches and so never fires or wakes.
+fn inert_record(tid: ThreadId) -> Waiter {
+    Waiter {
+        tid,
+        mask: 0,
+        kind: WaitKind::Wait,
+        fired: 0,
+    }
+}
+
+/// Fill every free waiter slot of notification `id` with an inert record of
+/// `tid`, through [`NotificationObject::insert`], in one NOTIFICATION_TABLE
+/// critical section with IRQs masked. Returns how many inserts succeeded (0
+/// for an empty slot): the free slot count, unless `insert` takes a slot that
+/// is not free, which the bound of one insert past the list size shows. For
+/// self-tests: the caller removes the records with [`clear_inert_records`]
+/// before it destroys `id`, which would wake `tid`. `id` must be in range.
+pub(super) fn fill_inert_records(id: NotificationId, tid: ThreadId) -> usize {
+    daif::with_irqs_masked(|| {
+        let mut table = NOTIFICATION_TABLE.lock();
+        let Some(notif) = table[id.0 as usize].as_mut() else {
+            return 0;
+        };
+        let mut inserted = 0;
+        while inserted <= MAX_WAITERS_PER_NOTIFICATION && notif.insert(inert_record(tid)).is_ok() {
+            inserted += 1;
+        }
+        inserted
+    })
+}
+
+/// Remove `tid`'s inert records ([`fill_inert_records`]) from notification
+/// `id`, with IRQs masked. `id` must be in range.
+pub(super) fn clear_inert_records(id: NotificationId, tid: ThreadId) {
+    daif::with_irqs_masked(|| {
+        let mut table = NOTIFICATION_TABLE.lock();
+        if let Some(notif) = table[id.0 as usize].as_mut() {
+            for slot in notif.waiters.iter_mut() {
+                if slot.is_some_and(|w| w.tid == tid && w.kind == WaitKind::Wait && w.mask == 0) {
+                    *slot = None;
+                }
+            }
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Timeout support
 // ---------------------------------------------------------------------------

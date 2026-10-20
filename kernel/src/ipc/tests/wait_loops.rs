@@ -20,8 +20,8 @@ use core::sync::atomic::Ordering;
 use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::ipc::channel::{ipc_call, ipc_recv, ipc_send};
 use crate::ipc::notify::{
-    arm_deadline, clear_deadline, deadline_of, has_waiter_record, notification_create,
-    notification_destroy, notification_wait,
+    arm_deadline, clear_deadline, clear_inert_records, deadline_of, fill_inert_records,
+    has_waiter_record, notification_create, notification_destroy, notification_wait,
 };
 use crate::ipc::select::ipc_select;
 use crate::ipc::timeout::{has_reply_slot, has_timeout_entry, sleep_ticks};
@@ -29,7 +29,10 @@ use crate::ipc::{channel_create, channel_destroy, channel_mut, DeadlineArm, CHAN
 use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::ThreadId;
-use shared::{Capability, ChannelId, NotificationId, SelectEntry, SelectKind, MAX_MESSAGE_SIZE};
+use shared::{
+    Capability, ChannelId, NotificationId, SelectEntry, SelectKind, MAX_MESSAGE_SIZE,
+    MAX_WAITERS_PER_NOTIFICATION,
+};
 
 use super::wake_helper::{self, Command};
 use super::TEST_PID;
@@ -295,6 +298,10 @@ impl SelectSet {
 ///   `select([ch2], 2000)` must return EAGAIN without
 ///   blocking, and `ipc_send(ch2)` releases the helper, whose receive must
 ///   return `Ok`.
+/// - (e) every free waiter slot of n1 holds an inert record of this thread
+///   (`fill_inert_records`: a mask-0 `Wait` record no signal matches), so
+///   `select([n1], 2000)` must return ENOMEM without blocking; the records
+///   are removed, and then no registration and no deadline may be left.
 ///
 /// In (b) and (c) ETIMEDOUT means the event's wake was lost. Logs
 /// `Select-loop test: as expected`, or a line naming the case and the check
@@ -311,6 +318,7 @@ pub(super) fn select_loop_test(me: ThreadId) {
                 .or_else(|| select_case_b(me, &set).map(|f| ("b", f)))
                 .or_else(|| select_case_c(me, &set).map(|f| ("c", f)))
                 .or_else(|| select_case_d(me, &set).map(|f| ("d", f)))
+                .or_else(|| select_case_e(me, &set).map(|f| ("e", f)))
         }
         _ => Some(("setup", "create failed")),
     };
@@ -423,6 +431,27 @@ fn select_case_d(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
     }
     if helper_done.is_none_or(|o| o.code < 0) {
         return Some("helper receive failed");
+    }
+    leftover(me)
+}
+
+/// Select-loop case (e): n1's waiter list is full, so the select fails
+/// ENOMEM (#186 item 2) after its arm, without blocking. A select that
+/// registered nothing and blocked instead would return ETIMEDOUT at its
+/// deadline. The inert records go before the leftover check, which then
+/// finds any `Select` record the select left.
+fn select_case_e(me: ThreadId, set: &SelectSet) -> Option<&'static str> {
+    let filled = fill_inert_records(set.n1, me);
+    let entries = [SelectEntry {
+        kind: SelectKind::Notification(set.n1, MASK),
+    }];
+    let result = (filled == MAX_WAITERS_PER_NOTIFICATION).then(|| ipc_select(&entries, LOOP_TICKS));
+    clear_inert_records(set.n1, me);
+    match result {
+        None => return Some("fill failed"),
+        Some(Err(e)) if e == IpcError::Enomem as i64 => {}
+        Some(Err(e)) if e == IpcError::Etimedout as i64 => return Some("ETIMEDOUT"),
+        Some(_) => return Some("wrong result"),
     }
     leftover(me)
 }

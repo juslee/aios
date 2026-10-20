@@ -334,7 +334,7 @@ fn put_tid_or_unknown(out: &mut UartSink, tid: u32) {
 }
 
 /// The panic handler's report after its `PANIC: ` lines: one `[panic]` line,
-/// then a full `[tripwire] v=1 src=panic` line.
+/// then a full `[tripwire] v=2 src=panic` line.
 ///
 /// ```text
 /// [panic] cpu=0 tid=12 ctx=irq-exit irq_was=on t=2.345678 irq_elr=0xffff000000091234
@@ -387,7 +387,7 @@ pub fn print_panic_report(irq_was_on: bool) {
 ///
 /// `tid` as in [`print_panic_report`], `irq` the raw `IRQ_CTX[cpu]` (0
 /// thread, 1 irq, 2 irq-exit), `sched` 1 while the CPU is inside
-/// `schedule()`. Then a full `[tripwire] v=1 src=exc` line. Exception
+/// `schedule()`. Then a full `[tripwire] v=2 src=exc` line. Exception
 /// context, so IRQs are masked. `putc` only.
 #[inline(never)]
 pub fn print_exception_ctx() {
