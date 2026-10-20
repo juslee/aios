@@ -26,24 +26,31 @@ fn dirty_count(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// `git rev-list --count <args>`, or `?` when git fails. The arguments are `OsStr`s so a
-/// ref built from a branch name that is not UTF-8 reaches git as it is.
-fn count(dir: &Path, args: &[&OsStr]) -> Vec<u8> {
-    git::command(dir)
-        .args(["rev-list", "--count"])
+/// `$(git <args>)` with `OsStr` arguments, so a ref built from bytes that are not UTF-8
+/// reaches git as it is: stdout without its trailing newlines; `None` when git fails.
+/// Stderr is dropped.
+pub fn out_os(dir: &Path, args: &[&OsStr]) -> Option<Vec<u8>> {
+    let output = git::command(dir)
         .args(args)
         .stderr(Stdio::null())
         .output()
         .ok()
-        .filter(|output| output.status.success())
-        .map(|output| {
-            let mut stdout = output.stdout;
-            while stdout.last() == Some(&b'\n') {
-                stdout.pop();
-            }
-            stdout
-        })
-        .unwrap_or_else(|| b"?".to_vec())
+        .filter(|output| output.status.success())?;
+    let mut stdout = output.stdout;
+    while stdout.last() == Some(&b'\n') {
+        stdout.pop();
+    }
+    Some(stdout)
+}
+
+/// `git rev-list --count <args>`, or `?` when git fails. The arguments are `OsStr`s so a
+/// ref built from a branch name that is not UTF-8 reaches git as it is.
+fn count(dir: &Path, args: &[&OsStr]) -> Vec<u8> {
+    let args: Vec<&OsStr> = [OsStr::new("rev-list"), OsStr::new("--count")]
+        .into_iter()
+        .chain(args.iter().copied())
+        .collect();
+    out_os(dir, &args).unwrap_or_else(|| b"?".to_vec())
 }
 
 /// How far `dir`'s branch is from origin. Unlike checkpoint, the commits on no remote

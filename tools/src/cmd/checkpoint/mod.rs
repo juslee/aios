@@ -23,6 +23,16 @@
 //! secret stop is not checked either: the output still says the index is as it was, and
 //! the staging stays in place.
 //!
+//! Non-UTF-8 handling: shell keeps bytes, so the branch name, the paths git lists, the
+//! `--allow` paths and the git-path of the rebase and bisect gate stay bytes from git to
+//! the writer, and reach git as `OsStr`s. The conversions that remain are safe because
+//! the value cannot hold other bytes: the tree sha of `write-tree`, the short sha of
+//! `rev-parse --short` and the commit count of `rev-list --count` (git prints hex and
+//! digits); the `scan` unit tests, which build their text from ASCII; and the message of
+//! the hard check in `push`, which only a branch that is not `claude/*` reaches, and
+//! `gate` never lets one through. `tests/checkpoint_parity.rs` compares the oracle's bytes
+//! with ours.
+//!
 //! Exit status: 0 no worktree holds work that is not on origin; 1 uncommitted files or
 //! commits not on origin remain here or in another worktree, or the secret scan failed;
 //! 3 stopped on a possible secret; 2 usage error.
@@ -206,13 +216,31 @@ fn comma_list(items: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-/// `branch` could not be pushed or committed on: the operation that blocks a commit.
+/// `[ -e "$(git rev-parse --git-path <name>)" ]`: whether the path git names for `name`
+/// exists. `git_path` runs the `rev-parse` and `exists` tests the path; both are seams
+/// for the unit test. The path stays bytes from git to the file-system call, so a
+/// repository under a directory whose name is not UTF-8 still shows its rebase or bisect.
+fn git_path_exists(
+    root: &Path,
+    name: &str,
+    git_path: &dyn Fn(&str) -> Option<Vec<u8>>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> bool {
+    git_path(name)
+        .filter(|path| !path.is_empty())
+        .is_some_and(|path| exists(&root.join(OsStr::from_bytes(&path))))
+}
+
+/// The operation that blocks a commit, if any.
 fn in_progress(root: &Path) -> Option<Vec<u8>> {
     let verify = |name: &str| git::ok(root, &["rev-parse", "-q", "--verify", name]);
     let exists = |name: &str| {
-        git::text(root, &["rev-parse", "--git-path", name])
-            .filter(|path| !path.is_empty())
-            .is_some_and(|path| root.join(path).exists())
+        git_path_exists(
+            root,
+            name,
+            &|name| git::out(root, &["rev-parse", "--git-path", name]),
+            &|path| path.exists(),
+        )
     };
     let what = if verify("MERGE_HEAD") {
         "merge in progress"
@@ -803,6 +831,33 @@ mod tests {
         assert!(ClaudeBranch::new(b"claude/").is_none());
         assert!(ClaudeBranch::new(b"main").is_none());
         assert!(ClaudeBranch::new(b"claudeX/y").is_none());
+    }
+
+    #[test]
+    fn git_path_exists_tests_a_path_that_is_not_utf8() {
+        // `[ -e "$(git rev-parse --git-path rebase-merge)" ]` ran on the raw bytes, so a
+        // repository under a directory whose name is not UTF-8 still shows its rebase.
+        let root = Path::new("/work/caf\u{e9}");
+        let non_utf8 = b"/work/\xe9/.git/rebase-merge".to_vec();
+        let git_path = |name: &str| {
+            assert_eq!(name, "rebase-merge");
+            Some(non_utf8.clone())
+        };
+        let present = |path: &Path| path.as_os_str().as_bytes() == b"/work/\xe9/.git/rebase-merge";
+        assert!(git_path_exists(root, "rebase-merge", &git_path, &present));
+        assert!(!git_path_exists(root, "rebase-merge", &git_path, &|_| {
+            false
+        }));
+        // A relative answer is read from the toplevel, as the script's `cd "$ROOT"` did.
+        let relative = |_: &str| Some(b".git/BISECT_\xe9".to_vec());
+        let there =
+            |path: &Path| path.as_os_str().as_bytes() == b"/work/caf\xc3\xa9/.git/BISECT_\xe9";
+        assert!(git_path_exists(root, "BISECT_LOG", &relative, &there));
+        // No answer and an empty answer name no path.
+        assert!(!git_path_exists(root, "x", &|_| None, &|_| true));
+        assert!(!git_path_exists(root, "x", &|_| Some(Vec::new()), &|_| {
+            true
+        }));
     }
 
     #[test]

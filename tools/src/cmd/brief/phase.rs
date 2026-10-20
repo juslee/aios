@@ -4,9 +4,10 @@
 //! The task scan is its own port of the script's awk. It does not reuse
 //! `docs_check::checks::milestones::is_unchecked_task`, whose semantics differ.
 
+use std::ffi::OsStr;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -27,8 +28,9 @@ pub fn status_of(doc: &[u8]) -> &[u8] {
         .unwrap_or_default()
 }
 
-/// The phase docs, `docs/phases/[0-9]*.md`, in bytewise order.
-fn phase_docs(root: &Path) -> Vec<String> {
+/// The phase docs, `docs/phases/[0-9]*.md`, in bytewise order. The names stay bytes: a
+/// name that is not UTF-8 is read and printed as it is.
+fn phase_docs(root: &Path) -> Vec<Vec<u8>> {
     let Ok(entries) = std::fs::read_dir(root.join("docs/phases")) else {
         return Vec::new();
     };
@@ -42,17 +44,19 @@ fn phase_docs(root: &Path) -> Vec<String> {
         .collect();
     names.sort_unstable();
     names
-        .into_iter()
-        .map(|name| String::from_utf8_lossy(&name).into_owned())
-        .collect()
+}
+
+/// The path of the phase doc `name`.
+fn doc_path(root: &Path, name: &[u8]) -> PathBuf {
+    root.join("docs/phases").join(OsStr::from_bytes(name))
 }
 
 /// The phase doc to report: the first `In Progress`, else the first that is neither
 /// `In Progress` nor `Complete`.
-fn current_doc(root: &Path) -> Option<(String, Vec<u8>)> {
-    let mut candidate: Option<(String, Vec<u8>)> = None;
+fn current_doc(root: &Path) -> Option<(Vec<u8>, Vec<u8>)> {
+    let mut candidate: Option<(Vec<u8>, Vec<u8>)> = None;
     for name in phase_docs(root) {
-        let doc = std::fs::read(root.join("docs/phases").join(&name)).unwrap_or_default();
+        let doc = std::fs::read(doc_path(root, &name)).unwrap_or_default();
         let status = status_of(&doc);
         if status.starts_with(b"In Progress") {
             return Some((name, status.to_vec()));
@@ -132,11 +136,8 @@ pub fn print(root: &Path, out: &mut dyn Write) -> Result<Option<Vec<u8>>> {
         )?;
         return Ok(None);
     };
-    line(
-        out,
-        &[format!("- docs/phases/{name}: ").as_bytes(), &status],
-    )?;
-    let doc = std::fs::read(root.join("docs/phases").join(&name)).unwrap_or_default();
+    line(out, &[b"- docs/phases/", &name, b": ", &status])?;
+    let doc = std::fs::read(doc_path(root, &name)).unwrap_or_default();
     let Some((next, task)) = next_task(&doc) else {
         line(out, &[b"- every task box in this doc is checked"])?;
         return Ok(None);
@@ -182,6 +183,37 @@ mod tests {
         assert_eq!(next, b"- next: B / (no step heading)");
         // The box needs a space after the bullet and after the brackets.
         assert!(next_task(b"-[ ] x\n- [ ]x\n").is_none());
+    }
+
+    #[test]
+    fn a_phase_doc_name_that_is_not_utf8_is_read_and_printed_as_it_is() {
+        let root = std::env::temp_dir().join(format!("aios-brief-phase-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let phases = root.join("docs/phases");
+        std::fs::create_dir_all(&phases).expect("create docs/phases");
+        let name = b"07-caf\xe9.md";
+        assert_eq!(
+            doc_path(&root, name).as_os_str().as_bytes(),
+            [root.as_os_str().as_bytes(), b"/docs/phases/07-caf\xe9.md"].concat()
+        );
+        // A file system that refuses a name that is not UTF-8 (APFS) cannot run this.
+        if std::fs::write(
+            phases.join(OsStr::from_bytes(name)),
+            "**Status:** In Progress\n## Milestone 9\n- [ ] the task\n",
+        )
+        .is_err()
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let mut out = Vec::new();
+        let milestone = print(&root, &mut out).expect("print the section");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(milestone, Some(b"9".to_vec()));
+        assert_eq!(
+            out,
+            b"- docs/phases/07-caf\xe9.md: In Progress\n- next: Milestone 9 / (no step heading)\n- first open task: the task\n"
+        );
     }
 
     #[test]

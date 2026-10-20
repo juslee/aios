@@ -25,6 +25,17 @@
 //! of a soak summary that is printed whole when it has no closing ` |`, and `unpushed_desc`
 //! counting commits on no remote against all remotes.
 //!
+//! Non-UTF-8 handling: shell keeps bytes, so branch names, worktree and phase-doc paths,
+//! file contents and the commit text of a soak summary stay bytes from git or the file
+//! system to the writer, and reach git as `OsStr`s (the only text that is ever arbitrary
+//! bytes). The conversions that remain are safe because the value cannot hold other
+//! bytes: the `origin/main` sha in the Main CI query and the two shas of a soak relation
+//! (`git rev-parse` prints hex); the milestone digits of a PR title match (the
+//! `[0-9]` run of the phase heading); and the JSON from `gh` and from the docs-check
+//! child (UTF-8 by definition, and the script read it through `jq`, which is lossy
+//! too). The unit tests of the byte paths are `phase`, `soak` and `crate::paths`;
+//! `tests/brief_parity.rs` compares the oracle's bytes with ours.
+//!
 //! Clock seam: the time comes from the host's `date` and from file modification times
 //! ([`clock`]), and the marker is written last.
 //!
@@ -48,7 +59,7 @@ use anyhow::{bail, Result};
 
 use crate::gh::{GhCli, GhEnv};
 use crate::git;
-use crate::paths::normpath;
+use crate::paths::normpath_bytes;
 
 const HELP: &str = "\
 aios brief - deterministic session briefing for /justin:brief (no LLM)
@@ -135,10 +146,11 @@ impl Ctx {
         let worktrees = git::worktrees(&root);
         let main = worktrees.first().cloned().unwrap_or_default();
         let common = git::out(&root, &["rev-parse", "--git-common-dir"])
-            .map(|dir| root.join(OsStr::from_bytes(&dir)))
-            .map(|dir| match dir.to_str() {
-                Some(text) => PathBuf::from(normpath(text)),
-                None => dir,
+            .map(|dir| {
+                let joined = root.join(OsStr::from_bytes(&dir));
+                PathBuf::from(OsString::from_vec(normpath_bytes(
+                    joined.as_os_str().as_bytes(),
+                )))
             })
             .unwrap_or_else(|| root.clone());
         Ctx {

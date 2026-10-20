@@ -342,9 +342,14 @@ fn non_utf8_branch_is_on_origin(outcome: &Outcome) {
         "main's push and the branch's two pushes, read from the reftable origin"
     );
     let stdout = outcome.stdout_str();
+    // The raw byte, not the replacement character the golden file shows.
+    let line: &[u8] = b"- uncommitted: 0 file(s); 1 unpushed, 0 behind origin/claude/caf\xe9";
     assert!(
-        stdout.contains("- uncommitted: 0 file(s); 1 unpushed, 0 behind origin/claude/caf"),
-        "the checkout line:\n{stdout}"
+        outcome
+            .stdout
+            .windows(line.len())
+            .any(|window| window == line),
+        "the checkout line, with the branch name's 0xE9 byte:\n{stdout}"
     );
     assert!(
         !stdout.contains("; not on origin; "),
@@ -1100,11 +1105,17 @@ fn brief_differential_against_oracle() {
         check_outcome(case, &oracle);
         let aios = agent::run_aios(&scenario, "brief", case.args);
         check_outcome(case, &aios);
-        let (want, got) = (
-            String::from_utf8_lossy(&render_golden(&oracle, true)).into_owned(),
-            String::from_utf8_lossy(&render_golden(&aios, false)).into_owned(),
-        );
-        (want != got).then(|| format!("{}: {}", case.name, agent::first_difference(&want, &got)))
+        // Byte for byte: a lossy rendering would equate 0xE9 and U+FFFD. Only the message
+        // that names the first difference is lossy.
+        let (want, got) = (render_golden(&oracle, true), render_golden(&aios, false));
+        (want != got).then(|| {
+            let lossy = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+            format!(
+                "{}: {}",
+                case.name,
+                agent::first_difference(&lossy(&want), &lossy(&got))
+            )
+        })
     })
     .into_iter()
     .flatten()

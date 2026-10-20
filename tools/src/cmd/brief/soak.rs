@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::clock::{fmt_epoch, mtime};
-use super::git_section::branch_or_detached;
+use super::git_section::{branch_or_detached, out_os};
 use super::phase::status_of;
 use super::{line, Ctx};
 use crate::cmd::checkpoint::scan::lines;
@@ -104,8 +104,17 @@ fn soak_relation(root: &Path, tip: Option<&[u8]>, raw: &[u8]) -> (Vec<u8>, bool)
         return (b"commit not recorded".to_vec(), false);
     }
     let commit = raw.strip_suffix(b"-dirty").unwrap_or(raw);
-    let spec = format!("{}^{{commit}}", String::from_utf8_lossy(commit));
-    let Some(full) = git::out(root, &["rev-parse", "-q", "--verify", &spec]) else {
+    // The recorded text is arbitrary bytes and may name a ref, so it reaches git as it is.
+    let spec = [commit, b"^{commit}"].concat();
+    let Some(full) = out_os(
+        root,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("-q"),
+            OsStr::new("--verify"),
+            OsStr::from_bytes(&spec),
+        ],
+    ) else {
         return (b"commit not in this repository".to_vec(), false);
     };
     let Some(tip) = tip else {
@@ -489,6 +498,78 @@ mod tests {
         .expect("write the summary");
         assert_eq!(soak_commit(&dir), b"");
         std::fs::remove_dir_all(&dir).expect("remove the directory");
+    }
+
+    /// `git args` in `dir`, with the ambient configuration masked; its stdout chomped.
+    fn setup_git(dir: &Path, args: &[&OsStr]) -> Vec<u8> {
+        let output = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=aios-test",
+                "-c",
+                "user.email=aios-test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("run git");
+        assert!(output.status.success(), "git {args:?} failed");
+        let mut stdout = output.stdout;
+        while stdout.last() == Some(&b'\n') {
+            stdout.pop();
+        }
+        stdout
+    }
+
+    #[test]
+    fn soak_relation_asks_git_about_the_recorded_bytes() {
+        let dir = std::env::temp_dir().join(format!("aios-brief-relation-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create the repository directory");
+        let os = |text: &'static str| OsStr::new(text);
+        // Reftable, because APFS refuses a ref file whose name is not UTF-8. A git without
+        // reftable cannot run this.
+        let init = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main", "--ref-format=reftable"])
+            .current_dir(&dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdin(std::process::Stdio::null())
+            .status();
+        if !init.is_ok_and(|status| status.success()) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        setup_git(
+            &dir,
+            &[
+                os("commit"),
+                os("-q"),
+                os("--allow-empty"),
+                os("-m"),
+                os("one"),
+            ],
+        );
+        let name = b"claude/caf\xe9";
+        setup_git(&dir, &[os("branch"), OsStr::from_bytes(name)]);
+        let head = setup_git(&dir, &[os("rev-parse"), os("HEAD")]);
+        // A recorded commit that is a ref name with a byte that is not UTF-8 resolves.
+        let (relation, on_main) = soak_relation(&dir, Some(&head), name);
+        assert_eq!(relation, b"origin/main tip");
+        assert!(on_main);
+        // The lossy name is another ref, which does not exist.
+        let (relation, on_main) = soak_relation(&dir, Some(&head), "claude/caf\u{fffd}".as_bytes());
+        assert_eq!(relation, b"commit not in this repository");
+        assert!(!on_main);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

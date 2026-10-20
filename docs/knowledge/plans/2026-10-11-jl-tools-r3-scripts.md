@@ -939,6 +939,7 @@ All of R3's earlier questions are decided (see Decisions Made). Two items are st
   - **The amendment set disagreed with R2 v2** (eleven amendments here, twelve there; no A12 marker in 0f; §2, §8 and §11 not in the edit list; a renumbering step that R2 v2 had already applied). A12 is now in the list and 0f's marker loop, the renumbering step is dropped, and the contract carries §14.
 - **Found in Task 3 (2026-10-12): Task 10f's grep will hit more than the provenance form.** `git grep -n -e 'brief\.sh' -e 'checkpoint\.sh' -- tools` also matches mentions outside the exempt form. These are `tools/src/git.rs:1` (frozen: its fix waits for R2's convergence, or needs a contract amendment), `tools/tests/agent_support.rs` L17, L33 and L690, `tools/tests/common/jail.rs` L34 and L41 (frozen; their `former scripts/agent/...` form lacks `(blob at`), and `tools/tests/shim.rs:623`, besides the docs_check comments that 10b covers. Task 10 must reword these, or exempt them through the provenance form, before 10f's verify can pass.
 - **Audit round 4: frozen gh.rs changed under A13 (owner ruling, #271).** `aios checkpoint` matches `claude/` branches on raw bytes, as `checkpoint.sh` did, and its WIP hold passes the branch to `gh pr list --head`. `gh::run_program` is therefore generic over its argument type and `GhCli` gains `run_os`, so a non-UTF-8 branch name reaches gh exactly. `R3_API_FREEZE` moved from 3296e1d to b4c3459 (Decisions Made).
+- Audit round 6: non-UTF-8 class swept; see the module docs
 
 ### Rejected review points
 

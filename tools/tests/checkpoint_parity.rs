@@ -201,6 +201,16 @@ fn non_utf8_branch_pushed(outcome: &Outcome) {
     let stdout = outcome.stdout_str();
     assert_eq!(outcome.code, 0, "stdout:\n{stdout}");
     assert_eq!(outcome.repo_state.status_after, "", "nothing is left dirty");
+    // The checkpoint line names the branch by its raw byte, not the replacement character
+    // the golden file shows.
+    let shown = b"checkpoint: claude/caf\xe9 @";
+    assert!(
+        outcome
+            .stdout
+            .windows(shown.len())
+            .any(|window| window == shown),
+        "the checkpoint line, with the branch name's 0xE9 byte:\n{stdout}"
+    );
     let refs = |dir: &Path| {
         let out = Command::new("git")
             .args(["for-each-ref", "--format=%(refname)"])
@@ -690,8 +700,8 @@ fn aios_matches_golden(name: &str) {
 }
 
 /// Everything a golden holds, plus the HEAD sha and its author and committer (the
-/// pinned `aios-test` identity of the `wip` commit).
-fn observed(outcome: &Outcome, oracle: bool) -> String {
+/// pinned `aios-test` identity of the `wip` commit), as bytes.
+fn observed(outcome: &Outcome, oracle: bool) -> Vec<u8> {
     let twin = outcome.twin();
     let ceiling = twin.root().parent().expect("the twin root has a parent");
     let head = agent::probe(
@@ -699,11 +709,11 @@ fn observed(outcome: &Outcome, oracle: bool) -> String {
         ceiling,
         &["log", "-1", "--format=%H|%an <%ae>|%cn <%ce>"],
     );
-    format!(
-        "{}== HEAD ==\n{}\n",
-        String::from_utf8_lossy(&render_golden(outcome, oracle)),
-        head.as_deref().unwrap_or("(none)")
-    )
+    let mut observed = render_golden(outcome, oracle);
+    observed.extend_from_slice(
+        format!("== HEAD ==\n{}\n", head.as_deref().unwrap_or("(none)")).as_bytes(),
+    );
+    observed
 }
 
 /// The oracle (run by `bash`) and aios, in twin repositories, over the 50 differential
@@ -721,8 +731,17 @@ fn differential(bash: &Path) {
         check_outcome(case, &oracle);
         let aios = agent::run_aios(&scenario, "checkpoint", case.args);
         check_outcome(case, &aios);
+        // Byte for byte: a lossy rendering would equate 0xE9 and U+FFFD. Only the message
+        // that names the first difference is lossy.
         let (want, got) = (observed(&oracle, true), observed(&aios, false));
-        (want != got).then(|| format!("{}: {}", case.name, agent::first_difference(&want, &got)))
+        (want != got).then(|| {
+            let lossy = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+            format!(
+                "{}: {}",
+                case.name,
+                agent::first_difference(&lossy(&want), &lossy(&got))
+            )
+        })
     })
     .into_iter()
     .flatten()
