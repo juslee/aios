@@ -1,0 +1,21 @@
+== exit ==
+1
+== stdout ==
+checkpoint: claude/w1 @ 0ec8ffe | wip: clean | pushed: no (nothing to push) | handoff: not recorded
+Other worktrees hold work that is not on origin (left untouched: an agent may be working there):
+  - .claude/worktrees/w2 on claude/w2: 1 uncommitted file(s), 0 commit(s) not on origin
+    checkpoint it: (cd '<ROOT>/.claude/worktrees/w2' && just --justfile '<ROOT>/justfile' --working-directory . checkpoint)
+Not fully saved: 1 other worktree(s) listed above hold work that is not on origin.
+/clear keeps all of it on disk; run /justin:start after.
+== stderr ==
+== origin refs ==
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+Initial
+== index ==
+before 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+after 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+== upstream ==
+(none)
+== gh calls ==
+(none)

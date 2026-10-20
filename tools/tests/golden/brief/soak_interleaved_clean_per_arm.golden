@@ -1,0 +1,93 @@
+== exit ==
+0
+== stdout ==
+# AIOS brief - <DATE>
+
+## Git
+
+- checkout: (main checkout) on `main` @ b170a8e Second commit
+- uncommitted: 0 file(s); 0 unpushed, 0 behind origin/main
+- origin/main @ b170a8e Second commit (<AGO>)
+- worktrees:
+  - (main checkout): `main`, 0 uncommitted, 0 unpushed, 0 behind origin/main
+
+## Open pull requests
+
+- #7 Add the widget [`claude/widget`, alice] {team-build}
+  checks: 3 pass, 0 fail, 0 pending; mergeable: MERGEABLE / CLEAN; review: none; unresolved threads: 1
+  merge-ready: no (1 unresolved review thread(s))
+
+## Main CI
+
+- CI: success @ b170a8e (push, 2026-01-01 00:30 UTC)
+
+## Soak
+
+- main soak: none (no finished run of a commit on origin/main without local changes)
+- newest interleaved soak (an A/B experiment, not main's state): target/soak/ab-1 (worktree on `main`, 2026-01-01 00:50)
+  - status: complete, 4 boots (2 per arm)
+  - CLEAN per arm: arm A `0ec8ffe013e36fa997f8e2859be98370c7247fd9` 1/2; arm B `b170a8ead9ab09a38c772269444ee22777c5cde6` 2/2
+
+## Host QEMU lock
+
+- free
+
+## Routing log
+
+- route-shadow records: 0; launched dispatches: 0 (the Jev evaluation needs 200; agent-loop.md, Model routing)
+
+## Handoffs
+
+- no handoff files in <ROOT>/.remember (written by /justin:pause)
+
+## Knowledge notes changed since last session
+
+- since 7 days ago (no handoff or marker yet): <DATE>
+- none
+
+## Needs human
+
+- #41 Settings: decide the allow rules (updated 2025-12-30)
+- #60 Gate: merge PR #99 after the soak (updated 2026-01-02)
+- queue: 3 agent-ready, 1 agent-working
+
+## Next phase-doc step
+
+- no phase doc in progress (all docs/phases/*.md are Complete)
+
+## Docs drift
+
+- docs-check: 0 new vs baseline, 3 total (3 baselined, of which 1 accepted false positives; 0 resolved)
+== stderr ==
+== gh calls ==
+1: api rate_limit --jq .resources.core.remaining
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+2: issue list --state open --label needs-human --limit 1000 --json number,title,body,updatedAt
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+3: api graphql -F owner={owner} -F name={repo} -f query=         query($owner: String!, $name: String!) {           repository(owner: $owner, name: $name) {             pullRequests(states: OPEN, first: 50, orderBy: {field: CREATED_AT, direction: DESC}) {               nodes { number reviewThreads(first: 100) { nodes { isResolved } } }             }           }         } --jq [.data.repository.pullRequests.nodes[]                   | {key: (.number | tostring), value: ([.reviewThreads.nodes[] | select(.isResolved | not)] | length)}]                  | from_entries
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+4: pr list --state open --limit 30 --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author,labels
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+5: api graphql -F owner={owner} -F name={repo} -F oid=b170a8ead9ab09a38c772269444ee22777c5cde6 -f query=         query($owner: String!, $name: String!, $oid: GitObjectID!) {           repository(owner: $owner, name: $name) {             object(oid: $oid) {               ... on Commit {                 checkSuites(first: 100) {                   nodes { status conclusion branch { name } workflowRun { event createdAt workflow { name } } }                 }               }             }           }         }
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+6: run list --branch main --event push --limit 40 --json workflowName,status,conclusion,headSha,createdAt,event
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+7: issue list --state open --label agent-ready --limit 1000 --json number --jq length
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+8: issue list --state open --label agent-working --limit 1000 --json number --jq length
+   cwd <ROOT>
+   env GH_HOST=<unset> GH_NO_UPDATE_NOTIFIER=<unset> GH_PROMPT_DISABLED=<unset> GH_REPO=<unset> LC_ALL=C NO_COLOR=<unset>
+== docs calls ==
+docs-check --json
+docs-cwd <ROOT>
+== marker touched ==
+yes
+== remote refs ==
+b170a8ead9ab09a38c772269444ee22777c5cde6 commit	refs/remotes/origin/main

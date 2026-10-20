@@ -16,7 +16,7 @@ Start a session: brief, then one proposed next action. Runbook for the human sid
    1. Uncommitted or unpushed work on a `claude/*` branch: continue it, or checkpoint it with `/justin:pause`.
    2. Main CI is red: fix main before anything else.
    3. An open PR from a `claude/*` branch has failing checks or unresolved review threads (the brief counts both per PR): tend that PR.
-   4. A PR shows `merge-ready: yes`: ask the human to review and merge it. Do not merge. `merge-ready` is computed by the script; never propose merging a draft, a PR gated by a `needs-human` issue, or a PR the script marks `no` for any other reason.
+   4. A PR shows `merge-ready: yes`: ask the human to review and merge it. Do not merge. `merge-ready` is computed by `aios brief`; never propose merging a draft, a PR gated by or named in a `needs-human` issue, or labelled `needs-human`, or a PR the brief marks `no` for any other reason.
    5. A `needs-human` issue blocks the next step (a gate on a PR you would otherwise propose, or a decision the next phase-doc step depends on): ask for that decision and link the issue.
    6. New docs drift since the baseline: if this branch introduced it, fix it here. If it came from `main` (it shows as new on every branch, including a fresh one from `origin/main`), propose a dedicated docs PR that fixes or baselines it; do not fold it into unrelated work.
    7. Otherwise: start the next phase-doc step (`/implement-phase N`, attended). If the brief names an open PR for that milestone, the milestone is already in flight: propose continuing that PR instead, never a second implementation.

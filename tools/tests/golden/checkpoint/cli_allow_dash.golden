@@ -1,0 +1,16 @@
+== exit ==
+2
+== stdout ==
+== stderr ==
+checkpoint: --allow takes a repo-relative path
+== origin refs ==
+refs/heads/main 0ec8ffe013e36fa997f8e2859be98370c7247fd9
+== HEAD message ==
+Initial
+== index ==
+before 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+after 2bf2bf81e971ef64c4f00f2b0b65f072698409bd
+== upstream ==
+refs/heads/main
+== gh calls ==
+(none)

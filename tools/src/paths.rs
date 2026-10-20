@@ -6,6 +6,8 @@
 //!
 //! Every function works on `/`-separated strings, never on `std::path`
 //! components, because check.py's paths are repository-relative POSIX paths.
+//! `normpath_bytes` is the byte form for paths that are not UTF-8, and `normpath`
+//! wraps it.
 //!
 //! Accepted divergences: a symlink target that is not valid
 //! UTF-8 goes through `to_string_lossy` where CPython uses surrogate escapes,
@@ -17,29 +19,38 @@ use std::collections::HashMap;
 
 /// `posixpath.normpath`.
 pub fn normpath(path: &str) -> String {
+    String::from_utf8(normpath_bytes(path.as_bytes()))
+        .expect("normpath only splits and joins at ASCII bytes, so UTF-8 stays UTF-8")
+}
+
+/// [`normpath`] on bytes, for a path that is not UTF-8: `/`, `.` and `..` are all it
+/// reads, so every other byte passes through.
+pub fn normpath_bytes(path: &[u8]) -> Vec<u8> {
     if path.is_empty() {
-        return ".".to_string();
+        return b".".to_vec();
     }
-    let mut initial_slashes = usize::from(path.starts_with('/'));
-    if initial_slashes == 1 && path.starts_with("//") && !path.starts_with("///") {
+    let mut initial_slashes = usize::from(path.starts_with(b"/"));
+    if initial_slashes == 1 && path.starts_with(b"//") && !path.starts_with(b"///") {
         initial_slashes = 2;
     }
-    let mut comps: Vec<&str> = Vec::new();
-    for comp in path.split('/') {
-        if comp.is_empty() || comp == "." {
+    let mut comps: Vec<&[u8]> = Vec::new();
+    for comp in path.split(|&b| b == b'/') {
+        if comp.is_empty() || comp == b"." {
             continue;
         }
-        if comp != ".." || (initial_slashes == 0 && comps.is_empty()) || comps.last() == Some(&"..")
+        if comp != b".."
+            || (initial_slashes == 0 && comps.is_empty())
+            || comps.last() == Some(&&b".."[..])
         {
             comps.push(comp);
         } else if !comps.is_empty() {
             comps.pop();
         }
     }
-    let mut out = "/".repeat(initial_slashes);
-    out.push_str(&comps.join("/"));
+    let mut out = vec![b'/'; initial_slashes];
+    out.extend_from_slice(&comps.join(&b'/'));
     if out.is_empty() {
-        ".".to_string()
+        b".".to_vec()
     } else {
         out
     }
@@ -258,7 +269,14 @@ mod tests {
             ("/../x", "/x"),
         ] {
             assert_eq!(normpath(raw), want, "normpath({raw:?})");
+            assert_eq!(normpath_bytes(raw.as_bytes()), want.as_bytes());
         }
+    }
+
+    #[test]
+    fn normpath_bytes_keeps_bytes_that_are_not_utf8() {
+        assert_eq!(normpath_bytes(b"/a/\xe9/../\xff/./b//"), b"/a/\xff/b");
+        assert_eq!(normpath_bytes(b"\xe9/../.."), b"..");
     }
 
     #[test]

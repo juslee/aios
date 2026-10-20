@@ -52,7 +52,7 @@ Hard rules for agent work. They apply in every session: team mode (two attended 
 
 - **Writers** commit only, on their own temporary branch, with the message the lead gives. Their one reset is the first command, `git reset --hard <tip>`. A merge of `origin/main` is a merge, never a rebase.
 - **Leads** fast-forward their branch worktrees to approved ranges (`git -C <W> merge --ff-only worktree-<name>`), remove temporary agent worktrees and branches, push their own branches with an explicit refspec (`git -C <W> push -u origin claude/<branch>`), decide when a branch takes `origin/main`, open draft PRs, set labels, and file issues. Temporary `worktree-*` branches are never pushed.
-- **Nobody** stashes, force-pushes, or touches `main` (rule 03). Only the owner merges, with `/merge-and-cleanup`, in either lead session or a solo one. That skill refuses a PR the brief shows as gated and refuses while a quiet lease holds the QEMU lock. Cross-team merge order exists only as `needs-human` gate issues.
+- **Nobody** stashes, force-pushes, or touches `main` (rule 03). Only the owner merges, with `/merge-and-cleanup`, in either lead session or a solo one. That skill refuses a PR the brief shows as gated or labelled needs-human and refuses while a quiet lease holds the QEMU lock. Cross-team merge order exists only as `needs-human` gate issues.
 
 ## Reviews
 
