@@ -1058,6 +1058,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn token_model_never_loses_the_condition() {
         let finals = explore(Config {
             arm: true,
@@ -1075,6 +1076,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn token_model_without_the_arm_loses_the_condition() {
         // Negative control: today's unblock, with no arm, skips a waiter that
         // has registered but not blocked, and the waiter then blocks for good.
@@ -1088,6 +1090,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn token_model_never_loses_the_timeout() {
         for cond_waker in [false, true] {
             let finals = explore(Config {
@@ -1106,6 +1109,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn token_model_entry_before_the_arm_loses_the_timeout() {
         // Negative control: the timeout entry published before the arm can
         // fire into an Idle word, and the waiter then blocks with its timeout
@@ -1120,6 +1124,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn token_model_exit_victims_end_idle() {
         let finals = explore(Config {
             arm: true,
@@ -1863,18 +1868,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_notification_wait_never_loses_a_wake() {
-        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
-        for &deadline in deadlines {
+        for deadline in [false, true] {
             check_loop_site(Site::Notify, Event::Signal, deadline);
         }
         check_loop_site(Site::Notify, Event::None, true);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_select_never_loses_a_wake() {
-        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
-        for &deadline in deadlines {
+        for deadline in [false, true] {
             for event in [Event::Signal, Event::Send] {
                 check_loop_site(Site::Select, event, deadline);
             }
@@ -1883,6 +1888,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_sleep_never_loses_a_wake() {
         // A stale reply or send that removes the entry, then wakes the
         // sleeper: the next pass re-inserts it.
@@ -1890,6 +1896,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_sleep_without_the_reinsert_hangs() {
         // Negative control: only the first pass publishes the entry, so a
         // stale clear and wake leave the sleeper blocked with no entry and
@@ -1911,17 +1918,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_recv_never_loses_a_wake() {
         // The sender, the timeout, and a stale sender that removes the
         // entry and then wakes the receiver: the next pass re-inserts it.
-        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
-        for &deadline in deadlines {
+        for deadline in [false, true] {
             check_loop_site(Site::Recv, Event::Send, deadline);
         }
         check_loop_site(Site::Recv, Event::None, true);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_recv_entry_before_the_arm_loses_the_wake() {
         // Negative control (today's order): the receiver slot and the
         // timeout entry are published before the arm, so a timeout that
@@ -1944,6 +1952,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_recv_without_the_reinsert_hangs() {
         // Negative control: only the first pass publishes the entry, so a
         // stale sender's clear and wake leave the receiver blocked with no
@@ -1965,6 +1974,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_old_signal_path_loses_bits() {
         // Negative control: the result written after the table lock is
         // released, while the timed-out waiter removes its own record.
@@ -1985,6 +1995,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_deadline_without_the_arm_loses_the_wake() {
         // Negative control: the deadline published after the waiter record,
         // with no arm, fires into a waiter that has not blocked yet.
@@ -2005,6 +2016,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_split_scan_and_registration_loses_the_event() {
         // Negative control: an event between a source's check and its
         // registration finds no registration to wake.
@@ -2045,12 +2057,12 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_select_destroy_returns_epipe() {
         // #186: a select whose channel is destroyed, or whose endpoint goes
         // Dead, returns EPIPE. ETIMEDOUT is right only when the destroy landed
         // after the pass's check of the channel, so the deadline decided first.
-        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
-        for &deadline in deadlines {
+        for deadline in [false, true] {
             let finals = loop_model::explore(select_destroy_config(deadline, true, true));
             assert!(!finals.is_empty());
             for w in &finals {
@@ -2077,6 +2089,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn loop_model_select_without_the_gone_check_times_out() {
         // Negative control (#186): the pass skips the lookup and Dead check,
         // so a selector the destroy woke registers again on the gone channel
@@ -2754,9 +2767,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_reply_never_lost() {
-        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
-        for &deadline in deadlines {
+        for deadline in [false, true] {
             let finals = check_call_site(Claimer::Reply, deadline);
             if deadline {
                 // The first pass's Expired path with a concurrent reply
@@ -2772,14 +2785,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_cancel_never_lost() {
-        let deadlines: &[bool] = if cfg!(miri) { &[true] } else { &[false, true] };
-        for &deadline in deadlines {
+        for deadline in [false, true] {
             check_call_site(Claimer::Cancel, deadline);
         }
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_timeout_with_a_stale_replier() {
         // No server: a stale replier removes the entry and wakes the call,
         // and only the next pass's re-insert ends it on time.
@@ -2787,6 +2801,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_slot_after_pending_caller_loses_the_reply() {
         // Negative control (the order before the loop): the replier claims
         // the call before the slot exists, writes nothing, and the caller
@@ -2800,6 +2815,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_arm_after_pending_caller_loses_the_wake() {
         // Negative control: the reply lands before the arm, finds the caller
         // Running with an Idle word and skips it, and the caller then blocks
@@ -2813,6 +2829,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_without_the_reinsert_hangs() {
         // Negative control: only the first pass publishes the entry, so the
         // stale replier's clear and wake leave the caller blocked with no
@@ -2825,6 +2842,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_expired_without_cancel_block_finds_armed() {
         // Negative control: the first pass's Expired path goes on without
         // cancelling its arm, so the next pass's prepare_block finds Armed.
@@ -2870,11 +2888,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_late_reply_never_reaches_the_next_call() {
         check_two_calls(Claimer::Reply);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_without_seq_the_late_reply_hits_the_next_call() {
         // Negative control (the code before the seq): the replier claims
         // the first call, the call times out, the second call posts its
@@ -2887,11 +2907,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_late_cancel_never_reaches_the_next_call() {
         check_two_calls(Claimer::Cancel);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "pure-logic model, no unsafe; runs in just test")]
     fn call_model_without_seq_the_late_cancel_hits_the_next_call() {
         // Negative control: the late cancel marks the second call's slot
         // cancelled.
