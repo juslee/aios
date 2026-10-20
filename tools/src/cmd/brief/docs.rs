@@ -1,8 +1,10 @@
 //! The Docs drift section: `aios docs-check --json` runs in the background from the
 //! start of the brief and is summarised at the end.
 //!
-//! The child is this very binary (`current_exe()`), so it is the binary the caller chose
-//! and no shim message can reach its stderr (divergence D2). Only the program can be
+//! The child is this very binary, spawned as `/proc/self/exe` on Linux, so a `just tools`
+//! rename over the running binary during the brief cannot leave it pointing at a deleted
+//! path, and as `current_exe()` elsewhere. It is the binary the caller chose and no shim
+//! message can reach its stderr (divergence D2). Only the program can be
 //! replaced, by `AIOS_BRIEF_DOCS_CHECK`, and only in a build with debug assertions (the
 //! profile `cargo test` uses): the argv `docs-check --json` and the working directory
 //! (the toplevel) stay the same, so the tests pin them.
@@ -39,6 +41,17 @@ pub struct DocsRun {
     stderr: Vec<u8>,
 }
 
+/// This binary, as a path that still runs it after `just tools` renamed a new binary over
+/// it: on Linux `current_exe()` reads `/proc/self/exe` and returns `<path> (deleted)`, so
+/// the link itself is the program (exec through it reaches the running inode).
+fn self_exe() -> std::io::Result<OsString> {
+    if cfg!(target_os = "linux") {
+        Ok(OsString::from("/proc/self/exe"))
+    } else {
+        std::env::current_exe().map(PathBuf::into_os_string)
+    }
+}
+
 /// The program that runs docs-check.
 fn program() -> std::io::Result<OsString> {
     if cfg!(debug_assertions) {
@@ -46,7 +59,7 @@ fn program() -> std::io::Result<OsString> {
             return Ok(program);
         }
     }
-    std::env::current_exe().map(PathBuf::into_os_string)
+    self_exe()
 }
 
 /// Run `<program> docs-check --json` in `root`.
@@ -237,6 +250,16 @@ mod tests {
 
     fn doc(json: &str) -> Value {
         serde_json::from_str(json).expect("valid JSON")
+    }
+
+    #[test]
+    fn self_exe_is_the_proc_link_on_linux_and_current_exe_elsewhere() {
+        let exe = self_exe().expect("this binary's path");
+        if cfg!(target_os = "linux") {
+            assert_eq!(exe, OsString::from("/proc/self/exe"));
+        } else {
+            assert_eq!(exe, std::env::current_exe().expect("current_exe"));
+        }
     }
 
     #[test]
