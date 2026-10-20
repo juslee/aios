@@ -28,22 +28,17 @@ pub fn status_of(doc: &[u8]) -> &[u8] {
         .unwrap_or_default()
 }
 
-/// The phase docs, `docs/phases/[0-9]*.md`, in bytewise order. The names stay bytes: a
-/// name that is not UTF-8 is read and printed as it is.
-fn phase_docs(root: &Path) -> Vec<Vec<u8>> {
+/// The file names in `docs/phases` under `root`, as bytes: a name that is not UTF-8 is
+/// kept as it is.
+fn list_phases(root: &Path) -> Vec<Vec<u8>> {
     let Ok(entries) = std::fs::read_dir(root.join("docs/phases")) else {
         return Vec::new();
     };
-    let mut names: Vec<Vec<u8>> = entries
+    entries
         .filter_map(std::result::Result::ok)
         .filter(|entry| entry.path().is_file())
         .map(|entry| entry.file_name().as_bytes().to_vec())
-        .filter(|name| {
-            name.len() >= b"0.md".len() && name[0].is_ascii_digit() && name.ends_with(b".md")
-        })
-        .collect();
-    names.sort_unstable();
-    names
+        .collect()
 }
 
 /// The path of the phase doc `name`.
@@ -51,12 +46,27 @@ fn doc_path(root: &Path, name: &[u8]) -> PathBuf {
     root.join("docs/phases").join(OsStr::from_bytes(name))
 }
 
+/// The content of the phase doc `name` under `root`; empty when it cannot be read.
+fn read_doc(root: &Path, name: &[u8]) -> Vec<u8> {
+    std::fs::read(doc_path(root, name)).unwrap_or_default()
+}
+
+/// The phase docs among `names`, `[0-9]*.md`, in bytewise order. The names stay bytes: a
+/// name that is not UTF-8 is read and printed as it is.
+fn phase_docs(mut names: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    names.retain(|name| {
+        name.len() >= b"0.md".len() && name[0].is_ascii_digit() && name.ends_with(b".md")
+    });
+    names.sort_unstable();
+    names
+}
+
 /// The phase doc to report: the first `In Progress`, else the first that is neither
-/// `In Progress` nor `Complete`.
-fn current_doc(root: &Path) -> Option<(Vec<u8>, Vec<u8>)> {
+/// `In Progress` nor `Complete`. `read` returns the content of a doc by name.
+fn current_doc(names: Vec<Vec<u8>>, read: &dyn Fn(&[u8]) -> Vec<u8>) -> Option<(Vec<u8>, Vec<u8>)> {
     let mut candidate: Option<(Vec<u8>, Vec<u8>)> = None;
-    for name in phase_docs(root) {
-        let doc = std::fs::read(doc_path(root, &name)).unwrap_or_default();
+    for name in phase_docs(names) {
+        let doc = read(&name);
         let status = status_of(&doc);
         if status.starts_with(b"In Progress") {
             return Some((name, status.to_vec()));
@@ -129,7 +139,17 @@ fn milestone_number(next: &[u8]) -> Option<Vec<u8>> {
 /// milestone the next open task is in (a `## Milestone <n>...` heading), which that
 /// lookup needs.
 pub fn print(root: &Path, out: &mut dyn Write) -> Result<Option<Vec<u8>>> {
-    let Some((name, status)) = current_doc(root) else {
+    print_from(list_phases(root), &|name| read_doc(root, name), out)
+}
+
+/// `print` over the names `docs/phases` lists and the reader of a doc by name; both are
+/// seams for the unit test, which feeds a name that no file system need accept.
+fn print_from(
+    names: Vec<Vec<u8>>,
+    read: &dyn Fn(&[u8]) -> Vec<u8>,
+    out: &mut dyn Write,
+) -> Result<Option<Vec<u8>>> {
+    let Some((name, status)) = current_doc(names, read) else {
         line(
             out,
             &[b"- no phase doc in progress (all docs/phases/*.md are Complete)"],
@@ -137,7 +157,7 @@ pub fn print(root: &Path, out: &mut dyn Write) -> Result<Option<Vec<u8>>> {
         return Ok(None);
     };
     line(out, &[b"- docs/phases/", &name, b": ", &status])?;
-    let doc = std::fs::read(doc_path(root, &name)).unwrap_or_default();
+    let doc = read(&name);
     let Some((next, task)) = next_task(&doc) else {
         line(out, &[b"- every task box in this doc is checked"])?;
         return Ok(None);
@@ -187,32 +207,40 @@ mod tests {
 
     #[test]
     fn a_phase_doc_name_that_is_not_utf8_is_read_and_printed_as_it_is() {
-        let root = std::env::temp_dir().join(format!("aios-brief-phase-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let phases = root.join("docs/phases");
-        std::fs::create_dir_all(&phases).expect("create docs/phases");
-        let name = b"07-caf\xe9.md";
+        let root = Path::new("/repo");
+        let name: &[u8] = b"07-caf\xe9.md";
         assert_eq!(
-            doc_path(&root, name).as_os_str().as_bytes(),
-            [root.as_os_str().as_bytes(), b"/docs/phases/07-caf\xe9.md"].concat()
+            doc_path(root, name).as_os_str().as_bytes(),
+            b"/repo/docs/phases/07-caf\xe9.md"
         );
-        // A file system that refuses a name that is not UTF-8 (APFS) cannot run this.
-        if std::fs::write(
-            phases.join(OsStr::from_bytes(name)),
-            "**Status:** In Progress\n## Milestone 9\n- [ ] the task\n",
-        )
-        .is_err()
-        {
-            let _ = std::fs::remove_dir_all(&root);
-            return;
-        }
+        // No file system: the listing and the reader are fed the bytes.
+        let names = vec![b"README.txt".to_vec(), name.to_vec(), b"x.md".to_vec()];
+        let read = |wanted: &[u8]| {
+            assert_eq!(wanted, name, "only the phase doc is read");
+            b"**Status:** In Progress\n## Milestone 9\n- [ ] the task\n".to_vec()
+        };
         let mut out = Vec::new();
-        let milestone = print(&root, &mut out).expect("print the section");
-        let _ = std::fs::remove_dir_all(&root);
+        let milestone = print_from(names, &read, &mut out).expect("print the section");
         assert_eq!(milestone, Some(b"9".to_vec()));
         assert_eq!(
             out,
             b"- docs/phases/07-caf\xe9.md: In Progress\n- next: Milestone 9 / (no step heading)\n- first open task: the task\n"
+        );
+    }
+
+    #[test]
+    fn phase_docs_keeps_digit_led_md_names_in_bytewise_order() {
+        let names = vec![
+            b"10-b.md".to_vec(),
+            b"README.md".to_vec(),
+            b"2-a.md".to_vec(),
+            b"3.txt".to_vec(),
+            b".md".to_vec(),
+            b"1.md".to_vec(),
+        ];
+        assert_eq!(
+            phase_docs(names),
+            vec![b"1.md".to_vec(), b"10-b.md".to_vec(), b"2-a.md".to_vec()]
         );
     }
 

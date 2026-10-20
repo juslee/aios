@@ -535,8 +535,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create the repository directory");
         let os = |text: &'static str| OsStr::new(text);
-        // Reftable, because APFS refuses a ref file whose name is not UTF-8. A git without
-        // reftable cannot run this.
+        // Reftable, because APFS refuses a ref file whose name is not UTF-8. The parity
+        // scenarios need it too, so a host without it fails here instead of skipping.
         let init = std::process::Command::new("git")
             .args(["init", "-q", "-b", "main", "--ref-format=reftable"])
             .current_dir(&dir)
@@ -546,7 +546,9 @@ mod tests {
             .status();
         if !init.is_ok_and(|status| status.success()) {
             let _ = std::fs::remove_dir_all(&dir);
-            return;
+            panic!(
+                "git init --ref-format=reftable failed: this test and brief_parity need a git with reftable"
+            );
         }
         setup_git(
             &dir,

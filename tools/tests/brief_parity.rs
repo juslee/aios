@@ -460,9 +460,11 @@ scenario!(worktrees, ["--no-fetch"],
     .git(&["reset", "-q", "--hard", "HEAD~1"]));
 // A branch name that is not UTF-8 (`claude/caf\xe9`), checked out and pushed: the Git section
 // asks git about `origin/<branch>` by its bytes, as the script did, so the branch is on
-// origin and one commit ahead; only the printed name is lossy. The branch is made by git
-// itself (an alias whose `printf` writes the 0xe9 byte), as a Rust string cannot hold it,
-// and the refs are reftable, because APFS refuses a file name that is not UTF-8.
+// origin and one commit ahead. Brief prints the name as its raw bytes (asserted by
+// `non_utf8_branch_is_on_origin`); only the golden file shows U+FFFD, by design. The branch
+// is made by git itself (an alias whose `printf` writes the 0xe9 byte), as a Rust string
+// cannot hold it, and the refs are reftable, because APFS refuses a file name that is not
+// UTF-8.
 scenario!(non_utf8_claude_branch, ["--no-fetch"],
     |n| brief_base(n)
         .reftable()
