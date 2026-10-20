@@ -260,6 +260,15 @@ mod tests {
         } else {
             assert_eq!(exe, std::env::current_exe().expect("current_exe"));
         }
+        // The path must also run: this lib test binary is the libtest harness,
+        // which lists its tests for `--list` and exits 0.
+        let status = Command::new(&exe)
+            .arg("--list")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn self_exe()");
+        assert!(status.success(), "self_exe() {exe:?} --list: {status}");
     }
 
     #[test]

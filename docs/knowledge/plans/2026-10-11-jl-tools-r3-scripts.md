@@ -559,7 +559,7 @@ Conventions for every task:
   - [x] 6a: `tools/src/cmd/brief/mod.rs`: `run(args, cwd, out, err) -> anyhow::Result<u8>`.
     - Parse the arguments in order. `-h`/`--help` prints new help text naming `aios brief [--no-fetch]` and its side effects (D1). Outside a repo, print `brief: not inside a git repository` and exit 2; otherwise exit 0.
     - Find the toplevel (`git rev-parse --show-toplevel` from `cwd`), the common dir and the main worktree (`git::worktrees`). **Every later git, gh, docs-check and file call runs with the toplevel as cwd**, as brief.sh's `cd "$ROOT"` does (L56): the phase-doc glob, `-- docs/knowledge`, the soak dirs.
-    - Start docs-check first, on a `std::thread`, as a child: program `current_exe()`, argv exactly `docs-check --json`, cwd = the toplevel. Only the program can be overridden, by `AIOS_BRIEF_DOCS_CHECK=<program>`, and only `if cfg!(debug_assertions)` (the `AIOS_SOAK_LOADAVG` precedent, `tools/src/cmd/soak/host.rs` L129-133). The argv and cwd stay the same, so the `docs calls` golden section pins them.
+    - Start docs-check first, on a `std::thread`, as a child: program `self_exe()` (this binary: `/proc/self/exe` on Linux, so a `just tools` rename over the running binary cannot leave a deleted path; `current_exe()` elsewhere), argv exactly `docs-check --json`, cwd = the toplevel. Only the program can be overridden, by `AIOS_BRIEF_DOCS_CHECK=<program>`, and only `if cfg!(debug_assertions)` (the `AIOS_SOAK_LOADAVG` precedent, `tools/src/cmd/soak/host.rs` L129-133). The argv and cwd stay the same, so the `docs calls` golden section pins them.
     - Touch the marker last.
     - Verify: T(`--lib brief::tests::`) ≥ 1 (the parser table).
   - [x] 6b: `clock.rs`:
@@ -809,7 +809,7 @@ Conventions for every task:
 - **Test repos and the enclosing checkout.** Every scenario asserts that its twin's toplevel is the twin root; `outside_repo` alone runs under `std::env::temp_dir()` with a `GIT_CEILING_DIRECTORIES` ceiling set after `hermetic` (Task 1e).
 - **External calls keep the oracle's argv, cwd and env**: gh including `--jq`; `GH_PROMPT_DISABLED` on checkpoint's `pr list --head` only; `GIT_TERMINAL_PROMPT` on fetch and push; docs-check's `docs-check --json` from the toplevel. So the differential compares the fake-gh and FAKE_DOCS call logs.
 - **Sequential gh calls, docs-check on a thread.** brief.sh is sequential except for the background docs-check. Parallel gh calls would change the call order and buy little.
-- **docs-check as a child of `current_exe()`**, not in-process. This keeps the exit 2/101 parity and isolates a panic. It is the binary the shim chose, so no shim message can appear on its stderr (D2).
+- **docs-check as a child of this binary** (spawned by `self_exe()`: `/proc/self/exe` on Linux, `current_exe()` elsewhere), not in-process. This keeps the exit 2/101 parity and isolates a panic. It is the binary the shim chose, so no shim message can appear on its stderr (D2).
 - **No `time` crate.** Formatting shells out to `date` (`-r`, then `-d @`), as the script does and as R4 ruling 1 did. Epoch arithmetic is std.
 - **No new dependencies.** regex (bytes), serde_json (`preserve_order`, already enabled, `tools/Cargo.toml` L22) and anyhow suffice. signal-hook is not used: the script handled no signals, so having no index restore on a signal is parity.
 - **Debug-only test seam.** `AIOS_BRIEF_DOCS_CHECK` replaces the docs-check program only, never its argv or cwd, and is read only under `cfg!(debug_assertions)`. `just tools` builds release, so the shipped binary ignores it.
@@ -819,7 +819,7 @@ Conventions for every task:
   - **D2:** unreachable branches are removed:
     - brief's "jq is not installed" (W234 L629-630);
     - "docs-check unavailable (needs .claude/hooks/aios …)" (L645);
-    - the docs-error preference for the shim's `^aios: ` line (L626). The child is `current_exe()`, never the shim, and the binary prints no `aios: ` line.
+    - the docs-error preference for the shim's `^aios: ` line (L626). The child is this binary, spawned by `self_exe()` (`/proc/self/exe` on Linux, so a `just tools` rename cannot leave a deleted path; `current_exe()` elsewhere), never the shim, and the binary prints no `aios: ` line.
 
     "gh is not installed" is kept. Pinned: `gh_missing`, `docs_other_rc_last_line`.
   - **D3:** collation is bytewise (= `LC_ALL=C`) for `sort -u`, the `ls -t` name tie and the soak dir order; `grep -c .` counts non-empty lines bytewise. Pinned: `handoffs`, `knowledge_uncommitted_rename_and_space`.
@@ -941,6 +941,7 @@ All of R3's earlier questions are decided (see Decisions Made). Two items are st
 - **Audit round 4: frozen gh.rs changed under A13 (owner ruling, #271).** `aios checkpoint` matches `claude/` branches on raw bytes, as `checkpoint.sh` did, and its WIP hold passes the branch to `gh pr list --head`. `gh::run_program` is therefore generic over its argument type and `GhCli` gains `run_os`, so a non-UTF-8 branch name reaches gh exactly. `R3_API_FREEZE` moved from 3296e1d to b4c3459 (Decisions Made).
 - **Audit round 6 (2026-10-19): the non-UTF-8 class swept (owner ruling, #271).** checkpoint's rebase/bisect gate tests the git-path on bytes (`git_path_exists`); the brief and checkpoint differentials compare raw bytes; phase-doc names, the common-dir normalisation (`paths::normpath_bytes`) and the soak recorded commit (`git_section::out_os`) stay bytes; the conversions that remain are printing-only and listed with their reason in the `brief` and `checkpoint` module docs.
 - Audit round 7: the two byte-path unit tests no longer skip silently (phase-doc listing seam; reftable required).
+- Audit rounds 8-10 (2026-10-20): the binary inherits the shim's `GIT_NO_REPLACE_OBJECTS=1` / `GIT_GRAFT_FILE` exports on the recipe path (git.rs is frozen, so it is recorded in the kept-bug item and the module docs); brief's docs-check child is spawned through `self_exe()` (`/proc/self/exe` on Linux) and its test spawns that path.
 
 ### Rejected review points
 
