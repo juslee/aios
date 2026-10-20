@@ -25,6 +25,10 @@
 //! of a soak summary that is printed whole when it has no closing ` |`, and `unpushed_desc`
 //! counting commits on no remote against all remotes.
 //!
+//! Through the `just` recipes the binary inherits the shim's two git exports
+//! (`GIT_NO_REPLACE_OBJECTS=1`, `GIT_GRAFT_FILE=/dev/null/no-grafts`), so replace refs
+//! and grafts are off on that path, unlike the oracle script.
+//!
 //! Non-UTF-8 handling: shell keeps bytes, so branch names, worktree and phase-doc paths,
 //! file contents and the commit text of a soak summary stay bytes from git or the file
 //! system to the writer, and reach git as `OsStr`s (the only text that is ever arbitrary

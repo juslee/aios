@@ -841,7 +841,7 @@ Conventions for every task:
 - **Kept bug-for-bug** (parity; listed so reviewers do not "fix" them):
   - the `git add -A` exit status is unchecked (H2, follow-up);
   - a multi-commit cherry-pick/revert `sequencer` is not detected (H3, follow-up);
-  - evil merges and binary files are not scanned, and the scan honours replace refs (follow-up);
+  - evil merges and binary files are not scanned, and the scan honours replace refs only when the binary runs outside the shim (follow-up). On the recipe path (`just brief`, `just checkpoint`) the shim's `GIT_NO_REPLACE_OBJECTS=1` and `GIT_GRAFT_FILE=/dev/null/no-grafts` exports turn replace refs and grafts off, so the scan reads the original objects there (the safer side); the parity tests run the binary directly and do not see this;
   - the push is attempted after a commit failure;
   - the Boots sed fall-through prints the whole row;
   - `unpushed_desc` uses `--remotes` (all remotes) in brief but `--remotes=origin` in checkpoint;

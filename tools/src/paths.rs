@@ -6,6 +6,8 @@
 //!
 //! Every function works on `/`-separated strings, never on `std::path`
 //! components, because check.py's paths are repository-relative POSIX paths.
+//! `normpath_bytes` is the byte form for paths that are not UTF-8, and `normpath`
+//! wraps it.
 //!
 //! Accepted divergences: a symlink target that is not valid
 //! UTF-8 goes through `to_string_lossy` where CPython uses surrogate escapes,

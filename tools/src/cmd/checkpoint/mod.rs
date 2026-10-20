@@ -23,6 +23,10 @@
 //! secret stop is not checked either: the output still says the index is as it was, and
 //! the staging stays in place.
 //!
+//! Through the `just` recipes the binary inherits the shim's two git exports
+//! (`GIT_NO_REPLACE_OBJECTS=1`, `GIT_GRAFT_FILE=/dev/null/no-grafts`), so replace refs
+//! and grafts are off on that path, unlike the oracle script.
+//!
 //! Non-UTF-8 handling: shell keeps bytes, so the branch name, the paths git lists, the
 //! `--allow` paths and the git-path of the rebase and bisect gate stay bytes from git to
 //! the writer, and reach git as `OsStr`s. The conversions that remain are safe because
