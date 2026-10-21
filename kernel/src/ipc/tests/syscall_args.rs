@@ -14,7 +14,9 @@ use shared::{
     MAX_NOTIFICATIONS, RING_CAPACITY, USER_VA_MIN,
 };
 
-use super::bad_pid::{revoke_region_access, revoke_token, token_id};
+use crate::cap::revoke_in_process;
+
+use super::bad_pid::{creation_cap, holds_live, token_id};
 use super::TEST_PID;
 
 const PAGE: u64 = 4096;
@@ -49,10 +51,10 @@ pub(super) fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
 /// no state and grant nothing. Checks 0-20 and 26-42 log no warning; checks
 /// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
-/// warnings. The one MemoryMap allocation is freed by the
-/// test's own exact unmap, the one shared region by its unmap once the
-/// test has revoked every capability it granted, and the one notification by
-/// `notification_destroy`.
+/// warnings. The one MemoryMap allocation is freed by the test's own exact
+/// unmap, the one shared region by its unmap once the test has revoked the
+/// region's SharedMemoryAccess (the SharedMemoryCreate grant is revoked
+/// after that unmap), and the one notification by `notification_destroy`.
 ///
 /// DebugPrint, IpcSelect and CapabilityList get this thread's stack buffers
 /// as kernel addresses. Before #188 IpcSelect accepted them and read them
@@ -109,7 +111,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
     let msg = *b"TEST";
     let kernel_msg = msg.as_ptr() as u64;
     let entry = RawSelectEntry::from(SelectEntry {
-        kind: SelectKind::Channel(ChannelId(0)),
+        kind: SelectKind::Channel(ChannelId::from_raw(0)),
     });
     let kernel_entries = &entry as *const RawSelectEntry as u64;
     let mut kernel_ids = [0u64; 4];
@@ -185,9 +187,9 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
 
     // A live notification (#188 item 8): NotificationSignal returns 0, and
     // the bits it set are the ones a NotificationWait with timeout 0 returns
-    // from its fast path. Timeout 0 is not a poll for notification_wait: if
-    // the bits were not set, the wait would block until the next tick and
-    // time out, so this check fails late rather than at once.
+    // from its fast path. If the bits were not set, the wait's deadline (the
+    // current tick) would already have passed at its first pass, so it would
+    // return ETIMEDOUT without blocking and the check would fail.
     let id = svc(Syscall::NotificationCreate, &[]);
     if IpcError::try_from(id).is_err() && id >= 0 {
         checks[30] = svc(Syscall::NotificationSignal, &[id as u64, 0b101]) == 0;
@@ -219,7 +221,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
 /// whatever the results.
 fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS]) {
     let einval = IpcError::Einval as i64;
-    let channel = open.0 as u64;
+    let channel = u64::from(open.raw());
     let mut buf = [0u8; 4];
 
     let queued = crate::ipc::ipc_send(open, b"TEST") == 0;
@@ -278,11 +280,25 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS
 ///
 /// Returns `[beyond_max, mapped, denied, oversize, high_bits,
 /// undefined_bit]`, one flag per check, all false if the grant fails and
-/// all but `oversize` false if the region could not be created. Like
-/// `shm_bad_pid_test`, it revokes the SharedMemoryCreate token it granted
-/// right after the create, and every SharedMemoryAccess token of the region
-/// before the unmap that frees it.
+/// all but `oversize` false if the region could not be created. On entry
+/// process 1 must hold no live SharedMemoryCreate (otherwise it logs `holds
+/// SharedMemoryCreate` and returns all false), and the region must record the
+/// granted token as its `creation_cap` (otherwise it logs `creation_cap
+/// mismatch`). Through `revoke_in_process`, it revokes the region's only
+/// SharedMemoryAccess token (the creator's, minted as a child of the create
+/// token) before the unmap that frees it, and the SharedMemoryCreate token
+/// it granted last, after the unmap: revoking the create token earlier
+/// would also revoke the minted access the maps need. By then the region is
+/// freed, so the cascade destroys nothing; if no map succeeded, it destroys
+/// the region instead.
 fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
+    // A create records the first live SharedMemoryCreate as its region's
+    // creation_cap, so one left live by an earlier test would be recorded
+    // instead of the grant below.
+    if holds_live(pid, &Capability::SharedMemoryCreate) {
+        crate::kwarn!(Ipc, "Syscall-arg test: holds SharedMemoryCreate");
+        return [false; 6];
+    }
     let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
         .ok()
         .and_then(|handle| token_id(pid, handle));
@@ -296,12 +312,17 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // for, so the `max_flags` check passes a READ | USER map and only the
     // syscall's flag decode can reject it.
     let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ | VmFlags::USER);
-    revoke_token(pid, create_token);
-    let Ok(region) = created else {
+    let Ok((region, access)) = created else {
+        let _ = revoke_in_process(pid, create_token);
         return [false, false, false, oversize, false, false];
     };
+    if creation_cap(region) != Some(create_token) {
+        crate::kwarn!(Ipc, "Syscall-arg test: creation_cap mismatch");
+        let _ = revoke_in_process(pid, create_token);
+        return [false, false, false, oversize, false, false];
+    }
 
-    let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[region.0 as u64, flags]);
+    let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[u64::from(region.raw()), flags]);
     // The region's limit, not the caller's rights: EINVAL.
     let beyond_max = map(READ_WRITE) == IpcError::Einval as i64;
     // Undefined bits are EINVAL even with the right held: bit 32 above READ,
@@ -315,7 +336,12 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     let probe_mapped = high_bits_result > 0 || undefined_bit_result > 0;
     // The creator holds SharedMemoryAccess(region), so READ maps.
     let mapped = map(READ) > 0;
-    revoke_region_access(pid, region);
+    // The creator's minted token, process 1's only SharedMemoryAccess for
+    // the region: a child of the create token, not the region's
+    // creation_cap, so its cascade destroys nothing.
+    if let Some(access_token) = token_id(pid, access) {
+        let _ = revoke_in_process(pid, access_token);
+    }
     // The capability is checked before the duplicate-mapping check, so the
     // repeated map fails for the missing right: EPERM, not EEXIST.
     let denied = map(READ) == IpcError::Eperm as i64;
@@ -323,6 +349,7 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     if mapped || probe_mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
+    let _ = revoke_in_process(pid, create_token);
     [
         beyond_max,
         mapped,

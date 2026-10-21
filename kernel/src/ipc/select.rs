@@ -4,60 +4,71 @@
 //! notifications). If any source is ready, returns immediately. Otherwise
 //! blocks with BlockedSelect state until any source fires.
 //! Per ipc.md §5.
+//!
+//! The sources are authoritative (capability-lifetime ADR §9): a select
+//! registers on each source itself, as a channel's `waiting_receiver` and as
+//! a `Select` waiter record on a notification, and the source's own waker
+//! (`ipc_send`, `ipc_call`'s fallback, `notification_signal`) claims the
+//! registration and calls `unblock`. The select then re-scans. It arms its
+//! wake token before each pass, so a wake that lands between a registration
+//! and the block is kept, and checks and registers each source in one
+//! critical section, so no event falls between the check and the
+//! registration.
 
-use crate::sched;
-use crate::sync::IrqSpinLock;
-use crate::task::{ThreadId, ThreadState, MAX_THREADS};
-use shared::lock::LockClass;
-use shared::tripwire::{BadchanSite, Key, WakeSource};
-use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
+use crate::arch::aarch64::daif;
+use crate::arch::aarch64::timer::TICK_COUNT;
+use crate::sched::{self, wake};
+use crate::syscall::IpcError;
+use crate::task::{ThreadId, ThreadState};
+use shared::tripwire::{BadchanSite, Key};
+use shared::{deadline_after, SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
 
-/// Per-thread select registration: what sources a BlockedSelect thread is
-/// waiting on, and which one fired.
-pub(super) struct SelectWaiter {
-    #[allow(dead_code)]
-    pub(super) tid: ThreadId,
-    pub(super) entries: [Option<SelectEntry>; MAX_SELECT_ENTRIES],
-    pub(super) entry_count: usize,
-    /// Set by the waker to indicate which entry became ready.
-    pub(super) ready_index: Option<usize>,
-    /// For notification wakes: the matched bits.
-    pub(super) ready_bits: u64,
-}
-
-// ---------------------------------------------------------------------------
-// Global table
-// ---------------------------------------------------------------------------
-
-/// Per-thread select waiters. Lock ordering: after NOTIFICATION_TABLE,
-/// after CHANNEL_TABLE (per deadlock-prevention §3).
-/// An IRQ-class lock (`sync::IrqSpinLock`): the notification timeout scan
-/// try-locks it from the timer IRQ.
-pub(super) static SELECT_WAITERS: IrqSpinLock<[Option<SelectWaiter>; MAX_THREADS]> =
-    IrqSpinLock::new(LockClass::SelectWaiters, [const { None }; MAX_THREADS]);
+use super::{channel_mut, notify, timeout, DeadlineArm, CHANNEL_TABLE};
 
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
 
 /// Perform IpcSelect: wait on multiple sources, return the index of the
-/// first ready source. `entries` is a slice of SelectEntry.
+/// lowest-index ready source. `entries` is a slice of SelectEntry.
 ///
 /// Every channel entry requires `Capability::ChannelAccess(id)`, the same
 /// check `ipc_recv` makes. The whole set is validated before the
-/// non-blocking scan and before the thread is registered as a waiter on any
-/// source, so a rejected call observes nothing and leaves no partial
-/// registration: `EINVAL` if any id is out of range, otherwise
-/// `EPERM` if the caller lacks access to any channel in the set (or, for a
-/// set with a channel entry, if the calling thread has no owning process).
+/// non-blocking scan and before the thread is registered on any source, so a
+/// rejected call observes nothing and leaves no registration: `EINVAL` if
+/// any id is out of range, otherwise `EPERM` if the caller lacks access to
+/// any channel in the set (or, for a set with a channel entry, if the
+/// calling thread has no owning process). `EPERM` also when the CPU has no
+/// current thread.
+///
+/// Then the fast scan, which arms and publishes nothing, takes each entry in
+/// index order under its own lock: a channel lookup error (EINVAL for a
+/// malformed slot, EPIPE for a destroyed or stale id) or a Dead endpoint
+/// (EPIPE) returns at once, a queued message is ready, and a notification
+/// returns EINVAL for an empty slot or consumes the bits of its mask.
+///
+/// Otherwise the loop: each pass arms (`wake::prepare_block`), then checks
+/// and registers each entry in index order, one critical section per source.
+/// A channel fails as in the scan, is ready with a queued message, and is
+/// otherwise registered as the channel's `waiting_receiver`, or fails EAGAIN
+/// if another thread holds that slot. A notification fails EINVAL for an
+/// empty slot, is ready when bits of its mask are set (consumed), and
+/// otherwise keeps one `Select` record for this thread whose mask is the OR
+/// of every entry naming it, or fails ENOMEM when its waiter list is full.
+/// The first entry that is ready or fails ends the pass. Otherwise the pass
+/// publishes the deadline (`timeout_ticks` from the call, by
+/// `shared::deadline_after`; ETIMEDOUT if it has passed) and blocks.
+///
+/// Every exit of the loop removes the thread's registrations, clears its
+/// deadline, takes and discards its `WAKEUP_ERRORS` code (destroy and exit
+/// write EPIPE there for a `waiting_receiver`; the result comes from the
+/// channel's state), and cancels the arm. The result comes from the sources'
+/// state and the wait's own deadline, never from which wake arrived.
 ///
 /// Returns `(ready_index, matched_bits)` on success.
 /// `matched_bits` is non-zero only for notification entries.
 pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize, u64), i64> {
-    use crate::arch::aarch64::timer::TICK_COUNT;
-    use crate::syscall::IpcError;
-
-    let my_tid = crate::ipc::current_thread_id().ok_or(IpcError::Einval as i64)?;
+    let me = sched::current_tid().ok_or(IpcError::Eperm as i64)?;
 
     if entries.is_empty() || entries.len() > MAX_SELECT_ENTRIES {
         return Err(IpcError::Einval as i64);
@@ -85,70 +96,40 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     // whether a channel has a pending message and consumes notification bits:
     // scanning first would leak traffic on channels the caller cannot access.
     // Lock order agrees: the scan and the registration below take
-    // CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS, while the check
-    // takes THREAD_TABLE (process_of_thread) and then PROCESS_TABLE
-    // (check_channel_access) one at a time; both rank above all three, so
-    // none of them may be held here.
-    check_channel_entries(my_tid, entries)?;
+    // CHANNEL_TABLE or NOTIFICATION_TABLE, while the check takes THREAD_TABLE
+    // (process_of_thread) and then PROCESS_TABLE (check_channel_access) one
+    // at a time; both rank above both of them, so neither may be held here.
+    check_channel_entries(me, entries)?;
 
-    // --- Non-blocking scan: check each entry ---
-    if let Some((idx, bits)) = scan_entries(entries) {
-        return Ok((idx, bits));
+    // --- Fast scan: no arm, no registration ---
+    if let Some(ready) = fast_scan(entries)? {
+        return Ok(ready);
     }
 
-    // --- Blocking path ---
-    // NOTIFY_DEADLINES stores no deadline as u64::MAX.
-    let deadline = shared::deadline_after(
+    // --- Loop: arm, check and register, then publish the deadline ---
+    let deadline = deadline_after(
         TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed),
         timeout_ticks,
-    )
-    .unwrap_or(u64::MAX);
-
-    // Register as select waiter.
-    {
-        let mut waiters = SELECT_WAITERS.lock();
-        let mut sw = SelectWaiter {
-            tid: my_tid,
-            entries: [None; MAX_SELECT_ENTRIES],
-            entry_count: entries.len(),
-            ready_index: None,
-            ready_bits: 0,
-        };
-        for (i, e) in entries.iter().enumerate() {
-            sw.entries[i] = Some(*e);
+    );
+    let result = loop {
+        // Arm before the per-source pass (ADR §8 rule 1).
+        wake::prepare_block(me);
+        if let Some(result) = register_pass(me, entries) {
+            break result;
         }
-        waiters[my_tid.0 as usize] = Some(sw);
-    }
-
-    // Register on each source's waiter list.
-    register_on_sources(my_tid, entries);
-
-    // Store deadline for timeout checking.
-    super::notify::set_select_deadline(my_tid, deadline);
-
-    // Block.
-    sched::block_current(ThreadState::BlockedSelect);
-
-    // Woken up — retrieve result.
-    let (ready_index, ready_bits) = {
-        let mut waiters = SELECT_WAITERS.lock();
-        let result = if let Some(sw) = &waiters[my_tid.0 as usize] {
-            (sw.ready_index, sw.ready_bits)
-        } else {
-            (None, 0)
-        };
-        // Clean up our registration.
-        waiters[my_tid.0 as usize] = None;
-        result
+        if notify::arm_deadline(me, deadline) == DeadlineArm::Expired {
+            break Err(IpcError::Etimedout as i64);
+        }
+        sched::block_current(ThreadState::BlockedSelect);
     };
 
-    // Clean up from all source waiter lists.
-    unregister_from_sources(my_tid, entries);
-
-    match ready_index {
-        Some(idx) => Ok((idx, ready_bits)),
-        None => Err(IpcError::Etimedout as i64),
-    }
+    // --- Exit: every loop exit armed in its pass ---
+    unregister(me, entries);
+    notify::clear_deadline(me);
+    // Taken once per wait and discarded: it decides nothing (ADR §9).
+    daif::with_irqs_masked(|| timeout::get_wakeup_error(me));
+    wake::cancel_block(me);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -165,8 +146,6 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
 /// `notify::notification_wait`. A set without channel entries skips the
 /// process lookup.
 fn check_channel_entries(tid: ThreadId, entries: &[SelectEntry]) -> Result<(), i64> {
-    use crate::syscall::IpcError;
-
     let mut channels = entries
         .iter()
         .filter_map(|entry| match entry.kind {
@@ -183,182 +162,97 @@ fn check_channel_entries(tid: ThreadId, entries: &[SelectEntry]) -> Result<(), i
 }
 
 // ---------------------------------------------------------------------------
-// Non-blocking scan
+// Fast scan and the loop pass
 // ---------------------------------------------------------------------------
 
-/// Scan all entries for a ready source. Returns `(index, matched_bits)`.
-fn scan_entries(entries: &[SelectEntry]) -> Option<(usize, u64)> {
+/// The fast scan: each entry in index order under its own lock, publishing
+/// nothing. Returns `(index, matched_bits)` for the first ready entry,
+/// `None` if none is ready, or the first entry's failure.
+fn fast_scan(entries: &[SelectEntry]) -> Result<Option<(usize, u64)>, i64> {
     for (i, entry) in entries.iter().enumerate() {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
-                // Check if the channel has a pending message.
-                let mut table = super::CHANNEL_TABLE.lock();
-                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
-                    if ch.ring.len > 0 {
-                        return Some((i, 0));
-                    }
+                let mut table = CHANNEL_TABLE.lock();
+                let ch = channel_mut(&mut table, ch_id)?;
+                if ch.has_dead_endpoint() {
+                    return Err(IpcError::Epipe as i64);
                 }
-                // Lock dropped here.
+                if ch.ring.len > 0 {
+                    return Ok(Some((i, 0)));
+                }
             }
             SelectKind::Notification(nid, mask) => {
-                // Check if notification has matching bits.
-                let table = super::notify::NOTIFICATION_TABLE.lock();
-                if let Some(notif) = &table[nid.0 as usize] {
-                    let current = notif.word.load(core::sync::atomic::Ordering::Acquire);
-                    let matched = current & mask;
-                    if matched != 0 {
-                        // Clear the matched bits.
-                        notif
-                            .word
-                            .fetch_and(!matched, core::sync::atomic::Ordering::AcqRel);
-                        return Some((i, matched));
-                    }
+                if let Some(bits) = notify::poll(nid, mask)? {
+                    return Ok(Some((i, bits)));
                 }
-                // Lock dropped here.
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// One loop pass for the armed thread `me`: check and register each entry in
+/// index order, one critical section per source. `Some` with the pass's
+/// result when an entry is ready or fails (the first one ends the pass),
+/// `None` when every entry is registered.
+fn register_pass(me: ThreadId, entries: &[SelectEntry]) -> Option<Result<(usize, u64), i64>> {
+    for (i, entry) in entries.iter().enumerate() {
+        match entry.kind {
+            SelectKind::Channel(ch_id) => {
+                let mut table = CHANNEL_TABLE.lock();
+                let ch = match channel_mut(&mut table, ch_id) {
+                    Ok(ch) => ch,
+                    Err(code) => return Some(Err(code)),
+                };
+                if ch.has_dead_endpoint() {
+                    return Some(Err(IpcError::Epipe as i64));
+                }
+                if ch.ring.len > 0 {
+                    return Some(Ok((i, 0)));
+                }
+                match ch.waiting_receiver {
+                    None => ch.waiting_receiver = Some(me),
+                    Some(tid) if tid == me => {}
+                    // Another receiver holds the slot (#186 item 2).
+                    Some(_) => return Some(Err(IpcError::Eagain as i64)),
+                }
+            }
+            SelectKind::Notification(nid, mask) => {
+                // One record per notification, for every entry naming it.
+                let record_mask = entries
+                    .iter()
+                    .filter_map(|e| match e.kind {
+                        SelectKind::Notification(n, m) if n == nid => Some(m),
+                        _ => None,
+                    })
+                    .fold(0, |acc, m| acc | m);
+                match notify::select_register(nid, mask, record_mask, me) {
+                    Ok(Some(bits)) => return Some(Ok((i, bits))),
+                    Ok(None) => {}
+                    Err(code) => return Some(Err(code)),
+                }
             }
         }
     }
     None
 }
 
-// ---------------------------------------------------------------------------
-// Source registration
-// ---------------------------------------------------------------------------
-
-/// Register the select-waiting thread on each source's waiter list.
-fn register_on_sources(tid: ThreadId, entries: &[SelectEntry]) {
+/// Remove every registration of `me` on the sources of `entries`: under
+/// CHANNEL_TABLE, a `waiting_receiver` that is `me`; under NOTIFICATION_TABLE
+/// (IRQs masked), `me`'s `Select` records. A source a waker claimed holds no
+/// registration of `me`, and a gone one holds none at all.
+fn unregister(me: ThreadId, entries: &[SelectEntry]) {
     for entry in entries {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
-                // For channels, set waiting_receiver if not already set.
-                // The channel's ipc_call/ipc_send code checks waiting_receiver.
-                let mut table = super::CHANNEL_TABLE.lock();
-                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
-                    if ch.waiting_receiver.is_none() {
-                        ch.waiting_receiver = Some(tid);
-                    }
-                }
-            }
-            SelectKind::Notification(nid, mask) => {
-                let mut table = super::notify::NOTIFICATION_TABLE.lock();
-                if let Some(notif) = &mut table[nid.0 as usize] {
-                    // Add to notification's waiter list.
-                    for slot in notif.waiters.iter_mut() {
-                        if slot.is_none() {
-                            *slot = Some(super::notify::waiter_new(tid, mask));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Remove the select-waiting thread from each source's waiter list.
-fn unregister_from_sources(tid: ThreadId, entries: &[SelectEntry]) {
-    for entry in entries {
-        match entry.kind {
-            SelectKind::Channel(ch_id) => {
-                let mut table = super::CHANNEL_TABLE.lock();
-                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
-                    if ch.waiting_receiver == Some(tid) {
+                let mut table = CHANNEL_TABLE.lock();
+                if let Ok(ch) = channel_mut(&mut table, ch_id) {
+                    if ch.waiting_receiver == Some(me) {
                         ch.waiting_receiver = None;
                     }
                 }
             }
-            SelectKind::Notification(nid, _mask) => {
-                let mut table = super::notify::NOTIFICATION_TABLE.lock();
-                if let Some(notif) = &mut table[nid.0 as usize] {
-                    for slot in notif.waiters.iter_mut() {
-                        if let Some(w) = slot {
-                            if w.tid == tid {
-                                *slot = None;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Wake helpers (called from signal/send paths)
-// ---------------------------------------------------------------------------
-
-/// Check if a thread is select-blocked and wake it via the select path.
-/// Called from ipc_call/ipc_send when a message is enqueued for a receiver,
-/// and from notification_signal when bits match.
-///
-/// Returns true if the thread was select-woken (caller should NOT do
-/// separate unblock). `src` names the caller for the tripwire's per-source
-/// `unblock` counters.
-pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64, src: WakeSource) -> bool {
-    // Check thread state first (cheap — avoids SELECT_WAITERS lock if not select-blocked).
-    let is_select = {
-        let table = crate::task::THREAD_TABLE.lock();
-        if let Some(thread) = &table[tid.0 as usize] {
-            matches!(thread.sched.state, ThreadState::BlockedSelect)
-        } else {
-            false
-        }
-    };
-
-    if !is_select {
-        return false;
-    }
-
-    let mut waiters = SELECT_WAITERS.lock();
-    let sw = match &mut waiters[tid.0 as usize] {
-        Some(sw) => sw,
-        None => return false,
-    };
-
-    // Find the matching entry index.
-    for i in 0..sw.entry_count {
-        if let Some(entry) = &sw.entries[i] {
-            let matches = match (&entry.kind, &source_kind) {
-                (SelectKind::Channel(a), SelectKind::Channel(b)) => a.0 == b.0,
-                (SelectKind::Notification(a, _), SelectKind::Notification(b, _)) => a.0 == b.0,
-                _ => false,
-            };
-            if matches {
-                sw.ready_index = Some(i);
-                sw.ready_bits = bits;
-                drop(waiters);
-                sched::unblock(tid, src);
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-/// Set the select-ready metadata for a thread without unblocking it.
-/// Used by ipc_call's direct-switch path where unblock happens separately.
-/// No-op if the thread is not select-blocked.
-pub fn set_select_ready(tid: ThreadId, source_kind: SelectKind, bits: u64) {
-    let mut waiters = SELECT_WAITERS.lock();
-    let sw = match &mut waiters[tid.0 as usize] {
-        Some(sw) => sw,
-        None => return,
-    };
-
-    for i in 0..sw.entry_count {
-        if let Some(entry) = &sw.entries[i] {
-            let matches = match (&entry.kind, &source_kind) {
-                (SelectKind::Channel(a), SelectKind::Channel(b)) => a.0 == b.0,
-                (SelectKind::Notification(a, _), SelectKind::Notification(b, _)) => a.0 == b.0,
-                _ => false,
-            };
-            if matches {
-                sw.ready_index = Some(i);
-                sw.ready_bits = bits;
-                return;
-            }
+            SelectKind::Notification(nid, _) => notify::select_unregister(nid, me),
         }
     }
 }

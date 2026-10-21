@@ -241,6 +241,8 @@ Attenuate: expires in 1 hour                  ← shorter, OK
 Attenuate: expires in 730 days                ← longer, DENIED
 ```
 
+**As implemented** (`CapabilityTable::attenuate` in `shared/src/cap.rs`; [capability-lifetime ADR](../../knowledge/decisions/2026-09-24-jl-capability-lifetime.md) §3). Attenuation is identity only for the object-bound capabilities: there is no Create → Access attenuation, so `ChannelCreate` never attenuates to `ChannelAccess(id)`, nor `SharedMemoryCreate` to `SharedMemoryAccess(id)` (EPERM). The access token for a channel or region is minted for its creator when it is created (§3.5). A parent that has expired gives EPERM, and so does a requested expiry later than the parent's (the `ExpiryExpansion` rule above); a request with no expiry gives the child the parent's. The child is not delegatable and records the parent as its `parent_token`.
+
 ### 3.4 Capability Request and Approval Flow
 
 ```mermaid
@@ -339,6 +341,13 @@ User revokes T2 only:
   → T1 NOT revoked (A retains capability)
   → T4 NOT revoked (D retains capability — derived from T1, not T2)
 ```
+
+**As implemented** (`kernel/src/cap/mod.rs`, `kernel/src/ipc/shmem.rs`; [capability-lifetime ADR](../../knowledge/decisions/2026-09-24-jl-capability-lifetime.md) §2–§5):
+
+- **Access is minted at creation.** `ChannelCreate` and `SharedMemoryCreate` mint the creator's `ChannelAccess(id)` or `SharedMemoryAccess(id)` as a child of the authorising Create token, in the same `PROCESS_TABLE` hold that publishes the object, and the object records that Create token as its `creation_cap`.
+- **The cascade reaches only the creator's table.** A revoke marks the token and its descendants in the same table. It then destroys every channel and region the process created whose `creation_cap` is now revoked, so revoking `ChannelCreate` or `SharedMemoryCreate`, or a same-table ancestor of it, destroys the channels or regions created under it, a region even while others map it. A process's exit revokes every token it holds and so destroys everything it created. Cross-table revocation (T1 → T2 above, across agents) is not implemented, so a delegated child in another table survives its parent's revoke; for a region, the region's destruction is what ends that holder's access (its next map returns `EPIPE`).
+- **Delegation of a region.** `SharedMemoryShare` gives the target a non-delegatable child of the creator's live `SharedMemoryAccess(id)` token, which must be delegatable unless the target is the creator. A repeat share mints nothing, and a share to another process that has 64 or fewer free slots (`CAP_FOREIGN_RESERVE`) returns `ENOSPC`.
+- **No ambient grant of an object-bound capability.** The Capability Kit's `grant` refuses `ChannelAccess`, `SharedMemoryAccess` and `GpuBufferAccess` with `NotGranted`: a token for one object comes only from minting at creation or from delegation. Kernel init code before the scheduler starts, and self-tests, still grant such tokens directly, an interim exception until `CapabilityTransfer` exists.
 
 ### 3.6 Temporal Capabilities
 

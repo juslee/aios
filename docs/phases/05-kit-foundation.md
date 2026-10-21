@@ -232,7 +232,7 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 
 **Tasks:**
 - [x] Define `ChannelOps` trait:
-  - `fn channel_create(&mut self) -> Result<ChannelId, IpcKitError>` — create a new channel pair
+  - `fn channel_create(&mut self) -> Result<(ChannelId, CapabilityHandle), IpcKitError>` — create a new channel pair; returns the channel and the handle of the caller's minted `ChannelAccess(id)` (capability-lifetime change)
   - `fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError>` — destroy a channel
   - `fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError>` — fire-and-forget send
   - `fn recv(&self, id: ChannelId, timeout_ticks: u64) -> Result<RawMessage, IpcKitError>` — blocking receive
@@ -245,7 +245,7 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 - [x] Define `SelectOps` trait:
   - `fn select(&self, entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize, u64), IpcKitError>` — multi-wait on channels + notifications
 - [x] Define `SharedMemoryOps` trait:
-  - `fn shmem_create(&mut self, size: usize, flags: u64) -> Result<SharedMemoryId, IpcKitError>` — create shared region
+  - `fn shmem_create(&mut self, size: usize, flags: u64) -> Result<(SharedMemoryId, CapabilityHandle), IpcKitError>` — create shared region; returns the region and the handle of the caller's minted `SharedMemoryAccess(id)` (capability-lifetime change)
   - `fn shmem_map(&mut self, id: SharedMemoryId, vaddr: VirtAddr, flags: u64) -> Result<(), IpcKitError>` — map into caller's address space
   - `fn shmem_unmap(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>` — unmap from caller
   - `fn shmem_destroy(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>` — destroy region

@@ -24,9 +24,10 @@
 use crate::arch::aarch64::exceptions;
 use crate::observability::metrics::METRICS;
 use crate::observability::tripwire::{self, DispatchSite};
+use crate::sched::wake;
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
 use shared::tripwire::{ClearResult, Key};
-use shared::ChannelId;
+use shared::{block_action, BlockAction, ChannelId, WaitState};
 
 // Re-export from shared crate so kernel code can use `direct::MAX_INHERITANCE_DEPTH`.
 pub use shared::MAX_INHERITANCE_DEPTH;
@@ -46,6 +47,8 @@ extern "C" {
 /// - Message already enqueued in channel ring
 /// - `receiver_tid` was the channel's `waiting_receiver`
 /// - Channel lock has been released
+/// - The sender has armed its wait (`wake::prepare_block`) and published its
+///   timeout entry, if it has a deadline
 ///
 /// This function:
 /// 1. Masks IRQs (we're manipulating thread state and switching)
@@ -84,17 +87,35 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
         return false;
     }
 
-    // Receiver must be blocked on IPC (waiting in ipc_recv).
+    // Receiver must be blocked on IPC (waiting in ipc_recv), and the sender
+    // must be able to block: shared::block_action on the sender's state and
+    // wait word must say Sleep. A Dead sender (AlreadyDead: a process exit
+    // killed it) and a sender with a token pending (ConsumeToken: a waker
+    // found it armed and not yet blocked, for example a stale wake between
+    // ipc_call's arm and this switch) take the slow path, where block_current
+    // keeps the first Dead and lets the second consume its token. The word is
+    // only read here; THREAD_TABLE is held from this read to the swap at the
+    // BlockedIpc write below, and every waker's token CAS runs under
+    // THREAD_TABLE, so it cannot change in between.
     {
-        let receiver = table[receiver_idx].as_ref().unwrap();
-        match receiver.sched.state {
-            ThreadState::BlockedIpc { .. } => {}
-            _ => {
-                drop(table);
-                // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
-                unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
-                return false;
-            }
+        let receiver_blocked = matches!(
+            table[receiver_idx].as_ref().unwrap().sched.state,
+            ThreadState::BlockedIpc { .. }
+        );
+        let sender_blocks = block_action(
+            &table[sender_idx].as_ref().unwrap().sched.state,
+            wake::wait_state(sender_tid),
+            &ThreadState::BlockedIpc { channel: 0 },
+        ) == BlockAction::Sleep;
+        if !receiver_blocked || !sender_blocks {
+            drop(table);
+            // SAFETY: This function masked IRQs at entry and THREAD_TABLE is
+            // dropped, so clearing PSTATE.I restores the state its one
+            // caller, ipc_call at thread level, entered with. Unmasking
+            // with THREAD_TABLE still held would let this CPU's tick, whose
+            // schedule() takes THREAD_TABLE too, panic "lock re-entry:".
+            unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+            return false;
         }
     }
 
@@ -140,11 +161,24 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     }
 
     // --- Block sender ---
-    // The sender blocks until ipc_reply wakes it.
+    // The sender blocks until ipc_reply wakes it. Its wait word goes to Idle
+    // in the same critical section, as block_current's does, so a blocked
+    // thread never holds a word that is not Idle. The check above ruled out
+    // Woken, and nothing can have left a token since, so the word is Armed:
+    // ipc_call arms before it publishes pending_caller. Idle here would be a
+    // block without an arm, which loses any wake that landed before it (the
+    // guard, capability-lifetime ADR §9).
     {
         let sender = table[sender_idx].as_mut().unwrap();
         sender.sched.state = ThreadState::BlockedIpc { channel: 0 };
         sender.sched.time_slice_remaining = 0;
+        let word = wake::take(sender_tid);
+        debug_assert_eq!(
+            word,
+            WaitState::Armed,
+            "try_direct_switch: tid {} blocks without prepare_block",
+            sender_tid.0
+        );
     }
 
     // Get context pointers. We need raw pointers because save_context
@@ -273,7 +307,7 @@ pub fn try_reply_switch(
 
     // The switch will happen: classify the reply's wake of the caller (the
     // caller is blocked, so its call phase is stable under THREAD_TABLE).
-    tripwire::note_reply_switch(caller_tid, u64::from(channel.0), clear);
+    tripwire::note_reply_switch(caller_tid, u64::from(channel.raw()), clear);
 
     // --- Restore replier's original priority (undo inheritance) ---
     {
@@ -302,12 +336,17 @@ pub fn try_reply_switch(
     // Block replier — it goes back to waiting for the next request.
     // The replier's ipc_recv loop will re-block via sched::block_current()
     // naturally, but we mark it Runnable and re-enqueue so the scheduler
-    // picks it up on its next pass.
-    {
+    // picks it up on its next pass. A Dead replier (a process exit killed
+    // it) is neither: Dead is terminal, so the switch leaves it for good.
+    let requeue_replier = {
         let replier = table[replier_idx].as_mut().unwrap();
-        replier.sched.state = ThreadState::Runnable;
+        let alive = replier.sched.state.may_become(&ThreadState::Runnable);
+        if alive {
+            replier.sched.state = ThreadState::Runnable;
+        }
         replier.sched.time_slice_remaining = 0;
-    }
+        alive
+    };
 
     let replier_ctx_ptr = &mut table[replier_idx].as_mut().unwrap().context as *mut ThreadContext;
     let (caller_ctx_ptr, caller_stack_phys) = {
@@ -326,7 +365,9 @@ pub fn try_reply_switch(
     drop(table);
 
     // Re-enqueue the replier so it can handle future requests.
-    crate::sched::enqueue_on_cpu(cpu, replier_tid, replier_class);
+    if requeue_replier {
+        crate::sched::enqueue_on_cpu(cpu, replier_tid, replier_class);
+    }
 
     #[cfg(feature = "kernel-metrics")]
     {

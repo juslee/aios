@@ -6,6 +6,7 @@
 
 mod init;
 mod scheduler;
+pub mod wake;
 
 use core::sync::atomic::AtomicBool;
 
@@ -21,7 +22,9 @@ use shared::FixedQueue;
 // Re-export public API from submodules.
 pub use init::{init, start, try_load_balance};
 pub use scheduler::{
-    block_current, check_preemption, enter_scheduler, thread_yield, timer_tick, unblock,
+    block_current, check_preemption, current_thread_and_pid, current_tid, enter_scheduler,
+    exit_current, kill_process_threads, thread_probe, thread_yield, timer_tick, unblock,
+    ThreadProbe,
 };
 
 // Re-export time slice constants from shared for use in submodules.
@@ -81,6 +84,14 @@ impl RunQueue {
             return Some(tid);
         }
         self.idle.pop_front()
+    }
+
+    /// Whether any of the four class queues holds `tid`.
+    pub(crate) fn contains(&self, tid: ThreadId) -> bool {
+        self.rt.contains(&tid)
+            || self.interactive.contains(&tid)
+            || self.normal.contains(&tid)
+            || self.idle.contains(&tid)
     }
 
     pub(crate) fn total_depth(&self) -> usize {
@@ -180,7 +191,10 @@ fn scan_queue_level(cpu: usize, ncpu: usize) -> ScanLock {
 }
 
 /// The innermost level of [`scan_snapshot`]: with every run queue held, hold
-/// THREAD_TABLE and record the current threads and each slot's state.
+/// THREAD_TABLE and record the current threads and each slot's state and
+/// wait word. The word is read under THREAD_TABLE, where every block site
+/// clears it in the same critical section that blocks the thread, so a
+/// blocked thread with a word that is not Idle is a real fault (`bw`).
 #[inline(never)]
 #[deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn scan_thread_table(ncpu: usize) -> ScanLock {
@@ -193,7 +207,8 @@ fn scan_thread_table(ncpu: usize) -> ScanLock {
     for slot in 0..MAX_THREADS {
         let thread = table.get(slot).and_then(Option::as_ref);
         let state = SlotState::of(thread.map(|t| &t.sched.state));
-        tripwire::scan_note_slot(slot as u32, state);
+        let word = wake::wait_state(ThreadId(slot as u32));
+        tripwire::scan_note_slot(slot as u32, state, word);
     }
     drop(table);
     ScanLock::Done
@@ -233,12 +248,14 @@ static SCHED_READY: AtomicBool = AtomicBool::new(false);
 /// Allocate a thread slot in the global THREAD_TABLE. Returns the index.
 ///
 /// Resets the slot's tripwire stamps (last CPU, last run, wake in flight)
-/// under THREAD_TABLE before it fills the slot.
+/// and its wait word (`wake::reset`) under THREAD_TABLE before it fills the
+/// slot, so the new thread starts outside any wait.
 pub fn allocate_thread(thread: Thread) -> Option<usize> {
     let mut table = crate::task::THREAD_TABLE.lock();
     for (i, slot) in table.iter_mut().enumerate() {
         if slot.is_none() {
             tripwire::reset_thread_stamps(i);
+            wake::reset(ThreadId(i as u32));
             *slot = Some(thread);
             return Some(i);
         }

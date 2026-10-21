@@ -2,10 +2,11 @@
 //! the ipc-timeout thread.
 
 use crate::arch::aarch64::trap::TrapFrame;
+use crate::cap::revoke_in_process;
 use crate::ipc::shmem;
 use crate::mm::pgtable::VmFlags;
 use crate::syscall::IpcError;
-use crate::task::process::{process_mut, process_ref, ProcessId, MAX_PROCESSES, PROCESS_TABLE};
+use crate::task::process::{process_ref, ProcessId, MAX_PROCESSES, PROCESS_TABLE};
 use crate::task::ThreadId;
 use shared::{Capability, CapabilityHandle, CapabilityTokenId, SharedMemoryId};
 
@@ -21,10 +22,17 @@ use super::TEST_PID;
 ///
 /// The test changes no capability outside process 1 and leaves none behind.
 /// It checks that `my_tid` belongs to process 1 before it grants or revokes
-/// anything. It revokes the exact SharedMemoryCreate token it granted, right
-/// after the create call. It revokes the region's SharedMemoryAccess tokens
-/// (the creator grant and the self-share) before the unmap that frees the
-/// region, because region ids are reused.
+/// anything, and that process 1 holds no live SharedMemoryCreate on entry
+/// (otherwise it logs `holds SharedMemoryCreate` and stops), so the
+/// SharedMemoryCreate token T it grants is the one the region records as its
+/// `creation_cap`, which it checks. T is delegatable, so the region's minted
+/// SharedMemoryAccess is too: a share to another pid passes the token check,
+/// and the last valid pid's EPERM comes from its empty process slot. The
+/// self-share is idempotent and mints nothing; the minted token authorises
+/// the map. Then T is revoked through `revoke_in_process`: revoking the
+/// create token revokes the minted token, its child, and destroys the region
+/// (its cascade logs `shm_cascade: pid=1 destroyed 1 regions`), so no token
+/// or region outlives the test.
 pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     let pid = match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => p,
@@ -33,24 +41,25 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
             return;
         }
     };
+    if holds_live(pid, &Capability::SharedMemoryCreate) {
+        crate::kwarn!(Ipc, "Bad-pid test: holds SharedMemoryCreate");
+        return;
+    }
     let flags = VmFlags::READ | VmFlags::WRITE;
 
-    let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
-        .ok()
-        .and_then(|handle| token_id(pid, handle));
-    let Some(create_token) = create_token else {
+    let Some(create_token) = grant_shm_create(pid, true) else {
         crate::kwarn!(Ipc, "Bad-pid test: grant failed");
         return;
     };
-    let created = shmem::shared_memory_create(pid, 4096, flags);
-    revoke_token(pid, create_token);
-    let region = match created {
-        Ok(r) => r,
+    let region = match shmem::shared_memory_create(pid, 4096, flags) {
+        Ok((r, _access)) => r,
         Err(e) => {
+            let _ = revoke_in_process(pid, create_token);
             crate::kwarn!(Ipc, "Bad-pid test: shm_create failed {}", e);
             return;
         }
     };
+    let recorded = creation_cap(region) == Some(create_token);
 
     // SharedMemoryShare: x8 = syscall number, x0 = region, x1 = target pid.
     let share = |target_pid: u64| -> i64 {
@@ -61,7 +70,7 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
             spsr_el1: 0,
         };
         tf.x[8] = shared::Syscall::SharedMemoryShare as u64;
-        tf.x[0] = region.0 as u64;
+        tf.x[0] = u64::from(region.raw());
         tf.x[1] = target_pid;
         crate::syscall::syscall_dispatch(&mut tf);
         tf.x[0] as i64
@@ -74,28 +83,29 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     // which no process uses, so a regression shows as EPERM (not EINVAL)
     // without granting anything to a live process.
     let past_u32 = share((1 << 32) | (MAX_PROCESSES - 1) as u64);
-    // The last valid pid reaches the table; no process uses that slot → EPERM.
+    // The last valid pid reaches the table and passes the token check (the
+    // minted token is delegatable); no process uses that slot → EPERM.
     let last_slot = share((MAX_PROCESSES - 1) as u64);
-    // A live in-range pid (the caller itself) → success.
+    // A live in-range pid (the caller itself, which holds the token) →
+    // success, minting nothing.
     let live = share(pid.0 as u64);
     // The original panic site, called directly.
     let grant = match crate::cap::grant_to_process(
         ProcessId(MAX_PROCESSES as u32),
-        Capability::SharedMemoryAccess(region.0),
+        Capability::SharedMemoryAccess(region),
         false,
     ) {
         Ok(_) => 0,
         Err(e) => e,
     };
 
-    // Free the region: it is released when its only mapping goes away.
-    // shared_memory_map needs SharedMemoryAccess and shared_memory_unmap does
-    // not, so revoke in between: no token outlives the region.
+    // Map the region, then revoke T. Revoking T revokes the minted
+    // SharedMemoryAccess, its child, and destroys the region while it is
+    // mapped: the cascade force-unmaps it and frees its frames, so the unmap
+    // that follows finds it gone (EPIPE).
     let mapped = shmem::shared_memory_map(pid, region, flags).is_ok();
-    revoke_region_access(pid, region);
-    if mapped {
-        let _ = shmem::shared_memory_unmap(pid, region);
-    }
+    let destroyed = revoke_in_process(pid, create_token).is_ok()
+        && shmem::shared_memory_unmap(pid, region) == Err(IpcError::Epipe as i64);
 
     // A log message keeps at most 96 bytes (two ring entries); longer text
     // is cut and marked with `~`, so keep these lines short.
@@ -106,21 +116,34 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
         && live == 0
         && grant == einval
         && mapped
+        && recorded
+        && destroyed
     {
         crate::kinfo!(Ipc, "Bad-pid test: EINVAL as expected");
     } else {
         crate::kwarn!(
             Ipc,
-            "Bad-pid: {} {} {} {} {} {} {}",
+            "Bad-pid: {} {} {} {} {} {} {} {} {}",
             at_max,
             at_u32_max,
             past_u32,
             last_slot,
             live,
             grant,
-            mapped
+            mapped,
+            recorded,
+            destroyed
         );
     }
+}
+
+/// Grant `pid` a parentless SharedMemoryCreate, delegatable or not, and
+/// return its token id. The token is temporary: the shared memory
+/// self-tests revoke it through `revoke_in_process` before they return.
+pub(super) fn grant_shm_create(pid: ProcessId, delegatable: bool) -> Option<CapabilityTokenId> {
+    crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, delegatable)
+        .ok()
+        .and_then(|handle| token_id(pid, handle))
 }
 
 /// Id of the live token behind `handle` in `pid`'s capability table.
@@ -130,30 +153,20 @@ pub(super) fn token_id(pid: ProcessId, handle: CapabilityHandle) -> Option<Capab
     proc.cap_table.get(handle).map(|t| t.id)
 }
 
-/// Revoke the token `token_id` in `pid`'s capability table.
-pub(super) fn revoke_token(pid: ProcessId, token_id: CapabilityTokenId) {
-    let mut table = PROCESS_TABLE.lock();
-    if let Ok(proc) = process_mut(&mut table, pid) {
-        proc.cap_table.revoke(token_id);
-    }
+/// Whether `pid` holds a live, unexpired token that authorises `cap`. The
+/// shared memory tests check SharedMemoryCreate on entry: a create records
+/// the first live match as its region's `creation_cap`, so a token left live
+/// by an earlier test would be recorded instead of the test's own.
+pub(super) fn holds_live(pid: ProcessId, cap: &Capability) -> bool {
+    let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    let table = PROCESS_TABLE.lock();
+    process_ref(&table, pid).is_ok_and(|proc| proc.cap_table.has_capability(cap, now))
 }
 
-/// Revoke every live SharedMemoryAccess(`region`) token in `pid`'s capability
-/// table. Process 1 holds no other shared memory capability and `region` was
-/// created by the calling test, so every such token was granted during it.
-pub(super) fn revoke_region_access(pid: ProcessId, region: SharedMemoryId) {
-    let access = Capability::SharedMemoryAccess(region.0);
-    let mut table = PROCESS_TABLE.lock();
-    if let Ok(proc) = process_mut(&mut table, pid) {
-        while let Some(token_id) = proc
-            .cap_table
-            .tokens()
-            .iter()
-            .flatten()
-            .find(|t| t.capability == access && !t.revoked)
-            .map(|t| t.id)
-        {
-            proc.cap_table.revoke(token_id);
-        }
-    }
+/// The `creation_cap` of the live region `region`, or `None` if it is gone.
+pub(super) fn creation_cap(region: SharedMemoryId) -> Option<CapabilityTokenId> {
+    let mut table = shmem::SHARED_REGION_TABLE.lock();
+    shmem::region_mut(&mut table, region)
+        .ok()
+        .map(|r| r.creation_cap)
 }

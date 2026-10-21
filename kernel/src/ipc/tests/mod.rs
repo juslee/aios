@@ -5,10 +5,18 @@
 //! Called from main.rs after sched::init() but before enter_scheduler().
 
 mod bad_pid;
+mod create_abi;
+mod dead_thread;
 mod kit_errors;
+mod lifecycle;
 mod select_cap;
+mod share;
+mod stale_id;
 mod syscall_args;
 mod timeout_args;
+mod wait_loops;
+mod wake_helper;
+mod wake_token;
 
 use crate::sched;
 use crate::syscall::IpcError;
@@ -18,7 +26,7 @@ use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE};
 use spin::Mutex;
 
 use super::channel::{ipc_call, ipc_recv, ipc_reply, ipc_send};
-use super::{channel_create, channel_destroy, channel_set_peer, CHANNEL_TABLE};
+use super::{channel_create, channel_create_unchecked, channel_destroy, channel_set_peer};
 
 // ---------------------------------------------------------------------------
 // IPC test initialization
@@ -45,25 +53,19 @@ const TEST_PID: shared::ProcessId = shared::ProcessId(1);
 /// - Process 3 ("cap-test-denied"): NO ChannelCreate cap (for enforcement test)
 pub fn init() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
+    use crate::task::process::{process_install, KernelResourceLimits};
     use crate::task::{CpuSet, SchedulerClass, Thread, THREAD_TABLE};
 
     // --- Create processes ---
 
     // Process 0: kernel (owns idle threads, scheduler test threads).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..6].copy_from_slice(b"kernel");
-        procs[0] = Some(ProcessControl {
-            pid: ProcessId(0),
-            address_space: None,
-            resource_limits: KernelResourceLimits::system(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(0),
+        None,
+        b"kernel",
+        KernelResourceLimits::system(),
+    )
+    .expect("process 0 install");
     // Grant kernel process all capability types.
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::DebugPrint, true);
@@ -81,53 +83,35 @@ pub fn init() {
     }
 
     // Process 1: IPC test (server, caller, timeout).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..8].copy_from_slice(b"ipc-test");
-        procs[1] = Some(ProcessControl {
-            pid: ProcessId(1),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(1),
+        None,
+        b"ipc-test",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 1 install");
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::DebugPrint, false);
 
     // Process 2: PI test (priority inheritance server + caller).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..7].copy_from_slice(b"pi-test");
-        procs[2] = Some(ProcessControl {
-            pid: ProcessId(2),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(2),
+        None,
+        b"pi-test",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 2 install");
     let _ = cap::grant_to_process(ProcessId(2), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(2), shared::Capability::DebugPrint, false);
 
     // Process 3: cap-test-denied (NO ChannelCreate — used to test enforcement).
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..15].copy_from_slice(b"cap-test-denied");
-        procs[3] = Some(ProcessControl {
-            pid: ProcessId(3),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(
+        ProcessId(3),
+        None,
+        b"cap-test-denied",
+        KernelResourceLimits::native(),
+    )
+    .expect("process 3 install");
     // Process 3 gets DebugPrint only — no ChannelCreate, no ChannelAccess.
     let _ = cap::grant_to_process(ProcessId(3), shared::Capability::DebugPrint, false);
 
@@ -206,13 +190,30 @@ pub fn init() {
         );
         thread.sched.class = SchedulerClass::Normal;
         thread.sched.effective_class = SchedulerClass::Normal;
-        thread.sched.affinity = CpuSet::all();
+        // Pinned to CPU 2 from creation. A timeout wake from check_timeouts
+        // may run on any ticking CPU, and unblock queues the woken thread on
+        // the waking CPU when affinity allows; pinned, it always comes back
+        // to CPU 2, whose own tick preempts at slice expiry, instead of
+        // starving behind the Interactive bench threads on CPU 0.
+        thread.sched.affinity = CpuSet::single(2);
         thread.context.sp = stack_virt_top as u64;
         thread.owner_pid = Some(ProcessId(1));
 
         let idx = sched::allocate_thread(thread).expect("thread table full for IPC timeout");
         sched::enqueue_on_cpu(2, ThreadId(idx as u32), SchedulerClass::Normal);
     }
+
+    // Dead test helper (process 1, pinned to CPU 2): ends itself when it
+    // first runs; the ipc-timeout thread probes it.
+    dead_thread::init();
+
+    // Lifecycle test: processes 14 and 17, and pid 14's thread (pinned to
+    // CPU 2), which exits its own process when the test starts it.
+    lifecycle::init();
+
+    // Wake helper of the loop tests (process 1, pinned to CPU 2): acts on
+    // the ipc-timeout thread's waits while they wait.
+    wake_helper::init();
 
     // --- Priority inheritance test threads ---
     {
@@ -303,26 +304,6 @@ pub fn init() {
     );
 }
 
-/// Create a channel without capability checks (for init-time setup).
-/// Used when threads don't exist yet so owner_pid lookup would fail: the
-/// caller names the process that owns endpoint A.
-pub(crate) fn channel_create_unchecked(owner: ProcessId) -> ChannelId {
-    let mut table = CHANNEL_TABLE.lock();
-    let idx = table
-        .iter()
-        .position(|s| s.is_none())
-        .expect("channel table full");
-    let id = ChannelId(idx as u32);
-    table[idx] = Some(super::Channel::new(id, owner));
-    crate::kinfo!(
-        Ipc,
-        "Channel {} created (unchecked) for pid {}",
-        idx,
-        owner.0
-    );
-    id
-}
-
 // ---------------------------------------------------------------------------
 // IPC test thread entry points
 // ---------------------------------------------------------------------------
@@ -347,7 +328,7 @@ fn ipc_server_entry() -> ! {
         }
         sched::thread_yield();
     };
-    crate::kinfo!(Ipc, "Server: started, channel={}", ch.0);
+    crate::kinfo!(Ipc, "Server: started, channel={}", ch);
 
     let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
 
@@ -448,15 +429,38 @@ fn ipc_caller_entry() -> ! {
     }
 }
 
-/// IPC timeout test thread: calls IpcCall on a channel with no receiver
-/// (expects ETIMEDOUT). It then checks EPIPE after channel destroy, EINVAL
-/// for out-of-range channel ids, EINVAL for out-of-range pids on the
-/// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
-/// check (`select_cap_test`), EINVAL for hostile syscall arguments,
-/// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
+/// IPC timeout test thread, pinned to CPU 2. It checks EPIPE after channel
+/// destroy, EINVAL for out-of-range channel ids, EINVAL for out-of-range pids
+/// on the SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect
+/// capability check (`select_cap_test`), EINVAL for hostile syscall
+/// arguments, MemoryUnmap ownership and the shared memory EINVAL/EPERM split
 /// (`syscall_args_test`, whose bad-buffer checks use `select_cap_test`'s
-/// `owned_a`), and the IPC Kit's error variants through `KernelIpc`
-/// (`kit_errors_test`, on all three of `select_cap_test`'s channels).
+/// `owned_a`), the IPC Kit's error variants through `KernelIpc`
+/// (`kit_errors_test`, on all three of `select_cap_test`'s channels), EPIPE
+/// for stale channel and region ids whose slot was reused, and the region
+/// cascade of a SharedMemoryCreate revoke with a kernel borrow held
+/// (`stale_id_test`), the x0/x1 return of ChannelCreate and
+/// SharedMemoryCreate with their minted tokens (`create_abi_test`), and
+/// SharedMemoryShare as delegation and the Kit destroy's creator check
+/// (`share_test`, which grants into process 2), and that a thread ended by
+/// `exit_current` stays Dead (`dead_thread_test`, on a helper pinned to
+/// CPU 2), and that a wake between a thread's arm and its block is kept as a
+/// token that the block consumes (`wake_token_test`, on this thread's own
+/// tid, which the pin to CPU 2 makes safe to read), and the process
+/// lifecycle: exit, wait and reap, the exit cascade, one waiter per child,
+/// the token on the wait path, and the exit walk over channel endpoints
+/// (`lifecycle_test`, on pids 12-18), and that `notification_wait`,
+/// `ipc_select`, `sleep_ticks`, `ipc_recv` and `ipc_call` return on their
+/// own condition, failure or deadline whatever wakes them
+/// (`notify_loop_test`, `select_loop_test`, `sleep_loop_test`,
+/// `recv_loop_test`, `call_loop_test`, with the wake helper pinned to CPU 2;
+/// their timed-out cases take about 2 s each, so the lines after them print
+/// after the bench), and that an `ipc_cancel` inside an `ipc_call` ends it
+/// with ECANCELED and leaves nothing behind (`cancel_loop_test`, after
+/// `call_loop_test`, with the helper's cancel). Last, it calls IpcCall on a
+/// channel with no receiver (expects ETIMEDOUT): the call holds the
+/// channel's minted ChannelAccess, so it blocks until its 100-tick timeout,
+/// and a late timeout wake can hide only that line.
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -470,7 +474,6 @@ fn ipc_timeout_entry() -> ! {
     // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
-    // Create a channel with no server — timeout is guaranteed.
     let caller_tid = match super::current_thread_id() {
         Some(t) => t,
         None => loop {
@@ -478,32 +481,11 @@ fn ipc_timeout_entry() -> ! {
         },
     };
 
-    let ch = match channel_create(caller_tid) {
-        Ok(c) => c,
-        Err(e) => {
-            crate::kwarn!(Ipc, "Timeout test: channel_create failed: {}", e);
-            loop {
-                sched::thread_yield();
-            }
-        }
-    };
-
-    let msg = b"TIMEOUT_TEST";
-    let mut reply_buf = [0u8; MAX_MESSAGE_SIZE];
-
-    // Use a short timeout (100 ticks = 100ms).
-    crate::kinfo!(Ipc, "Timeout test: calling with 100ms timeout...");
-    let result = ipc_call(ch, msg, &mut reply_buf, 100);
-
-    if result == IpcError::Etimedout as i64 {
-        crate::kinfo!(Ipc, "Timeout test: ETIMEDOUT as expected");
-    } else {
-        crate::kwarn!(Ipc, "Timeout test: unexpected result {}", result);
-    }
-
-    // Test channel destroy → EPIPE.
+    // Test channel destroy → EPIPE. The minted ChannelAccess(ch2) stays live
+    // after the destroy, so the recv passes the capability check and fails
+    // at the lookup.
     let ch2 = match channel_create(caller_tid) {
-        Ok(c) => c,
+        Ok((c, _access)) => c,
         Err(_) => loop {
             sched::thread_yield();
         },
@@ -527,9 +509,9 @@ fn ipc_timeout_entry() -> ! {
     // A log message keeps at most 96 bytes (two ring entries); longer text
     // is cut and marked with `~`, so keep these lines short.
     let einval = IpcError::Einval as i64;
-    let recv_result = ipc_recv(ChannelId(MAX_CHANNELS as u32), &mut buf, 0);
-    let send_result = ipc_send(ChannelId(MAX_CHANNELS as u32), b"BAD_ID");
-    let reply_result = ipc_reply(ChannelId(u32::MAX), b"BAD_ID");
+    let recv_result = ipc_recv(ChannelId::from_raw(MAX_CHANNELS as u32), &mut buf, 0);
+    let send_result = ipc_send(ChannelId::from_raw(MAX_CHANNELS as u32), b"BAD_ID");
+    let reply_result = ipc_reply(ChannelId::from_raw(u32::MAX), b"BAD_ID");
     if recv_result == Err(einval) && send_result == einval && reply_result == einval {
         crate::kinfo!(Ipc, "Bad-id test: EINVAL as expected");
     } else {
@@ -546,6 +528,43 @@ fn ipc_timeout_entry() -> ! {
     let select_channels = select_cap::select_cap_test(caller_tid);
     syscall_args::syscall_args_test(caller_tid, select_channels.map(|c| c.owned_a));
     kit_errors::kit_errors_test(caller_tid, select_channels);
+    stale_id::stale_id_test(caller_tid);
+    create_abi::create_abi_test(caller_tid);
+    share::share_test(caller_tid);
+    dead_thread::dead_thread_test();
+    wake_token::wake_token_test(caller_tid);
+    lifecycle::lifecycle_test(caller_tid);
+    wait_loops::notify_loop_test(caller_tid);
+    wait_loops::select_loop_test(caller_tid);
+    wait_loops::sleep_loop_test(caller_tid);
+    wait_loops::recv_loop_test(caller_tid);
+    wait_loops::call_loop_test(caller_tid);
+    wait_loops::cancel_loop_test(caller_tid);
+
+    // Timeout test, last. The channel has no server, so the call, authorised
+    // by the minted ChannelAccess, can only time out.
+    let ch = match channel_create(caller_tid) {
+        Ok((c, _access)) => c,
+        Err(e) => {
+            crate::kwarn!(Ipc, "Timeout test: channel_create failed: {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    };
+
+    let msg = b"TIMEOUT_TEST";
+    let mut reply_buf = [0u8; MAX_MESSAGE_SIZE];
+
+    // Use a short timeout (100 ticks = 100ms).
+    crate::kinfo!(Ipc, "Timeout test: calling with 100ms timeout...");
+    let result = ipc_call(ch, msg, &mut reply_buf, 100);
+
+    if result == IpcError::Etimedout as i64 {
+        crate::kinfo!(Ipc, "Timeout test: ETIMEDOUT as expected");
+    } else {
+        crate::kwarn!(Ipc, "Timeout test: unexpected result {}", result);
+    }
 
     loop {
         sched::thread_yield();
@@ -578,7 +597,7 @@ fn pi_server_entry() -> ! {
         }
         sched::thread_yield();
     };
-    crate::kinfo!(Ipc, "PI-Server: started (Normal class), channel={}", ch.0);
+    crate::kinfo!(Ipc, "PI-Server: started (Normal class), channel={}", ch);
 
     let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
 
@@ -689,11 +708,11 @@ fn cap_denied_entry() -> ! {
     // Attempt channel_create — should fail with EPERM because process 3
     // does not hold ChannelCreate capability.
     match channel_create(my_tid) {
-        Ok(ch) => {
+        Ok((ch, _access)) => {
             crate::kwarn!(
                 Cap,
                 "UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
-                ch.0
+                ch
             );
         }
         Err(e) if e == crate::syscall::IpcError::Eperm as i64 => {

@@ -17,7 +17,7 @@
 //!   (or `ctx=irq`) `holder=kernel/src/sync/selftest.rs:<line>
 //!   holder_irqs=on …`;
 //! - `[panic] cpu=0 … irq_elr=0x…`, with `irq_elr` inside [`hold_loop`];
-//! - `[tripwire] v=1 src=panic …` with `lktry` for THREAD_TABLE ≥ 1, from
+//! - `[tripwire] v=2 src=panic …` with `lktry` for THREAD_TABLE ≥ 1, from
 //!   `sched::timer_tick`'s `try_lock`, which runs before all three sites.
 //!
 //! If no panic arrives within [`HOLD_TICKS`], the thread releases the lock,

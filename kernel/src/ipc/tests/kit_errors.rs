@@ -5,11 +5,13 @@ use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use shared::kits::ipc::{ChannelOps, IpcKitError, NotificationOps, SelectOps, SharedMemoryOps};
 use shared::{
-    Capability, ChannelId, NotificationId, RawMessage, SelectEntry, SelectKind, MAX_CHANNELS,
-    MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, RING_CAPACITY,
+    Capability, ChannelId, NotificationId, RawMessage, SelectEntry, SelectKind, ID_GEN_FIRST,
+    MAX_CHANNELS, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, RING_CAPACITY,
 };
 
-use super::bad_pid::{revoke_region_access, revoke_token, token_id};
+use crate::cap::revoke_in_process;
+
+use super::bad_pid::{creation_cap, holds_live, token_id};
 use super::select_cap::SelectCapChannels;
 use super::TEST_PID;
 
@@ -37,9 +39,14 @@ const USER_BIT: u64 = 0b1000;
 /// channel and grants no ChannelAccess. `open` (`owned_a`) is accessible and
 /// empty; every message sent to it is received again, so it is left empty.
 /// `owned_b` is accessible too and only named in a lookup. `denied` is not
-/// accessible. The shared memory checks revoke the SharedMemoryCreate token
-/// they grant right after the create, and the region's SharedMemoryAccess
-/// tokens before the unmap that frees it.
+/// accessible. The shared memory checks start only if process 1 holds no
+/// live SharedMemoryCreate (otherwise they log `holds SharedMemoryCreate`),
+/// check that the region records the token they grant as its
+/// `creation_cap` (otherwise they log `creation_cap mismatch`), revoke the
+/// region's minted SharedMemoryAccess before the unmap that frees it, and
+/// revoke the SharedMemoryCreate token they grant last, through
+/// `revoke_in_process`, after that unmap (the minted token is its child, so
+/// revoking it earlier would revoke the access too).
 ///
 /// The five `denied` channel cases log the kernel's usual `denied
 /// ChannelAccess` warnings, and the shared memory cases its denied
@@ -78,7 +85,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
             required: Capability::ChannelAccess(id),
         })
     };
-    let bad_id = ChannelId(MAX_CHANNELS as u32);
+    let bad_id = ChannelId::from_raw(MAX_CHANNELS as u32);
 
     let mut checks = [false; 24];
 
@@ -115,8 +122,8 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
     let gone = crate::ipc::CHANNEL_TABLE
         .lock()
         .iter()
-        .rposition(Option::is_none)
-        .map(|i| ChannelId(i as u32));
+        .rposition(|slot| slot.channel.is_none())
+        .map(|i| ChannelId::new(i, ID_GEN_FIRST));
     checks[19] = gone
         .is_some_and(|id| kit.reply(id, &msg).err() == Some(IpcKitError::InvalidChannel { id }));
     // A `len` past the inline buffer is the wrapper's MessageTooLarge, found
@@ -190,6 +197,13 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<SelectCapChanne
 /// of `kit_errors_test`, all false from the first one that cannot run.
 fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     let mut checks = [false; 7];
+    // A create records the first live SharedMemoryCreate as its region's
+    // creation_cap, so one left live by an earlier test would be recorded
+    // instead of the grant below.
+    if holds_live(pid, &Capability::SharedMemoryCreate) {
+        crate::kwarn!(Ipc, "Kit-error test: holds SharedMemoryCreate");
+        return checks;
+    }
 
     // Without SharedMemoryCreate: CapabilityDenied naming it. An undefined
     // flag bit is the wrapper's own decode error, before the capability
@@ -210,11 +224,20 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     let Some(create_token) = create_token else {
         return checks;
     };
+    // The create token is revoked at the end, after the last unmap, through
+    // revoke_in_process: revoking it here would also revoke the region's
+    // minted SharedMemoryAccess, its child, which the map needs, and would
+    // destroy the region that checks 5 and 6 unmap.
     let created = kit.shmem_create(PAGE, READ);
-    revoke_token(pid, create_token);
-    let Ok(region) = created else {
+    let Ok((region, access)) = created else {
+        let _ = revoke_in_process(pid, create_token);
         return checks;
     };
+    if creation_cap(region) != Some(create_token) {
+        crate::kwarn!(Ipc, "Kit-error test: creation_cap mismatch");
+        let _ = revoke_in_process(pid, create_token);
+        return checks;
+    }
 
     // shared_memory_unmap checks no capability: its EPERM is "not mapped",
     // a SharedMemoryError, never CapabilityDenied.
@@ -223,11 +246,15 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
             reason: "not mapped",
         });
     let mapped = kit.shmem_map(region, 0, READ).is_ok();
-    // The creator's SharedMemoryAccess grant is revoked before the unmap
-    // that frees the region, as in the other shared memory self-tests. The
-    // capability is checked before the duplicate-mapping check, so the
-    // repeated map fails for the missing right, naming this region.
-    revoke_region_access(pid, region);
+    // The creator's minted SharedMemoryAccess, process 1's only token for
+    // the region, is revoked through revoke_in_process before the unmap that
+    // frees the region. It is a child of the create token, not a region's
+    // creation_cap, so its cascade destroys nothing. The capability is
+    // checked before the duplicate-mapping check, so the repeated map fails
+    // for the missing right, naming this region.
+    if let Some(access_token) = token_id(pid, access) {
+        let _ = revoke_in_process(pid, access_token);
+    }
     // USER is an undefined flag bit for shmem_map too, rejected before the
     // capability check: without the decoder this map would be
     // CapabilityDenied, and with the grant still held it would be the
@@ -236,16 +263,19 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     checks[4] = mapped
         && kit.shmem_map(region, 0, READ).err()
             == Some(IpcKitError::CapabilityDenied {
-                required: Capability::SharedMemoryAccess(region.0),
+                required: Capability::SharedMemoryAccess(region),
             });
     checks[5] = mapped && kit.shmem_unmap(region).is_ok();
     // The region is freed: EPIPE, a SharedMemoryError, not the table's
-    // ObjectGone. (Another process may reuse the slot in between, which makes
-    // it EPERM, "not mapped": a SharedMemoryError too.)
+    // ObjectGone.
     checks[6] = checks[5]
-        && matches!(
-            kit.shmem_unmap(region),
-            Err(IpcKitError::SharedMemoryError { .. })
-        );
+        && kit.shmem_unmap(region).err()
+            == Some(IpcKitError::SharedMemoryError {
+                reason: "region not found",
+            });
+    // The region is already freed (check 5), so the cascade destroys
+    // nothing and logs no `shm_cascade` line; if the unmap failed, it
+    // destroys the region instead.
+    let _ = revoke_in_process(pid, create_token);
     checks
 }

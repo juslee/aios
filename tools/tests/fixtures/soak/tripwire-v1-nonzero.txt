@@ -1,0 +1,1 @@
+[tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0,0 starved=1,0,0,0 badchan=4,0,6 twc=812345 twn=12 twmax=94000 n=14

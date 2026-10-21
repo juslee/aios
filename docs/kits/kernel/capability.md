@@ -118,7 +118,11 @@ impl CapabilityTable {
     pub fn insert(&mut self, token: CapabilityToken) -> Result<CapabilityHandle, CapError>;
 
     /// Revoke a token and all its delegated children (cascade).
-    /// Also invalidates any IPC channels created with this token.
+    /// Also destroys the IPC channels and shared memory regions this
+    /// process created under the token or a same-table descendant: revoking
+    /// `ChannelCreate` or `SharedMemoryCreate` destroys what was created
+    /// with it, a region even while others map it. The cascade reaches only
+    /// this table (no cross-table revocation yet).
     pub fn revoke(&mut self, token_id: TokenId);
 
     /// List all non-revoked, non-expired tokens in this table.
@@ -288,13 +292,15 @@ fn show_agent_capabilities(inspector: &Inspector, agent: AgentId) {
 | Capability | What It Gates | Default Grant |
 |---|---|---|
 | `ChannelCreate` | Creating new IPC channels | Granted to all agents |
-| `ChannelAccess(id)` | Sending/receiving on a specific channel | Per-channel, on creation |
+| `ChannelAccess(id)` | Sending/receiving on a specific channel | Per-channel, on creation: minted for the creator as a child of the authorising `ChannelCreate` |
 | `ReadSpace(space)` | Reading objects in a Space | Prompt user on first access |
 | `WriteSpace(space)` | Writing objects in a Space | Prompt user on first access |
 | `CameraCapture` | Accessing camera hardware | Prompt user, LED enforced |
 | `AudioCapture` | Accessing microphone | Prompt user, indicator enforced |
 | `NetworkAccess` | Making network requests | Prompt user per protocol |
 | `ComputeAccess` | Using GPU/NPU for compute | Granted based on trust level |
+
+The object-bound capabilities (`ChannelAccess(id)`, `SharedMemoryAccess(id)`, `GpuBufferAccess(id)`) never come from a grant: the kernel's `CapabilityEnforcer::grant` refuses them with `NotGranted`. They are minted for an object's creator when it is created, and a region's is delegated by `SharedMemoryShare` ([`docs/security/model/capabilities.md` §3.5](../../security/model/capabilities.md)). There is no Create → Access attenuation either: in today's kernel an attenuated child names the same capability (for an object-bound one, the same full id) and can only shorten the expiry.
 
 ### Agent manifest example
 

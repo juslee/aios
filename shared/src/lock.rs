@@ -1,8 +1,10 @@
 //! Owner-stamped spinlock core for the kernel's detect-only IRQ-class lock.
 //!
-//! Crash-fix step 1b wraps the 9 IRQ-shared statics in a detect-only lock
-//! (`kernel/src/sync/irq_spin_lock.rs`). This module holds the part of it that
-//! is pure protocol, so that host threads and `just miri` check it:
+//! Crash-fix step 1b wraps the IRQ-shared statics in a detect-only lock
+//! (`kernel/src/sync/irq_spin_lock.rs`); there are 8 of them.
+//!
+//! This module holds the part of that lock that is pure protocol, so that
+//! host threads and `just miri` check it:
 //!
 //! - [`OwnerStamp`]: the lock word is the owner stamp. A separate owner field
 //!   beside a spin flag cannot be kept consistent: clearing it before the
@@ -547,9 +549,12 @@ const _: () = assert!(
 // LockClass
 // ---------------------------------------------------------------------------
 
-/// The 9 IRQ-shared lock statics.
+/// The 8 IRQ-shared lock statics.
 ///
-/// The order is the index order of the 9-wide per-lock tripwire keys.
+/// The order is the index order of the 8-wide per-lock tripwire keys.
+/// The per-thread select table's lock, once between `NOTIFICATION_TABLE`
+/// and `BOOT_LOG`, was deleted with the select wake path
+/// (capability-lifetime step 11, tripwire schema v=2).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum LockClass {
@@ -567,15 +572,13 @@ pub enum LockClass {
     NotifyDeadlines,
     /// `ipc::notify::NOTIFICATION_TABLE`.
     NotificationTable,
-    /// `ipc::select::SELECT_WAITERS`.
-    SelectWaiters,
     /// `observability::BOOT_LOG`.
     BootLog,
 }
 
 impl LockClass {
     /// Number of lock classes.
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 8;
 
     /// Every class, in index order.
     pub const ALL: [LockClass; Self::COUNT] = [
@@ -586,11 +589,10 @@ impl LockClass {
         LockClass::TimeoutQueue,
         LockClass::NotifyDeadlines,
         LockClass::NotificationTable,
-        LockClass::SelectWaiters,
         LockClass::BootLog,
     ];
 
-    /// Index into 9-wide per-lock arrays.
+    /// Index into 8-wide per-lock arrays.
     #[inline]
     pub const fn index(self) -> usize {
         self as usize
@@ -607,7 +609,6 @@ impl LockClass {
             LockClass::TimeoutQueue => "TIMEOUT_QUEUE",
             LockClass::NotifyDeadlines => "NOTIFY_DEADLINES",
             LockClass::NotificationTable => "NOTIFICATION_TABLE",
-            LockClass::SelectWaiters => "SELECT_WAITERS",
             LockClass::BootLog => "BOOT_LOG",
         }
     }
@@ -1401,9 +1402,9 @@ mod tests {
             "TIMEOUT_QUEUE",
             "NOTIFY_DEADLINES",
             "NOTIFICATION_TABLE",
-            "SELECT_WAITERS",
             "BOOT_LOG",
         ];
+        assert_eq!(LockClass::COUNT, 8);
         assert_eq!(LockClass::ALL.len(), LockClass::COUNT);
         assert_eq!(expected.len(), LockClass::COUNT);
         for (i, class) in LockClass::ALL.into_iter().enumerate() {

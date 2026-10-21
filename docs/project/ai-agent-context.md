@@ -60,18 +60,18 @@ When implementing kernel code, use these established patterns:
 
 | Task | Pattern | Reference File |
 |---|---|---|
-| Read/write hardware register | `mmio_read32()`/`mmio_write32()` volatile helpers | `arch/aarch64/uart.rs:102-110` |
-| Read ARM system register | `asm!("mrs {}, REG", out(reg) val)` with SAFETY | `arch/aarch64/timer.rs:19-25` |
-| Write ARM system register | `asm!("msr REG, {}",  in(reg) val)` + ISB if needed | `arch/aarch64/timer.rs:51-58` |
-| New static shared across cores | `AtomicT` with appropriate ordering | `smp.rs:34` (PRINT_TURN) |
-| Write-once boot-time static | `UnsafeCell` + `unsafe impl Sync` | `arch/aarch64/mmu.rs:32-39` |
-| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:205` (LOG_RINGS) |
+| Read/write hardware register | `mmio_read32()`/`mmio_write32()` volatile helpers | `arch/aarch64/uart.rs` (`mmio_read32`, `mmio_write32`) |
+| Read ARM system register | `asm!("mrs {}, REG", out(reg) val)` with SAFETY | `arch/aarch64/timer.rs` (`read_cntfrq`) |
+| Write ARM system register | `asm!("msr REG, {}",  in(reg) val)` + ISB if needed | `arch/aarch64/timer.rs` (`init_generic_timer`) |
+| New static shared across cores | `AtomicT` with appropriate ordering | `smp.rs` (`PRINT_TURN`) |
+| Write-once boot-time static | `UnsafeCell` + `unsafe impl Sync` | `arch/aarch64/mmu.rs` (`RawPageTable`) |
+| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs` (`LOG_RINGS`) |
 | New module in kernel | `pub mod name;` in parent + file with `//!` doc comment | `arch/aarch64/mod.rs` |
-| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:18` |
+| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs` (`pub use shared::`) |
 | Error from syscall handler | Return `Err(IpcError::Variant as i64)` | `ipc/mod.rs` (channel_create) |
-| Unrecoverable error | `kerror!(Subsys, "msg"); halt()` OR `panic!("msg")` | `main.rs:53-64` |
+| Unrecoverable error | `kerror!(Subsys, "msg"); halt()` OR `panic!("msg")` | `main.rs` (`kernel_main`, `halt`) |
 | Feature-gated code | `#[cfg(feature = "feature-name")] { ... }` | `observability/trace.rs:6` |
-| Structured logging | `kinfo!(Subsys, "fmt {}", arg)` | `main.rs:37` |
+| Structured logging | `kinfo!(Subsys, "fmt {}", arg)` | `main.rs` (`kernel_main`) |
 | TLB invalidation (boot) | `tlbi vmalle1` + `dsb nsh` (non-broadcast) | `arch/aarch64/mmu.rs` |
 | TLB invalidation (runtime) | `tlbi vmalle1is` + `dsb ish` (broadcast) | `mm/kmap.rs` |
 | Compile-time size check | `const _: () = assert!(size_of::<T>() == N);` | `arch/aarch64/trap.rs:35` |
@@ -81,15 +81,15 @@ When implementing kernel code, use these established patterns:
 | Task | Pattern | Reference File |
 |---|---|---|
 | Lock ordering enforcement | Acquire in the order of the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts | `docs/kernel/deadlock-prevention.md` |
-| IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
+| IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs` (`enter_scheduler`) |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
-| Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
+| Capability check before op | `create_with_access(pid, create, publish)` (checked creates) / `check_channel_access(pid, ch)` | `cap/mod.rs:102-159` |
 | Service registration | `service_register(name, pid, channel)` → name uniqueness check | `service/mod.rs:48-83` |
 | Lock-free audit logging | `audit_log(pid, event)` -- AtomicUsize ring head, Mutex ring body | `service/mod.rs:153-171` |
-| VirtIO-blk I/O | `read_sector(sector, buf)` / `write_sector(sector, buf)` polled | `drivers/virtio_blk.rs:112-132` |
+| VirtIO-blk I/O | `read_sector(sector, buf)` / `write_sector(sector, buf)` polled | `drivers/virtio_blk.rs` (`read_sector`, `write_sector`) |
 | Crash-safe block write | WAL append → data write → WAL commit | `storage/block_engine.rs:1-6` (module doc) |
 | Direct-map phys→virt | Add `DIRECT_MAP_BASE + phys` after TTBR1 enabled | `mm/slab.rs` (`convert_to_direct_map`) |
-| Cascade revocation | Drop PROCESS_TABLE lock *before* walking CHANNEL_TABLE | `cap/mod.rs:193-212` |
+| Cascade revocation | Under PROCESS_TABLE, nest SHARED_REGION_TABLE then CHANNEL_TABLE one after the other; free frames and destroy channels after releasing all three | `cap/mod.rs:347-362` |
 
 -----
 
@@ -176,7 +176,7 @@ drop(table);
 unsafe { core::arch::asm!("msr DAIFClr, #0x2") };  // unmask IRQs
 ```
 
-Reference: `sched/scheduler.rs:67-76`.
+Reference: `sched/scheduler.rs` (`enter_scheduler`).
 
 ### Never use SVC from EL1 kernel threads
 
@@ -264,41 +264,63 @@ Comprehensive per-subsystem guide for agents working on Phase 3+ code. For each 
 
 ### 6.1 Scheduler
 
-**Files**: `kernel/src/sched/scheduler.rs`, `kernel/src/sched/init.rs`, `kernel/src/sched/mod.rs`
+**Files**: `kernel/src/sched/scheduler.rs`, `kernel/src/sched/wake.rs` (the wake token), `kernel/src/sched/init.rs`, `kernel/src/sched/mod.rs`
 
 **Key APIs**:
 
 ```rust
 // Enter the scheduler loop on a CPU (never returns).
 // Called from kernel_main (boot CPU) and secondary_main.
-pub fn enter_scheduler() -> !            // scheduler.rs:47
+pub fn enter_scheduler() -> !            // sched/scheduler.rs
 
 // Core scheduling function. Must be called with IRQs masked.
 // Picks next thread from run queue and context-switches to it.
-pub fn schedule()                        // scheduler.rs:153
+pub fn schedule(origin: Origin)          // sched/scheduler.rs
+
+// Arm the calling thread's wait word (sched/wake.rs). Every waiting site
+// calls it before it publishes the first record a waker can find it by.
+// `tid` is the caller's own, read with IRQs masked (current_tid(), or
+// current_thread_and_pid() for SVC 25). Takes no lock.
+pub fn prepare_block(tid: ThreadId)      // sched/wake.rs
+
+// End an armed wait without blocking (condition met, deadline passed,
+// failure). Returns whether a wake token was pending.
+pub fn cancel_block(tid: ThreadId) -> bool    // sched/wake.rs
 
 // Block the current thread with the given new state.
-// Masks IRQs internally, updates state, calls schedule().
-pub fn block_current(new_state: ThreadState)  // scheduler.rs:327
+// Masks IRQs internally, consumes a pending token (returns at once) or
+// updates state and calls schedule(). Asserts the thread armed first.
+pub fn block_current(new_state: ThreadState)  // sched/scheduler.rs
 
 // Unblock a thread by ID. Safe to call from IRQ context.
-// Saves/restores DAIF to work from any context.
-pub fn unblock(tid: ThreadId)            // scheduler.rs:358
+// Saves/restores DAIF to work from any context. Leaves a token for an
+// Armed Running/Runnable target. `src` names the caller for the counters.
+pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome  // sched/scheduler.rs
+
+// End the calling thread: block_current(Dead). Never returns.
+pub fn exit_current() -> !               // sched/scheduler.rs
+
+// The caller's own tid, read in one IRQ-masked section.
+pub fn current_tid() -> Option<ThreadId>      // sched/scheduler.rs
 
 // Timer tick handler (called from IRQ at 1 kHz).
 // Uses try_lock to avoid deadlock from same-core re-entrancy.
-pub fn timer_tick(cpu: usize)            // scheduler.rs:114
+pub fn timer_tick(cpu: usize)            // sched/scheduler.rs
 ```
 
 **Gotchas**:
 
-- **IN_SCHEDULER re-entrancy guard** (scheduler.rs:157): `IN_SCHEDULER[cpu].swap(true, Acquire)` prevents recursive schedule() calls. If a timer IRQ fires while schedule() is running on the same core, timer_tick() sees the guard is set and returns immediately. Forgetting this guard causes stack overflow from recursive scheduling.
+- **IN_SCHEDULER re-entrancy guard** (`schedule`): `IN_SCHEDULER[cpu].swap(true, Acquire)` prevents recursive schedule() calls. If a timer IRQ fires while schedule() is running on the same core, timer_tick() sees the guard is set and returns immediately. Forgetting this guard causes stack overflow from recursive scheduling.
 
-- **Context switch return ambiguity** (scheduler.rs:263-272): After `save_context()` returns, the thread might be the *original* thread being resumed later (not the thread that just saved). The code must re-read the CPU ID and CURRENT_THREAD to determine which case it is. Do not cache CPU ID across a save_context call.
+- **Context switch return ambiguity** (`schedule`): After `save_context()` returns, the thread might be the *original* thread being resumed later (not the thread that just saved). The code must re-read the CPU ID and CURRENT_THREAD to determine which case it is. Do not cache CPU ID across a save_context call.
 
-- **Lock release before restore_context** (scheduler.rs:247): The THREAD_TABLE lock MUST be dropped before calling `restore_context()`. If the lock is held during restore, a timer IRQ on the newly-running thread will deadlock trying to reacquire.
+- **Lock release before restore_context** (`schedule`): The THREAD_TABLE lock MUST be dropped before calling `restore_context()`. If the lock is held during restore, a timer IRQ on the newly-running thread will deadlock trying to reacquire.
 
-- **timer_tick() uses try_lock** (scheduler.rs:114-141): Because timer_tick() runs from IRQ context, it cannot block. It uses `try_lock()` on CURRENT_THREAD[cpu] first -- if held, it returns immediately (skipping the entire tick). Then it uses `try_lock()` on THREAD_TABLE -- if held, it skips the time slice decrement but does not return early (metrics may still update). RUN_QUEUES is only try_locked for optional metrics collection (`#[cfg(feature = "kernel-metrics")]`), not for core logic.
+- **Arm before you publish, then block or cancel** (wake.rs, capability-lifetime ADR §8): a waiting site calls `prepare_block(tid)` inside, or before, the critical section that publishes the first waker record (a `TIMEOUT_QUEUE` entry or notification deadline included), then `block_current` or `cancel_block`, and after `block_current` returns re-checks its condition under its own lock and loops, re-arming before each re-publish. `block_current` asserts the arm in a debug build. A waker that finds an Armed thread Running or Runnable (not yet blocked) leaves a token; `block_current` consumes it and returns at once, so a wake in the publish-to-block window is not lost. Dead threads never take or consume a token.
+
+- **Dead is terminal** (scheduler.rs, `exit_current`): `block_current(Dead)` switches away and `schedule()` never re-enqueues or dispatches a Dead thread, so it never runs again. A self-exit ends with `exit_current()`, which cannot return (it panics if it does). `kill_process_threads` marks the other threads of a process Dead and resets their wait words (exit step B).
+
+- **timer_tick() uses try_lock** (`timer_tick`): Because timer_tick() runs from IRQ context, it cannot block. It uses `try_lock()` on CURRENT_THREAD[cpu] first -- if held, it returns immediately (skipping the entire tick). Then it uses `try_lock()` on THREAD_TABLE -- if held, it skips the time slice decrement but does not return early (metrics may still update). RUN_QUEUES is only try_locked for optional metrics collection (`#[cfg(feature = "kernel-metrics")]`), not for core logic.
 
 **Lock ordering**:
 
@@ -323,6 +345,9 @@ RIGHT: Re-read core_id() after save_context returns (you might be on a different
 
 WRONG: Holding THREAD_TABLE lock while calling restore_context()
 RIGHT: Drop the lock, then call restore_context()
+
+WRONG: Publishing a waker record (timeout entry, waiter record), then block_current() with no prepare_block()
+RIGHT: prepare_block(tid) first, with tid from current_tid(), then publish, then block_current() or cancel_block()
 ```
 
 ### 6.2 IPC
@@ -339,7 +364,7 @@ pub fn ipc_call(
     send_buf: &[u8],
     recv_buf: &mut [u8],
     timeout_ticks: u64,
-) -> i64                                 // channel.rs:33
+) -> i64                                 // ipc/channel.rs
 
 // Receive a message from a channel. Blocks if no message pending.
 // Returns (bytes_received, sender_tid) on success.
@@ -347,50 +372,51 @@ pub fn ipc_recv(
     channel: ChannelId,
     recv_buf: &mut [u8],
     timeout_ticks: u64,
-) -> Result<(usize, ThreadId), i64>     // channel.rs:232
+) -> Result<(usize, ThreadId), i64>     // ipc/channel.rs
 
 // Reply to a pending caller. No capability check required (spec §9.1).
 pub fn ipc_reply(
     channel: ChannelId,
     reply_buf: &[u8],
-) -> i64                                 // channel.rs:349
+) -> i64                                 // ipc/channel.rs
 
 // Non-blocking send (fire and forget).
 pub fn ipc_send(
     channel: ChannelId,
     send_buf: &[u8],
-) -> i64                                 // channel.rs:415
+) -> i64                                 // ipc/channel.rs
 
-// Create a new IPC channel. Requires ChannelCreate capability.
+// Create a new IPC channel. Requires ChannelCreate capability; returns the
+// id and the handle of the creator's minted ChannelAccess(id).
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs:182
+) -> Result<(ChannelId, CapabilityHandle), i64>   // ipc/mod.rs
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
     entries: &[SelectEntry],
     timeout_ticks: u64,
-) -> Result<(usize, u64), i64>          // select.rs:52
+) -> Result<(usize, u64), i64>          // ipc/select.rs
 ```
 
 **Gotchas**:
 
-- **Capability check placement** (channel.rs:49-57): Every IPC operation checks capabilities *before* locking CHANNEL_TABLE. This prevents state corruption on unauthorized access. Cap check order: resolve thread → find process → check capability → proceed.
+- **Capability check placement** (`ipc_call`, `ipc_recv`, `ipc_send`): Every IPC operation checks capabilities *before* locking CHANNEL_TABLE. This prevents state corruption on unauthorized access. Cap check order: resolve thread → find process → check capability → proceed.
 
-- **Only one pending caller per channel** (channel.rs:81): A channel supports at most one outstanding call (single-request model). A second `ipc_call()` to a channel with a pending caller returns `Eagain`. This is architectural, not a bug.
+- **Only one pending caller per channel** (`ipc_call`): A channel supports at most one outstanding call (single-request model). A second `ipc_call()` to a channel with a pending caller returns `Eagain`. This is architectural, not a bug.
 
-- **Direct switch conditions** (channel.rs:132-144): Direct switch (bypassing the scheduler) succeeds only if: both caller and receiver threads exist, receiver is in `BlockedIpc` state, and both are on the same CPU. On failure, falls back to scheduler path. The receiver must be unblocked *after* dropping the CHANNEL_TABLE lock to avoid select waker inconsistency.
+- **Direct switch conditions** (`ipc_call`, `direct::try_direct_switch`): Direct switch (bypassing the scheduler) succeeds only if: both caller and receiver threads exist, receiver is in `BlockedIpc` state, and both are on the same CPU. On failure, falls back to scheduler path. The receiver must be unblocked *after* dropping the CHANNEL_TABLE lock, to avoid a circular wait with the scheduler.
 
-- **Reply buffer lifetime** (channel.rs:107-114): The `ReplySlot` holds a pointer to the caller's recv_buf. The receiver copies directly into this buffer during `ipc_reply()`. The buffer must remain valid for the entire IPC round-trip. Do not use stack-allocated reply buffers that go out of scope before the reply arrives.
+- **Reply buffer lifetime** (`channel.rs`, `post_reply_slot`): The `ReplySlot` holds a pointer to the caller's recv_buf, written before the call arms and publishes `pending_caller`. The replier copies directly into this buffer during `ipc_reply()` and sets the slot's `done` flag under `REPLY_SLOTS`; `ipc_cancel` sets `cancelled` there instead. Every `ipc_call` exit takes the slot back under `REPLY_SLOTS` before it returns (a written reply wins over a concurrent timeout, cancel or destroy), so the buffer is valid whenever a replier can reach it. The slot carries the call's `seq` (`timeout::next_call_seq`, also in the channel's `pending_caller`), and a late reply or cancel whose claimed `seq` does not match the slot's (the caller left that call and started another) is dropped, a late reply counted as `latereply`. Do not use stack-allocated reply buffers that go out of scope before `ipc_call` returns.
 
-- **Timeout registration before blocking** (channel.rs:118-126): Timeouts are registered in the TIMEOUT_QUEUE *before* the thread blocks. If direct switch fails and falls through to the scheduler, the timeout is still active. On timeout expiry, the timeout queue wakes the thread with an error code.
+- **Timeout registration before blocking** (`timeout::arm_timeout`): Timeouts are registered in the TIMEOUT_QUEUE *before* the thread blocks, with IRQs masked. If direct switch fails and falls through to the scheduler, the timeout is still active. On timeout expiry, the timeout queue wakes the thread with an error code, which decides nothing: `ipc_call`, `ipc_recv` and `ipc_select` take and discard it at their exit, and return ETIMEDOUT only when a pass finds their own deadline passed, so a stale wake costs one more pass, never an early return. A deadline that has already passed when it is registered (`DeadlineArm::Expired`) inserts no entry, and the wait must not block: `ipc_recv` returns ETIMEDOUT, `sleep_ticks` ends, and `ipc_call` still wakes the receiver it took, cancels its arm and returns ETIMEDOUT from its next pass unless the reply was written first.
 
-- **ipc_reply() needs no capability** (channel.rs:349): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
+- **ipc_reply() needs no capability** (`ipc_reply`): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
 
 **Lock ordering**:
 
 ```text
-CHANNEL_TABLE → TIMEOUT_QUEUE → SELECT_WAITERS → sched::RUN_QUEUES
+CHANNEL_TABLE → TIMEOUT_QUEUE → sched::RUN_QUEUES
 ```
 
 Drop CHANNEL_TABLE before calling `sched::unblock()` to prevent circular wait with the scheduler.
@@ -415,16 +441,21 @@ RIGHT: Use a buffer with lifetime that spans the entire blocking period
 **Key APIs**:
 
 ```rust
-// Check ChannelCreate capability. Returns authorizing token ID.
-pub fn check_channel_create(
+// Checked create: under one PROCESS_TABLE hold, find the token that
+// authorises `create`, publish the object (nesting CHANNEL_TABLE or
+// SHARED_REGION_TABLE), and mint the access capability `publish` returns as a
+// child of that token. Used by channel_create and shared_memory_create.
+pub fn create_with_access<T>(
     pid: ProcessId,
-) -> Result<CapabilityTokenId, i64>      // cap/mod.rs:70
+    create: Capability,
+    publish: impl FnOnce(CapabilityTokenId) -> Result<(T, Capability), i64>,
+) -> Result<(T, CapabilityHandle), i64>  // cap/mod.rs
 
 // Check ChannelAccess(channel_id) capability. Fail-closed.
 pub fn check_channel_access(
     pid: ProcessId,
     channel: ChannelId,
-) -> Result<(), i64>                     // cap/mod.rs:94
+) -> Result<(), i64>                     // cap/mod.rs
 
 // Grant a capability token to a process.
 // EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot.
@@ -432,34 +463,40 @@ pub fn grant_to_process(
     pid: ProcessId,
     cap: Capability,
     delegatable: bool,
-) -> Result<CapabilityHandle, i64>       // cap/mod.rs:164
+) -> Result<CapabilityHandle, i64>       // cap/mod.rs
 
 // Revoke a token (and all children) from a process.
-// Cascades: destroys channels created under the revoked capability.
-// EINVAL for pid >= MAX_PROCESSES, before anything is revoked.
+// Cascades: destroys the regions and channels the process created under the
+// revoked token or one of its descendants.
+// EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot, before anything
+// is revoked.
 pub fn revoke_in_process(
     pid: ProcessId,
     token_id: CapabilityTokenId,
-) -> Result<(), i64>                     // cap/mod.rs:193
+) -> Result<(), i64>                     // cap/mod.rs
 ```
 
 **Gotchas**:
 
-- **Token expiry** (cap/mod.rs:71, 99): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
+- **Token expiry** (`create_with_access`, `check_channel_access`): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
 
-- **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
+- **Cascade revocation lock ordering** (`revoke_in_process`): `revoke_in_process()` locks PROCESS_TABLE and revokes the token and its descendants. Still under PROCESS_TABLE, it takes SHARED_REGION_TABLE nested to detach every region the process created under a token that is now revoked (`shmem::revoke_regions_for_cap`) and releases it, then takes CHANNEL_TABLE nested to collect every such channel and releases it; the two tables are never held together. With no lock held it then frees the detached regions' frames (`shmem::finish_region_cascade`; a region a kernel `RegionBorrow` still holds drains until its last `region_release`) and destroys the channels, because a destroy wakes the threads blocked on them. The Capability Kit's `revoke` runs the same sequence.
 
-- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints Dead on every channel with an endpoint owned by the process (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
+- **Kernel access to region memory** (ipc/shmem.rs): EL1 reads a region through the direct map only between `region_borrow(pid, id)` (the caller's process must map it) and `region_release(borrow)`. A region destroyed meanwhile keeps its frames, and its slot, draining until the last release; a double release panics. Release explicitly, never under PROCESS_TABLE.
+
+- **Shared memory map, share and destroy check in the same hold** (ipc/shmem.rs): each takes PROCESS_TABLE once and nests SHARED_REGION_TABLE, so the capability check and the region change cannot be split by a revoke. A share is delegation: the target gets a non-delegatable child of the caller's SharedMemoryAccess token, minted on the held table (`cap::mint_share_token`, verdict from the pure `shared::cap::share_decision`); never call `grant_to_process` or any other `cap::` entry that locks PROCESS_TABLE inside such a hold (`spin::Mutex` does not re-enter). A foreign target keeps its last `CAP_FOREIGN_RESERVE` (64) free slots, and a repeat share or self-share grants nothing. Only the creator, holding a live token, may destroy a region (`shared_memory_destroy`, the Kit `shmem_destroy`).
+
+- **Process exit revokes everything and fails closed** (task/process.rs, capability-lifetime ADR §6): every cap check goes through `process_ref`/`process_mut`, which accept only an Alive slot (`deny_missing_process` otherwise, EPERM, no warning). `process_exit()` (steps A–E) marks the slot `Exited`, revokes every token (`revoke_all`) and destroys the regions and channels the process created, marks its threads Dead except the caller, marks Dead the endpoints of every channel with an endpoint owned by the process, and publishes the exit code last. A self-exiting caller ends itself with `sched::exit_current()`. Only the parent reaps (`process_wait`), and a reaped slot is never installed again (`process_install` returns EEXIST).
 
 - **CapabilityTable is per-process, max 256** (shared/src/cap.rs): Each process has `[Option<CapabilityToken>; 256]`. Handle allocation is O(n) scan for `None` slot. Don't assume constant-time allocation.
 
 **Lock ordering**:
 
 ```text
-PROCESS_TABLE → CHANNEL_TABLE (never reverse)
+PROCESS_TABLE → PROCESS_WAITERS (leaf), SHARED_REGION_TABLE, CHANNEL_TABLE (never reverse)
 ```
 
-When checking caps before IPC, PROCESS_TABLE is locked first. Cascade revocation drops PROCESS_TABLE before CHANNEL_TABLE walk to avoid inversion.
+Checked creates, shares and the revoke cascade nest under PROCESS_TABLE, one table at a time: SHARED_REGION_TABLE and CHANNEL_TABLE are never held together, and PROCESS_WAITERS (taken by install, wait and exit step E, not by the revoke) is a leaf. Frames are freed and channels destroyed only after PROCESS_TABLE is released, because a destroy wakes threads. Never take PROCESS_TABLE inside such a nested hold.
 
 ### 6.4 Services
 
@@ -517,35 +554,35 @@ SERVICE_MANAGER (standalone — never acquired while holding PROCESS_TABLE or CH
 ```rust
 // Probe for a VirtIO-blk device and initialize it.
 // Strategy: DTB probe → brute-force MMIO scan fallback.
-pub fn init(dt: &DeviceTree) -> bool     // virtio_blk.rs:81
+pub fn init(dt: &DeviceTree) -> bool     // drivers/virtio_blk.rs
 
 // Read a single 512-byte sector.
 pub fn read_sector(
     sector: u64,
     buf: &mut [u8; 512],
-) -> Result<(), StorageError>            // virtio_blk.rs:113
+) -> Result<(), StorageError>            // drivers/virtio_blk.rs
 
 // Write a single 512-byte sector.
 pub fn write_sector(
     sector: u64,
     buf: &[u8; 512],
-) -> Result<(), StorageError>            // virtio_blk.rs:123
+) -> Result<(), StorageError>            // drivers/virtio_blk.rs
 
 // Device capacity in sectors, or 0 if no device.
-pub fn capacity_sectors() -> u64         // virtio_blk.rs:135
+pub fn capacity_sectors() -> u64         // drivers/virtio_blk.rs
 ```
 
 **Gotchas**:
 
-- **Legacy v1 MMIO only** (virtio_blk.rs:7-8): The driver checks `version == 1` during probe. Modern v2 devices are rejected. There is no FEATURES_OK negotiation step. Don't try to add v2 support without understanding the full VirtIO spec §3.1 device initialization sequence.
+- **Legacy v1 MMIO only** (`virtio_blk.rs` module doc; checked in `probe_slot`): The driver checks `version == 1` during probe. Modern v2 devices are rejected. There is no FEATURES_OK negotiation step. Don't try to add v2 support without understanding the full VirtIO spec §3.1 device initialization sequence.
 
-- **Polled I/O with busy-wait** (virtio_blk.rs:20): `POLL_TIMEOUT = 10_000_000` iterations. Each read/write is fully synchronous. No IRQ-based completion. The driver spins checking the used ring. Don't use this in latency-sensitive paths.
+- **Polled I/O with busy-wait** (`virtio_common.rs`, `POLL_TIMEOUT`): `POLL_TIMEOUT = 10_000_000` iterations. Each read/write is fully synchronous. No IRQ-based completion. The driver spins checking the used ring. Don't use this in latency-sensitive paths.
 
 - **DMA pool allocation**: Request buffers are allocated from the DMA pool (`Pool::Dma`), not the kernel pool. DMA memory must be physically contiguous and the device accesses it via physical addresses. Using kernel pool memory would cause cache coherency issues or mapping failures.
 
-- **Single request buffer** (virtio_blk.rs:29-48): The driver holds one VirtioBlk instance with pre-allocated `req_phys`/`req_virt` buffers. There is no request queuing -- each I/O is atomic and exclusive. The VIRTIO_BLK mutex serializes all access.
+- **Single request buffer** (`VirtioBlk`): The driver holds one VirtioBlk instance with pre-allocated `req_phys`/`req_virt` buffers. There is no request queuing -- each I/O is atomic and exclusive. The VIRTIO_BLK mutex serializes all access.
 
-- **Probe address conversion** (virtio_blk.rs:81-110): Physical MMIO addresses are converted to virtual via `MMIO_BASE + phys_base`. The driver always works with virtual addresses after init. Don't pass raw physical MMIO addresses after Phase 2.
+- **Probe address conversion** (`init`): Physical MMIO addresses are converted to virtual via `MMIO_BASE + phys_base`. The driver always works with virtual addresses after init. Don't pass raw physical MMIO addresses after Phase 2.
 
 **Lock ordering**:
 
@@ -595,14 +632,14 @@ pub fn read_block(
 pub fn init() -> Result<(), StorageError>  // storage/mod.rs (module-level)
 
 // Compute CRC-32C checksum.
-pub fn crc32c(data: &[u8]) -> u32        // block_engine.rs:44
+pub fn crc32c(data: &[u8]) -> u32        // shared/src/storage.rs
 ```
 
 **Gotchas**:
 
 - **Crash safety via WAL** (block_engine.rs:1-6): Write path is: append WAL entry (uncommitted) → write data sectors → mark WAL entry committed. On crash before commit, entry is discarded during recovery. On crash after commit, entry is replayed.
 
-- **CRC-32C offset precision** (block_engine.rs:69-137): The superblock checksum covers a specific byte range of the repr(C) layout. Off-by-one in the checksum range causes validation failures on read. When modifying the Superblock struct, always update the checksum computation range and add a compile-time size assertion.
+- **CRC-32C offset precision** (`Superblock::compute_checksum`, `block_engine.rs`): The superblock checksum covers a specific byte range of the repr(C) layout. Off-by-one in the checksum range causes validation failures on read. When modifying the Superblock struct, always update the checksum computation range and add a compile-time size assertion.
 
 - **read_unaligned for superblock**: Superblock is assembled from an array of 512-byte sector reads into a byte buffer. The resulting pointer is not guaranteed to be aligned to Superblock's alignment. Must use `ptr::read_unaligned()` -- `ptr::read()` would cause UB on misaligned access.
 
@@ -630,19 +667,19 @@ pub fn append(
     block_id: ContentHash,
     data_offset: u64,
     data_size: u32,
-) -> Result<(u64, u64), StorageError>    // wal.rs:118
+) -> Result<(u64, u64), StorageError>    // storage/wal.rs
 
 // WAL: mark entry at index as committed (O(1)).
 pub fn commit_at(
     &mut self,
     index: u64,
-) -> Result<(), StorageError>            // wal.rs:151
+) -> Result<(), StorageError>            // storage/wal.rs
 
 // WAL: find and commit by sequence number (O(n) scan).
 pub fn commit(
     &mut self,
     sequence_number: u64,
-) -> Result<(), StorageError>            // wal.rs:160
+) -> Result<(), StorageError>            // storage/wal.rs
 
 // MemTable: insert or dedup (refcount bump).
 // Returns true if new insertion, false if dedup.
@@ -650,28 +687,28 @@ pub fn insert(
     &mut self,
     key: ContentHash,
     location: BlockLocation,
-) -> Result<bool, StorageError>          // lsm.rs:73
+) -> Result<bool, StorageError>          // shared/src/storage.rs (`MemTable::insert`)
 
 // MemTable: lookup by content hash (O(log n)).
 pub fn get(
     &self,
     key: &ContentHash,
-) -> Option<&MemTableEntry>              // lsm.rs:59
+) -> Option<&MemTableEntry>              // shared/src/storage.rs (`MemTable::get`)
 ```
 
 **Gotchas**:
 
-- **WAL entry size is exactly 64 bytes** (wal.rs:39): `const _: () = assert!(size_of::<WalEntry>() == WAL_ENTRY_SIZE);`. The `repr(C)` layout must stay at 64 bytes for sector alignment (8 entries per 512-byte sector). Adding fields breaks the on-disk format.
+- **WAL entry size is exactly 64 bytes** (`WalEntry`, `shared/src/storage.rs`): `const _: () = assert!(size_of::<WalEntry>() == WAL_ENTRY_SIZE);`. The `repr(C)` layout must stay at 64 bytes for sector alignment (8 entries per 512-byte sector). Adding fields breaks the on-disk format.
 
-- **WAL checksum covers bytes 0..56** (wal.rs:42-47): The last 8 bytes (checksum + pad2) are excluded. `compute_checksum()` must remain in sync with the layout. Changing field order breaks the checksum.
+- **WAL checksum covers bytes 0..56** (`WalEntry::compute_checksum`, `shared/src/storage.rs`): The last 8 bytes (checksum + pad2) are excluded. `compute_checksum()` must remain in sync with the layout. Changing field order breaks the checksum.
 
-- **Uncommitted entries may be salvaged on recovery** (block_engine.rs:479-492): Recovery does NOT simply discard all uncommitted entries. For entries with `committed == 0`, the recovery code verifies the data block's CRC on disk (`verify_block_crc`). If the CRC is valid, the entry is salvaged (inserted into MemTable and retroactively committed in the WAL). Only entries with invalid or missing data are truly discarded.
+- **Uncommitted entries may be salvaged on recovery** (`recover`, `block_engine.rs`): Recovery does NOT simply discard all uncommitted entries. For entries with `committed == 0`, the recovery code verifies the data block's CRC on disk (`verify_block_crc`). If the CRC is valid, the entry is salvaged (inserted into MemTable and retroactively committed in the WAL). Only entries with invalid or missing data are truly discarded.
 
-- **MemTable capacity is a hard limit** (lsm.rs:84-86): 65536 entries maximum. When full, `insert()` returns `MemTableFull` for new key insertions. Dedup operations (existing key, refcount bump) succeed regardless of capacity since they don't add entries. Recovery from a full MemTable requires flushing to a persistent SSTable (future L0 flush).
+- **MemTable capacity is a hard limit** (`MemTable::insert`, `shared/src/storage.rs`): 65536 entries maximum. When full, `insert()` returns `MemTableFull` for new key insertions. Dedup operations (existing key, refcount bump) succeed regardless of capacity since they don't add entries. Recovery from a full MemTable requires flushing to a persistent SSTable (future L0 flush).
 
-- **Dedup via refcount** (lsm.rs:78-82): If the same ContentHash (SHA-256 of data) is inserted twice, the existing entry's refcount is incremented instead of creating a duplicate. This is content-addressed deduplication.
+- **Dedup via refcount** (`MemTable::insert`, `shared/src/storage.rs`): If the same ContentHash (SHA-256 of data) is inserted twice, the existing entry's refcount is incremented instead of creating a duplicate. This is content-addressed deduplication.
 
-- **Binary search key is [u8; 32]** (lsm.rs:112): Comparison is lexicographic byte-by-byte (`entry.key.0.cmp(&key.0)`). Changing the hash algorithm requires updating both the hash size and the comparison.
+- **Binary search key is [u8; 32]** (`MemTable::binary_search`, `shared/src/storage.rs`): Comparison is lexicographic byte-by-byte (`entry.key.0.cmp(&key.0)`). Changing the hash algorithm requires updating both the hash size and the comparison.
 
 **Lock ordering**:
 
