@@ -171,7 +171,8 @@ Waiting sites (cap-lifetime): every wait arms with sched::prepare_block before i
 Region memory (cap-lifetime): EL1 code reads region memory only between region_borrow and
                               region_release, and never releases under PROCESS_TABLE.
 IPC call seq (step 14):       a reply or cancel binds to its call by a per-call seq
-                              (ReplySlot.seq, PendingCall); a mismatch is dropped, and a reply's mismatch counts latereply.
+                              (ReplySlot.seq, PendingCall); a mismatch is dropped, and a
+                              reply's mismatch counts latereply.
 Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op returns a
                               FocusChange so the caller drops it before issuing IPC.
                               WINDOW_Z_ORDER and DRAG_STATE rank above SURFACE_TABLE
