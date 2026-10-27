@@ -5,4 +5,7 @@
 //! and nothing is committed or pushed. R2b adds the write side.
 
 pub mod config;
+pub mod gate;
+pub mod git;
+pub mod github;
 pub mod schema;

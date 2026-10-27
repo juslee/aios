@@ -301,8 +301,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - a malformed config names its bad key.
     - Verify: `cargo test -p aios-tools --test loop_config` passes; `ls scripts/agent/prompts/*.md | wc -l` prints `4`; TG.
 
-- [ ] **Task 4: Loop git, the gate and the gh reads** [FG]
-  - [ ] 4a: `tools/src/cmd/loop/git.rs`, on `soak::host::git()`:
+- [x] **Task 4: Loop git, the gate and the gh reads** [FG]
+  - [x] 4a: `tools/src/cmd/loop/git.rs`, on `soak::host::git()`:
     - `merge_base`;
     - `changed_paths(base, head)` (`-c core.quotePath=false diff --name-status --no-renames -z`);
     - `fetch_pr_head(n)` (`git fetch origin pull/<n>/head`, with `GIT_TERMINAL_PROMPT=0`);
@@ -317,13 +317,13 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - an unrecorded path is refused;
     - a missing directory is pruned;
     - the hardened env is set.
-  - [ ] 4b: `tools/src/cmd/loop/gate.rs`:
+  - [x] 4b: `tools/src/cmd/loop/gate.rs`:
     - `normalise(path)`: strip `./`, collapse `//`, and reject `..` and a leading `/`;
     - `gated_paths(repo, head)`: `changed_paths` against `merge_base(origin/main, head)`, filtered by `is_tools_input`, sorted and unique;
     - `cross_check(git_set, github_files, changed_files)`: every GitHub path, normalised, is in git's set; `changed_files < 100`; and `changed_files == github_files.len()`. Otherwise it returns `Mismatch`, which is needs-human.
 
     Tests in `tools/tests/loop_gate.rs`: a path table of ≥ 25 rows, plus TestRepo cases (edit, add, delete, rename into and out of `tools/`, mode-only, a docs PR that merged a main which changed `Cargo.lock` gives an empty gate) and the five cross-check cases.
-  - [ ] 4c: `tools/src/cmd/loop/github.rs`, typed reads only, each through `gh::GhCli { cwd: <main>, env: LOOP_GH_ENV }`, each with a named consumer:
+  - [x] 4c: `tools/src/cmd/loop/github.rs`, typed reads only, each through `gh::GhCli { cwd: <main>, env: LOOP_GH_ENV }`, each with a named consumer:
     - `pr_view` (preflight, gather, verdict);
     - `pr_checks` (log tails);
     - `review_threads` (paged until `hasNextPage=false`);
@@ -333,7 +333,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - `run_log_failed`.
 
     `fn json(..)` maps `GhOutcome` (`Missing` gives "gh is not installed"; `Failed` carries `first_stderr_line`; `Refused` is an internal error). Tests in `tools/tests/loop_gh.rs`: every Task 1 gh fixture deserialises, every read argv passes `gh::is_read`, and pagination goes past 100.
-  - [ ] 4d: Verify:
+  - [x] 4d: Verify:
     - `cargo test -p aios-tools --test loop_git --test loop_gate --test loop_gh` passes;
     - `git -C <worker wt> grep -n 'Command::new("gh")' -- tools/src` lists only `tools/src/gh.rs`;
     - TG.
