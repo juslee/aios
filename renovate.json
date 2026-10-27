@@ -3,5 +3,11 @@
   "extends": [
     "config:recommended"
   ],
-  "osvVulnerabilityAlerts": true
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "* 0-3 1 * *"
+    ]
+  }
 }
