@@ -181,10 +181,10 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
 - **Commit subject:** `Tools R2a Task N: <what>`, plus the session trailers.
 - **T(args) = N:** `cargo test -p aios-tools <args> 2>&1 | grep -E '^test result:'` prints exactly one line, and it starts `test result: ok. N passed` (`≥ N` where marked).
 
-- [ ] **Task 0: Plan, loop design and draft PR** [worker; docs only]
-  - [ ] 0a (lead): `W` exists on `claude/tools-r2-loop` at 4cbb812 (done 2026-10-27). Verify: `git -C <W> rev-parse --abbrev-ref HEAD` prints `claude/tools-r2-loop`.
-  - [ ] 0b (worker): Commit this approved plan unchanged as `docs/knowledge/plans/2026-10-27-jl-tools-r2a-loop-review.md`, with rule 08 frontmatter. Verify: `git show --name-only --format= HEAD` prints exactly that path; DG.
-  - [ ] 0c (worker): `git merge --no-ff origin/claude/justin-review-merge-loop`.
+- [x] **Task 0: Plan, loop design and draft PR** [worker; docs only]
+  - [x] 0a (lead): `W` exists on `claude/tools-r2-loop` at 4cbb812 (done 2026-10-27). Verify: `git -C <W> rev-parse --abbrev-ref HEAD` prints `claude/tools-r2-loop`.
+  - [x] 0b (worker): Commit this approved plan unchanged as `docs/knowledge/plans/2026-10-27-jl-tools-r2a-loop-review.md`, with rule 08 frontmatter. Verify: `git show --name-only --format= HEAD` prints exactly that path; DG.
+  - [x] 0c (worker): `git merge --no-ff origin/claude/justin-review-merge-loop`.
     - It is a clean merge that adds only `docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md`. On any conflict, abort and report.
     - Then, in a second commit, add a top section `## Amendments (Tools R2, 2026-10-27)` to that file. LOOP's body stays as written. The section records:
       - Rust in `tools/src/cmd/loop/`, run as `.claude/hooks/aios loop …`;
@@ -200,24 +200,24 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - model aliases `sonnet`, `opus` and `fable`;
       - 6 required checks.
     - Verify: `git -C <worker wt> log -1 --format=%P HEAD~1 | wc -w` prints `2`; `grep -c '^## Amendments (Tools R2, 2026-10-27)' docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md` prints `1`; DG.
-  - [ ] 0d (lead): Placement, then `gh pr create --draft --label team-build --title "Tools R2a: aios loop review (read-only) and /justin:review"`. Verify: `gh pr view <n> --json isDraft --jq .isDraft` prints `true`.
+  - [x] 0d (lead): Placement, then `gh pr create --draft --label team-build --title "Tools R2a: aios loop review (read-only) and /justin:review"`. Verify: `gh pr view <n> --json isDraft --jq .isDraft` prints `true`.
 
-- [ ] **Task 1: Probes and recorded fixtures** [OWNER-attended; lead's main thread; read-only `gh`; `claude` spend ≤ $0.50 total]
+- [x] **Task 1: Probes and recorded fixtures** [OWNER-attended; lead's main thread; read-only `gh`; `claude` spend ≤ $0.50 total]
   All output goes to `<S>/r2a-probe/` (`<S>` = the session scratchpad). Every `claude` call:
   - runs with `env -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT`;
   - appends `<id>\t<cost>` to `cost.tsv` from the envelope;
   - is preceded by a check of the running total: the lead stops at $0.45 and reports the probes not run.
 
   The first call measures a fresh call's cost, with `--max-budget-usd 0.15`. Later calls are capped at 1.5× that cost, and acceptance-only calls use the small form (`--tools "" --setting-sources "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'`). Priority, in order:
-  - [ ] 1a: **Envelope and flags.**
+  - [x] 1a: **Envelope and flags.**
     - `--output-format json --json-schema <tiny schema>` with `--model sonnet`: save `success.json`, and record where `structured_output` lands and the cost key.
     - `--model fable` (small form) returns a structured result: `fable.json`.
     - `--model opus` is accepted.
     - The overrun envelope (`--max-budget-usd 0.0001`): `over_budget.json`.
     - An `env -i` start with the allowlist authenticates; record any extra variable it needs.
     - Whether `--max-turns` is accepted. If not, it is never used.
-  - [ ] 1b: **Permission mode (D2).** One call in a scratch git repo with `--permission-mode dontAsk --tools Read,Bash --allowedTools Read 'Bash(git diff:*)' --disallowedTools 'Bash(git commit*)' Agent WebFetch WebSearch`. The prompt runs `true`, then `git diff`. Record from `permission_denials` whether `true` was denied without a prompt and `git diff` ran: `denied.json`. If `dontAsk` prompts, retry once with `--permission-mode manual --permission-prompts none`.
-  - [ ] 1c: **Isolation (D1) and placement (`ROUND_ROOT`).**
+  - [x] 1b: **Permission mode (D2).** One call in a scratch git repo with `--permission-mode dontAsk --tools Read,Bash --allowedTools Read 'Bash(git diff:*)' --disallowedTools 'Bash(git commit*)' Agent WebFetch WebSearch`. The prompt runs `true`, then `git diff`. Record from `permission_denials` whether `true` was denied without a prompt and `git diff` ran: `denied.json`. If `dontAsk` prompts, retry once with `--permission-mode manual --permission-prompts none`.
+  - [x] 1c: **Isolation (D1) and placement (`ROUND_ROOT`).**
     - **The scratch repo** `<S>/r2a-probe/iso` (not an aios worktree) holds:
       - a project `.claude/settings.json` hook that touches `marker-project-hook`;
       - a `.claude/CLAUDE.md` asking the model to echo a nonce.
@@ -239,7 +239,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - Make a detached worktree of `origin/main` at `<main>/.claude/worktrees/loop-probe` with `git -C <main> worktree add --detach`, run the D1 call there with the prompt "run `git diff --stat HEAD~1` and report it", and feed the guard a `git diff` PreToolUse payload with that cwd.
       - `ROUND_ROOT` = `<main>/.claude/worktrees` if the command ran and the guard gave no decision. Otherwise try `<os temp>/aios-loop-rt/<12 hex of sha256(common dir)>`. If neither works, stop and ask the owner.
       - Remove the probe worktree without `--force`.
-  - [ ] 1d: **gh shapes (GET only).**
+  - [x] 1d: **gh shapes (GET only).**
     - `gh pr view 257 --json <PR_FIELDS>,headRefOid,baseRefName,isCrossRepository,files,changedFiles,commits`;
     - `gh pr checks 257 --json name,state,bucket,link`;
     - the `reviewThreads` GraphQL page query on #257;
@@ -248,13 +248,13 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - `gh api repos/{owner}/{repo}/labels/agent-stop`, and the 404 of a missing label;
     - `gh issue list --label agent-stop --state open --json number`;
     - the Copilot reviewer login, as it appears on threads and in `reviews`.
-  - [ ] 1e (worker): Sanitise and commit the fixtures:
+  - [x] 1e (worker): Sanitise and commit the fixtures:
     - `tools/tests/fixtures/loop/claude/{success,fable,denied,over_budget}.json`;
     - `tools/tests/fixtures/loop/gh/{pr_view,checks,threads_p1,issues,label_agent_stop,agent_stop_empty}.json`, `label_404.{err,rc}` and `run_log_failed.txt`;
     - `README.txt` with the CLI versions and the probe commands.
 
     In the same commit, record D1, D2, `ROUND_ROOT`, the Copilot login and the cost total under this plan's Decisions Made.
-  - [ ] 1f: Verify:
+  - [x] 1f: Verify:
     - `awk -F'\t' '{s+=$2} END{exit !(s<=0.50)}' <S>/r2a-probe/cost.tsv`;
     - `jq -e '.subtype=="success"'` on `success.json` and `fable.json`;
     - every listed fixture is non-empty and valid JSON where `.json`;
@@ -580,14 +580,23 @@ None open for R2a. Deferred to R2b or later:
 
 ## Issues Encountered
 
-(filled during implementation)
+- `--output-format json` prints an event array on some calls and one result object on others; the stage parser accepts both and uses the last `type == "result"` element (claude 2.1.311).
+- `--max-budget-usd` is checked after spending: a $0.0001 cap still billed $0.00996, so the per-PR cap can be overshot by one call.
+- `--max-turns` is not in the CLI's help, so it is never used.
+- `dontAsk` still auto-allows read-only commands (`true`).
+- Copilot has not reviewed recent PRs, so trusted threads come mostly from the owner.
+- Task 3a's `per_call_usd` must cover a stage-shaped call (about $0.04): set it to `0.15`, and keep `per_pr_usd` 5.
 
 ## Decisions Made
 
 - 2026-10-27 (owner): three PRs, R2a/R2b/R2c, cut as in Context.
 - 2026-10-27 (owner): fold `claude/justin-review-merge-loop` into R2a (Task 0c).
 - The 2026-10-11 decisions under Binding decisions.
-- D1, D2, `ROUND_ROOT`, the Copilot login and the probe cost total: recorded by Task 1e as `- **D1 (final):** …`, `- **D2 (final):** …` and `- **ROUND_ROOT (final):** …`.
+- **D1 (final):** --restricted --disable-slash-commands, with --settings <stage settings>, --tools Read,Grep,Glob,Bash and --strict-mcp-config --mcp-config '{"mcpServers":{}}'. The project hooks and CLAUDE.md do not load; only Claude Code's three built-in plugins load; no MCP and no skills (Task 1c, 2026-10-27).
+- **D2 (final):** --permission-mode dontAsk. Writes outside --allowedTools are denied without a prompt and listed in permission_denials; Claude Code's built-in read-only auto-allow still runs read-only commands such as true (Task 1b).
+- **ROUND_ROOT (final):** `<main>/.claude/worktrees`. A stage call there with real-shaped stage settings ran git diff and Read; the guard gives git diff/log/show there no decision (Task 1c).
+- **Copilot login (Task 1d):** copilot-pull-request-reviewer (GraphQL thread authors and gh reviews; REST shows Copilot). trusted_authors = juslee, copilot-pull-request-reviewer. Copilot's last review was on #144.
+- **Probe cost (Task 1):** $0.2797 of the $0.50 cap; a full-toolset fresh call costs $0.133, a small-form call $0.005-0.025, a stage-shaped call about $0.03-0.04.
 
 ## Lessons Learned
 

@@ -1,0 +1,241 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0wMy0yNlQwNjowMDoxMlrOduplqw=="
+          },
+          "nodes": [
+            {
+              "id": "PRRT_kwDORPWS0c526YC5",
+              "isResolved": true,
+              "isOutdated": true,
+              "path": "kernel/src/input/mod.rs",
+              "line": null,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992590204,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "In `process_abs_event`, the code locks `PENDING_POINTER` and then calls `get_abs_max_x/get_abs_max_y`, which lock `virtio_input::INPUT_DEVICES` via `virtio_input::get_abs_info()`. This inverts the lock order documented elsewhere (VIRTIO_INPUT before {INPUT_QUEUE, PENDING_POINTER}) and can deadlock if any future path holds `INPUT_DEVICES` and then needs `PENDING_POINTER` (or if translation is moved earlier). Fetch the abs max values before taking `PENDING_POINTER`, or cache `abs_max_x/y` once during init in atomics so ABS handling doesn’t need to lock the driver.\n```suggestion\n    match code {\n        ABS_X => {\n            // Fetch ABS metadata and compute display coordinate before taking PENDING_POINTER,\n            // to avoid locking virtio_input::INPUT_DEVICES while holding PENDING_POINTER.\n            let max_x = get_abs_max_x();\n            let width = DISPLAY_WIDTH.load(Ordering::Relaxed);\n            let new_x = abs_to_display(value, max_x, width);\n\n            let mut pending = PENDING_POINTER.lock();\n            pending.x = new_x;\n            pending.dirty = true;\n        }\n        ABS_Y => {\n            // Same pattern for Y: compute first, then update under PENDING_POINTER lock.\n            let max_y = get_abs_max_y();\n            let height = DISPLAY_HEIGHT.load(Ordering::Relaxed);\n            let new_y = abs_to_display(value, max_y, height);\n\n            let mut pending = PENDING_POINTER.lock();\n            pending.y = new_y;\n```"
+                  },
+                  {
+                    "databaseId": 2992647040,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in fb5fa02. Moved abs max lookup and coordinate computation before locking PENDING_POINTER — avoids holding PENDING_POINTER while INPUT_DEVICES is acquired via get_abs_info()."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526YDT",
+              "isResolved": true,
+              "isOutdated": true,
+              "path": "kernel/src/input/mod.rs",
+              "line": null,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992590233,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "`poll_if_due` limits raw event collection to 64 entries per tick. If a device produces bursts larger than this (especially since each event not drained/recycled stays in the used ring), the driver can temporarily run out of available buffers and stop delivering events until the backlog is recycled. Consider sizing this buffer based on the negotiated `queue_size` (and device count), or loop calling `virtio_input::poll_all` until it returns 0 so all used entries are recycled each poll cycle.\n```suggestion\n\n    // Drain all pending events by repeatedly polling until no more are available.\n    loop {\n        let count = virtio_input::poll_all(&mut raw_buf);\n        if count == 0 {\n            break;\n        }\n\n        // Process events WITHOUT holding INPUT_DEVICES lock.\n        for &(_device_id, event) in raw_buf.iter().take(count) {\n            process_raw_event(event);\n        }\n```"
+                  },
+                  {
+                    "databaseId": 2992647589,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in fb5fa02. poll_if_due now loops poll_all until it returns 0, ensuring all used ring entries are drained and recycled each poll cycle."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526YDm",
+              "isResolved": true,
+              "isOutdated": true,
+              "path": "docs/knowledge/decisions/2026-03-26-cl-input-pointer-syn-report.md",
+              "line": null,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992590257,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "This decision doc doesn’t follow the repository’s ADR template (`docs/knowledge/decisions/_template.md`): the heading should be `# ADR: ...` and the document should include the standard sections (Context / Options Considered / Decision / Consequences). Please reformat to match the template so ADRs stay consistent and searchable.\n```suggestion\n# ADR: Pointer Events Use SYN_REPORT Accumulation\n\n## Context\n\nThe evdev model groups pointer-related events atomically using `EV_SYN/SYN_REPORT`. Individual hardware events such as `ABS_X`, `ABS_Y`, and button state transitions may arrive separately but represent a single logical pointer state update that compositors expect to see as a coherent snapshot.\n\n## Options Considered\n\n1. Accumulate pointer events (`ABS_X`, `ABS_Y`, button state) in a pending state and flush them as a single `InputEvent::Pointer` on `EV_SYN/SYN_REPORT`, preserving evdev’s atomic grouping semantics.\n2. Push each `ABS_X` / `ABS_Y` change as a separate pointer event immediately when it is received.\n\nThe second option was rejected because it would produce partial pointer states (for example, a new X with a stale Y, or vice versa), which in turn would cause visible cursor jitter in the compositor.\n\n## Decision\n\nWe accumulate pointer events (`ABS_X`, `ABS_Y`, button state) in a pending pointer structure and flush them as a single `InputEvent::Pointer` when an `EV_SYN/SYN_REPORT` is received. This follows the correct evdev atomic grouping model and ensures the compositor always observes complete pointer snapshots.\n\nKeyboard events remain unchanged: each key event is pushed immediately, since keyboard input is self-contained and does not require cross-event grouping.\n\n## Consequences\n\nThis approach introduces slightly more complex input handling code (a `PENDING_POINTER` state plus flush logic) but provides correct, jitter-free behavior that the compositor can rely on.\n\nIn terms of locking, `PENDING_POINTER` and `INPUT_QUEUE` are both treated as leaf locks and are acquired separately in `process_raw_event()`. The `INPUT_DEVICES` lock is released before processing events to avoid three-level lock nesting, reducing the risk of deadlocks while still maintaining correct synchronization around pending pointer state and the input queue.\n```"
+                  },
+                  {
+                    "databaseId": 2992647916,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in fb5fa02. Restructured to ADR format with Context/Options Considered/Decision/Consequences sections."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526mV2",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "shared/src/observability.rs",
+              "line": 197,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992667277,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "`subsystem_repr_values` no longer asserts the `Gpu` discriminant (13). That makes it easier for an accidental reordering/renumbering of `Gpu` to slip through while still passing this test; add an explicit `assert_eq!(Subsystem::Gpu as u8, 13)` alongside the others.\n```suggestion\n        assert_eq!(Subsystem::Audit as u8, 12);\n        assert_eq!(Subsystem::Gpu as u8, 13);\n```"
+                  },
+                  {
+                    "databaseId": 2992679735,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in 8293a45. Added Gpu as u8 == 13 assertion."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526mWB",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "shared/src/input.rs",
+              "line": 523,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992667290,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "`abs_to_display` casts the computed `u64` result to `u32` without any clamping. If `abs_val > abs_max` (buggy/malicious device) or extremely large dimensions are ever passed in, the cast truncates and can yield incorrect coordinates. Consider clamping the result to `display_dim.saturating_sub(1)` (and optionally clamping `abs_val` to `abs_max`) before converting back to `u32`.\n```suggestion\n    // Clamp reported absolute value to the declared maximum range.\n    let abs_val = abs_val.min(abs_max);\n    // Use u64 intermediate to avoid overflow for large values.\n    let result = (abs_val as u64) * (display_dim as u64) / (abs_max as u64 + 1);\n    // Clamp to the largest valid display coordinate before casting back to u32.\n    let display_max = display_dim.saturating_sub(1);\n    let clamped = result.min(display_max as u64);\n    clamped as u32\n```"
+                  },
+                  {
+                    "databaseId": 2992679798,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in 8293a45. Added clamping: abs_val > abs_max is clamped to abs_max before conversion."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526mWO",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "shared/src/input.rs",
+              "line": 564,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992667313,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "`virtio_input_event_repr_c_offsets` only validates the first 6 bytes of the struct (it doesn’t check `value` bytes at offsets 6 and 7). This leaves the test unable to catch layout/endian issues affecting the high half of `value`; please assert the remaining bytes too.\n```suggestion\n            assert_eq!(*ptr.add(5), 0x07);\n            assert_eq!(*ptr.add(6), 0x06);\n            assert_eq!(*ptr.add(7), 0x05);\n```"
+                  },
+                  {
+                    "databaseId": 2992679864,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in 8293a45. Added assertions for value bytes at offsets 6 and 7."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526mWb",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "kernel/src/drivers/virtio_input.rs",
+              "line": 158,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992667328,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "`poll_device` reads the used ring index with `read_volatile` but without a memory barrier before the read. The blk/gpu VirtIO drivers use `dsb sy` before polling `used_idx` to ensure DMA writes are observed; doing the same here avoids stale `used_idx`/event reads on weaker memory ordering or non-QEMU implementations."
+                  },
+                  {
+                    "databaseId": 2992679972,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in 8293a45. Added dsb sy before read_volatile on used ring idx, matching the blk/gpu driver pattern."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526mWk",
+              "isResolved": true,
+              "isOutdated": true,
+              "path": "kernel/src/drivers/virtio_input.rs",
+              "line": null,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992667337,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "`poll_all` has the same missing memory barrier pattern as `poll_device` when reading `used_idx` from the used ring. Add a `dsb sy` (or equivalent fence) before reading `used_idx` so DMA updates are reliably visible, consistent with the other VirtIO drivers."
+                  },
+                  {
+                    "databaseId": 2992680112,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in 8293a45. Same dsb sy barrier added before used_idx read in poll_all."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_kwDORPWS0c526mWr",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "kernel/src/drivers/virtio_input.rs",
+              "line": 244,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 2992667345,
+                    "author": {
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "body": "In `poll_all`, an out-of-range `desc_id` is silently skipped. `poll_device` logs this as an error, which is useful for diagnosing device/queue corruption; consider logging here too (potentially rate-limited) so multi-device polling doesn’t hide this class of failure."
+                  },
+                  {
+                    "databaseId": 2992680227,
+                    "author": {
+                      "login": "juslee"
+                    },
+                    "body": "Fixed in 8293a45. Added kerror! log for invalid desc_id in poll_all, matching poll_device."
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

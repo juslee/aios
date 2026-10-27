@@ -1,0 +1,11 @@
+{
+  "id": 12633923476,
+  "node_id": "LA_kwDORPWS0c8AAAAC8QpflA",
+  "url": "https://api.github.com/repos/juslee/aios/labels/agent-stop",
+  "name": "agent-stop",
+  "color": "B60205",
+  "default": false,
+  "description": "Kill switch: while an open issue has this label, every aios loop run stops",
+  "archived_at": null,
+  "archived_by": null
+}
