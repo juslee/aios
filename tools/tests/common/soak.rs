@@ -30,7 +30,12 @@ pub fn bless() -> bool {
 /// Compare `actual` with the golden file `rel` (under [`golden_dir`]), or
 /// rewrite it when blessing. Returns a description of the mismatch.
 pub fn check_golden(rel: &str, actual: &[u8]) -> Option<String> {
-    let path = golden_dir().join(rel);
+    check_golden_in(&golden_dir(), rel, actual)
+}
+
+/// [`check_golden`] for the golden file `rel` under `dir`.
+pub fn check_golden_in(dir: &Path, rel: &str, actual: &[u8]) -> Option<String> {
+    let path = dir.join(rel);
     if bless() {
         std::fs::create_dir_all(path.parent().expect("a parent")).expect("golden dir");
         std::fs::write(&path, actual).expect("write golden");

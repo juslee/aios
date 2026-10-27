@@ -158,9 +158,9 @@ pub fn run_id_of(link: &str) -> Option<u64> {
 /// `gh pr checks <n> --json name,state,bucket,link`. Consumer: gather (the log
 /// tails of failing checks).
 ///
-/// `gh pr checks` can exit non-zero (8 while checks are pending, 1 when one
-/// failed) and still print the JSON. [`GhOutcome::Failed`] does not carry
-/// stdout, so that case is an error here, not a guess.
+/// `gh pr checks --json` exits 0 even when a check failed or is pending (gh
+/// 2.103.3), so any non-zero exit is a real failure. [`GhOutcome::Failed`] does
+/// not carry stdout, so it is an error here, not a guess.
 pub fn pr_checks(r: &dyn GhRunner, n: u64) -> Result<Vec<Check>> {
     let n = n.to_string();
     let v = json(r, &["pr", "checks", &n, "--json", "name,state,bucket,link"])?;

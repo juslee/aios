@@ -338,8 +338,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - `git -C <worker wt> grep -n 'Command::new("gh")' -- tools/src` lists only `tools/src/gh.rs`;
     - TG.
 
-- [ ] **Task 5: State, kill switch, preflight and the stage runner** [FG]
-  - [ ] 5a: `tools/src/cmd/loop/state.rs`.
+- [x] **Task 5: State, kill switch, preflight and the stage runner** [FG]
+  - [x] 5a: `tools/src/cmd/loop/state.rs`.
     - **Layout:** `<git-common-dir>/aios-agent/loop/` holds:
       - `pr-<n>/lock/pid`;
       - `pr-<n>/stage-settings.json`;
@@ -356,7 +356,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - **Quiet:** a `qemu-lock.sh status` with `mode=quiet` stops with exit 4.
 
     Tests in `tools/tests/loop_state.rs`, one per bullet, including the kill switch failing closed on a 404 and on a gh error.
-  - [ ] 5b: `tools/src/cmd/loop/{settings,claude}.rs`.
+  - [x] 5b: `tools/src/cmd/loop/{settings,claude}.rs`.
     - `settings::materialise(main, state)`: from the `origin/main` blob, as in Stage isolation.
     - `trait Claude` and `ClaudeCli` on `proc::Supervisor`: `env_clear` plus the allowlist; it maps the envelope to `StageResult::{Ok(Value), Empty, Error, Refusal, UsageLimit, PermissionDenied(cmd), OverBudget, Timeout}`.
     - A lens result with an unknown category is an `Error`.
@@ -368,7 +368,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - an unset `CLAUDE_CONFIG_DIR` is exit 2;
     - the settings file equals the expected keys exactly;
     - a Supervisor timeout gives `Timeout`.
-  - [ ] 5c: Verify: `cargo test -p aios-tools --test loop_state --test loop_claude` passes; TG.
+  - [x] 5c: Verify: `cargo test -p aios-tools --test loop_state --test loop_claude` passes; TG.
 
 - [ ] **Task 6: Gather, review, verify, verdict and the CLI** [FG]
   - [ ] 6a: `tools/tests/common/loop_fake.rs` and `tools/tests/loop_fakes.rs`.
@@ -585,6 +585,7 @@ None open for R2a. Deferred to R2b or later:
 - `--max-turns` is not in the CLI's help, so it is never used.
 - `dontAsk` still auto-allows read-only commands (`true`).
 - Copilot has not reviewed recent PRs, so trusted threads come mostly from the owner.
+- `gh pr checks --json` exits 0 even when a check fails (gh 2.103.3, checked by the lead on #279), so `github::pr_checks` treats a non-zero exit as an error.
 - Task 3a's `per_call_usd` must cover a stage-shaped call (about $0.04): set it to `0.15`, and keep `per_pr_usd` 5.
 
 ## Decisions Made
