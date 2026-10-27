@@ -137,8 +137,8 @@ Cross-ref: [posix.md](../posix.md) §7 (process/thread translation).
 | 281 | `execveat` | ELF loader (fd-relative path) | Like execve but relative to dirfd |
 | 93 | `exit` | AIOS thread termination | Single thread exit, process continues |
 | 94 | `exit_group` | AIOS `ProcessExit` | Terminates all threads in process |
-| 260 | `wait4` | AIOS `ProcessWait` + rusage collection | Waits for child state change, collects stats |
-| 95 | `waitid` | AIOS `ProcessWait` | P_PID / P_PGID / P_ALL selectors |
+| 260 | `wait4` | AIOS `ProcessWait` + rusage collection | Serves only a known child pid (`ProcessWait` takes one child pid, is parent-only and reaps it); `wait4(-1)` (any child) and process-group waits are unsupported until a wait-any design exists ([posix.md](../posix.md) §7.5); collects rusage stats |
+| 95 | `waitid` | AIOS `ProcessWait` | Only `P_PID` (a known child pid) maps to `ProcessWait`; `P_PGID` and `P_ALL` are unsupported until a wait-any design exists ([posix.md](../posix.md) §7.5) |
 | 96 | `set_tid_address` | Store pointer in `LinuxThreadState` | Kernel clears `*tidptr` and futex-wakes on exit |
 | 178 | `gettid` | AIOS `ThreadId` → Linux TID mapping | Thread-local TID from translation state |
 | 172 | `getpid` | AIOS `ProcessId` → Linux PID mapping | PID namespace translation |
