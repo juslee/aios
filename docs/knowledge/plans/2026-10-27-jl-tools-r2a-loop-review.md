@@ -262,15 +262,15 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - `grep -cE '^- \*\*(D1|D2|ROUND_ROOT) \(final\):\*\* [^<]' <plan>` prints `3`;
     - `git -C <main> worktree list | grep -c loop-probe` prints `0`.
 
-- [ ] **Task 2: `tools/src/inputs.rs` and the loop module skeleton** [2a-2b worker; 2c FG]
-  - [ ] 2a: Move `TOOLS_INPUTS`, `TOOLS_EXCLUDE_DIRS` and `TOOLS_JUNK` from `soak/host.rs` to `pub const`s in `tools/src/inputs.rs`, and add `pub mod inputs;` to `lib.rs`. `host.rs` uses `crate::inputs::…`, and the test `tools_inputs_match_the_recipe_and_the_shim` moves with them.
-  - [ ] 2b: `pub fn is_tools_input(path: &str) -> bool`.
+- [x] **Task 2: `tools/src/inputs.rs` and the loop module skeleton** [2a-2b worker; 2c FG]
+  - [x] 2a: Move `TOOLS_INPUTS`, `TOOLS_EXCLUDE_DIRS` and `TOOLS_JUNK` from `soak/host.rs` to `pub const`s in `tools/src/inputs.rs`, and add `pub mod inputs;` to `lib.rs`. `host.rs` uses `crate::inputs::…`, and the test `tools_inputs_match_the_recipe_and_the_shim` moves with them.
+  - [x] 2b: `pub fn is_tools_input(path: &str) -> bool`.
     - Directory entries match as prefixes on a `/` boundary; file entries match exactly. Both compare case-folded (fail-closed on APFS).
     - A table test covers these rows:
       - true: `tools/x`, `tools`, `shared/src/lib.rs`, `Cargo.lock`, `rust-toolchain`, `.cargo/config.toml`, `justfile`, `TOOLS/x`, `Justfile`;
       - false: `toolsx/a`, `docs/tools/x`, `kernel/Cargo.toml`, `Cargo.toml.bak`.
     - Verify: T(`--lib inputs::`) ≥ 2; `cargo test -p aios-tools --test soak_harness` passes.
-  - [ ] 2c [FG]: `tools/src/cmd/mod.rs` gets `#[path = "loop/mod.rs"] pub mod pr_loop;` (`loop` is a keyword; the directory keeps the protected name). `tools/src/cmd/loop/mod.rs` gets a module doc that states the read-only property. Verify: TG.
+  - [x] 2c [FG]: `tools/src/cmd/mod.rs` gets `#[path = "loop/mod.rs"] pub mod pr_loop;` (`loop` is a keyword; the directory keeps the protected name). `tools/src/cmd/loop/mod.rs` gets a module doc that states the read-only property. Verify: TG.
 
 - [ ] **Task 3: Config, prompts and schemas** [3a worker; 3b-3c FG]
   - [ ] 3a: `scripts/agent/loop-config.json`:
