@@ -22,6 +22,7 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 
 use super::awk::fields;
+use crate::inputs::{TOOLS_EXCLUDE_DIRS, TOOLS_INPUTS, TOOLS_JUNK};
 
 /// The first executable file called `name` on `PATH` (`command -v name`).
 pub fn find_in_path(name: &str) -> Option<PathBuf> {
@@ -389,28 +390,6 @@ pub fn git_rev_of(root: &Path, commit: &str) -> String {
     rev
 }
 
-/// The host tools' build inputs, as the justfile's `tools` recipe and the
-/// `.claude/hooks/aios` shim list them in `inputs` (a test checks all three
-/// agree): cargo reads untracked and ignored files among them (a
-/// `tools/build.rs`, a legacy `rust-toolchain`, a `.cargo/config`) as well as
-/// tracked ones.
-const TOOLS_INPUTS: [&str; 8] = [
-    "tools",
-    "shared",
-    "Cargo.lock",
-    "Cargo.toml",
-    "rust-toolchain.toml",
-    "rust-toolchain",
-    ".cargo",
-    "justfile",
-];
-
-/// The directory inputs the dirty test's exclude pathspecs are anchored
-/// under, and the editor and Finder files they leave out, as the `tools`
-/// recipe and the shim write them (`':(exclude,glob)tools/**/.DS_Store'` …).
-const TOOLS_EXCLUDE_DIRS: [&str; 3] = ["tools", "shared", ".cargo"];
-const TOOLS_JUNK: [&str; 5] = [".DS_Store", "*.swp", "*.swo", "*~", "*.rs.bk"];
-
 /// Whether the checkout `root` holds host-tools build inputs that its `HEAD`
 /// does not: the `tools` recipe's own test, so a harness the recipe stamps
 /// `source dirty` for uncommitted, untracked or ignored inputs reads dirty
@@ -675,40 +654,6 @@ pub fn repo_root(cwd: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// [`TOOLS_INPUTS`], [`TOOLS_EXCLUDE_DIRS`] and [`TOOLS_JUNK`] are copies
-    /// of the justfile `tools` recipe's and the `.claude/hooks/aios` shim's
-    /// `inputs` list and exclude pathspecs: a list changed there and not here
-    /// would make every Harness row read stale or miss dirty inputs.
-    #[test]
-    fn tools_inputs_match_the_recipe_and_the_shim() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut excludes: Vec<String> = TOOLS_EXCLUDE_DIRS
-            .iter()
-            .flat_map(|dir| {
-                TOOLS_JUNK
-                    .iter()
-                    .map(move |junk| format!("{dir}/**/{junk}"))
-            })
-            .collect();
-        excludes.sort();
-        for file in ["justfile", ".claude/hooks/aios"] {
-            let text = std::fs::read_to_string(root.join(file)).expect("read");
-            let lists: Vec<&str> = text
-                .lines()
-                .filter_map(|l| l.trim_start().strip_prefix("inputs='"))
-                .map(|rest| rest.split('\'').next().unwrap_or_default())
-                .collect();
-            assert_eq!(lists, [TOOLS_INPUTS.join(" ")], "{file}: inputs='...'");
-            let mut found: Vec<String> = text
-                .split("':(exclude,glob)")
-                .skip(1)
-                .map(|rest| rest.split('\'').next().unwrap_or_default().to_string())
-                .collect();
-            found.sort();
-            assert_eq!(found, excludes, "{file}: exclude pathspecs");
-        }
-    }
 
     #[test]
     fn chomp_and_first_line_follow_the_shell() {
