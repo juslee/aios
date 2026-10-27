@@ -7,6 +7,26 @@ status: active
 
 # Discussion: /justin:review and /justin:merge — the self-improving PR loop
 
+## Amendments (Tools R2, 2026-10-27)
+
+R2 builds this loop in Rust. These points override the text below where they differ.
+
+- The loop is Rust in `tools/src/cmd/loop/`, run as `.claude/hooks/aios loop …`. The Python 3.9 constraint is replaced by the tools crate's rules.
+- The fakes are `#!/bin/sh` scripts on R3's PATH jail and fake-gh harness.
+- The owner cut R2 into three PRs on 2026-10-27:
+  - R2a: `aios loop review`, read-only. One review round (gather, three lenses, verify), a findings report, a merge verdict (`ready`, `pending` or `needs-human`) that is only reported, the Option A gate, the shim's strict `loop)` arm, prompts and config, `/justin:review`, and the probe (at most $0.50). No GitHub writes, no push, no commits, no fix stage.
+  - R2b: the write side. Fix and sync stages, rounds until convergence, push, thread replies and resolves, the needs-human label and comment, pre-existing issue filing, CI and reviewer waits, `aios loop merge`, `/justin:merge`, the narrowing of `/review-pr-comments`, and the settings asks for every loop spelling.
+  - R2c: the eval suites (loop-stage and skill), `scores.json`, the eval gate on prompt, model and skill changes, and the first recorded scores (at most $25, owner-approved cases).
+- Stage-0 scope: no auto-merge, no `justin/review` statuses, no sweep, and no retro until 5 loop-reviewed merges. `/merge-and-cleanup` stays the only merge path. `/review-pr-comments` stays and is narrowed in R2b.
+- Option A (owner, #204): the changed-paths gate covers every input of the aios binary: `tools/**`, `shared/**`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `rust-toolchain`, `.cargo/**` and `justfile`. A gated PR is never `ready`.
+- Exit 3 with full strictness (owner, 2026-10-11): the shim's `loop)` arm exits 3 on a stale binary whose rebuild fails, a dirty build, a binary that is rebuilt but still not fresh, a missing binary whose build fails, and `AIOS_TOOLS_BIN` set.
+- Stage settings are a minimal file built from `origin/main`'s `.claude/settings.json`: the guard hook, the deny and ask lists, an empty allow list, and every plugin disabled. This supersedes `--setting-sources user` below.
+- Prompts, config and hive notes are read from `origin/main`. Under `--tree DIR` they are read from DIR instead.
+- In R2a, verdicts are only reported, never written to GitHub.
+- Trusted authors are the owner and Copilot. `claude[bot]` cannot post, because `.github/workflows/claude-code-review.yml` grants `pull-requests: read` (line 29).
+- Model aliases are `sonnet`, `opus` and `fable`.
+- The main ruleset requires 6 checks, not 5.
+
 ## Context
 
 Stage 0 of the agent loop is merged. It added:
