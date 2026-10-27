@@ -1,0 +1,44 @@
+{
+  "models": {
+    "lens": "sonnet",
+    "lens_kernel_core": "opus",
+    "verify": "opus",
+    "verify_hard": "fable",
+    "fallback_on_fable_error": "opus"
+  },
+  "per_call_usd": 0.15,
+  "per_pr_usd": 5,
+  "stage_timeout_seconds": 600,
+  "kernel_core_globs": ["kernel/src/{arch,sched,ipc,mm}/**"],
+  "trusted_authors": ["juslee", "copilot-pull-request-reviewer"],
+  "category_taxonomy": [
+    "unsafe-doc",
+    "lock-order",
+    "concurrency",
+    "error-handling",
+    "shell-quoting",
+    "doc-drift",
+    "test-gap",
+    "convention",
+    "other"
+  ],
+  "path_tags": {
+    "kernel/src/ipc/**": "ipc",
+    "kernel/src/sched/**": "sched",
+    "kernel/src/mm/**": "memory",
+    "kernel/src/storage/**": "storage",
+    "kernel/src/arch/**": "boot",
+    "kernel/src/compositor/**": "compositor",
+    "kernel/src/gpu/**": "gpu",
+    "kernel/src/input/**": "input",
+    "kernel/src/drivers/**": "drivers",
+    "kernel/src/cap/**": "security",
+    "uefi-stub/**": "boot",
+    "tools/**": "tooling",
+    "scripts/**": "tooling",
+    ".claude/**": "tooling",
+    "shared/**": "kernel"
+  },
+  "hive_cap": { "notes": 12, "bytes": 40960 },
+  "log_tail_bytes": 8192
+}

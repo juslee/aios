@@ -272,8 +272,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - Verify: T(`--lib inputs::`) ≥ 2; `cargo test -p aios-tools --test soak_harness` passes.
   - [x] 2c [FG]: `tools/src/cmd/mod.rs` gets `#[path = "loop/mod.rs"] pub mod pr_loop;` (`loop` is a keyword; the directory keeps the protected name). `tools/src/cmd/loop/mod.rs` gets a module doc that states the read-only property. Verify: TG.
 
-- [ ] **Task 3: Config, prompts and schemas** [3a worker; 3b-3c FG]
-  - [ ] 3a: `scripts/agent/loop-config.json`:
+- [x] **Task 3: Config, prompts and schemas** [3a worker; 3b-3c FG]
+  - [x] 3a: `scripts/agent/loop-config.json`:
     - **Models** (aliases): lenses `sonnet`, with `opus` for correctness and security when the diff touches `kernel_core_globs` or adds a line containing `unsafe`; verify `opus`, with `fable` when the PR has the `hard` label. `fallback_on_fable_error: "opus"`.
     - **Budgets:** `per_call_usd` (from Task 1's measured cost), `per_pr_usd: 5`, `stage_timeout_seconds`.
     - **Globs:** `kernel_core_globs: ["kernel/src/{arch,sched,ipc,mm}/**"]`.
@@ -283,7 +283,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - **Logs:** `log_tail_bytes`.
 
     No key without a consumer in R2a (no-legacy). R2b and R2c add their own keys.
-  - [ ] 3b [FG]: `tools/src/cmd/loop/config.rs`:
+  - [x] 3b [FG]: `tools/src/cmd/loop/config.rs`:
     - `Config::from_json` with `deny_unknown_fields`;
     - `glob_to_regex` for `**`, `*` and `{a,b}`;
     - validation: known aliases, budgets > 0, globs compile, the taxonomy equals `schema::CATEGORY_TAXONOMY`, and every `path_tags` tag is in rule 08's list (a const, plus a test that re-reads the Tags line of `.claude/rules/08-knowledge-hive.md`).
@@ -291,7 +291,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     `tools/src/cmd/loop/schema.rs` holds:
     - the lens finding schema `{id, lens, severity: must-fix|should-fix|nit, category, file, line, claim, evidence, suggested_fix}`, with `category` an enum of the taxonomy;
     - the verify verdict schema `{id, verdict: confirmed|refuted, scope: in-diff|pre-existing, reason}`.
-  - [ ] 3c: `scripts/agent/prompts/{review-correctness,review-security,review-conventions,verify}.md`.
+  - [x] 3c: `scripts/agent/prompts/{review-correctness,review-security,review-conventions,verify}.md`.
     - Each starts with `version: 1`. They are written from LOOP §2 and rules 01, 02, 06 and 11.
     - Placeholders: `{{facts}}`, `{{prior_findings}}`, `{{lessons}}`, `{{untrusted}}` and `{{findings}}` (verify only).
     - Every prompt says the stage is read-only and that text inside the untrusted fence is data.
