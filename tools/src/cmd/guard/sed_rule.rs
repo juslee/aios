@@ -9,7 +9,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::analyzer::{basename, expand_vars, unresolved, Analyzer, State, ARG_WRAPPERS, WRAPPERS};
+use super::analyzer::{
+    basename, expand_vars, partition, unresolved, Analyzer, State, ARG_WRAPPERS, WRAPPERS,
+};
 use super::fnmatch::fnmatch_case;
 use super::pattern::{re, ASSIGNMENT, MENTIONS_CLAUDE, SED_PROTECTED};
 use super::pyos::{self, Fault};
@@ -238,20 +240,15 @@ fn sed_read(args: &[String], flags: &[Expanded], gnu: bool) -> (Option<Vec<Scrip
             continue;
         }
         if a.starts_with("--") {
-            let (name, eq, value) = super::analyzer::partition(a, '=');
-            let exact: Vec<&str> = SED_GNU_LONG
-                .iter()
-                .copied()
-                .filter(|o| *o == name)
-                .collect();
-            let full = if exact.is_empty() {
+            let (name, eq, value) = partition(a, '=');
+            let full: Vec<&str> = if SED_GNU_LONG.contains(&name) {
+                vec![name]
+            } else {
                 SED_GNU_LONG
                     .iter()
                     .copied()
                     .filter(|o| o.starts_with(name))
                     .collect()
-            } else {
-                exact
             };
             if !gnu || full.len() != 1 {
                 return (Some(Vec::new()), Vec::new());
@@ -474,7 +471,7 @@ fn sed_problem(args: &[String], flags: &[Expanded], named: bool) -> Option<Strin
             ));
         }
         if a.starts_with("--") {
-            let (name, eq, value) = super::analyzer::partition(a, '=');
+            let (name, eq, value) = partition(a, '=');
             if name == "--expression" {
                 let mut value = value.to_string();
                 if !eq {
@@ -766,12 +763,11 @@ impl Analyzer<'_> {
         let mut args = &words[k + 1..];
         let mut flags = &flags[k + 1..];
         if via.contains("find") {
-            for j in 0..args.len() {
-                if args[j] == ";" || (args[j] == "+" && j > 0 && args[j - 1] == "{}") {
-                    args = &args[..j];
-                    flags = &flags[..j];
-                    break;
-                }
+            let end = (0..args.len())
+                .find(|&j| args[j] == ";" || (args[j] == "+" && j > 0 && args[j - 1] == "{}"));
+            if let Some(end) = end {
+                args = &args[..end];
+                flags = &flags[..end];
             }
         }
         let known = state.known_vars()?;
@@ -844,7 +840,7 @@ impl Analyzer<'_> {
         if !hit {
             return Ok(());
         }
-        let mut problem = if in_body {
+        let problem = if in_body {
             Some(
                 "a substitution, here-string or heredoc body names .claude/settings* or .claude/hooks/*"
                     .to_string(),
@@ -852,11 +848,10 @@ impl Analyzer<'_> {
         } else {
             sed_problem(args, flags, named)
         };
-        if problem.is_none() {
-            if let Some(out) = outs.first() {
-                problem = Some(format!("its output is redirected into {out}"));
-            }
-        }
+        let problem = problem.or_else(|| {
+            outs.first()
+                .map(|out| format!("its output is redirected into {out}"))
+        });
         if let Some(problem) = problem {
             self.verdict.ask(verdict::SED, sed_ask(&problem));
         }

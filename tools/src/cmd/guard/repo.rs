@@ -25,7 +25,6 @@ use crate::pystr;
 pub type Config = BTreeMap<String, Vec<String>>;
 
 /// `Repo.get`: one [`Repo`] per (directory, extra global options) for a run.
-/// (directory, extra global options) -> its [`Repo`].
 type Cache = HashMap<(String, Vec<String>), Rc<Repo>>;
 
 #[derive(Default)]
@@ -263,10 +262,11 @@ impl Repo {
             let mut args = vec!["log", "--format=", "--name-only", "--max-count=500"];
             args.extend(shas.iter().map(String::as_str));
             args.extend(["--not", "--remotes", "--", ":(top).github"]);
-            if let Some(out) = self.run(&args)? {
-                if !pystr::strip(&out).is_empty() {
-                    return Ok(true);
-                }
+            if self
+                .run(&args)?
+                .is_some_and(|out| !pystr::strip(&out).is_empty())
+            {
+                return Ok(true);
             }
         }
         if wide {
@@ -277,10 +277,8 @@ impl Repo {
                 "--",
                 ":(top).github",
             ])?;
-            if let Some(out) = status {
-                if !pystr::strip(&out).is_empty() {
-                    return Ok(true);
-                }
+            if status.is_some_and(|out| !pystr::strip(&out).is_empty()) {
+                return Ok(true);
             }
         }
         Ok(false)
@@ -290,23 +288,10 @@ impl Repo {
 /// Run `cmd` with its output captured: (exit code, stdout, stderr), or `None`
 /// when it cannot start or outlives `limit` (then it is killed, as
 /// `subprocess.run(timeout=...)` kills it).
-pub fn run_with_limit(
-    mut cmd: Command,
-    limit: Duration,
-) -> Option<(Option<i32>, Vec<u8>, Vec<u8>)> {
+fn run_with_limit(mut cmd: Command, limit: Duration) -> Option<(Option<i32>, Vec<u8>, Vec<u8>)> {
     let mut child = cmd.spawn().ok()?;
-    let mut out_pipe = child.stdout.take()?;
-    let mut err_pipe = child.stderr.take()?;
-    let out_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = out_pipe.read_to_end(&mut buf);
-        buf
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = err_pipe.read_to_end(&mut buf);
-        buf
-    });
+    let out_reader = drain(child.stdout.take()?);
+    let err_reader = drain(child.stderr.take()?);
     let deadline = Instant::now() + limit;
     let status = loop {
         match child.try_wait() {
@@ -322,4 +307,14 @@ pub fn run_with_limit(
     let stdout = out_reader.join().unwrap_or_default();
     let stderr = err_reader.join().unwrap_or_default();
     status.map(|s| (s.code(), stdout, stderr))
+}
+
+/// Read `pipe` to its end on a thread of its own, so a full pipe never blocks
+/// the child.
+fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = pipe.read_to_end(&mut buf);
+        buf
+    })
 }

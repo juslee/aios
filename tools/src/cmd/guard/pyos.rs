@@ -185,12 +185,7 @@ pub fn read_text_replace(path: &str) -> Result<String, ReadError> {
 /// Python's strict UTF-8 decode in text mode: the text with universal newlines,
 /// or the `UnicodeDecodeError` Python raises for the first bad sequence.
 pub fn decode_strict(bytes: &[u8]) -> Result<String, Fault> {
-    let text = decode_utf8(bytes)?;
-    Ok(if text.contains('\r') {
-        text.replace("\r\n", "\n").replace('\r', "\n")
-    } else {
-        text
-    })
+    decode_utf8(bytes).map(|text| pystr::decode_text(text.as_bytes()))
 }
 
 /// `bytes.decode("utf-8")`: the text as it is, or the `UnicodeDecodeError`

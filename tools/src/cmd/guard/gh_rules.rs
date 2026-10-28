@@ -267,10 +267,12 @@ impl Analyzer<'_> {
             self.check_gh_publish(top, sub, shorts, rest, cmd, cwd, &env)?;
         } else if top == "run" && sub == "download" {
             let (flags, _) = scan_gh_flags(rest, "Dnp", &["dir", "name", "pattern", "repo"]);
-            for (name, value) in flags {
-                if let (true, Some(value)) = (name == "-D" || name == "--dir", value) {
-                    self.check_download_dir(&value, cwd)?;
-                }
+            let dirs = flags
+                .into_iter()
+                .filter(|(name, _)| name == "-D" || name == "--dir")
+                .filter_map(|(_, value)| value);
+            for dir in dirs {
+                self.check_download_dir(&dir, cwd)?;
             }
         } else if top == "api" {
             self.check_gh_api(&args[1..], cmd, cwd, &env)?;
@@ -386,7 +388,7 @@ impl Analyzer<'_> {
         let mut inputs: Vec<String> = Vec::new();
         let mut headers: Vec<String> = Vec::new();
         for (name, value) in flags {
-            let key: Option<&str> = match name.strip_prefix("--") {
+            let key: Option<&'static str> = match name.strip_prefix("--") {
                 Some(long) => API_VALUE_LONGS.iter().copied().find(|k| *k == long),
                 None => {
                     let short = name.chars().nth(1);
@@ -399,9 +401,7 @@ impl Analyzer<'_> {
             let Some(value) = value else { continue };
             match key {
                 Some("method") => method = Some(value),
-                Some(k @ ("field" | "raw-field")) => {
-                    fields.push((if k == "field" { "field" } else { "raw-field" }, value))
-                }
+                Some(k @ ("field" | "raw-field")) => fields.push((k, value)),
                 Some("input") => inputs.push(value),
                 Some("header") => headers.push(value),
                 _ => {}

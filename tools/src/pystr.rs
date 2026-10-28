@@ -1,4 +1,4 @@
-//! Python `str` semantics that the docs-check port depends on.
+//! Python `str` semantics that the docs-check and guard ports depend on.
 //!
 //! `scripts/docs/check.py` runs on CPython, so the port must strip, split and
 //! slice text exactly as Python does: `str.isspace` (check.py's strips and

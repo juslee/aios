@@ -4,7 +4,7 @@
 //! changes) and rule 4 rows 4-6 (agents reset, commit and move refs only in their
 //! own temporary worktree).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -190,15 +190,9 @@ pub enum Qemu {
 /// `classify_only`: `soak --classify LOG...` classifies saved logs and starts no
 /// QEMU. Only a --classify before the `--` that ends the options counts.
 fn classify_only(args: &[String]) -> bool {
-    for a in args {
-        if a == "--" {
-            return false;
-        }
-        if a == "--classify" || a.starts_with("--classify=") {
-            return true;
-        }
-    }
-    false
+    args.iter()
+        .take_while(|a| *a != "--")
+        .any(|a| a == "--classify" || a.starts_with("--classify="))
 }
 
 /// `aios_starts_qemu`: `aios [options] soak ...` (not --classify), the tools
@@ -338,26 +332,19 @@ fn qemu_lock_dir(repo: &Repo) -> Result<Option<String>, Fault> {
 /// written after the wrapper's mkdir, so it can be missing while the lock is
 /// held; it only supplies this message.
 fn lock_message(lock: &str) -> String {
-    let mut fields: Vec<(String, String)> = Vec::new();
+    let mut fields: HashMap<String, String> = HashMap::new();
     if let Ok(text) = pyos::read_text_replace(&pyos::join(lock, "owner")) {
         for line in pystr::splitlines(&text) {
             let (key, eq, value) = partition(line, '=');
             if eq {
-                let key = pystr::strip(key).to_string();
-                let value = pystr::strip(value).to_string();
-                match fields.iter_mut().find(|(k, _)| *k == key) {
-                    Some(slot) => slot.1 = value,
-                    None => fields.push((key, value)),
-                }
+                fields.insert(
+                    pystr::strip(key).to_string(),
+                    pystr::strip(value).to_string(),
+                );
             }
         }
     }
-    let get = |key: &str| {
-        fields
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    };
+    let get = |key: &str| fields.get(key).map(String::as_str);
     let Some(team) = get("team") else {
         return "QEMU lock held (owner file not written yet)".to_string();
     };

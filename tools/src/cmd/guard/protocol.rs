@@ -52,8 +52,10 @@ pub enum Response {
 impl Response {
     pub fn exit_code(&self) -> u8 {
         match self {
-            Response::Pass => 0,
-            Response::Decide { level, .. } => u8::from(*level == Level::Deny) * 2,
+            Response::Decide {
+                level: Level::Deny, ..
+            } => 2,
+            Response::Pass | Response::Decide { .. } => 0,
             Response::Crash(_) => 1,
         }
     }

@@ -570,13 +570,11 @@ impl<'s, 'o> Parser<'s, 'o> {
                 self.i += 1;
                 self.read_heredocs();
             } else if c == '\\' {
-                if self.peek(1) == Some('\n') {
-                    self.i += 2;
-                } else {
+                if self.peek(1) != Some('\n') {
                     let next = self.peek(1).map(String::from).unwrap_or_default();
                     self.add(&next, true);
-                    self.i += 2;
                 }
+                self.i += 2;
             } else if c == '\'' {
                 let text = self.read_single()?;
                 self.add(&text, true);
