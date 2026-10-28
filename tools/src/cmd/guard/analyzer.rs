@@ -15,6 +15,7 @@ use regex::Regex;
 use super::pattern::{self, re, ASSIGNMENT, AWK_EXEC, MENTIONS_GIT, MENTIONS_TEAM, PID_FINDER};
 use super::pyos::{self, Fault, ReadError};
 use super::repo::{Repo, Repos};
+use super::sed_rule::{run_positions, SED_NAMES};
 use super::shell::{parse_commands, Command, Expanded, ParseError, MAX_DEPTH, RESERVED};
 use super::shlex;
 use super::verdict::{self, Tag, Verdict};
@@ -437,6 +438,14 @@ impl<'c> Analyzer<'c> {
         if head == "command" && command_lookup(&words[idx + 1..]) {
             return Ok(()); // command -v / -V only prints what a name resolves to
         }
+        let runs: BTreeSet<usize> = if words[idx..]
+            .iter()
+            .any(|w| SED_NAMES.contains(&basename(w)))
+        {
+            run_positions(words, idx)
+        } else {
+            BTreeSet::new()
+        };
         for k in idx..words.len() {
             let name = basename(&words[k]);
             if k > idx && head == "env" && ASSIGNMENT.is_match(&words[k]) {
@@ -447,6 +456,10 @@ impl<'c> Analyzer<'c> {
                     .insert(assigned);
                 continue;
             }
+            let via: BTreeSet<String> = words[idx..k]
+                .iter()
+                .map(|w| basename(w).to_string())
+                .collect();
             if k == idx || WRAPPERS.contains(&head) {
                 if name == "env" {
                     if let Some(split) = env_split_string(&words[k + 1..]) {
@@ -466,6 +479,9 @@ impl<'c> Analyzer<'c> {
                         self.analyze_text(text, &cwd, depth + 1, false)?;
                     }
                     return Ok(());
+                }
+                if SED_NAMES.contains(&name) && runs.contains(&k) {
+                    self.check_sed(words, flags, k, cmd, state, &via)?;
                 }
             }
             if name == "git" {

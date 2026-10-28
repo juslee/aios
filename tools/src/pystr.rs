@@ -176,6 +176,48 @@ pub fn is_digit(s: &str) -> bool {
     !s.is_empty() && s.chars().all(is_digit_char)
 }
 
+/// `str.isprintable()` for one non-ASCII character: not in the categories Cc,
+/// Cf, Cs, Co, Cn, Zl, Zp or Zs. The `regex` crate's tables are Unicode 16.0, so
+/// a character assigned after the interpreter's Unicode version counts as
+/// printable here and as `Cn` there (no command the guard reads depends on it).
+fn is_printable(c: char) -> bool {
+    static NON_PRINTABLE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\A[\p{C}\p{Zl}\p{Zp}\p{Zs}]\z").expect("valid"));
+    !NON_PRINTABLE.is_match(c.encode_utf8(&mut [0; 4]))
+}
+
+/// `repr(s)` for a `str`: single quotes unless the text has a `'` and no `"`;
+/// `\\`, `\t`, `\n`, `\r` and the quote escaped; other control characters as
+/// `\xNN`, and non-printable non-ASCII ones as `\xNN`, `\uNNNN` or `\UNNNNNNNN`.
+pub fn repr(s: &str) -> String {
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(quote);
+    for c in s.chars() {
+        let code = u32::from(c);
+        match c {
+            _ if c == quote || c == '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ if code < 0x20 || code == 0x7f => out.push_str(&format!("\\x{code:02x}")),
+            _ if code < 0x7f || is_printable(c) => out.push(c),
+            _ if code <= 0xff => out.push_str(&format!("\\x{code:02x}")),
+            _ if code <= 0xffff => out.push_str(&format!("\\u{code:04x}")),
+            _ => out.push_str(&format!("\\U{code:08x}")),
+        }
+    }
+    out.push(quote);
+    out
+}
+
 /// `unicodedata.decimal(c)`, or `None` when `c` is not a decimal digit. Unicode
 /// encodes every decimal digit set as ten consecutive code points from 0 to 9 (a
 /// stability policy), so a maximal run of Nd code points is whole sets end to end
@@ -299,6 +341,25 @@ fn hex_byte(hi: Option<&u8>, lo: Option<&u8>) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repr_matches_python() {
+        // repr(s) on CPython 3.13.
+        for (s, want) in [
+            ("a", "'a'"),
+            ("it's", "\"it's\""),
+            ("say \"hi\" it's", "'say \"hi\" it\\'s'"),
+            ("tab\there", "'tab\\there'"),
+            ("\x7f\x00\x1b", "'\\x7f\\x00\\x1b'"),
+            (
+                "é\u{a0}\u{ad}\u{200b}\u{2028}\u{3000}😀\u{e0001}\u{e000}\u{10ffff}\u{378}",
+                "'é\\xa0\\xad\\u200b\\u2028\\u3000😀\\U000e0001\\ue000\\U0010ffff\\u0378'",
+            ),
+            ("back\\slash", "'back\\\\slash'"),
+        ] {
+            assert_eq!(repr(s), want, "repr({s:?})");
+        }
+    }
 
     // Every expected value below was recorded from CPython 3.14 by calling the
     // `str` method (or `urllib.parse.unquote`) that the function ports.
