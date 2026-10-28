@@ -134,6 +134,48 @@ pub fn is_decimal_char(c: char) -> bool {
     c.is_ascii_digit() || (!c.is_ascii() && DECIMAL.is_match(c.encode_utf8(&mut [0; 4])))
 }
 
+/// The characters `str.isdigit()` accepts beyond the decimal digits (Numeric_Type
+/// Digit: superscripts, circled and parenthesised digits, ...), as code point
+/// ranges: `[c for c in range(0x110000) if chr(c).isdigit() and not
+/// chr(c).isdecimal()]` on CPython 3.13 (Unicode 15.1), 128 code points.
+const DIGIT_NOT_DECIMAL: [(u32, u32); 20] = [
+    (0xB2, 0xB3),
+    (0xB9, 0xB9),
+    (0x1369, 0x1371),
+    (0x19DA, 0x19DA),
+    (0x2070, 0x2070),
+    (0x2074, 0x2079),
+    (0x2080, 0x2089),
+    (0x2460, 0x2468),
+    (0x2474, 0x247C),
+    (0x2488, 0x2490),
+    (0x24EA, 0x24EA),
+    (0x24F5, 0x24FD),
+    (0x24FF, 0x24FF),
+    (0x2776, 0x277E),
+    (0x2780, 0x2788),
+    (0x278A, 0x2792),
+    (0x10A40, 0x10A43),
+    (0x10E60, 0x10E68),
+    (0x11052, 0x1105A),
+    (0x1F100, 0x1F10A),
+];
+
+/// `str.isdigit()` for one character: a decimal digit, or Numeric_Type Digit.
+pub fn is_digit_char(c: char) -> bool {
+    is_decimal_char(c)
+        || DIGIT_NOT_DECIMAL
+            .iter()
+            .any(|&(lo, hi)| (lo..=hi).contains(&u32::from(c)))
+}
+
+/// `str.isdigit()`: non-empty and every character a digit. The guard ports it
+/// with this (git-push-guard.py L730, L1415); docs-check keeps `is_decimal` (see the
+/// module doc).
+pub fn is_digit(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_digit_char)
+}
+
 /// `unicodedata.decimal(c)`, or `None` when `c` is not a decimal digit. Unicode
 /// encodes every decimal digit set as ten consecutive code points from 0 to 9 (a
 /// stability policy), so a maximal run of Nd code points is whole sets end to end
@@ -329,6 +371,29 @@ mod tests {
         assert_eq!(decode_text("café".as_bytes()), "café");
         assert_eq!(decode_text(b"x\xe2\x82y"), "x\u{fffd}y");
         assert_eq!(decode_text(b""), "");
+    }
+
+    #[test]
+    fn is_digit_matches_python_isdigit() {
+        // [c for c in "...".split() if c.isdigit()] on CPython 3.13.
+        for (s, want) in [
+            ("12", true),
+            ("²", true),
+            ("①", true),
+            ("١٢", true),
+            ("🄀", true),
+            ("½", false),
+            ("Ⅻ", false),
+            ("1a", false),
+            ("", false),
+        ] {
+            assert_eq!(is_digit(s), want, "{s:?}.isdigit()");
+        }
+        let count = (0..=0x10FFFFu32)
+            .filter_map(char::from_u32)
+            .filter(|&c| is_digit_char(c) && !is_decimal_char(c))
+            .count();
+        assert_eq!(count, 128);
     }
 
     #[test]

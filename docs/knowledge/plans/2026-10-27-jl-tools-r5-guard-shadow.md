@@ -46,12 +46,12 @@ Three choices shape the plan:
   - [x] 2b: Repository setups as code in `tools/tests/guard_support/` (temporary repo, bare remote, worktrees `agent-<id>` / `wf_…`, the lock directory, symlinks, a stopped rebase). These reuse `tools/tests/common` and `hook_support`
   - [x] 2c: An ignored recorder test (`AIOS_BLESS_GOLDENS=1`, the docs_check_parity convention) that runs the Python guard on every case and writes `tools/tests/golden/guard/*.json`. `.gitattributes` already marks golden and fixtures `-text` [VERIFIED]
   - [x] 2d: Acceptance: `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test guard_parity -- --ignored record` writes the goldens, and `cargo test -p aios-tools --test guard_parity goldens_match_python_tests` prints `test result: ok` (the recorder output matches the Python tests' own expectations for every (i) case)
-- [ ] Step 3: Shell model (`tools/src/cmd/guard/shell.rs`)
-  - [ ] 3a: Port the parser: quotes, `$(…)`, backticks, heredocs, `case`, `sh -c`, `eval`, `read`, functions, `MAX_DEPTH = 8`. It keeps the per-word expansion state (bare or quoted) and passes nested commands as argument vectors (lesson 2026-10-11 guard-wrapped-commands)
-  - [ ] 3b: Directory tracking exactly as Python does it (plain `cd`/`pushd` at the head, lexical `-C`). The #241 §1–2 gaps stay as pinned rows
-  - [ ] 3c: The parse-failure fallback exactly as Python does it (keyword gate), pending D4
-  - [ ] 3d: Patterns compile through `pyre::compile`, strings use `pystr` semantics (lesson 2026-09-24)
-  - [ ] 3e: Acceptance: `cargo test -p aios-tools guard::shell` prints `test result: ok`, with the parser table tests ported from the Python shell-model classes
+- [x] Step 3: Shell model (`tools/src/cmd/guard/shell.rs`)
+  - [x] 3a: Port the parser: quotes, `$(…)`, backticks, heredocs, `case`, `sh -c`, `eval`, `read`, functions, `MAX_DEPTH = 8`. It keeps the per-word expansion state (bare or quoted) and passes nested commands as argument vectors (lesson 2026-10-11 guard-wrapped-commands)
+  - [ ] 3b (lands with the analyzer in step 4): Directory tracking exactly as Python does it (plain `cd`/`pushd` at the head, lexical `-C`). The #241 §1–2 gaps stay as pinned rows
+  - [ ] 3c (lands with the analyzer in step 4): The parse-failure fallback exactly as Python does it (keyword gate), pending D4
+  - [x] 3d: Patterns compile through `pyre::compile`, strings use `pystr` semantics (lesson 2026-09-24)
+  - [x] 3e: Acceptance: `cargo test -p aios-tools guard::shell` prints `test result: ok`, with the parser table tests ported from the Python shell-model classes
 - [ ] Step 4: Git and gh rules (`git_rules.rs`, `gh_rules.rs`)
   - [ ] 4a: Git option abbreviation and cluster rules, aliases, script files, and push-destination resolution (`push.default`, upstream, `remote.<name>.push`/`.mirror`). Reuses `tools/src/git.rs` for config reads, run with the same environment as Python's `Repo` (`GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C`; guard L1004 [VERIFIED])
   - [ ] 4b: The deny and ask tables from the docstring, gh api/GraphQL writes, `HOME_REPO`
@@ -138,6 +138,11 @@ Doc = `docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md`.
 - 2026-10-28, step 2: scenario roots live under the system temp directory, never under the checkout. The guard treats paths containing `.claude` specially and rule 03 puts every checkout under `.claude/worktrees/`, so a root under `target/tmp` would change decisions.
 - 2026-10-28, step 2, sources (ii) and (iii): `Corpus.adv_r2`, `Corpus.adv_r3` (73 adversarial commands each) and `Corpus.stage0_cases` (89) from port-inputs, and 27 `Gap241.*` scenarios from #241 and its five comments, are pinned at today's Python decision. Each #241 row keeps the issue's `issue_now` and `issue_expected` for R5c. 11 rows differ today from the issue's "now" column, because the repro here differs from the issue's setup or the guard changed after the issue; the pin is today's decision either way.
 - 2026-10-28, step 2: `python_reproduces_goldens` runs the Python guard on all 2,694 checks (about 65 s) and found the goldens byte-stable across runs.
+
+- 2026-10-28, step 3: the Python tests have no shell-model class: they test the parser only through decisions. So 3e's table is recorded from the guard itself. `tests/fixtures/guard/shell.jsonl` holds 1,727 parses (`{text, depth, commands | error}`) from the guard's own `parse_commands`: 84 edge cases written for the parser's branches, and every fixture command up to 8 KiB (the nesting tests' 90 KB wrapped commands are left out). `guard::shell::tests::parses_like_python` checks the Rust parser against it (all equal), and `guard_parity`'s `python_parses_like_the_shell_table` checks the table against the live Python guard; `record_shell` rewrites it.
+- 2026-10-28, step 3: 3b (`cd`/`pushd` and `-C` tracking) and 3c (the keyword-gate fallback) are Python's `Analyzer.dispatch` and `decide`, which call into every rule. They land with the analyzer in step 4, so each commit compiles without placeholder rule functions.
+- 2026-10-28, step 3: Python-semantics findings for the later steps [VERIFIED on CPython 3.13.17, Unicode 15.1]: Python's `\w` is exactly `[\p{L}\p{N}_]`, so `\b` is emulated with that class (the `regex` crate's `\b` also counts marks); under `re.I` only `i` (U+0130, U+0131), `k` (U+212A) and `s` (U+017F) have non-ASCII equivalents, and the `regex` crate's `(?i)` lacks the two `i` ones, so `re.I` patterns spell those classes out; `str.isdigit()` adds 128 code points to the decimal digits (`pystr::is_digit`). One divergence is accepted: `$'\uD800'` gives a lone surrogate in Python and U+FFFD in Rust (a `String` cannot hold a surrogate).
+- 2026-10-28, step 3: the oracle's Python version matters at the margins. The goldens and CI use the container's `/usr/bin/python3` (3.13); the owner's Mac runs `/usr/bin/python3` from the Command Line Tools [ASSUMED 3.9]. Unicode table versions (3.9 is Unicode 13.0, the `regex` crate 16.0) and exception names (`re.error` vs `PatternError`) differ only on inputs no real command uses; the shadow's disagreement log is where any real one would show.
 
 ## Decisions Made
 

@@ -40,6 +40,12 @@ pub fn fixture_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/guard/cases.jsonl")
 }
 
+/// The shell parse table (plan step 3): one `{text, depth, commands | error}`
+/// object per line, recorded from the Python guard's `parse_commands`.
+pub fn shell_fixture_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/guard/shell.jsonl")
+}
+
 pub fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/guard")
 }
@@ -386,7 +392,7 @@ fn decode_base64(s: &str) -> Vec<u8> {
 }
 
 /// The tests' `too_deep()`: `command` under `times` levels of `$( )` or `sh -c`.
-fn wrap(mut command: String, form: &str, times: u64) -> String {
+pub fn wrap(mut command: String, form: &str, times: u64) -> String {
     for _ in 0..times {
         command = match form {
             "subst" => format!("echo $({command})"),
@@ -517,4 +523,79 @@ pub fn read_goldens(class: &str) -> Result<Map<String, Value>, String> {
         Ok(Value::Object(map)) => Ok(map),
         _ => Err(format!("{}: not a JSON object", path.display())),
     }
+}
+
+/// Every Bash command the scenarios run, wrapped as the hook receives it, in
+/// fixture order and without repeats.
+pub fn bash_commands(all: &[Scenario]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for s in all {
+        for check in s.checks() {
+            let Some(command) = check.get("bash").and_then(Value::as_str) else {
+                continue;
+            };
+            let mut command = command.to_string();
+            if let Some(w) = check.get("wrap") {
+                command = wrap(
+                    command,
+                    w["form"].as_str().expect("a form"),
+                    w["times"].as_u64().expect("times"),
+                );
+            }
+            if seen.insert(command.clone()) {
+                out.push(command);
+            }
+        }
+    }
+    out
+}
+
+/// Run the Python guard's own `parse_commands` on each `(text, depth)`: one JSON
+/// line per input, `{text, depth, commands}` or `{text, depth, error}` (the
+/// `ParseError` message).
+pub fn python_parse(inputs: &[(String, usize)]) -> Vec<String> {
+    const SCRIPT: &str = r#"
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(guard)
+for text, depth in json.load(sys.stdin):
+    case = {"text": text, "depth": depth}
+    try:
+        case["commands"] = [
+            {"words": c.words, "expanded": c.expanded, "heredocs": c.heredocs,
+             "stdin_files": c.stdin_files, "out_files": c.out_files,
+             "piped_in": c.piped_in, "src": c.src, "bodies": c.bodies}
+            for c in guard.parse_commands(text, depth)]
+    except guard.ParseError as exc:
+        case["error"] = str(exc)
+    print(json.dumps(case, ensure_ascii=False, sort_keys=True))
+"#;
+    let guard = repo_root().join(".claude/hooks/git-push-guard.py");
+    let mut child = Command::new(PYTHON)
+        .arg("-I")
+        .arg("-c")
+        .arg(SCRIPT)
+        .arg(&guard)
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("start python");
+    let payload = serde_json::to_vec(inputs).expect("serialise the inputs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&payload)
+        .expect("write the inputs");
+    let out = child.wait_with_output().expect("wait for python");
+    assert!(out.status.success(), "python parse_commands failed");
+    String::from_utf8(out.stdout)
+        .expect("UTF-8 output")
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
