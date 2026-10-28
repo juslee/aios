@@ -1560,6 +1560,7 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
 | `just soak` | Boot N times in a row (or interleave 2–4 checkouts with `--arm`) and classify each boot (PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN); see §5.6 |
 | `just test` | Run host-side unit tests (shared crate only; excludes the tools crate, which is tested separately with `cargo test -p aios-tools`, CI's Tools (host) job) |
+| `just guard-test` | Run the Python guard's unit tests: `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests -v`, the oracle the Rust port (R5) is compared against; CI's Tools (host) job runs it, and R5b removes it with the guard |
 | `just tools` | Build the host tools binary (`cargo build --release -p aios-tools --target-dir target/tools`), then install it at `target/tools/installed/aios` by atomic rename, with the provenance stamp `installed/aios.stamp` beside it; `.claude/hooks/aios` runs it (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
 | `just clippy` | Run clippy on kernel and stub targets with `-D warnings`, plus host clippy on the tools crate |
 | `just fmt` | Format code with `cargo fmt` |

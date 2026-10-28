@@ -69,7 +69,8 @@ jobs:
     # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in
     # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
     # no longer prove the shim is POSIX. The shim tests build through the real
-    # justfile `tools` recipe (with a fake cargo), so they need `just`.
+    # justfile `tools` recipe (with a fake cargo), so they need `just`. The job
+    # also runs the Python guard's tests (`just guard-test`, /usr/bin/python3).
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
@@ -84,6 +85,9 @@ jobs:
       - run: cargo fmt --check -p aios-tools
       - run: cargo clippy -p aios-tools --all-targets -- -D warnings
       - run: cargo test -p aios-tools
+      # The Python guard's tests: the oracle the Rust port (R5) is checked
+      # against. Removed in R5b with the guard.
+      - run: just guard-test
 
   security:
     name: Security (audit + deny)

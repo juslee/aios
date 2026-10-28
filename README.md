@@ -123,6 +123,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just soak` | Boot repeatedly under QEMU and classify each boot (PCZERO/PANIC-LOCK/PANIC/EXCEPTION/WEDGE-STUCK/WEDGE-ALIVE/INCONCLUSIVE/DEGRADED/CLEAN): `runs=N secs=T mode=text\|gpu`, logs in `target/soak/`. `--arm DIR`, given 2–4 times, interleaves git checkouts boot by boot and reports Fisher tests per pair ([developer guide §5.6](docs/project/developer-guide.md#56-boot-soak-testing-just-soak)) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
+| `just guard-test` | Run the Python guard's unit tests (`.claude/hooks/tests`, under `/usr/bin/python3`, as CI's Tools (host) job does) |
 | `just tools` | Build the host tools binary `aios` and install it, with a provenance stamp, at `target/tools/installed/aios`, which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/installed/aios`) |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
