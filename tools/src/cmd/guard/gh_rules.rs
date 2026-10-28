@@ -554,7 +554,7 @@ impl Analyzer<'_> {
             );
             return Ok(());
         }
-        let full = pyos::realpath(&pyos::join(cwd, &pyos::expanduser(path)?));
+        let full = pyos::realpath(&pyos::join(cwd, &pyos::expanduser(path)?))?;
         let protected = full.split('/').any(|p| PROTECTED_DIRS.contains(&p));
         if !self.inside_repo(path, cwd)? || protected {
             self.verdict.ask(

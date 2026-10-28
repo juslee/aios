@@ -42,13 +42,27 @@ impl fmt::Display for Fault {
 
 pub use paths::{basename, dirname, join, normpath};
 
-/// `os.path.realpath(path)` (non-strict). A relative path resolves against the
-/// process's working directory, as `os.getcwd()` does.
-pub fn realpath(path: &str) -> String {
-    let cwd = std::env::current_dir()
-        .map(|d| d.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    paths::realpath(path, &cwd)
+/// `os.path.realpath(path)` (non-strict, CPython 3.13). A relative path
+/// resolves against the process's working directory, as `os.getcwd()` does,
+/// and raises its `OSError` when there is none. A NUL in the path raises
+/// `ValueError`, because 3.13 calls `os.lstat` on every component and catches
+/// only `OSError`.
+pub fn realpath(path: &str) -> Result<String, Fault> {
+    if !no_nul(path) {
+        return Err(Fault::new(
+            "ValueError",
+            "lstat: embedded null character in path",
+        ));
+    }
+    let cwd = if path.starts_with('/') {
+        String::new()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| os_error(&e))?
+            .to_string_lossy()
+            .into_owned()
+    };
+    Ok(paths::realpath(path, &cwd))
 }
 
 /// `os.path.expanduser(path)`: `~` is `$HOME` (when set, even empty) or the
@@ -171,17 +185,61 @@ pub fn read_text_replace(path: &str) -> Result<String, ReadError> {
 /// Python's strict UTF-8 decode in text mode: the text with universal newlines,
 /// or the `UnicodeDecodeError` Python raises for the first bad sequence.
 pub fn decode_strict(bytes: &[u8]) -> Result<String, Fault> {
+    let text = decode_utf8(bytes)?;
+    Ok(if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text
+    })
+}
+
+/// `bytes.decode("utf-8")`: the text as it is, or the `UnicodeDecodeError`
+/// Python raises for the first bad sequence.
+pub fn decode_utf8(bytes: &[u8]) -> Result<String, Fault> {
     match std::str::from_utf8(bytes) {
-        Ok(text) => Ok(if text.contains('\r') {
-            text.replace("\r\n", "\n").replace('\r', "\n")
-        } else {
-            text.to_string()
-        }),
+        Ok(text) => Ok(text.to_string()),
         Err(e) => Err(Fault::new(
             "UnicodeDecodeError",
             utf8_error_message(bytes, &e),
         )),
     }
+}
+
+/// `type(exc).__name__` for the `OSError` CPython raises for `err`
+/// (`Objects/exceptions.c` maps errno values to subclasses; every one that file
+/// and directory calls can raise is here).
+pub fn os_error_name(err: &std::io::Error) -> &'static str {
+    use std::io::ErrorKind;
+    match err.kind() {
+        ErrorKind::NotFound => "FileNotFoundError",
+        ErrorKind::PermissionDenied => "PermissionError",
+        ErrorKind::IsADirectory => "IsADirectoryError",
+        ErrorKind::NotADirectory => "NotADirectoryError",
+        ErrorKind::AlreadyExists => "FileExistsError",
+        ErrorKind::WouldBlock => "BlockingIOError",
+        ErrorKind::BrokenPipe => "BrokenPipeError",
+        ErrorKind::ConnectionAborted => "ConnectionAbortedError",
+        ErrorKind::ConnectionRefused => "ConnectionRefusedError",
+        ErrorKind::ConnectionReset => "ConnectionResetError",
+        ErrorKind::Interrupted => "InterruptedError",
+        ErrorKind::TimedOut => "TimeoutError",
+        _ => "OSError",
+    }
+}
+
+/// The `OSError` CPython raises for `err` from a call without a file name:
+/// `[Errno N] <strerror>`.
+pub fn os_error(err: &std::io::Error) -> Fault {
+    let text = err.to_string();
+    let message = match err.raw_os_error() {
+        Some(code) => {
+            let suffix = format!(" (os error {code})");
+            let strerror = text.strip_suffix(&suffix).unwrap_or(&text);
+            format!("[Errno {code}] {strerror}")
+        }
+        None => text,
+    };
+    Fault::new(os_error_name(err), message)
 }
 
 /// `str(UnicodeDecodeError)` for CPython's UTF-8 decoder at `e`.

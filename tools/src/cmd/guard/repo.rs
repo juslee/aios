@@ -140,10 +140,10 @@ impl Repo {
             .collect();
         let mut roots = Vec::new();
         if let Some(first) = lines.first() {
-            roots.push(pyos::realpath(first));
+            roots.push(pyos::realpath(first)?);
         }
         if lines.len() > 1 && pyos::basename(lines[1]) == ".git" {
-            roots.push(pyos::realpath(pyos::dirname(lines[1])));
+            roots.push(pyos::realpath(pyos::dirname(lines[1]))?);
         }
         self.memo.borrow_mut().roots = Some(roots.clone());
         Ok(roots)
@@ -167,7 +167,7 @@ impl Repo {
             .into_iter()
             .filter(|l| !l.is_empty())
             .map(pyos::realpath)
-            .collect();
+            .collect::<Result<_, _>>()?;
         let v = if lines.len() == 2 {
             (Some(lines[0].clone()), Some(lines[1].clone()))
         } else {

@@ -1,5 +1,6 @@
 //! `aios`: AIOS host tooling: `aios brief` and `aios checkpoint` (R3), `aios docs-check`
-//! (R1), `aios hook` (model routing) and `aios soak` (R4); later PRs add subcommands.
+//! (R1), `aios guard` (R5), `aios hook` (model routing) and `aios soak` (R4); later PRs add
+//! subcommands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -27,6 +28,8 @@ enum Command {
     /// Deterministic docs drift check against scripts/docs/baseline.json (exit 1 on new drift)
     #[command(name = "docs-check", infer_long_args = true, args_override_self = true)]
     DocsCheck(aios_tools::cmd::docs_check::Args),
+    /// The git and team-rules guard (PreToolUse for Bash, Monitor, Agent, Task and EnterWorktree): the port of .claude/hooks/git-push-guard.py
+    Guard(aios_tools::cmd::guard::Args),
     /// Claude Code hook programs: read one JSON payload on stdin; exit 0 on every payload (a usage error exits 2)
     Hook(aios_tools::cmd::hook::Args),
     /// Boot AIOS repeatedly under QEMU and classify every boot (see `aios soak --help`)
@@ -47,6 +50,22 @@ fn main() -> ExitCode {
                 &mut std::io::stderr().lock(),
             );
             ExitCode::SUCCESS
+        }
+        Command::Guard(_) => {
+            let env = std::env::vars_os()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect();
+            ExitCode::from(aios_tools::cmd::guard::run(
+                &mut std::io::stdin().lock(),
+                &env,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            ))
         }
         Command::DocsCheck(args) => {
             let cwd = match std::env::current_dir() {

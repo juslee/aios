@@ -825,33 +825,33 @@ impl<'c> Analyzer<'c> {
     /// slug is the project path with every other character replaced by '-'.
     /// Files there are the agent's own drafts, like files in the repo
     /// (`claude_tmp_roots`).
-    fn claude_tmp_roots(&self, repo_roots: &[String]) -> Vec<String> {
+    fn claude_tmp_roots(&self, repo_roots: &[String]) -> Result<Vec<String>, Fault> {
         if let Some(roots) = &self.tmp_roots {
-            return roots.clone();
+            return Ok(roots.clone());
         }
         let project = std::env::var("CLAUDE_PROJECT_DIR")
             .ok()
             .filter(|p| !p.is_empty())
             .or_else(|| repo_roots.last().cloned());
         let (Some(project), Some(uid)) = (project, uid()) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let slug: String = project
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect();
-        vec![pyos::realpath(&pyos::join(
+        Ok(vec![pyos::realpath(&pyos::join(
             &format!("/tmp/claude-{uid}"),
             &slug,
-        ))]
+        ))?])
     }
 
     /// Inside the working tree, the main checkout, or this project's Claude Code
     /// temp directory (session scratchpads).
     pub fn inside_repo(&self, path: &str, cwd: &str) -> Result<bool, Fault> {
-        let full = pyos::realpath(&pyos::join(cwd, &pyos::expanduser(path)?));
+        let full = pyos::realpath(&pyos::join(cwd, &pyos::expanduser(path)?))?;
         let roots = self.repo(cwd, &[]).roots()?;
-        let tmp = self.claude_tmp_roots(&roots);
+        let tmp = self.claude_tmp_roots(&roots)?;
         Ok(roots
             .iter()
             .chain(&tmp)

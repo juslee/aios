@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Read};
+use std::io::Read;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -194,33 +194,13 @@ fn isolation_marker(fields: &Fields, text: &str) -> Option<Isolation> {
     })
 }
 
-/// `type(exc).__name__` for the `OSError` CPython raises for `err`
-/// (`Objects/exceptions.c` maps errno values to subclasses).
-fn os_error_name(err: &io::Error) -> &'static str {
-    match err.kind() {
-        io::ErrorKind::NotFound => "FileNotFoundError",
-        io::ErrorKind::PermissionDenied => "PermissionError",
-        io::ErrorKind::IsADirectory => "IsADirectoryError",
-        io::ErrorKind::NotADirectory => "NotADirectoryError",
-        io::ErrorKind::AlreadyExists => "FileExistsError",
-        io::ErrorKind::WouldBlock => "BlockingIOError",
-        io::ErrorKind::BrokenPipe => "BrokenPipeError",
-        io::ErrorKind::ConnectionAborted => "ConnectionAbortedError",
-        io::ErrorKind::ConnectionRefused => "ConnectionRefusedError",
-        io::ErrorKind::ConnectionReset => "ConnectionResetError",
-        io::ErrorKind::Interrupted => "InterruptedError",
-        io::ErrorKind::TimedOut => "TimeoutError",
-        _ => "OSError",
-    }
-}
-
 /// `open(path, encoding="utf-8").read()`: the text, or the name of the
 /// exception Python raises (an `OSError` subclass or `UnicodeDecodeError`).
 fn read_agent_file(path: &str) -> Result<String, &'static str> {
     let mut bytes = Vec::new();
     fs::File::open(path)
         .and_then(|mut file| file.read_to_end(&mut bytes))
-        .map_err(|e| os_error_name(&e))?;
+        .map_err(|e| pyos::os_error_name(&e))?;
     pyos::decode_strict(&bytes).map_err(|f| f.kind)
 }
 

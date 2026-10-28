@@ -657,7 +657,7 @@ impl Analyzer<'_> {
         if pyos::basename(&typed) != "qemu-lock.sh" || pyos::islink(&typed) {
             return Ok(None);
         }
-        let target = pyos::realpath(&typed);
+        let target = pyos::realpath(&typed)?;
         let mut roots: Vec<String> = Vec::new();
         let payload_cwd = self.ctx.cwd.as_str();
         if !payload_cwd.is_empty() {
@@ -684,7 +684,7 @@ impl Analyzer<'_> {
         for root in roots {
             let wrapper = pyos::join(&root, WRAPPER_PATH);
             let real = pyos::join(
-                &pyos::realpath(pyos::dirname(&wrapper)),
+                &pyos::realpath(pyos::dirname(&wrapper))?,
                 pyos::basename(&wrapper),
             );
             if target == real && !pyos::islink(&real) {
@@ -1244,5 +1244,139 @@ mod tests {
             PLACEMENT_CONFIG.is_match("Core.Bare\n") && PLACEMENT_CONFIG.is_match("includeIf.x")
         );
         assert!(!PLACEMENT_CONFIG.is_match("core.barex"));
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?} in {dir:?}");
+    }
+
+    fn temp_name(path: &std::path::Path) -> Option<String> {
+        let repos = super::super::repo::Repos::default();
+        temp_worktree(&repos.get(&path.to_string_lossy(), &[])).expect("no fault")
+    }
+
+    /// WorkflowWorktrees' direct `temp_worktree()` checks (the fixture's 21
+    /// that are not hook calls): only <main>/.claude/worktrees/<name> on
+    /// branch worktree-<name>, with git's admin directory of the same name,
+    /// is a temporary worktree.
+    #[test]
+    fn temporary_worktrees_match_python() {
+        let tmp = std::env::temp_dir().join(format!("aios-guard-temp-wt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let repo = tmp.join("work");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        let trees = repo.join(".claude").join("worktrees");
+        let add = |path: &std::path::Path, branch: &str| {
+            git(
+                &repo,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    branch,
+                    &path.to_string_lossy(),
+                ],
+            );
+            path.to_path_buf()
+        };
+        // The temporary worktrees: a workflow agent's and an Agent-tool agent's.
+        let wf = add(
+            &trees.join("wf_0123abcd-0ef-1"),
+            "worktree-wf_0123abcd-0ef-1",
+        );
+        assert_eq!(temp_name(&wf).as_deref(), Some("wf_0123abcd-0ef-1"));
+        std::fs::create_dir_all(wf.join("sub")).expect("sub");
+        assert_eq!(
+            temp_name(&wf.join("sub")).as_deref(),
+            Some("wf_0123abcd-0ef-1")
+        );
+        let agent = add(&trees.join("agent-x"), "worktree-agent-x");
+        assert_eq!(temp_name(&agent).as_deref(), Some("agent-x"));
+        assert_eq!(temp_name(&repo), None);
+        let mut not_temporary = Vec::new();
+        for name in [
+            "wf_x",
+            "wf_0123abc-0ef-1",
+            "wf_0123abcde-0ef-1",
+            "wf_0123abcd-0e-1",
+            "wf_0123abcd-0eff-1",
+            "wf_ABCDEF01-0ef-11",
+            "wf_0123abcd-0ef-",
+            "wf_0123abcd-0ef-01",
+            "wf_0123abcd-0ef-1x",
+            "wf_0123abcd_0ef_1",
+            "wf-0123abcd-0ef-1",
+            "agent-a.b",
+        ] {
+            not_temporary.push(add(&trees.join(name), &format!("worktree-{name}")));
+        }
+        // The right name on another branch.
+        not_temporary.push(add(&trees.join("wf_0123abcd-0ef-3"), "claude/w3"));
+        // A worktree-wf_* branch outside .claude/worktrees, nested below it,
+        // or under another name in it.
+        not_temporary.push(add(
+            &tmp.join("wf_0123abcd-0ef-4"),
+            "worktree-wf_0123abcd-0ef-4",
+        ));
+        not_temporary.push(add(
+            &trees.join("sub").join("wf_0123abcd-0ef-5"),
+            "worktree-wf_0123abcd-0ef-5",
+        ));
+        not_temporary.push(add(
+            &repo.join(".claude").join("wf_0123abcd-0ef-6"),
+            "worktree-wf_0123abcd-0ef-6",
+        ));
+        not_temporary.push(add(&trees.join("lead"), "worktree-wf_0123abcd-0ef-7"));
+        // A branch worktree.
+        not_temporary.push(add(&tmp.join("W"), "claude/w"));
+        // A symlink at a wf_ path to a worktree that lives elsewhere.
+        let real = add(&tmp.join("real"), "worktree-wf_0123abcd-0ef-8");
+        let link = trees.join("wf_0123abcd-0ef-8");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        not_temporary.push(link);
+        // Worktrees moved onto a temporary path keep their admin directory's
+        // name, which no longer matches.
+        for name in ["wf_0123abcd-0ef-9", "agent-z"] {
+            let src = add(&tmp.join(format!("mv-{name}")), &format!("worktree-{name}"));
+            let dst = trees.join(name);
+            git(
+                &repo,
+                &[
+                    "worktree",
+                    "move",
+                    &src.to_string_lossy(),
+                    &dst.to_string_lossy(),
+                ],
+            );
+            not_temporary.push(dst);
+        }
+        assert_eq!(not_temporary.len(), 21);
+        for path in &not_temporary {
+            assert_eq!(temp_name(path), None, "{path:?}");
+        }
+        std::fs::remove_dir_all(&tmp).expect("remove the temp dir");
     }
 }

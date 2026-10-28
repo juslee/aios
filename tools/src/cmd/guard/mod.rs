@@ -15,12 +15,16 @@
 //! - [`repo`]: the read-only git queries (`Repo`); [`pyos`]: the Python runtime
 //!   behaviour the guard depends on; [`pattern`]: its regular expressions;
 //!   [`verdict`]: its decision.
+//! - [`protocol`]: the hook protocol (`main` and `emit`); [`pyjson`]: the
+//!   payload's `json.loads`, with Python's error messages.
 
 pub mod analyzer;
 pub mod fnmatch;
 pub mod gh_rules;
 pub mod git_rules;
 pub mod pattern;
+pub mod protocol;
+pub mod pyjson;
 pub mod pyos;
 pub mod repo;
 pub mod sed_rule;
@@ -30,9 +34,33 @@ pub mod spawn_rules;
 pub mod team_rules;
 pub mod verdict;
 
+use std::collections::HashMap;
+use std::io::{Read, Write};
+
 use analyzer::{Analyzer, Ctx, Stop};
 use pattern::{FALLBACK_WORDS, MENTIONS_GIT, MENTIONS_TEAM};
 use verdict::Verdict;
+
+/// `aios guard`: the PreToolUse hook for Bash, Monitor, Agent, Task and
+/// EnterWorktree. It takes no arguments.
+#[derive(clap::Args)]
+pub struct Args {}
+
+/// Run the hook: read one payload from `stdin`, write the decision, and return
+/// the exit code (0, 2 for a deny, 1 where Python's hook crashes or cannot
+/// write its output).
+pub fn run(
+    stdin: &mut dyn Read,
+    env: &HashMap<String, String>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> u8 {
+    let mut input = Vec::new();
+    let input = stdin.read_to_end(&mut input).map(|_| input);
+    let getcwd = || std::env::current_dir().map(|d| d.to_string_lossy().into_owned());
+    let response = protocol::respond(input, env, getcwd);
+    protocol::write(&response, out, err).unwrap_or(1)
+}
 
 /// `decide(command, cwd, ctx)`: the verdict for one command text, or the Python
 /// exception that escaped the analysis. Text the guard cannot parse asks when
@@ -326,5 +354,48 @@ mod tests {
             }
         }
         std::fs::remove_dir_all(&dir).expect("remove the temp dir");
+    }
+
+    /// GhCommands.test_scratchpad_body_files_are_the_agents_own: a body file in
+    /// the session scratchpad (`claude_tmp_roots`, replaced here as the Python
+    /// test mocks it) is the agent's own; elsewhere outside the repository it
+    /// asks. Python's decisions in the same layout.
+    #[test]
+    fn scratchpad_body_files_match_python() {
+        let tmp = std::env::temp_dir().join(format!("aios-guard-scratch-{}", std::process::id()));
+        let repo = tmp.join("work");
+        let scratch = tmp.join("claude-tmp");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let init = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .arg(&repo)
+            .status()
+            .expect("git");
+        assert!(init.success());
+        let body = scratch.join("pr-body.md");
+        std::fs::write(&body, "Summary\n").expect("body");
+        let (repo, body) = (repo.to_string_lossy(), body.to_string_lossy());
+        let scratch = pyos::realpath(&scratch.to_string_lossy()).expect("no NUL");
+        let ctx = Ctx {
+            cwd: repo.to_string(),
+            ..Ctx::default()
+        };
+        for (sub, verb) in [("create --title t", "create"), ("edit 5", "edit")] {
+            let command = format!("gh pr {sub} --body-file {body}");
+            let mut analyzer = Analyzer::new(&ctx);
+            analyzer.tmp_roots = Some(vec![scratch.clone()]);
+            analyzer
+                .analyze_text(&command, &repo, 0, false)
+                .expect("no stop");
+            assert_eq!(analyzer.verdict.level, Level::None, "{command}");
+            let v = decide(&command, &repo, &ctx).expect("no fault");
+            assert_eq!(v.level, Level::Ask, "{command}");
+            assert_eq!(
+                v.reasons,
+                [format!("gh pr {verb} reads {body}, which is outside the repository and the session scratchpad (the repository is public)")]
+            );
+        }
+        std::fs::remove_dir_all(&tmp).expect("remove the temp dir");
     }
 }
