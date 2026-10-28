@@ -410,6 +410,7 @@ impl Analyzer<'_> {
                 depth,
             );
         }
+        self.check_placement(sub, rest, &workdir, &extra, &inline_config)?;
         if rest
             .iter()
             .any(|a| a == "--output" || a.starts_with("--output="))

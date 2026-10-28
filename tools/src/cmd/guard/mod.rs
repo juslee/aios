@@ -9,7 +9,9 @@
 //! - [`analyzer`]: the shell level (`Analyzer`): variables, `cd`, wrappers, shell
 //!   strings and script files.
 //! - [`git_rules`] and [`gh_rules`]: the git and gh levels; [`sed_rule`]: sed on
-//!   the protected paths; [`fnmatch`]: Python's `fnmatch.fnmatchcase`.
+//!   the protected paths; [`team_rules`]: rule 11's QEMU, kill, toolchain and
+//!   placement rules; [`spawn_rules`]: its Agent spawn and EnterWorktree rules
+//!   (`decide_tool`); [`fnmatch`]: Python's `fnmatch.fnmatchcase`.
 //! - [`repo`]: the read-only git queries (`Repo`); [`pyos`]: the Python runtime
 //!   behaviour the guard depends on; [`pattern`]: its regular expressions;
 //!   [`verdict`]: its decision.
@@ -24,6 +26,8 @@ pub mod repo;
 pub mod sed_rule;
 pub mod shell;
 pub mod shlex;
+pub mod spawn_rules;
+pub mod team_rules;
 pub mod verdict;
 
 use analyzer::{Analyzer, Ctx, Stop};
@@ -67,15 +71,19 @@ mod tests {
     /// Each row's decision in a fresh directory outside any git repository, as
     /// `decide(command, cwd)` gave it on CPython 3.13.
     fn check_rows(label: &str, rows: &[Row]) {
+        check_rows_as(label, &Ctx::default(), rows);
+    }
+
+    /// [`check_rows`] for the caller `ctx` (`decide(command, cwd, ctx)`).
+    fn check_rows_as(label: &str, ctx: &Ctx, rows: &[Row]) {
         let dir = std::env::temp_dir().join(format!("aios-guard-{label}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let cwd = dir.to_string_lossy().into_owned();
-        let ctx = Ctx::default();
         for &(command, level, reasons, push_deny) in rows {
-            let v = decide(command, &cwd, &ctx).expect("no fault");
-            assert_eq!(v.level, level, "{command}");
-            assert_eq!(v.reasons, reasons, "{command}");
-            assert_eq!(v.push_deny, push_deny, "{command}");
+            let v = decide(command, &cwd, ctx).expect("no fault");
+            assert_eq!(v.level, level, "{label}: {command}");
+            assert_eq!(v.reasons, reasons, "{label}: {command}");
+            assert_eq!(v.push_deny, push_deny, "{label}: {command}");
         }
         std::fs::remove_dir(&dir).expect("the empty temp dir");
     }
@@ -135,6 +143,151 @@ mod tests {
             ("sh -c 'sed -i 1d \"$1\"' _ .claude/settings.json", Level::Ask, &["sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt (option -i)"], false),
             ("sed -n '/[[:alpha:]/p' .claude/settings.json", Level::Ask, &["sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt (a /regex/ whose bracket expression GNU and BSD sed end differently)"], false),
             ("sed --expression=1p --quiet .claude/hooks/aios", Level::None, &[], false),
+            ],
+        );
+    }
+
+    #[test]
+    fn team_rules_for_the_owner_match_python() {
+        let ctx = Ctx::default();
+        check_rows_as(
+            "owner",
+            &ctx,
+            &[
+            ("just soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("just --dry-run soak", Level::None, &[], false),
+            ("just -f other/justfile run", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("just build", Level::None, &[], false),
+            ("qemu-system-aarch64 -M virt", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("qemu-system-aarch64 --version", Level::None, &[], false),
+            ("cargo run -p aios-tools -- soak runs=1", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("aios soak --classify log.txt", Level::None, &[], false),
+            ("aios soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("$AIOS soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("bash scripts/agent/qemu-lock.sh run --team team-fix -- just soak", Level::None, &[], false),
+            ("bash scripts/agent/qemu-lock.sh status", Level::None, &[], false),
+            ("scripts/soak-qemu.sh", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("scripts/soak-qemu.sh --classify x", Level::None, &[], false),
+            ("./w.sh run --team x -- echo hi", Level::None, &[], false),
+            ("pkill qemu", Level::Deny, &["never pattern-kill QEMU; TERM the lock owner's pid (rule 11)"], false),
+            ("killall -9 qemu-system-aarch64", Level::Deny, &["never pattern-kill QEMU; TERM the lock owner's pid (rule 11)"], false),
+            ("kill 123", Level::None, &[], false),
+            ("kill $PID", Level::None, &[], false),
+            ("kill $(pgrep qemu)", Level::Ask, &["kill with pids found by pattern (pgrep, ps or xargs) can hit QEMU; TERM the lock owner's pid instead (rule 11)"], false),
+            ("rustup update", Level::Ask, &["rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)"], false),
+            ("rustup toolchain install nightly", Level::Ask, &["rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)"], false),
+            ("rustup target add x", Level::None, &[], false),
+            ("rustup show", Level::None, &[], false),
+            ("cargo +nightly build", Level::None, &[], false),
+            ("rustc +stable -V", Level::None, &[], false),
+            ("git reset --hard HEAD", Level::Ask, &["git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)"], false),
+            ("git commit -m x", Level::None, &[], false),
+            ("git -c core.worktree=/x commit -m x", Level::None, &[], false),
+            ("GIT_DIR=/x git commit -m x", Level::None, &[], false),
+            ("git switch -C x", Level::Ask, &["git switch -C can discard uncommitted changes or reset a branch"], false),
+            ("timeout 60 just soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("nohup just run &", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("xargs -I{} kill {}", Level::Ask, &["kill with pids found by pattern (pgrep, ps or xargs) can hit QEMU; TERM the lock owner's pid instead (rule 11)"], false),
+            ("sh -c 'just soak'", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ],
+        );
+    }
+
+    #[test]
+    fn team_rules_for_an_agent_match_python() {
+        let ctx = Ctx {
+            agent_id: Some(serde_json::json!("a1")),
+            agent_type: Some(serde_json::json!("verifier")),
+            ..Ctx::default()
+        };
+        check_rows_as(
+            "agent",
+            &ctx,
+            &[
+            ("just soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("just --dry-run soak", Level::None, &[], false),
+            ("just -f other/justfile run", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("just build", Level::None, &[], false),
+            ("qemu-system-aarch64 -M virt", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("qemu-system-aarch64 --version", Level::None, &[], false),
+            ("cargo run -p aios-tools -- soak runs=1", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("aios soak --classify log.txt", Level::None, &[], false),
+            ("aios soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("$AIOS soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("bash scripts/agent/qemu-lock.sh run --team team-fix -- just soak", Level::None, &[], false),
+            ("bash scripts/agent/qemu-lock.sh status", Level::None, &[], false),
+            ("scripts/soak-qemu.sh", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("scripts/soak-qemu.sh --classify x", Level::None, &[], false),
+            ("./w.sh run --team x -- echo hi", Level::None, &[], false),
+            ("pkill qemu", Level::Deny, &["never pattern-kill QEMU; TERM the lock owner's pid (rule 11)"], false),
+            ("killall -9 qemu-system-aarch64", Level::Deny, &["never pattern-kill QEMU; TERM the lock owner's pid (rule 11)"], false),
+            ("kill 123", Level::None, &[], false),
+            ("kill $PID", Level::None, &[], false),
+            ("kill $(pgrep qemu)", Level::Deny, &["agents never pattern-kill (kill with pids from pgrep, ps or xargs); stop only a pid you own, such as the lock owner's pid with a TERM (rule 11)"], false),
+            ("rustup update", Level::Deny, &["agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"], false),
+            ("rustup toolchain install nightly", Level::Deny, &["agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"], false),
+            ("rustup target add x", Level::Deny, &["agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"], false),
+            ("rustup show", Level::None, &[], false),
+            ("cargo +nightly build", Level::Deny, &["agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"], false),
+            ("rustc +stable -V", Level::Deny, &["agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)"], false),
+            ("git reset --hard HEAD", Level::Deny, &["agents reset only their own temporary worktree (rule 11)"], false),
+            ("git commit -m x", Level::Deny, &["agents commit only in their own temporary worktree, the one their cwd is in (rule 11)"], false),
+            ("git -c core.worktree=/x commit -m x", Level::Deny, &["agents never change where git writes: -c core.worktree in this command can point git commit at another repository, working tree, index or config (rule 11)"], false),
+            ("GIT_DIR=/x git commit -m x", Level::Deny, &["agents never change where git writes: GIT_DIR in this command can point git commit at another repository, working tree, index or config (rule 11)"], false),
+            ("git switch -C x", Level::Deny, &["agents run git switch -C only in their own temporary worktree, the one their cwd is in (rule 11)", "git switch -C can discard uncommitted changes or reset a branch"], false),
+            ("timeout 60 just soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("nohup just run &", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("xargs -I{} kill {}", Level::Deny, &["agents never pattern-kill (kill with pids from pgrep, ps or xargs); stop only a pid you own, such as the lock owner's pid with a TERM (rule 11)"], false),
+            ("sh -c 'just soak'", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ],
+        );
+    }
+
+    #[test]
+    fn team_rules_for_a_team_lead_match_python() {
+        let ctx = Ctx {
+            team: "team-fix".to_string(),
+            ..Ctx::default()
+        };
+        check_rows_as(
+            "lead",
+            &ctx,
+            &[
+            ("just soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("just --dry-run soak", Level::None, &[], false),
+            ("just -f other/justfile run", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("just build", Level::None, &[], false),
+            ("qemu-system-aarch64 -M virt", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("qemu-system-aarch64 --version", Level::None, &[], false),
+            ("cargo run -p aios-tools -- soak runs=1", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("aios soak --classify log.txt", Level::None, &[], false),
+            ("aios soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("$AIOS soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("bash scripts/agent/qemu-lock.sh run --team team-fix -- just soak", Level::Deny, &["team leads route boots to their verifier (rule 11)"], false),
+            ("bash scripts/agent/qemu-lock.sh status", Level::None, &[], false),
+            ("scripts/soak-qemu.sh", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("scripts/soak-qemu.sh --classify x", Level::None, &[], false),
+            ("./w.sh run --team x -- echo hi", Level::Deny, &["team leads route boots to their verifier (rule 11)"], false),
+            ("pkill qemu", Level::Deny, &["never pattern-kill QEMU; TERM the lock owner's pid (rule 11)"], false),
+            ("killall -9 qemu-system-aarch64", Level::Deny, &["never pattern-kill QEMU; TERM the lock owner's pid (rule 11)"], false),
+            ("kill 123", Level::None, &[], false),
+            ("kill $PID", Level::None, &[], false),
+            ("kill $(pgrep qemu)", Level::Ask, &["kill with pids found by pattern (pgrep, ps or xargs) can hit QEMU; TERM the lock owner's pid instead (rule 11)"], false),
+            ("rustup update", Level::Ask, &["rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)"], false),
+            ("rustup toolchain install nightly", Level::Ask, &["rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)"], false),
+            ("rustup target add x", Level::None, &[], false),
+            ("rustup show", Level::None, &[], false),
+            ("cargo +nightly build", Level::None, &[], false),
+            ("rustc +stable -V", Level::None, &[], false),
+            ("git reset --hard HEAD", Level::Ask, &["git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)"], false),
+            ("git commit -m x", Level::None, &[], false),
+            ("git -c core.worktree=/x commit -m x", Level::None, &[], false),
+            ("GIT_DIR=/x git commit -m x", Level::None, &[], false),
+            ("git switch -C x", Level::Ask, &["git switch -C can discard uncommitted changes or reset a branch"], false),
+            ("timeout 60 just soak", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("nohup just run &", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
+            ("xargs -I{} kill {}", Level::Ask, &["kill with pids found by pattern (pgrep, ps or xargs) can hit QEMU; TERM the lock owner's pid instead (rule 11)"], false),
+            ("sh -c 'just soak'", Level::Deny, &["every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)"], false),
             ],
         );
     }

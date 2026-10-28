@@ -18,6 +18,7 @@ use super::repo::{Repo, Repos};
 use super::sed_rule::{run_positions, SED_NAMES};
 use super::shell::{parse_commands, Command, Expanded, ParseError, MAX_DEPTH, RESERVED};
 use super::shlex;
+use super::team_rules::is_qemu_script;
 use super::verdict::{self, Tag, Verdict};
 
 /// The largest script, body or request file the guard reads (`FILE_LIMIT`).
@@ -431,7 +432,16 @@ impl<'c> Analyzer<'c> {
         }
         if head == "source" || head == "." {
             if idx + 1 < words.len() {
-                self.analyze_script(&words[idx + 1], state, depth, cmd, false)?;
+                self.analyze_script(
+                    &words[idx + 1],
+                    state,
+                    depth,
+                    cmd,
+                    false,
+                    &words[idx + 2..],
+                    &flags[idx + 2..],
+                    &BTreeSet::new(),
+                )?;
             }
             return Ok(());
         }
@@ -480,6 +490,9 @@ impl<'c> Analyzer<'c> {
                     }
                     return Ok(());
                 }
+                if self.check_team_command(words, flags, k, cmd, state, depth, &via)? {
+                    return Ok(());
+                }
                 if SED_NAMES.contains(&name) && runs.contains(&k) {
                     self.check_sed(words, flags, k, cmd, state, &via)?;
                 }
@@ -495,7 +508,14 @@ impl<'c> Analyzer<'c> {
                 return Ok(self.analyze_gh(&words[k + 1..], cmd, &cwd, runs)?);
             }
             if SHELLS.contains(&name) {
-                return self.analyze_shell(&words[k + 1..], &flags[k + 1..], cmd, state, depth);
+                return self.analyze_shell(
+                    &words[k + 1..],
+                    &flags[k + 1..],
+                    cmd,
+                    state,
+                    depth,
+                    &via,
+                );
             }
             if INTERPRETERS.contains(&name) {
                 let cwd = state.cwd.clone();
@@ -527,7 +547,16 @@ impl<'c> Analyzer<'c> {
                 return Ok(());
             }
             if k == idx && words[k].contains('/') {
-                return self.analyze_script(&words[k], state, depth, cmd, true);
+                return self.analyze_script(
+                    &words[k],
+                    state,
+                    depth,
+                    cmd,
+                    true,
+                    &words[k + 1..],
+                    &flags[k + 1..],
+                    &BTreeSet::new(),
+                );
             }
         }
         Ok(())
@@ -605,7 +634,8 @@ impl<'c> Analyzer<'c> {
         }
     }
 
-    /// A shell run with `args` (`flags`: their expansion state).
+    /// A shell run with `args` (`flags`: their expansion state). `via` holds
+    /// the wrappers that run it (xargs appends to a script's argv).
     fn analyze_shell(
         &mut self,
         args: &[String],
@@ -613,6 +643,7 @@ impl<'c> Analyzer<'c> {
         cmd: &Command,
         state: &mut State,
         depth: usize,
+        via: &BTreeSet<String>,
     ) -> Flow {
         let cwd = state.cwd.clone();
         let mut i = 0;
@@ -654,7 +685,16 @@ impl<'c> Analyzer<'c> {
             break;
         }
         if i < args.len() && args[i] != "-" {
-            return self.analyze_script(&args[i], state, depth, cmd, false);
+            return self.analyze_script(
+                &args[i],
+                state,
+                depth,
+                cmd,
+                false,
+                &args[i + 1..],
+                &flags[i + 1..],
+                via,
+            );
         }
         if !cmd.heredocs.is_empty() {
             for body in &cmd.heredocs {
@@ -662,7 +702,7 @@ impl<'c> Analyzer<'c> {
             }
         } else if !cmd.stdin_files.is_empty() {
             for path in &cmd.stdin_files {
-                self.analyze_script(path, state, depth, cmd, false)?;
+                self.analyze_script(path, state, depth, cmd, false, &[], &[], &BTreeSet::new())?;
             }
         } else if cmd.piped_in {
             self.verdict.ask(
@@ -673,7 +713,9 @@ impl<'c> Analyzer<'c> {
         Ok(())
     }
 
-    /// A script run as `path`.
+    /// A script run with `argv`; `flags` is their expansion state, `via` the
+    /// wrappers that run it.
+    #[allow(clippy::too_many_arguments)]
     pub fn analyze_script(
         &mut self,
         path: &str,
@@ -681,7 +723,13 @@ impl<'c> Analyzer<'c> {
         depth: usize,
         cmd: &Command,
         shebang: bool,
+        argv: &[String],
+        flags: &[Expanded],
+        via: &BTreeSet<String>,
     ) -> Flow {
+        if is_qemu_script(path, argv) {
+            return self.check_qemu_script(path, argv, flags, cmd, state, depth, shebang, via);
+        }
         if unresolved(path) {
             self.opaque(
                 state,
