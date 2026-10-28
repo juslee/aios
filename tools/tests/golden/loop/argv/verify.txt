@@ -15,27 +15,18 @@ dontAsk
 --settings
 /state/pr-7/stage-settings.json
 --tools
-Read,Grep,Glob,Bash
+Read,Grep,Glob
 --allowedTools
 Read
 Grep
 Glob
-Bash(git diff:*)
-Bash(git log:*)
-Bash(git show:*)
 --disallowedTools
+Bash
 Edit
 Write
 Agent
 WebFetch
 WebSearch
-Bash(gh *)
-Bash(git commit*)
-Bash(git push*)
-Bash(cargo *)
-Bash(just *)
-Bash(*aios*)
-Bash(*qemu*)
 --strict-mcp-config
 --mcp-config
 {"mcpServers":{}}

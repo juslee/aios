@@ -5,7 +5,9 @@
 //! [`ENV_ALLOWLIST`]. The prompt goes in on stdin and stdout is kept in the
 //! round's `round-01-<stage>.json`. The flags are pinned by the Task 1 probes
 //! (D1 isolation, D2 `dontAsk`): the toolset (`--tools`) is the control, and
-//! the deny list is a speed bump.
+//! the deny list is a speed bump. The toolset has no Bash: an allowed `git
+//! diff`, `git log` or `git show` can still write a file (`--output`), so the
+//! git output a stage needs is gathered in Rust and put in its prompt.
 //!
 //! [`parse_envelope`] maps `claude --output-format json` output to a
 //! [`StageResult`]; it is a pure function over the bytes, so the recorded
@@ -155,35 +157,18 @@ impl ClaudeCli {
         words(&mut argv, &["--restricted", "--disable-slash-commands"]);
         words(&mut argv, &["--permission-mode", "dontAsk", "--settings"]);
         argv.push(call.settings.clone().into_os_string());
-        words(&mut argv, &["--tools", "Read,Grep,Glob,Bash"]);
-        words(
-            &mut argv,
-            &[
-                "--allowedTools",
-                "Read",
-                "Grep",
-                "Glob",
-                "Bash(git diff:*)",
-                "Bash(git log:*)",
-                "Bash(git show:*)",
-            ],
-        );
+        words(&mut argv, &["--tools", "Read,Grep,Glob"]);
+        words(&mut argv, &["--allowedTools", "Read", "Grep", "Glob"]);
         words(
             &mut argv,
             &[
                 "--disallowedTools",
+                "Bash",
                 "Edit",
                 "Write",
                 "Agent",
                 "WebFetch",
                 "WebSearch",
-                "Bash(gh *)",
-                "Bash(git commit*)",
-                "Bash(git push*)",
-                "Bash(cargo *)",
-                "Bash(just *)",
-                "Bash(*aios*)",
-                "Bash(*qemu*)",
             ],
         );
         words(

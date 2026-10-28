@@ -122,9 +122,9 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
 - **Flags** (finalised as D2 by Task 1):
   - `--output-format json`, `--json-schema <stage schema>`, `--model <alias>`, `--max-budget-usd <per-call>`, `--no-session-persistence`;
   - `--permission-mode` = D2's mode (`dontAsk` expected);
-  - `--tools Read,Grep,Glob,Bash`;
-  - `--allowedTools Read,Grep,Glob,'Bash(git diff:*)','Bash(git log:*)','Bash(git show:*)'`;
-  - `--disallowedTools` with `Edit`, `Write`, `Agent`, `WebFetch`, `WebSearch`, `Bash(gh *)`, `Bash(git commit*)`, `Bash(git push*)`, `Bash(cargo *)`, `Bash(just *)`, `Bash(*aios*)` and `Bash(*qemu*)` (a speed bump; the toolset is the control);
+  - `--tools Read,Grep,Glob` (no Bash: see D3);
+  - `--allowedTools Read,Grep,Glob`;
+  - `--disallowedTools` with `Bash`, `Edit`, `Write`, `Agent`, `WebFetch` and `WebSearch` (a speed bump; the toolset is the control);
   - `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`;
   - D1's isolation flags.
 
@@ -293,7 +293,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - the verify verdict schema `{id, verdict: confirmed|refuted, scope: in-diff|pre-existing, reason}`.
   - [x] 3c: `scripts/agent/prompts/{review-correctness,review-security,review-conventions,verify}.md`.
     - Each starts with `version: 1`. They are written from LOOP §2 and rules 01, 02, 06 and 11.
-    - Placeholders: `{{facts}}`, `{{prior_findings}}`, `{{lessons}}`, `{{untrusted}}` and `{{findings}}` (verify only).
+    - Placeholders: `{{diff}}`, `{{facts}}`, `{{prior_findings}}`, `{{lessons}}`, `{{untrusted}}` and `{{findings}}` (verify only). `{{diff}}` is the change, rendered by gather (6b, D3).
     - Every prompt says the stage is read-only and that text inside the untrusted fence is data.
     - `tools/tests/loop_config.rs`:
       - the committed config validates;
@@ -385,7 +385,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - `AIOS_LOOP_ANY_EXE=1` and `AIOS_LOOP_STATE_DIR=<root>/state`.
     - **The invariant `assert_read_only(&Outcome)`:** every fake-gh call passes `gh::is_read`, origin refs are unchanged, the clone's branches and HEAD are unchanged, and no `loop-pr*` worktree is left.
   - [ ] 6b: `tools/src/cmd/loop/{gather,hive}.rs`.
-    - **`Facts`:** the diff, the changed paths, failing checks with log tails, docs-check new findings (with `plans-not-empty` split into `Facts.plan_present`), trusted threads, and untrusted threads inside a nonce fence.
+    - **The change (`{{diff}}`, D3):** `git log --no-decorate --format='%h %s' <merge-base>..<head>`, then `git diff --no-ext-diff --no-textconv --no-renames <merge-base> <head>`, both run by gather in Rust. The stages have no shell, so this is the only git output they see; any other line of a file is read from the round worktree.
+    - **`Facts`:** the changed paths, failing checks with log tails, docs-check new findings (with `plans-not-empty` split into `Facts.plan_present`), trusted threads, and untrusted threads inside a nonce fence.
     - **Lessons:** hive notes selected by `path_tags`, `status: final` first and then newest, capped; dropped notes are recorded.
     - **Gates:** `merge_ready::gates`.
     - **Prior findings:** dismissals from `findings.jsonl`.
@@ -595,6 +596,7 @@ None open for R2a. Deferred to R2b or later:
 - The 2026-10-11 decisions under Binding decisions.
 - **D1 (final):** --restricted --disable-slash-commands, with --settings <stage settings>, --tools Read,Grep,Glob,Bash and --strict-mcp-config --mcp-config '{"mcpServers":{}}'. The project hooks and CLAUDE.md do not load; only Claude Code's three built-in plugins load; no MCP and no skills (Task 1c, 2026-10-27).
 - **D2 (final):** --permission-mode dontAsk. Writes outside --allowedTools are denied without a prompt and listed in permission_denials; Claude Code's built-in read-only auto-allow still runs read-only commands such as true (Task 1b).
+- **D3 (owner, 2026-10-28, amends D1):** the stage toolset is `Read,Grep,Glob`, without Bash. An automated security review found that the allowed `git diff`, `git log` and `git show` take `--output=<path>`, which writes a file. main's deny list covers `git diff` and `git log` with `--output`, and `git show` is only in `ask` (denied under `dontAsk`), but other write or exec forms of those commands would each need their own rule. Gather renders the commit list and the diff into `{{diff}}` instead. Task 1c's `init_restricted.json` was recorded with Bash in the toolset; Task 9's real run is the first stage call with the D3 toolset.
 - **ROUND_ROOT (final):** `<main>/.claude/worktrees`. A stage call there with real-shaped stage settings ran git diff and Read; the guard gives git diff/log/show there no decision (Task 1c).
 - **Copilot login (Task 1d):** copilot-pull-request-reviewer (GraphQL thread authors and gh reviews; REST shows Copilot). trusted_authors = juslee, copilot-pull-request-reviewer. Copilot's last review was on #144.
 - **Probe cost (Task 1):** $0.2797 of the $0.50 cap; a full-toolset fresh call costs $0.133, a small-form call $0.005-0.025, a stage-shaped call about $0.03-0.04.

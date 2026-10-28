@@ -25,6 +25,7 @@ R2 builds this loop in Rust. These points override the text below where they dif
 - In R2a, verdicts are only reported, never written to GitHub.
 - Trusted authors are the owner and Copilot. `claude[bot]` cannot post, because `.github/workflows/claude-code-review.yml` grants `pull-requests: read` (line 29).
 - Model aliases are `sonnet`, `opus` and `fable`.
+- Stages get `Read`, `Grep` and `Glob` only, with no Bash (owner, 2026-10-28): an allowed `git diff` or `git log` can write a file through `--output`. Gather puts the PR's commit list and diff in the prompt.
 - The main ruleset requires 6 checks, not 5.
 
 ## Context

@@ -68,6 +68,7 @@ fn every_prompt_has_a_version_and_only_known_placeholders() {
         let text = read(&rel);
         assert_eq!(text.lines().next(), Some("version: 1"), "{rel}");
         let mut allowed: BTreeSet<&str> = [
+            "{{diff}}",
             "{{facts}}",
             "{{prior_findings}}",
             "{{lessons}}",
@@ -84,6 +85,7 @@ fn every_prompt_has_a_version_and_only_known_placeholders() {
             "{rel}: {found:?} not within {allowed:?}"
         );
         for needed in [
+            "{{diff}}",
             "{{facts}}",
             "{{prior_findings}}",
             "{{lessons}}",
@@ -103,6 +105,7 @@ fn every_prompt_stays_short_and_read_only() {
         assert!(text.lines().count() <= 80, "{rel} is over 80 lines");
         assert!(text.contains("read-only"), "{rel}");
         assert!(text.contains("untrusted fence"), "{rel}");
+        assert!(!text.contains("git diff"), "{rel} names a git command");
     }
 }
 
