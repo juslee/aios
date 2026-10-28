@@ -315,21 +315,15 @@ fn setup_ops(name: &str) -> Vec<Value> {
 /// Apply one operation step.
 fn apply(root: &Root, op: &Value) {
     let path = |key: &str| PathBuf::from(root.expand(op[key].as_str().expect("a path")));
+    let args = || -> Vec<String> {
+        strings(&op["args"])
+            .iter()
+            .map(|a| root.expand(a))
+            .collect()
+    };
     match op["op"].as_str().expect("an op") {
-        "git" => {
-            let args: Vec<String> = strings(&op["args"])
-                .iter()
-                .map(|a| root.expand(a))
-                .collect();
-            git(root, &path("cwd"), &args);
-        }
-        "git-fail" => {
-            let args: Vec<String> = strings(&op["args"])
-                .iter()
-                .map(|a| root.expand(a))
-                .collect();
-            git_failing(root, &path("cwd"), &args);
-        }
+        "git" => git(root, &path("cwd"), &args()),
+        "git-fail" => git_failing(root, &path("cwd"), &args()),
         "write" => {
             let p = path("path");
             let data = match (op.get("text"), op.get("base64")) {
@@ -403,6 +397,20 @@ pub fn wrap(mut command: String, form: &str, times: u64) -> String {
     command
 }
 
+/// A Bash check's command, wrapped as the hook receives it; `None` for any
+/// other check.
+fn bash_command(check: &Value) -> Option<String> {
+    let command = check.get("bash")?.as_str().expect("a command").to_string();
+    Some(match check.get("wrap") {
+        Some(w) => wrap(
+            command,
+            w["form"].as_str().expect("a form"),
+            w["times"].as_u64().expect("times"),
+        ),
+        None => command,
+    })
+}
+
 /// A check's hook stdin and the environment it adds.
 pub fn hook_input(root: &Root, check: &Value) -> (Vec<u8>, Vec<(String, String)>) {
     let env: Vec<(String, String)> = check
@@ -414,15 +422,7 @@ pub fn hook_input(root: &Root, check: &Value) -> (Vec<u8>, Vec<(String, String)>
                 .collect()
         })
         .unwrap_or_default();
-    let stdin = if let Some(command) = check.get("bash") {
-        let mut command = command.as_str().expect("a command").to_string();
-        if let Some(w) = check.get("wrap") {
-            command = wrap(
-                command,
-                w["form"].as_str().expect("a form"),
-                w["times"].as_u64().expect("times"),
-            );
-        }
+    let stdin = if let Some(command) = bash_command(check) {
         let mut payload = Map::new();
         payload.insert("tool_name".into(), json!("Bash"));
         payload.insert(
@@ -531,18 +531,7 @@ pub fn bash_commands(all: &[Scenario]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for s in all {
-        for check in s.checks() {
-            let Some(command) = check.get("bash").and_then(Value::as_str) else {
-                continue;
-            };
-            let mut command = command.to_string();
-            if let Some(w) = check.get("wrap") {
-                command = wrap(
-                    command,
-                    w["form"].as_str().expect("a form"),
-                    w["times"].as_u64().expect("times"),
-                );
-            }
+        for command in s.checks().filter_map(bash_command) {
             if seen.insert(command.clone()) {
                 out.push(command);
             }

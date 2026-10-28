@@ -9,7 +9,7 @@
 //! - `aios_guard_reproduces_goldens`: the Rust port (`aios guard`) prints them
 //!   byte for byte too: the same exit code, stdout and stderr on every check,
 //!   once the golden stderr drops the Python interpreter's own warning records
-//!   (`python_warnings`), which are not guard output.
+//!   (`PYTHON_WARNINGS`), which are not guard output.
 //! - `record` (ignored): `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test
 //!   guard_parity -- --ignored record` rewrites the goldens from the Python guard.
 //! - `python_parses_like_the_shell_table`: the Python guard's `parse_commands`
@@ -21,6 +21,7 @@ mod common;
 mod guard_support;
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use guard_support::{
     bash_commands, golden_dir, python_guard, python_parse, read_goldens, replay, scenarios,
@@ -162,7 +163,7 @@ fn aios_guard_reproduces_goldens() {
     let argv = [env!("CARGO_BIN_EXE_aios"), "guard"];
     let outcomes = common::parallel_map(&all, |s| replay(s, &argv));
     assert_reproduces_goldens("aios guard", &all, &outcomes, |o| Outcome {
-        stderr: python_warnings().replace_all(&o.stderr, "").into_owned(),
+        stderr: PYTHON_WARNINGS.replace_all(&o.stderr, "").into_owned(),
         ..o
     });
 }
@@ -172,12 +173,12 @@ fn aios_guard_reproduces_goldens() {
 /// Python 3.13 prints a `DeprecationWarning` for `re.split`'s positional
 /// `maxsplit` in `yaml_scalar` on every frontmatter read; the interpreter
 /// writes it, not the guard, so the port has no such line.
-fn python_warnings() -> regex::Regex {
+static PYTHON_WARNINGS: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(
         r"(?m)^\{REPO\}/\.claude/hooks/git-push-guard\.py:[0-9]+: DeprecationWarning: [^\n]*\n  [^\n]*\n",
     )
     .unwrap()
-}
+});
 
 /// Every scenario's outcomes (`who` ran them) equal its goldens, each golden
 /// seen through `view`.
