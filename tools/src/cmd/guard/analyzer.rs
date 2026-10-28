@@ -20,6 +20,7 @@ use super::shell::{parse_commands, Command, Expanded, ParseError, MAX_DEPTH, RES
 use super::shlex;
 use super::team_rules::is_qemu_script;
 use super::verdict::{self, Tag, Verdict};
+use crate::pystr;
 
 /// The largest script, body or request file the guard reads (`FILE_LIMIT`).
 pub const FILE_LIMIT: u64 = 256 * 1024;
@@ -127,6 +128,21 @@ pub struct State {
     pub pid_vars: HashSet<String>,
 }
 
+impl State {
+    /// The variables `expand_vars` resolves in one command: the text's own, plus
+    /// `PWD` (the command's cwd) and `HOME` (`~`) unless the text set them.
+    pub fn known_vars(&self) -> Result<HashMap<String, String>, Fault> {
+        let mut known = self.vars.clone();
+        known
+            .entry("PWD".to_string())
+            .or_insert_with(|| self.cwd.clone());
+        if !known.contains_key("HOME") {
+            known.insert("HOME".to_string(), pyos::expanduser("~")?);
+        }
+        Ok(known)
+    }
+}
+
 pub struct Analyzer<'c> {
     pub verdict: Verdict,
     pub ctx: &'c Ctx,
@@ -210,21 +226,21 @@ fn split_ws_max(s: &str, maxsplit: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut count = maxsplit;
     while count > 0 {
-        while i < n && crate::pystr::is_space(chars[i]) {
+        while i < n && pystr::is_space(chars[i]) {
             i += 1;
         }
         if i == n {
             break;
         }
         let j = i;
-        while i < n && !crate::pystr::is_space(chars[i]) {
+        while i < n && !pystr::is_space(chars[i]) {
             i += 1;
         }
         out.push(chars[j..i].iter().collect());
         count -= 1;
     }
     if i < n {
-        while i < n && crate::pystr::is_space(chars[i]) {
+        while i < n && pystr::is_space(chars[i]) {
             i += 1;
         }
         if i != n {
@@ -304,13 +320,7 @@ impl<'c> Analyzer<'c> {
     }
 
     pub fn analyze_command(&mut self, cmd: &Command, state: &mut State, depth: usize) -> Flow {
-        let mut known = state.vars.clone();
-        known
-            .entry("PWD".to_string())
-            .or_insert_with(|| state.cwd.clone());
-        if !known.contains_key("HOME") {
-            known.insert("HOME".to_string(), pyos::expanduser("~")?);
-        }
+        let known = state.known_vars()?;
         let flags = &cmd.expanded;
         let words: Vec<String> = cmd
             .words
@@ -480,15 +490,16 @@ impl<'c> Analyzer<'c> {
                 if name == "tmux" {
                     return self.analyze_tmux(&words[k + 1..], state, depth);
                 }
-                if name == "screen" && words[k + 1..].iter().any(|w| w == "stuff") {
+                if name == "screen" {
                     // screen -X stuff TEXT types TEXT into the session's shell.
                     let after = &words[k + 1..];
-                    let at = after.iter().position(|w| w == "stuff").expect("stuff");
-                    let cwd = state.cwd.clone();
-                    for text in &after[at + 1..] {
-                        self.analyze_text(text, &cwd, depth + 1, false)?;
+                    if let Some(at) = after.iter().position(|w| w == "stuff") {
+                        let cwd = state.cwd.clone();
+                        for text in &after[at + 1..] {
+                            self.analyze_text(text, &cwd, depth + 1, false)?;
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
                 if self.check_team_command(words, flags, k, cmd, state, depth, &via)? {
                     return Ok(());
@@ -527,8 +538,8 @@ impl<'c> Analyzer<'c> {
                         ),
                     );
                 }
-                let program = words[k + 1..].iter().chain(&cmd.heredocs);
-                if program.into_iter().any(|w| pattern::inline_git_push(w)) {
+                let mut program = words[k + 1..].iter().chain(&cmd.heredocs);
+                if program.any(|w| pattern::inline_git_push(w)) {
                     self.verdict.ask(
                         verdict::SHELL,
                         format!(
@@ -625,7 +636,7 @@ impl<'c> Analyzer<'c> {
         let parts = if names.len() > 1 {
             split_ws_max(line, names.len() - 1)
         } else {
-            vec![crate::pystr::strip(line).to_string()]
+            vec![pystr::strip(line).to_string()]
         };
         for (k, n) in names.into_iter().enumerate() {
             state
@@ -751,15 +762,8 @@ impl<'c> Analyzer<'c> {
         if !pyos::isfile(&full) {
             return Ok(());
         }
-        match pyos::getsize(&full) {
-            Ok(size) if size <= FILE_LIMIT => {}
-            Ok(_) | Err(ReadError::Os) => return Ok(()),
-            Err(ReadError::Fault(f)) => return Err(f.into()),
-        }
-        let text = match pyos::read_text_replace(&full) {
-            Ok(text) => text,
-            Err(ReadError::Os) => return Ok(()),
-            Err(ReadError::Fault(f)) => return Err(f.into()),
+        let Some(text) = read_capped(&full)? else {
+            return Ok(());
         };
         if text.contains('\0') {
             return Ok(()); // a binary
@@ -916,17 +920,22 @@ impl<'c> Analyzer<'c> {
         if path == "-" || unresolved(path) {
             return Ok(None);
         }
-        let full = pyos::join(cwd, &pyos::expanduser(path)?);
-        match pyos::getsize(&full) {
-            Ok(size) if size <= FILE_LIMIT => {}
-            Ok(_) | Err(ReadError::Os) => return Ok(None),
-            Err(ReadError::Fault(f)) => return Err(f),
-        }
-        match pyos::read_text_replace(&full) {
-            Ok(text) => Ok(Some(text)),
-            Err(ReadError::Os) => Ok(None),
-            Err(ReadError::Fault(f)) => Err(f),
-        }
+        read_capped(&pyos::join(cwd, &pyos::expanduser(path)?))
+    }
+}
+
+/// The text of the file at `full` (errors replaced), or `None` when it is
+/// missing, unreadable or over [`FILE_LIMIT`].
+fn read_capped(full: &str) -> Result<Option<String>, Fault> {
+    match pyos::getsize(full) {
+        Ok(size) if size <= FILE_LIMIT => {}
+        Ok(_) | Err(ReadError::Os) => return Ok(None),
+        Err(ReadError::Fault(f)) => return Err(f),
+    }
+    match pyos::read_text_replace(full) {
+        Ok(text) => Ok(Some(text)),
+        Err(ReadError::Os) => Ok(None),
+        Err(ReadError::Fault(f)) => Err(f),
     }
 }
 
@@ -963,12 +972,19 @@ fn command_lookup(args: &[String]) -> bool {
 /// line it runs. Returns that command line (with the arguments after STRING) as
 /// shell text, or `None` when there is no -S.
 fn env_split_string(args: &[String]) -> Option<String> {
-    let rest_quoted = |from: usize| -> Vec<String> {
-        args.get(from..)
-            .unwrap_or(&[])
-            .iter()
-            .map(|r| shlex::quote(r))
-            .collect()
+    // STRING, then the arguments from `from` on, quoted.
+    let command_line = |value: String, from: usize| -> String {
+        let rest = args.get(from..).unwrap_or(&[]);
+        std::iter::once(value)
+            .chain(rest.iter().map(|r| shlex::quote(r)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // The next argument, as an option's value (empty past the end).
+    let next_arg = |i: &mut usize| -> String {
+        let value = args.get(*i).cloned().unwrap_or_default();
+        *i += 1;
+        value
     };
     let mut i = 0;
     while i < args.len() {
@@ -983,13 +999,9 @@ fn env_split_string(args: &[String]) -> Option<String> {
                 let value = if eq {
                     value.to_string()
                 } else {
-                    let v = args.get(i).cloned().unwrap_or_default();
-                    i += 1;
-                    v
+                    next_arg(&mut i)
                 };
-                let mut parts = vec![value];
-                parts.extend(rest_quoted(i));
-                return Some(parts.join(" "));
+                return Some(command_line(value, i));
             }
             if !eq
                 && !name.is_empty()
@@ -1005,16 +1017,12 @@ fn env_split_string(args: &[String]) -> Option<String> {
         for (pos, &ch) in cluster.iter().enumerate() {
             let rest: String = cluster[pos + 1..].iter().collect();
             if ch == 'S' {
-                let rest = if rest.is_empty() {
-                    let v = args.get(i).cloned().unwrap_or_default();
-                    i += 1;
-                    v
+                let value = if rest.is_empty() {
+                    next_arg(&mut i)
                 } else {
                     rest
                 };
-                let mut parts = vec![rest];
-                parts.extend(rest_quoted(i));
-                return Some(parts.join(" "));
+                return Some(command_line(value, i));
             }
             if "uCPa".contains(ch) {
                 if rest.is_empty() {

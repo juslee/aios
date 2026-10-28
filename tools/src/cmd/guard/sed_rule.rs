@@ -774,13 +774,7 @@ impl Analyzer<'_> {
                 }
             }
         }
-        let mut known = state.vars.clone();
-        known
-            .entry("PWD".to_string())
-            .or_insert_with(|| cwd.to_string());
-        if !known.contains_key("HOME") {
-            known.insert("HOME".to_string(), pyos::expanduser("~")?);
-        }
+        let known = state.known_vars()?;
         // A digit or `-` is a descriptor (2>&1, >&-), not a file.
         let files = |targets: &[String]| -> Vec<String> {
             targets
