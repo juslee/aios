@@ -10,11 +10,12 @@
 //! dismissals for this PR. It calls no model and writes nothing.
 //!
 //! Text that an outsider can write is kept apart from the instructions of a
-//! prompt. A CI log tail and the text of a thread from an author who is not
-//! trusted are rendered only by [`Facts::render_untrusted`], inside a [`Fence`]
-//! whose nonce is drawn per round, so a comment cannot close it. "Trusted"
-//! means the author is listed in the config: the thread text is then part of
-//! the facts, and an unresolved thread becomes a deterministic confirmed
+//! prompt. A CI log tail and every review comment whose own author is not
+//! trusted (a reply to a trusted thread included) are rendered only by
+//! [`Facts::render_untrusted`], inside a [`Fence`] whose nonce is drawn per
+//! round, so a comment cannot close it. "Trusted" means the comment's author is
+//! listed in the config: that text is part of the facts, and an unresolved
+//! thread that a trusted author opened becomes a deterministic confirmed
 //! finding. The change is the PR's own code; the threat model accepts that a PR
 //! can steer a lens.
 
@@ -31,6 +32,7 @@ use super::gate::cross_check;
 use super::git::{changed_paths, git_in, merge_base};
 use super::github::{
     issues_needs_human, pr_checks, review_threads, run_log_failed, PrView, Slug, Thread,
+    ThreadComment,
 };
 use super::hive::{self, Lessons};
 use super::state::{Disposition, FindingRecord, State};
@@ -297,8 +299,12 @@ pub struct ThreadFact {
     /// The author of the thread's first comment (`ghost` for a deleted account).
     pub author: String,
     pub outdated: bool,
+    /// The thread was opened by a trusted author. Only a trusted thread is a
+    /// deterministic finding; rendering is decided per comment: a trusted
+    /// fact holds the trusted comments, an untrusted fact the others, so
+    /// this flag never moves text across the fence.
     pub trusted: bool,
-    /// Every comment as `(author, body)`.
+    /// The comments of this fact as `(author, body)`.
     pub comments: Vec<(String, String)>,
 }
 
@@ -761,40 +767,56 @@ fn failing_checks(ctx: &GatherCtx<'_>) -> Result<Vec<FailingCheck>> {
     Ok(out)
 }
 
-/// The unresolved threads of `threads`, split by whether the author of the
-/// first comment is in `trusted` (GitHub logins compare case-insensitively).
+/// The unresolved threads of `threads`, split by whether the author of each
+/// comment is in `trusted` (GitHub logins compare case-insensitively; a comment
+/// with no author is untrusted).
+///
+/// Trust is judged per comment, because anyone can reply to a thread that a
+/// trusted author opened. A thread whose first comment is trusted yields a
+/// trusted [`ThreadFact`] with only the trusted comments, and, when it has
+/// other comments, an untrusted one with the same id and place and only those
+/// comments. A thread whose first comment is untrusted is wholly untrusted.
 pub fn split_threads(trusted: &[String], threads: &[Thread]) -> (Vec<ThreadFact>, Vec<ThreadFact>) {
+    let is_trusted = |author: &Option<String>| {
+        author
+            .as_deref()
+            .is_some_and(|a| trusted.iter().any(|t| t.eq_ignore_ascii_case(a)))
+    };
     let mut t = Vec::new();
     let mut u = Vec::new();
     for thread in threads.iter().filter(|t| !t.is_resolved) {
-        let author = thread
+        let opener_trusted = thread
             .comments
             .first()
-            .and_then(|c| c.author.clone())
-            .unwrap_or_else(|| "ghost".to_string());
-        let is_trusted = trusted.iter().any(|a| a.eq_ignore_ascii_case(&author));
-        let fact = ThreadFact {
+            .is_some_and(|c| is_trusted(&c.author));
+        let fact = |comments: Vec<(String, String)>, trusted: bool| ThreadFact {
             id: thread.id.clone(),
             path: thread.path.clone(),
             line: thread.line,
-            author,
-            outdated: thread.is_outdated,
-            trusted: is_trusted,
-            comments: thread
+            author: thread
                 .comments
-                .iter()
-                .map(|c| {
-                    (
-                        c.author.clone().unwrap_or_else(|| "ghost".to_string()),
-                        c.body.clone(),
-                    )
-                })
-                .collect(),
+                .first()
+                .and_then(|c| c.author.clone())
+                .unwrap_or_else(|| "ghost".to_string()),
+            outdated: thread.is_outdated,
+            trusted,
+            comments,
         };
-        if is_trusted {
-            t.push(fact);
-        } else {
-            u.push(fact);
+        let pair = |c: &ThreadComment| {
+            (
+                c.author.clone().unwrap_or_else(|| "ghost".to_string()),
+                c.body.clone(),
+            )
+        };
+        if !opener_trusted {
+            u.push(fact(thread.comments.iter().map(pair).collect(), false));
+            continue;
+        }
+        let (own, others): (Vec<_>, Vec<_>) =
+            thread.comments.iter().partition(|c| is_trusted(&c.author));
+        t.push(fact(own.into_iter().map(pair).collect(), true));
+        if !others.is_empty() {
+            u.push(fact(others.into_iter().map(pair).collect(), false));
         }
     }
     (t, u)
@@ -803,7 +825,6 @@ pub fn split_threads(trusted: &[String], threads: &[Thread]) -> (Vec<ThreadFact>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::pr_loop::github::ThreadComment;
 
     fn thread(id: &str, resolved: bool, author: Option<&str>, body: &str) -> Thread {
         Thread {
@@ -856,6 +877,63 @@ mod tests {
             ["t2", "t4"]
         );
         assert_eq!(u[1].author, "ghost");
+    }
+
+    fn bare_facts() -> Facts {
+        Facts {
+            pr: 7,
+            head: "a".repeat(40),
+            base: "b".repeat(40),
+            head_moved: false,
+            change: String::new(),
+            change_truncated: false,
+            changed: BTreeSet::new(),
+            gated: vec![],
+            cross_check: None,
+            kernel_core: false,
+            adds_unsafe: false,
+            failing_checks: vec![],
+            docs: vec![],
+            plan_present: false,
+            trusted_threads: vec![],
+            untrusted_threads: vec![],
+            open_threads: Some(1),
+            issues: Some(vec![]),
+            gate_issues: vec![],
+            lessons: Lessons::default(),
+            prior: vec![],
+            notes: vec![],
+            fence: Fence::fixed("nonce0123"),
+        }
+    }
+
+    #[test]
+    fn an_untrusted_reply_in_a_trusted_thread_is_rendered_only_inside_the_fence() {
+        let comment = |author: Option<&str>, body: &str| ThreadComment {
+            database_id: None,
+            author: author.map(str::to_string),
+            body: body.to_string(),
+        };
+        let mut th = thread("PRRT_a", false, Some("juslee"), "TRUSTED-NOTE");
+        th.comments
+            .push(comment(Some("mallory"), "REPLY-INJECTION"));
+        th.comments.push(comment(None, "GHOST-INJECTION"));
+        th.comments
+            .push(comment(Some("JUSLEE"), "TRUSTED-FOLLOWUP"));
+        let (t, u) = split_threads(&["juslee".to_string()], &[th]);
+        assert_eq!((t.len(), u.len()), (1, 1));
+        assert_eq!(t[0].id, u[0].id);
+        assert!(t[0].trusted && !u[0].trusted);
+        let mut facts = bare_facts();
+        facts.trusted_threads = t;
+        facts.untrusted_threads = u;
+        let trusted = facts.render();
+        let untrusted = facts.render_untrusted();
+        assert!(trusted.contains("TRUSTED-NOTE") && trusted.contains("TRUSTED-FOLLOWUP"));
+        assert!(!trusted.contains("REPLY-INJECTION") && !trusted.contains("GHOST-INJECTION"));
+        assert!(untrusted.contains("REPLY-INJECTION") && untrusted.contains("GHOST-INJECTION"));
+        assert!(!untrusted.contains("TRUSTED-NOTE") && !untrusted.contains("TRUSTED-FOLLOWUP"));
+        assert!(untrusted.contains("PRRT_a (tools/a.rs:7"), "{untrusted}");
     }
 
     #[test]

@@ -271,6 +271,8 @@ pub struct ThreadSpec {
     pub author: String,
     pub body: String,
     pub resolved: bool,
+    /// Later comments of the thread as `(author, body)`.
+    pub replies: Vec<(String, String)>,
 }
 
 /// One PR of a scenario. `files` are committed on the PR branch.
@@ -705,17 +707,25 @@ fn threads_json(pr: &PrSpec) -> Value {
         .iter()
         .enumerate()
         .map(|(i, t)| {
+            let mut comments = vec![json!({
+                "databaseId": 100 + i as u64,
+                "author": {"login": t.author},
+                "body": t.body,
+            })];
+            for (j, (author, body)) in t.replies.iter().enumerate() {
+                comments.push(json!({
+                    "databaseId": 200 + 10 * i as u64 + j as u64,
+                    "author": {"login": author},
+                    "body": body,
+                }));
+            }
             json!({
                 "id": format!("PRRT_{}_{i}", pr.number),
                 "isResolved": t.resolved,
                 "isOutdated": false,
                 "path": "notes/demo.txt",
                 "line": 1,
-                "comments": {"nodes": [{
-                    "databaseId": 100 + i as u64,
-                    "author": {"login": t.author},
-                    "body": t.body,
-                }]},
+                "comments": {"nodes": comments},
             })
         })
         .collect();
