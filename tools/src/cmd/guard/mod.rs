@@ -291,4 +291,40 @@ mod tests {
             ],
         );
     }
+
+    /// Two gaps of the Python guard that the port keeps (plan D1), pinned at
+    /// today's decision for R5c: a script named soak-qemu.sh run with
+    /// --classify is never read, and a qemu-lock.sh outside the trusted
+    /// locations decides its `run` as the wrapper, so the QEMU start it
+    /// wraps is not checked. Python gives `none` for every row.
+    #[test]
+    fn qemu_script_gaps_are_pinned() {
+        let dir = std::env::temp_dir().join(format!("aios-guard-gaps-{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(
+            bin.join("soak-qemu.sh"),
+            "#!/bin/sh\ngit push origin main\n",
+        )
+        .expect("script");
+        std::fs::write(bin.join("qemu-lock.sh"), "#!/bin/sh\nexec \"$@\"\n").expect("script");
+        let cwd = dir.to_string_lossy().into_owned();
+        let agent = Ctx {
+            agent_id: Some(serde_json::json!("a")),
+            agent_type: Some(serde_json::json!("verifier")),
+            ..Ctx::default()
+        };
+        for ctx in [&Ctx::default(), &agent] {
+            for command in [
+                "bin/soak-qemu.sh --classify x",
+                "bin/qemu-lock.sh run --team team-fix -- qemu-system-aarch64 -M virt",
+                "bash bin/qemu-lock.sh run --team team-fix -- just soak",
+            ] {
+                let v = decide(command, &cwd, ctx).expect("no fault");
+                assert_eq!(v.level, Level::None, "{command} {ctx:?}");
+                assert!(v.reasons.is_empty(), "{command} {ctx:?}");
+            }
+        }
+        std::fs::remove_dir_all(&dir).expect("remove the temp dir");
+    }
 }
