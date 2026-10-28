@@ -60,6 +60,17 @@ pub enum Severity {
     Nit,
 }
 
+impl Severity {
+    /// The name the schema and the reports use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::MustFix => "must-fix",
+            Severity::ShouldFix => "should-fix",
+            Severity::Nit => "nit",
+        }
+    }
+}
+
 /// One lens finding, as the lens schema describes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

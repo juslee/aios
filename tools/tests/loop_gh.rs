@@ -338,3 +338,25 @@ fn every_read_argv_passes_is_read() {
     run_log_failed(&r, 1).expect("log");
     assert_eq!(r.calls.borrow().len(), 8);
 }
+
+#[test]
+fn no_loop_source_spawns_gh_itself() {
+    // Every gh call of the loop goes through `gh::GhCli`, which runs `is_read`
+    // before it spawns; a `Command::new("gh")` anywhere under cmd/loop would
+    // skip that.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/cmd/loop");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).expect("read src/cmd/loop") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().is_some_and(|e| e == "rs") {
+            seen += 1;
+            let text = std::fs::read_to_string(&path).expect("read a source file");
+            assert!(
+                !text.contains("Command::new(\"gh\")"),
+                "{} spawns gh itself",
+                path.display()
+            );
+        }
+    }
+    assert!(seen >= 10, "only {seen} source files found");
+}

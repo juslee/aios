@@ -370,8 +370,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - a Supervisor timeout gives `Timeout`.
   - [x] 5c: Verify: `cargo test -p aios-tools --test loop_state --test loop_claude` passes; TG.
 
-- [ ] **Task 6: Gather, review, verify, verdict and the CLI** [FG]
-  - [ ] 6a: `tools/tests/common/loop_fake.rs` and `tools/tests/loop_fakes.rs`.
+- [x] **Task 6: Gather, review, verify, verdict and the CLI** [FG]
+  - [x] 6a: `tools/tests/common/loop_fake.rs` and `tools/tests/loop_fakes.rs`.
     - **`FAKE_CLAUDE`** (`#!/bin/sh`):
       - it finds its root from `$0`;
       - it logs argv, env and stdin under `<root>/claude-calls/<SEQ>/`;
@@ -384,7 +384,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - the jail;
       - `AIOS_LOOP_ANY_EXE=1` and `AIOS_LOOP_STATE_DIR=<root>/state`.
     - **The invariant `assert_read_only(&Outcome)`:** every fake-gh call passes `gh::is_read`, origin refs are unchanged, the clone's branches and HEAD are unchanged, and no `loop-pr*` worktree is left.
-  - [ ] 6b: `tools/src/cmd/loop/{gather,hive}.rs`.
+  - [x] 6b: `tools/src/cmd/loop/{gather,hive}.rs`.
     - **The change (`{{diff}}`, D3):** `git log --no-decorate --format='%h %s' <merge-base>..<head>`, then `git diff --no-ext-diff --no-textconv --no-renames <merge-base> <head>`, both run by gather in Rust. The stages have no shell, so this is the only git output they see; any other line of a file is read from the round worktree.
     - **`Facts`:** the changed paths, failing checks with log tails, docs-check new findings (with `plans-not-empty` split into `Facts.plan_present`), trusted threads, and untrusted threads inside a nonce fence.
     - **Lessons:** hive notes selected by `path_tags`, `status: final` first and then newest, capped; dropped notes are recorded.
@@ -392,18 +392,18 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - **Prior findings:** dismissals from `findings.jsonl`.
 
     docs-check is a child of `current_exe()` (on Linux, `/proc/self/exe`, as in brief), run in the round worktree. Notes come from `origin/main` blobs, or from `--tree`.
-  - [ ] 6c: `tools/src/cmd/loop/review.rs`.
+  - [x] 6c: `tools/src/cmd/loop/review.rs`.
     - The 3 lenses run under `std::thread::scope`, then verify.
     - Model choice follows the config.
     - A fable error gets one opus retry, recorded as `fallback`. Any other stage failure gets one retry, then the PR is `incomplete`.
     - Deterministic findings are confirmed without verify.
     - Spend is summed against `per_pr_usd`; going over makes the PR `incomplete`, and no more stages run.
-  - [ ] 6d: `tools/src/cmd/loop/verdict.rs`. `ready` is as in Approach step 5. `classify(blockers)` splits brief's blocker texts:
+  - [x] 6d: `tools/src/cmd/loop/verdict.rs`. `ready` is as in Approach step 5. `classify(blockers)` splits brief's blocker texts:
     - **pending:** `N pending`; `mergeable: UNKNOWN`; `merge state: UNKNOWN`; `BLOCKED` or `UNSTABLE` only together with `N pending`; `merge state: BEHIND`.
     - **needs-human:** every other text, any gated path, any cross-check mismatch, and a review that is not `clean`.
 
     An unknown blocker text is needs-human (fail closed). Unit tests call `merge_ready::blockers` on crafted values, so the classes cover every text it can produce.
-  - [ ] 6e: `tools/src/cmd/loop/mod.rs` and `main.rs`.
+  - [x] 6e: `tools/src/cmd/loop/mod.rs` and `main.rs`.
     - **CLI:** `Command::Loop` (after `Hook`, before `Soak`) with the subcommand `review <PR>... [--tree DIR] [--budget-usd N]`.
     - **Output per PR:**
 
@@ -422,7 +422,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - 129/130/131/143: a signal. The stage process group is stopped and the run directory is kept.
 
       The binary never exits 3.
-  - [ ] 6f: `tools/tests/loop_scenarios.rs`. Every scenario runs `assert_read_only`. The scenarios:
+  - [x] 6f: `tools/tests/loop_scenarios.rs`. Every scenario runs `assert_read_only`. The scenarios:
     1. clean PR, ready;
     2. one confirmed in-diff finding;
     3. a finding refuted by verify;
@@ -451,14 +451,14 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     26. two PRs in one run, in order.
 
     Goldens go under `tools/tests/golden/loop/`.
-  - [ ] 6g: Mutation checks, not committed:
+  - [x] 6g: Mutation checks, not committed:
     - replace `GhCli` with a raw `Command::new("gh")` → `loop_gh` and `assert_read_only` fail;
     - make `is_tools_input` case-sensitive → `loop_gate` fails;
     - classify `N pending` as needs-human → scenario 11 fails;
     - skip the kill switch → scenario 18 fails.
 
     The worker reports one failing `test result` line per mutation, and `git status --porcelain -- tools/src` is empty after it restores the code.
-  - [ ] 6h: Verify: `cargo test -p aios-tools --test loop_scenarios --test loop_fakes` passes; T(`--lib pr_loop::verdict`) ≥ 3; TG.
+  - [x] 6h: Verify: `cargo test -p aios-tools --test loop_scenarios --test loop_fakes` passes; T(`--lib pr_loop::verdict`) ≥ 3; TG.
 
 - [ ] **Task 7: The shim's strict `loop)` arm** [FG: `.claude/hooks/aios`]
   - [ ] 7a: Tests first, appended to `tools/tests/shim.rs`:
@@ -588,6 +588,10 @@ None open for R2a. Deferred to R2b or later:
 - Copilot has not reviewed recent PRs, so trusted threads come mostly from the owner.
 - `gh pr checks --json` exits 0 even when a check fails (gh 2.103.3, checked by the lead on #279), so `github::pr_checks` treats a non-zero exit as an error.
 - Task 3a's `per_call_usd` must cover a stage-shaped call (about $0.04): set it to `0.15`, and keep `per_pr_usd` 5.
+- Task 6: an earlier writer's uncommitted draft (based before D3) was reused for `gather`, `hive`, `review`, `verdict` and the `Interrupts` wiring in `claude.rs`. Dropped from it: prompt `version: 2` and its "fence every thread" wording (the committed prompts stay `version: 1` and D3's `{{diff}}`); `gate.rs`'s non-ASCII fail-closed rule and `display_path`/`gate_of`/`is_gated` (Task 4 scope; the gate is `is_tools_input` as the plan says; a Unicode case-fold gap on APFS remains a residual, a candidate for R2b); its `DocsCheck` trait and `AIOS_LOOP_DOCS_CHECK` hook (the scenarios run the real `aios docs-check` in a tiny repo).
+- Task 6: `Facts.render` puts a trusted author's thread text in the facts; only CI log tails and untrusted authors' threads are inside the nonce fence (as Approach step 2 says). The verify prompt gets the lens findings inside the fence.
+- Task 6: a change over 192 KiB (commit list plus diff) is cut, and the cut makes the review `incomplete` (a lens that never saw the whole diff cannot say `clean`).
+- Task 6: `origin/main` is as of the last fetch: the loop fetches only `pull/<n>/head` (a write to FETCH_HEAD only), so the merge-base and the prompt blobs are as fresh as the caller's fetch.
 
 ## Decisions Made
 
@@ -599,6 +603,14 @@ None open for R2a. Deferred to R2b or later:
 - **D3 (owner, 2026-10-28, amends D1):** the stage toolset is `Read,Grep,Glob`, without Bash. An automated security review found that the allowed `git diff`, `git log` and `git show` take `--output=<path>`, which writes a file. main's deny list covers `git diff` and `git log` with `--output`, and `git show` is only in `ask` (denied under `dontAsk`), but other write or exec forms of those commands would each need their own rule. Gather renders the commit list and the diff into `{{diff}}` instead. Task 1c's `init_restricted.json` was recorded with Bash in the toolset; Task 9's real run is the first stage call with the D3 toolset.
 - **ROUND_ROOT (final):** `<main>/.claude/worktrees`. A stage call there with real-shaped stage settings ran git diff and Read; the guard gives git diff/log/show there no decision (Task 1c).
 - **Copilot login (Task 1d):** copilot-pull-request-reviewer (GraphQL thread authors and gh reviews; REST shows Copilot). trusted_authors = juslee, copilot-pull-request-reviewer. Copilot's last review was on #144.
+- **Task 6 (worker, 2026-10-28):**
+  - The verdict reads the PR again after the review (`pr_view`, then the kill switch once more): a changed head is `pending`, and the blockers are those of the PR as it is at the end, not at the start of a round that can take minutes. A stop at that point is exit 4 with no verdict.
+  - The stdout block adds `  incomplete: <why>` and `  note: <what could not be read>` lines, and `  - ... (pre-existing)` lines after the confirmed ones; `report: <path>` lines (json, md) come last.
+  - An internal error of one PR (a gh read fails, the fetch fails) ends the run with exit 2; a refusal (other team, fork, a held lock) goes on to the next PR and exits 1; a stop or a signal ends the run at once.
+  - `jail::FAKE_CLAUDE_TOOLS` shrank to `cat env mkdir sleep` and `FAKE_TOOLS` to 8 entries, to what the fakes run (no-legacy); the loop scenarios link `git` and `kill` into their jail themselves.
+  - `assert_read_only` also checks each gh call's environment (`LOOP_GH_ENV`) and working directory, and the claude toolset; `loop_gh.rs` gains `no_loop_source_spawns_gh_itself`. Both exist so the 6g mutation that swaps `GhCli` for a raw `Command::new("gh")` fails a test.
+  - A 27th scenario (not in the list): a `mode=quiet` QEMU lock stops the run with exit 4.
+  - `cargo test --lib pr_loop::verdict` matches the real module path `cmd::pr_loop::verdict::tests::*` by substring.
 - **Probe cost (Task 1):** $0.2797 of the $0.50 cap; a full-toolset fresh call costs $0.133, a small-form call $0.005-0.025, a stage-shaped call about $0.03-0.04.
 
 ## Lessons Learned

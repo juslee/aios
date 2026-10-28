@@ -235,7 +235,7 @@ fn jail_covers_every_script_command() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(fakes, set(jail::FAKE_TOOLS));
-    assert_eq!(jail::FAKE_TOOLS.len(), 10);
+    assert_eq!(jail::FAKE_TOOLS.len(), 8);
     // Every tool resolves under hermetic.
     let rig = rig("jail-cover");
     let tools = [jail::ORACLE_TOOLS, jail::FAKE_TOOLS].concat().join(" ");

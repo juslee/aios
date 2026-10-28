@@ -1,0 +1,5 @@
+pr #1 @ <SHA7>: findings (1 confirmed, 0 pre-existing; $0.25)
+  - [must-fix] notes/demo.txt:1 other: demo is wrong
+merge: needs-human: the review has confirmed findings
+report: <ROOT>/state/pr-1/run-<EPOCH>/report.json
+report: <ROOT>/state/pr-1/run-<EPOCH>/report.md

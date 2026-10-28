@@ -1,0 +1,4 @@
+pr #1 @ <SHA7>: clean (0 confirmed, 0 pre-existing; $0.15)
+merge: ready
+report: <ROOT>/state/pr-1/run-<EPOCH>/report.json
+report: <ROOT>/state/pr-1/run-<EPOCH>/report.md

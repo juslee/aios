@@ -6,6 +6,7 @@ pub mod agent;
 pub mod fake_gh;
 pub mod fixture;
 pub mod jail;
+pub mod loop_fake;
 pub mod soak;
 pub mod soak_fake;
 

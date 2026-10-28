@@ -17,12 +17,14 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use super::schema::{lens_schema, verify_schema, LensOutput, VerifyOutput, CATEGORY_TAXONOMY};
+use crate::cmd::soak::signals::Interrupts;
 use crate::proc::Supervisor;
 
 /// The only variables a stage inherits.
@@ -38,6 +40,9 @@ pub const ENV_ALLOWLIST: [&str; 7] = [
 
 /// SIGKILL follows SIGTERM by this long when a stage is over its time limit.
 const KILL_AFTER: Duration = Duration::from_secs(10);
+
+/// How often a running stage looks at the clock and at the terminal signals.
+const POLL: Duration = Duration::from_millis(20);
 
 /// What a stage's `--json-schema` and output check are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +104,10 @@ pub enum StageResult {
     OverBudget { cost: f64 },
     /// The stage ran out of time and was stopped.
     Timeout,
+    /// A terminal signal arrived: the stage's process group was stopped (or
+    /// never started). The value is the exit status the run ends with (129
+    /// SIGHUP, 130 SIGINT, 131 SIGQUIT, 143 SIGTERM).
+    Interrupted(u8),
 }
 
 /// Something that runs stages: [`ClaudeCli`], or a fake in a test. `Sync`
@@ -108,10 +117,21 @@ pub trait Claude: Sync {
 }
 
 /// The real runner.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClaudeCli {
     program: OsString,
     env: Vec<(&'static str, OsString)>,
+    interrupts: Option<Arc<Interrupts>>,
+}
+
+impl std::fmt::Debug for ClaudeCli {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaudeCli")
+            .field("program", &self.program)
+            .field("env", &self.env)
+            .field("interrupts", &self.interrupts.is_some())
+            .finish()
+    }
 }
 
 impl ClaudeCli {
@@ -137,7 +157,21 @@ impl ClaudeCli {
         Ok(ClaudeCli {
             program: program.into(),
             env,
+            interrupts: None,
         })
+    }
+
+    /// Watch `interrupts` while a stage runs: once a signal has arrived the
+    /// stage's process group gets SIGTERM (SIGKILL after the grace period) and
+    /// the call returns [`StageResult::Interrupted`]. A stage that has not
+    /// started yet is not started.
+    pub fn with_interrupts(mut self, interrupts: Arc<Interrupts>) -> ClaudeCli {
+        self.interrupts = Some(interrupts);
+        self
+    }
+
+    fn interrupted(&self) -> Option<u8> {
+        self.interrupts.as_ref().and_then(|i| i.pending())
     }
 
     /// The arguments of `call`, in the pinned order.
@@ -193,6 +227,9 @@ impl ClaudeCli {
     }
 
     fn exec(&self, call: &StageCall) -> Result<StageResult> {
+        if let Some(code) = self.interrupted() {
+            return Ok(StageResult::Interrupted(code));
+        }
         let dir = call
             .out
             .parent()
@@ -215,7 +252,18 @@ impl ClaudeCli {
         let mut child = Supervisor::spawn(cmd, call.timeout, KILL_AFTER)
             .with_context(|| format!("cannot start {}", self.program.to_string_lossy()))?;
         child.warn_as("aios loop");
-        let code = child.wait()?;
+        let code = loop {
+            child.service()?;
+            if let Some(code) = child.exit_code() {
+                break code;
+            }
+            if let Some(signal) = self.interrupted() {
+                child.terminate()?;
+                child.wait()?;
+                return Ok(StageResult::Interrupted(signal));
+            }
+            std::thread::sleep(POLL);
+        };
         // 124 and 137 are what Supervisor reports after its limit; a child
         // that died of SIGKILL on its own also reads 137, so the clock decides.
         if matches!(code, 124 | 137) && started.elapsed() >= call.timeout {

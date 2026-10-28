@@ -1,5 +1,6 @@
 //! `aios`: AIOS host tooling: `aios brief` and `aios checkpoint` (R3), `aios docs-check`
-//! (R1), `aios hook` (model routing) and `aios soak` (R4); later PRs add subcommands.
+//! (R1), `aios hook` (model routing), `aios loop` (R2) and `aios soak` (R4); later PRs
+//! add subcommands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -29,6 +30,8 @@ enum Command {
     DocsCheck(aios_tools::cmd::docs_check::Args),
     /// Claude Code hook programs: read one JSON payload on stdin; exit 0 on every payload (a usage error exits 2)
     Hook(aios_tools::cmd::hook::Args),
+    /// The PR loop: model-assisted review of pull requests, read-only (see `aios loop review --help`)
+    Loop(aios_tools::cmd::pr_loop::Args),
     /// Boot AIOS repeatedly under QEMU and classify every boot (see `aios soak --help`)
     #[command(name = "soak", disable_help_flag = true)]
     Soak(aios_tools::cmd::soak::Args),
@@ -68,6 +71,32 @@ fn main() -> ExitCode {
                 }
                 (Err(err), _) => {
                     eprintln!("docs-check: {err:#}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        Command::Loop(args) => {
+            let cwd = match std::env::current_dir() {
+                Ok(dir) => dir,
+                Err(err) => {
+                    eprintln!("loop: cannot read the current directory: {err}");
+                    return ExitCode::from(2);
+                }
+            };
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            let stderr = std::io::stderr();
+            let mut err = stderr.lock();
+            let result = aios_tools::cmd::pr_loop::run(&args, &cwd, &mut out, &mut err);
+            let flushed = out.flush();
+            match (result, flushed) {
+                (Ok(code), Ok(())) => ExitCode::from(code),
+                (Ok(_), Err(e)) => {
+                    let _ = writeln!(err, "loop: cannot write output: {e}");
+                    ExitCode::from(2)
+                }
+                (Err(e), _) => {
+                    let _ = writeln!(err, "loop: {e:#}");
                     ExitCode::from(2)
                 }
             }
