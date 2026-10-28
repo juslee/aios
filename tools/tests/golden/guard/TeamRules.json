@@ -1,0 +1,973 @@
+{
+  "test_hook_internal_error_in_a_team_rule_asks": [],
+  "test_hook_reads_agent_identity_and_team_from_the_payload_and_environment": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: only the verifier starts QEMU (rule 11)\"}}\n",
+      "stderr": "git-push-guard: only the verifier starts QEMU (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: team leads route boots to their verifier (rule 11)\"}}\n",
+      "stderr": "git-push-guard: team leads route boots to their verifier (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_hook_routes_agent_and_enterworktree_payloads": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never call EnterWorktree: isolation: \\\"worktree\\\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never call EnterWorktree: isolation: \"worktree\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: team leads stay in the main checkout (rule 11)\"}}\n",
+      "stderr": "git-push-guard: team leads stay in the main checkout (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r1_classify_starts_no_qemu": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    }
+  ],
+  "test_r1_other_commands_start_no_qemu": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r1_row1_lock_found_from_a_temporary_worktree": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\"}}\n",
+      "stderr": "git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\n"
+    }
+  ],
+  "test_r1_row1_lock_held_denies_everyone": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\"}}\n",
+      "stderr": "git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\"}}\n",
+      "stderr": "git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\"}}\n",
+      "stderr": "git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\n"
+    }
+  ],
+  "test_r1_row1_lock_without_owner_file": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: QEMU lock held (owner file not written yet)\"}}\n",
+      "stderr": "git-push-guard: QEMU lock held (owner file not written yet)\n"
+    }
+  ],
+  "test_r1_row2_only_the_wrapper_starts_qemu": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    }
+  ],
+  "test_r1_row3_agent_without_a_type_is_refused": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: cannot tell which agent this is; only the verifier starts QEMU\"}}\n",
+      "stderr": "git-push-guard: cannot tell which agent this is; only the verifier starts QEMU\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: cannot tell which agent this is; only the verifier starts QEMU\"}}\n",
+      "stderr": "git-push-guard: cannot tell which agent this is; only the verifier starts QEMU\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: cannot tell which agent this is; only the verifier starts QEMU\"}}\n",
+      "stderr": "git-push-guard: cannot tell which agent this is; only the verifier starts QEMU\n"
+    }
+  ],
+  "test_r1_row4_verifier_may_run_the_wrapper": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r1_row5_other_agents_never_boot": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: only the verifier starts QEMU (rule 11)\"}}\n",
+      "stderr": "git-push-guard: only the verifier starts QEMU (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: only the verifier starts QEMU (rule 11)\"}}\n",
+      "stderr": "git-push-guard: only the verifier starts QEMU (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: only the verifier starts QEMU (rule 11)\"}}\n",
+      "stderr": "git-push-guard: only the verifier starts QEMU (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: only the verifier starts QEMU (rule 11)\"}}\n",
+      "stderr": "git-push-guard: only the verifier starts QEMU (rule 11)\n"
+    }
+  ],
+  "test_r1_row6_team_leads_route_boots_to_the_verifier": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: team leads route boots to their verifier (rule 11)\"}}\n",
+      "stderr": "git-push-guard: team leads route boots to their verifier (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: team leads route boots to their verifier (rule 11)\"}}\n",
+      "stderr": "git-push-guard: team leads route boots to their verifier (rule 11)\n"
+    }
+  ],
+  "test_r1_row7_solo_main_thread_may_run_the_wrapper": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r2_read_only_rustup_is_fine": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r2_row1_pattern_kills_of_qemu_are_denied_to_everyone": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\"}}\n",
+      "stderr": "git-push-guard: never pattern-kill QEMU; TERM the lock owner's pid (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r2_row2_agents_never_change_the_toolchain": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\"}}\n",
+      "stderr": "git-push-guard: agents never change the toolchain; report a missing toolchain to your lead (rule 11, Toolchain)\n"
+    }
+  ],
+  "test_r2_row3_main_thread_toolchain_changes_ask": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: rustup would change the toolchain, which only Renovate PRs and the owner do (rule 11, Toolchain)\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "test_r3_odd_agent_types_are_not_project_files": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r3_row1_named_spawn_without_isolation_is_denied": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r3_row2_ignores_nested_and_body_keys": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+    }
+  ],
+  "test_r3_row2_writers_need_call_level_isolation": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: kernel-dev is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: kernel-dev is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: kernel-dev is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: kernel-dev is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+    }
+  ],
+  "test_r3_row3_project_agents_set_their_own_model": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: the agent's frontmatter sets its model; do not pass model (rule 11)\"}}\n",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: the agent's frontmatter sets its model; do not pass model (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r3_row4_otherwise_no_opinion": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r3_task_is_the_same_tool": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: a named spawn without isolation becomes a teammate where agent teams are on; drop the name or add isolation (rule 11)\n"
+    }
+  ],
+  "test_r3_unreadable_agent_file_asks": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: cannot read the agent definition {ROOT}/work/.claude/agents/broken.md (UnicodeDecodeError); the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: cannot read the agent definition {ROOT}/work/.claude/agents/broken.md (IsADirectoryError); the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "test_r3_wrong_typed_fields_ask": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the Agent call's subagent_type is not a string; the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the Agent call's name is not a string; the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the Agent call's isolation is not a string; the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the Agent call's model is not a string; the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the Agent call has no readable input; the guard cannot judge the spawn\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "test_r4_row1_agents_never_enter_a_worktree": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never call EnterWorktree: isolation: \\\"worktree\\\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never call EnterWorktree: isolation: \"worktree\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never call EnterWorktree: isolation: \\\"worktree\\\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never call EnterWorktree: isolation: \"worktree\" already placed you in your own worktree; start with git reset --hard <tip> (rule 11)\n"
+    }
+  ],
+  "test_r4_row2_team_leads_stay_in_the_main_checkout": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: team leads stay in the main checkout (rule 11)\"}}\n",
+      "stderr": "git-push-guard: team leads stay in the main checkout (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: team leads stay in the main checkout (rule 11)\"}}\n",
+      "stderr": "git-push-guard: team leads stay in the main checkout (rule 11)\n"
+    }
+  ],
+  "test_r4_row3_the_owners_main_thread_may_enter": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r4_row4_agents_reset_only_their_own_temporary_worktree": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; --git-dir --work-tree in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; --git-dir --work-tree in this command can point git at another one (rule 11)\n"
+    }
+  ],
+  "test_r4_row4_allows_the_first_command_in_the_temporary_worktree": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r4_row4_directory_name_alone_is_not_enough": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    }
+  ],
+  "test_r4_row5_main_thread_reset_hard_asks": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_r4_row6_agents_never_commit_in_the_main_checkout": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    }
+  ],
+  "test_r4_row6_other_places_and_callers_are_fine": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

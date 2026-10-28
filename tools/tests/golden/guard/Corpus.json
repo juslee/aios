@@ -1,0 +1,1183 @@
+{
+  "adv_r2": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0 set in this command can change where git pushes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: GIT_CONFIG_PARAMETERS set in this command can change where git pushes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0 set in this command can change where git pushes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: an earlier command in this text can switch branches (checkout); the guard resolves HEAD and upstreams as they were before the command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: an earlier command in this text can switch branches (switch); the guard resolves HEAD and upstreams as they were before the command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: an earlier command in this text changes git config or branches (config); the guard resolves pushes against the repository as it was before the command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git p is not a git command; it may be an alias defined earlier in this command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: a shell reads commands from a pipe; the guard cannot see what it runs\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: eval runs a command string that comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: a push remote or refspec comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git rebase --exec runs a shell command after each commit\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git rebase --exec runs a shell command after each commit\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git fetch --upload-pack runs a command for local and ssh remotes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: awk program runs shell commands (system, getline or print to a pipe)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: awk program runs shell commands (system, getline or print to a pipe); awk program text mentions git push; the guard cannot resolve it\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: eval runs a command string that comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: inline -c/--config-env on git push can change where it pushes; push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: inline -c/--config-env on git push can change where it pushes; push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: --force-with-lease rewrites 'renovate/rust-1.x', which is outside claude/*\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: push deletes remote ref 'claude/old'\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git checkout --force can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git switch --discard-changes can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git switch --discard-changes can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git branch -D/-f/-M/-C can drop commits or overwrite a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git fetch with a forced refspec can reset local branches\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/pulls/5/merge changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/pulls/5/merge changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/contents/x changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api POST repos/juslee/aios/merges is not a routine comment, reply, review or reaction on this repository\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api graphql reads query from m.graphql, which the guard cannot read\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh issue comment mentions @claude, which starts the Claude workflow\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh issue create reads ~/.config/gh/hosts.yml, which is outside the repository and the session scratchpad (the repository is public); gh issue create targets attacker/x, not juslee/aios\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr create targets attacker/x, not juslee/aios\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh run download writes artifacts to .git/hooks, outside the working tree or into a directory whose files run as code\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git add --force stages files that .gitignore excludes, such as secrets\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git commit --file reads ~/.config/gh/hosts.yml, which is outside the repository and the session scratchpad (the repository is public)\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "adv_r3": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0 set in this command can change where git pushes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: GIT_CONFIG_PARAMETERS set in this command can change where git pushes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0 set in this command can change where git pushes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: an earlier command in this text can switch branches (checkout); the guard resolves HEAD and upstreams as they were before the command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: an earlier command in this text can switch branches (switch); the guard resolves HEAD and upstreams as they were before the command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: an earlier command in this text changes git config or branches (config); the guard resolves pushes against the repository as it was before the command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git p is not a git command; it may be an alias defined earlier in this command\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: a shell reads commands from a pipe; the guard cannot see what it runs\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: eval runs a command string that comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: a push remote or refspec comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git rebase --exec runs a shell command after each commit\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git rebase --exec runs a shell command after each commit\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git fetch --upload-pack runs a command for local and ssh remotes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: awk program runs shell commands (system, getline or print to a pipe)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: awk program runs shell commands (system, getline or print to a pipe); awk program text mentions git push; the guard cannot resolve it\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: eval runs a command string that comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: inline -c/--config-env on git push can change where it pushes; push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: inline -c/--config-env on git push can change where it pushes; push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: --force-with-lease rewrites 'renovate/rust-1.x', which is outside claude/*\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: push deletes remote ref 'claude/old'\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git checkout --force can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git switch --discard-changes can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git switch --discard-changes can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git branch -D/-f/-M/-C can drop commits or overwrite a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git fetch with a forced refspec can reset local branches\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/pulls/5/merge changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/pulls/5/merge changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/contents/x changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api POST repos/juslee/aios/merges is not a routine comment, reply, review or reaction on this repository\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api graphql reads query from m.graphql, which the guard cannot read\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh issue comment mentions @claude, which starts the Claude workflow\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh issue create reads ~/.config/gh/hosts.yml, which is outside the repository and the session scratchpad (the repository is public); gh issue create targets attacker/x, not juslee/aios\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr create targets attacker/x, not juslee/aios\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh run download writes artifacts to .git/hooks, outside the working tree or into a directory whose files run as code\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git add --force stages files that .gitignore excludes, such as secrets\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git commit --file reads ~/.config/gh/hosts.yml, which is outside the repository and the session scratchpad (the repository is public)\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "stage0_cases": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: --force-with-lease rewrites 'renovate/lz4_flex-0.x', which is outside claude/*\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: '+' refspec force-pushes (+claude/x). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: '+' refspec force-pushes (+claude/x). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would delete main ('main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would delete main ('main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'refs/heads/main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'refs/heads/main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'refs/heads/main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'refs/heads/main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: --all/--branches/--mirror pushes every branch, including main. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: --all/--branches/--mirror pushes every branch, including main. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: --all/--branches/--mirror pushes every branch, including main. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: --all/--branches/--mirror pushes every branch, including main. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would delete main ('main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would delete main ('main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: plain force push (--force/-f); use --force-with-lease on a claude/* branch. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: '+' refspec force-pushes (+claude/x). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: '+' refspec force-pushes (+claude/x). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge --admin bypasses branch protection; merging is reserved for the user. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: gh pr merge --admin bypasses branch protection; merging is reserved for the user. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge --admin bypasses branch protection; merging is reserved for the user. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: gh pr merge --admin bypasses branch protection; merging is reserved for the user. Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/pulls/170/merge changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PUT repos/juslee/aios/pulls/170/merge changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api graphql calls PullRequestAutoMerge, which changes branches, merges or repository settings\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api graphql calls mergePullRequest, which changes branches, merges or repository settings\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api DELETE repos/juslee/aios/rulesets/123 changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh api PATCH repos/juslee/aios/git/refs/heads/main changes GitHub state\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git switch -f can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git branch -D/-f/-M/-C can drop commits or overwrite a branch\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git worktree remove --force deletes uncommitted changes in that worktree\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: gh pr merge: merging is reserved for the user\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

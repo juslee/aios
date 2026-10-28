@@ -1,0 +1,202 @@
+{
+  "test_github_changes_ask": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: commits for this push change .github/; CI runs those workflows with repository secrets\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_local_remotes_are_exempt": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: --receive-pack/--exec runs a command for local remotes\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: inline -c/--config-env on git push can change where it pushes; push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: inline -c/--config-env on git push can change where it pushes; push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    }
+  ],
+  "test_routine_agent_pushes_have_no_opinion": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_text_that_only_mentions_push_is_ignored": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_url_rewriting_disables_the_exemption": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    }
+  ]
+}

@@ -1,0 +1,636 @@
+{
+  "s1_directory_changes": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s1_script_cd": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s1_env_chdir_push_on_main": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\"}}\n",
+      "stderr": "git-push-guard: push would update main (destination 'main'). Pushes to main, force pushes, mirror pushes and admin merges are reserved for the user: push a claude/* branch and open a PR instead.\n"
+    }
+  ],
+  "s1_alias_body_cwd": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s2_symlink_dotdot": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s3_stopped_rebase": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git rebase only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents run git rebase only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git rebase only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents run git rebase only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git rebase only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents run git rebase only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    }
+  ],
+  "s4_shared_refs": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s4_branch_rename_from_main": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s5_same_command_checkout": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git checkout -B can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "s6_unlisted_git_commands": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s6_reader_in_main": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "s7_new_directory": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    }
+  ],
+  "s7_leaked_git_dir": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; GIT_DIR in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; GIT_DIR in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: GIT_DIR in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: GIT_DIR in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    }
+  ],
+  "s8_stale_cwd_texts": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    }
+  ],
+  "s8_detached_own_worktree": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    }
+  ],
+  "s8_stale_cwd_in_main": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    }
+  ],
+  "out_of_model_peer_wf": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "c1_wrapper_and_more": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "c1_forged_gitdir": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "c2_wrapper_out_of_model": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: cannot tell where the command qemu-lock.sh run wraps starts (an option word comes from a shell expansion)\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "c2_project_dir_outside_repo": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\"}}\n",
+      "stderr": "git-push-guard: QEMU lock held by team-build/claude/x mode=boot until 2030-03-17 17:46 (rule 11)\n"
+    }
+  ],
+  "c3_kills": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "c4_sed_main": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt (the 's' command)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt ($f comes from a shell expansion and may split into options)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt (option -f)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "c4_sed_worker": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt (the 's' command)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt ($f comes from a shell expansion and may split into options)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: sed may write a protected path (.claude/settings*, .claude/hooks/*): only read-only sed scripts run without a prompt (option -f)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "c4_sed_worker_in_hooks": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "c5_wrapper_copy_lock": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: the command name comes from a shell expansion the guard cannot resolve\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "c6_parse_failure_gate": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git-push-guard could not parse the command (unterminated single quote)\"}}\n",
+      "stderr": ""
+    }
+  ]
+}

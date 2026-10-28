@@ -1,0 +1,775 @@
+{
+  "test_a_worktree_moved_onto_a_temporary_path_is_not_one": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    }
+  ],
+  "test_agent_worktrees_keep_the_id_check": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    }
+  ],
+  "test_isolated_workflow_agent_resets_and_commits_in_its_own_worktree": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_look_alike_names_are_not_temporary_worktrees": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "test_main_thread_is_unchanged": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git reset --hard discards uncommitted work; the settings allow rule for it exists only for an isolated agent's first command (rule 11)\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "test_non_isolated_workflow_agent_in_the_main_checkout_is_unchanged": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never run git stash in the main checkout (it moves refs or discards work): you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never run git stash in the main checkout (it moves refs or discards work): you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    }
+  ],
+  "test_ownership_is_by_cwd": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    }
+  ],
+  "test_the_wrapper_in_a_workflow_worktree_is_its_own": [
+    {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\"}}\n",
+      "stderr": "git-push-guard: every QEMU start goes through scripts/agent/qemu-lock.sh run (rule 11)\n"
+    }
+  ],
+  "test_workflow_agent_targeting_another_worktree_is_denied": [
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git stash only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents run git stash only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git branch -D/-f/-M/-C only in their own temporary worktree, the one their cwd is in (rule 11); git branch -D/-f/-M/-C can drop commits or overwrite a branch\"}}\n",
+      "stderr": "git-push-guard: agents run git branch -D/-f/-M/-C only in their own temporary worktree, the one their cwd is in (rule 11); git branch -D/-f/-M/-C can drop commits or overwrite a branch\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git stash only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents run git stash only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git branch -D/-f/-M/-C only in their own temporary worktree, the one their cwd is in (rule 11); git branch -D/-f/-M/-C can drop commits or overwrite a branch\"}}\n",
+      "stderr": "git-push-guard: agents run git branch -D/-f/-M/-C only in their own temporary worktree, the one their cwd is in (rule 11); git branch -D/-f/-M/-C can drop commits or overwrite a branch\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git stash only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents run git stash only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents run git branch -D/-f/-M/-C only in their own temporary worktree, the one their cwd is in (rule 11); git branch -D/-f/-M/-C can drop commits or overwrite a branch\"}}\n",
+      "stderr": "git-push-guard: agents run git branch -D/-f/-M/-C only in their own temporary worktree, the one their cwd is in (rule 11); git branch -D/-f/-M/-C can drop commits or overwrite a branch\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never commit in the main checkout: you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never run git update-ref in the main checkout (it moves refs or discards work): you were spawned without isolation (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never run git update-ref in the main checkout (it moves refs or discards work): you were spawned without isolation (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; GIT_DIR, GIT_WORK_TREE in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; GIT_DIR, GIT_WORK_TREE in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: GIT_DIR, GIT_WORK_TREE in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: GIT_DIR, GIT_WORK_TREE in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; GIT_WORK_TREE in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; GIT_WORK_TREE in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: GIT_WORK_TREE in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: GIT_WORK_TREE in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; GIT_DIR in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; GIT_DIR in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: GIT_DIR in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: GIT_DIR in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; -c core.worktree in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; -c core.worktree in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: -c core.worktree in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: -c core.worktree in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; --work-tree in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; --work-tree in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: --work-tree in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: --work-tree in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree; --git-dir in this command can point git at another one (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree; --git-dir in this command can point git at another one (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents never change where git writes: --git-dir in this command can point git commit at another repository, working tree, index or config (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents never change where git writes: --git-dir in this command can point git commit at another repository, working tree, index or config (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents reset only their own temporary worktree (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents reset only their own temporary worktree (rule 11)\n"
+    },
+    {
+      "exit": 2,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\"}}\n",
+      "stderr": "git-push-guard: agents commit only in their own temporary worktree, the one their cwd is in (rule 11)\n"
+    }
+  ]
+}
