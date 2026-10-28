@@ -2051,9 +2051,9 @@ mod tests {
     use std::vec;
     use std::vec::Vec;
 
-    /// The longest `kernel/src` Rust path today (37 bytes); the fs-walking
+    /// The longest `kernel/src` Rust path today (43 bytes); the fs-walking
     /// test re-checks the message bound against the live tree.
-    const LONGEST_KERNEL_PATH: &str = "kernel/src/arch/aarch64/exceptions.rs";
+    const LONGEST_KERNEL_PATH: &str = "kernel/src/compositor/shell/status_strip.rs";
 
     /// Hazard strings the soak classifier keys on; no tripwire output may
     /// contain them.
@@ -2787,8 +2787,8 @@ mod tests {
         assert_eq!(
             msg,
             "lock re-entry: CURRENT_THREAD[7] on CPU 7 ctx=thread-off \
-             holder=kernel/src/arch/aarch64/exceptions.rs:99999 holder_irqs=off tid=99 \
-             gen=18014398509481983"
+             holder=kernel/src/compositor/shell/status_strip.rs:99999 holder_irqs=off \
+             tid=99 gen=18014398509481983"
         );
     }
 

@@ -1645,7 +1645,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 712 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
+Currently 801 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1738,14 +1738,14 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (712 tests):**
+**Current test distribution (801 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
+| `compositor` | 145 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing (shell keyboard focus drop), title truncation, command/event wire format, `CompositorRequest` factories and per-client `effective_channel`, shell clock/percent formatting, Taskbar layout and pointer hit-test, Super-tap edge detection, Workspace render modes, shell redraw gating, frame-window summary |
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
 | `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
-| `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
