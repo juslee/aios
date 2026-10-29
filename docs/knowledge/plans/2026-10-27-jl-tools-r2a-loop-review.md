@@ -483,8 +483,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - The header gets an `aios loop` paragraph that names both residuals.
     - Verify: `cargo test -p aios-tools --test shim` passes; `sh -n .claude/hooks/aios`; `diff <(git show origin/main:.claude/hooks/aios | shellcheck -s sh -f gcc - | sed -E 's/.*(SC[0-9]+).*/\1/' | sort -u) <(shellcheck -s sh -f gcc .claude/hooks/aios | sed -E 's/.*(SC[0-9]+).*/\1/' | sort -u) | grep -c '^>'` prints `0` (no new shellcheck code); TG.
 
-- [ ] **Task 8: `/justin:review`, and docs** [FG for `.claude/**`]
-  - [ ] 8a: `.claude/skills/justin/skills/review/SKILL.md` (model-invocable).
+- [x] **Task 8: `/justin:review`, and docs** [FG for `.claude/**`]
+  - [x] 8a: `.claude/skills/justin/skills/review/SKILL.md` (model-invocable).
     - It runs `.claude/hooks/aios loop review <PR…>` from the main checkout with the Bash tool's `run_in_background: true` (a run can take more than 10 minutes), then waits for the completion notification.
     - It reports each PR's block, and the report path.
     - **Exit handling:**
@@ -495,12 +495,12 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - **Stopping a running review:** the `STOP` file, the `agent-stop` label, or stopping the background task. Esc does not stop it.
     - It never claims a merge. It says the verdict is advisory and that the owner merges with `/merge-and-cleanup`.
     - It expects one permission prompt per run (the guard asks on the shim spelling).
-  - [ ] 8b: Skill wiring, in one commit with 8a (`harness-tables`):
+  - [x] 8b: Skill wiring, in one commit with 8a (`harness-tables`):
     - `.claude/skills/justin/.claude-plugin/plugin.json`: bump the version and list `/justin:review`;
     - `.claude/CLAUDE.md`: a Skills-table row and the layout skills line;
     - `start/SKILL.md`: propose `/justin:review <n>` for an open PR with unresolved threads or no review yet;
     - `team/SKILL.md` loop step 8: `gh pr ready <n>`, then `/justin:review <n>` (a report), then `/review-pr-comments`.
-  - [ ] 8c: Docs:
+  - [x] 8c: Docs:
     - **`docs/project/agent-loop.md`:**
       - the session-skills table gains `/justin:review`;
       - "Where state lives" gains `aios-agent/loop/`;
@@ -513,7 +513,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - the Open Questions on Option A/B and exit 3 are marked answered (#204, 2026-10-11), and OQ8 (gate widening) stays open for R2b/Stage 5.
     - **Rule 05:** `tools/src/cmd/loop/` and `scripts/agent/{prompts,loop-config.json}`.
     - **The developer guide:** an `aios loop review` subsection near §5.1. Counts wait for the ship pass.
-  - [ ] 8d: Verify:
+  - [x] 8d: Verify:
     - DG;
     - `git -C <W> grep -c 'run_in_background' -- .claude/skills/justin/skills/review/SKILL.md` ≥ 1;
     - `git -C <W> grep -n '/justin:review' -- .claude/skills/justin/skills/start/SKILL.md .claude/skills/justin/skills/team/SKILL.md` prints ≥ 2 lines;

@@ -217,7 +217,8 @@ aios/
 │   ├── rules/            01-code-conventions … 11-teams (auto-loaded)
 │   ├── skills/           generate-phase-doc, implement-phase, review-pr-comments, verify-phase,
 │   │                     write-arch-doc, audit-loop, merge-and-cleanup,
-│   │                     justin:start, justin:brief, justin:doctor, justin:pause, justin:team
+│   │                     justin:start, justin:brief, justin:doctor, justin:pause, justin:team,
+│   │                     justin:review
 │   │                     (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
 │   └── workflows/        audit-loop.js (one audit round; run by /audit-loop)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
@@ -291,6 +292,7 @@ Two attended lead sessions split by domain, `team-build` (harness, tools, CI, fe
 | `/justin:doctor` | Docs/harness health check | Drift report from `just docs-check --all`, grouped by who fixes it; read-only (bare `/doctor` is Claude Code's own) |
 | `/justin:pause` | Before a break or `/clear` (user only) | Writes this session's `.remember/handoff-<key>.md` (`team-build`, `team-fix` or `solo-<name>`), then the WIP checkpoint (`aios checkpoint`) |
 | `/justin:team <build\|fix>` | Team mode, in each lead (user only) | Makes the session the team-build or team-fix lead: checks the session, restores state from its handoff file and team labels, greets the peer, runs the loop |
+| `/justin:review <PR...>` | Review of a named PR, before `/review-pr-comments` | Read-only `aios loop review` in the background: three review lenses and a verify stage per PR, a findings report and an advisory merge verdict; writes nothing to GitHub or git |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
