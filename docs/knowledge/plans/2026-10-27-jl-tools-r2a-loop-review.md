@@ -460,8 +460,8 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     The worker reports one failing `test result` line per mutation, and `git status --porcelain -- tools/src` is empty after it restores the code.
   - [x] 6h: Verify: `cargo test -p aios-tools --test loop_scenarios --test loop_fakes` passes; T(`--lib pr_loop::verdict`) ≥ 3; TG.
 
-- [ ] **Task 7: The shim's strict `loop)` arm** [FG: `.claude/hooks/aios`]
-  - [ ] 7a: Tests first, appended to `tools/tests/shim.rs`:
+- [x] **Task 7: The shim's strict `loop)` arm** [FG: `.claude/hooks/aios`]
+  - [x] 7a: Tests first, appended to `tools/tests/shim.rs`:
     - `loop_refuses_aios_tools_bin_with_exit_3`;
     - `loop_with_a_failing_stale_rebuild_exits_3`;
     - `loop_with_a_dirty_binary_exits_3_naming_the_cause`;
@@ -472,7 +472,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
     - `a_subcommand_named_loopx_is_other`.
 
     Each exit-3 test also asserts an empty stdout and that the fake binary did not run.
-  - [ ] 7b: In the shim:
+  - [x] 7b: In the shim:
     - Before the `AIOS_TOOLS_BIN` branch: `[ "$sub" = loop ] && [ -n "${AIOS_TOOLS_BIN:-}" ] && stop "AIOS_TOOLS_BIN is not used for loop; …"`.
     - A last `loop)` arm in `case $sub`:
       - missing: `build_fg`, then `runnable`;
