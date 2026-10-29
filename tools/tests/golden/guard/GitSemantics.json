@@ -1,0 +1,18 @@
+{
+  "test_heads_main_really_updates_main": [],
+  "test_rebase_exec_abbreviation_really_runs": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git rebase --exec runs a shell command after each commit\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "test_switch_discard_abbreviation_really_discards": [
+    {
+      "exit": 0,
+      "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: git switch --discard-changes can discard uncommitted changes or reset a branch\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "test_upstream_push_default_really_updates_main": []
+}

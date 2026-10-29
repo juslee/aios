@@ -1,4 +1,4 @@
-//! Python `str` semantics that the docs-check port depends on.
+//! Python `str` semantics that the docs-check and guard ports depend on.
 //!
 //! `scripts/docs/check.py` runs on CPython, so the port must strip, split and
 //! slice text exactly as Python does: `str.isspace` (check.py's strips and
@@ -134,6 +134,90 @@ pub fn is_decimal_char(c: char) -> bool {
     c.is_ascii_digit() || (!c.is_ascii() && DECIMAL.is_match(c.encode_utf8(&mut [0; 4])))
 }
 
+/// The characters `str.isdigit()` accepts beyond the decimal digits (Numeric_Type
+/// Digit: superscripts, circled and parenthesised digits, ...), as code point
+/// ranges: `[c for c in range(0x110000) if chr(c).isdigit() and not
+/// chr(c).isdecimal()]` on CPython 3.13 (Unicode 15.1), 128 code points.
+const DIGIT_NOT_DECIMAL: [(u32, u32); 20] = [
+    (0xB2, 0xB3),
+    (0xB9, 0xB9),
+    (0x1369, 0x1371),
+    (0x19DA, 0x19DA),
+    (0x2070, 0x2070),
+    (0x2074, 0x2079),
+    (0x2080, 0x2089),
+    (0x2460, 0x2468),
+    (0x2474, 0x247C),
+    (0x2488, 0x2490),
+    (0x24EA, 0x24EA),
+    (0x24F5, 0x24FD),
+    (0x24FF, 0x24FF),
+    (0x2776, 0x277E),
+    (0x2780, 0x2788),
+    (0x278A, 0x2792),
+    (0x10A40, 0x10A43),
+    (0x10E60, 0x10E68),
+    (0x11052, 0x1105A),
+    (0x1F100, 0x1F10A),
+];
+
+/// `str.isdigit()` for one character: a decimal digit, or Numeric_Type Digit.
+pub fn is_digit_char(c: char) -> bool {
+    is_decimal_char(c)
+        || DIGIT_NOT_DECIMAL
+            .iter()
+            .any(|&(lo, hi)| (lo..=hi).contains(&u32::from(c)))
+}
+
+/// `str.isdigit()`: non-empty and every character a digit. The guard ports it
+/// with this (git-push-guard.py L730, L1415); docs-check keeps `is_decimal` (see the
+/// module doc).
+pub fn is_digit(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_digit_char)
+}
+
+/// `str.isprintable()` for one non-ASCII character: not in the categories Cc,
+/// Cf, Cs, Co, Cn, Zl, Zp or Zs. The `regex` crate's tables are Unicode 16.0, so
+/// a character assigned after the interpreter's Unicode version counts as
+/// printable here and as `Cn` there (no command the guard reads depends on it).
+fn is_printable(c: char) -> bool {
+    static NON_PRINTABLE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\A[\p{C}\p{Zl}\p{Zp}\p{Zs}]\z").expect("valid"));
+    !NON_PRINTABLE.is_match(c.encode_utf8(&mut [0; 4]))
+}
+
+/// `repr(s)` for a `str`: single quotes unless the text has a `'` and no `"`;
+/// `\\`, `\t`, `\n`, `\r` and the quote escaped; other control characters as
+/// `\xNN`, and non-printable non-ASCII ones as `\xNN`, `\uNNNN` or `\UNNNNNNNN`.
+pub fn repr(s: &str) -> String {
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(quote);
+    for c in s.chars() {
+        let code = u32::from(c);
+        match c {
+            _ if c == quote || c == '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ if code < 0x20 || code == 0x7f => out.push_str(&format!("\\x{code:02x}")),
+            _ if code < 0x7f || is_printable(c) => out.push(c),
+            _ if code <= 0xff => out.push_str(&format!("\\x{code:02x}")),
+            _ if code <= 0xffff => out.push_str(&format!("\\u{code:04x}")),
+            _ => out.push_str(&format!("\\U{code:08x}")),
+        }
+    }
+    out.push(quote);
+    out
+}
+
 /// `unicodedata.decimal(c)`, or `None` when `c` is not a decimal digit. Unicode
 /// encodes every decimal digit set as ten consecutive code points from 0 to 9 (a
 /// stability policy), so a maximal run of Nd code points is whole sets end to end
@@ -258,6 +342,25 @@ fn hex_byte(hi: Option<&u8>, lo: Option<&u8>) -> Option<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn repr_matches_python() {
+        // repr(s) on CPython 3.13.
+        for (s, want) in [
+            ("a", "'a'"),
+            ("it's", "\"it's\""),
+            ("say \"hi\" it's", "'say \"hi\" it\\'s'"),
+            ("tab\there", "'tab\\there'"),
+            ("\x7f\x00\x1b", "'\\x7f\\x00\\x1b'"),
+            (
+                "é\u{a0}\u{ad}\u{200b}\u{2028}\u{3000}😀\u{e0001}\u{e000}\u{10ffff}\u{378}",
+                "'é\\xa0\\xad\\u200b\\u2028\\u3000😀\\U000e0001\\ue000\\U0010ffff\\u0378'",
+            ),
+            ("back\\slash", "'back\\\\slash'"),
+        ] {
+            assert_eq!(repr(s), want, "repr({s:?})");
+        }
+    }
+
     // Every expected value below was recorded from CPython 3.14 by calling the
     // `str` method (or `urllib.parse.unquote`) that the function ports.
 
@@ -329,6 +432,29 @@ mod tests {
         assert_eq!(decode_text("café".as_bytes()), "café");
         assert_eq!(decode_text(b"x\xe2\x82y"), "x\u{fffd}y");
         assert_eq!(decode_text(b""), "");
+    }
+
+    #[test]
+    fn is_digit_matches_python_isdigit() {
+        // [c for c in "...".split() if c.isdigit()] on CPython 3.13.
+        for (s, want) in [
+            ("12", true),
+            ("²", true),
+            ("①", true),
+            ("١٢", true),
+            ("🄀", true),
+            ("½", false),
+            ("Ⅻ", false),
+            ("1a", false),
+            ("", false),
+        ] {
+            assert_eq!(is_digit(s), want, "{s:?}.isdigit()");
+        }
+        let count = (0..=0x10FFFFu32)
+            .filter_map(char::from_u32)
+            .filter(|&c| is_digit_char(c) && !is_decimal_char(c))
+            .count();
+        assert_eq!(count, 128);
     }
 
     #[test]

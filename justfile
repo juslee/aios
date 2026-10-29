@@ -172,6 +172,15 @@ soak *args: tools
 test:
     cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 
+# The Python guard's unit tests, under /usr/bin/python3 as the PreToolUse hook
+# runs it (the suite's header gives this discover form; a path argument to
+# unittest fails with "Empty module name"). CI's Tools (host) job runs this
+# recipe: the guard is the oracle the Rust port (R5) is compared against. R5b
+# deletes the recipe together with the guard and its tests.
+# Run the Python guard's unit tests (.claude/hooks/tests)
+guard-test:
+    /usr/bin/python3 -m unittest discover -s .claude/hooks/tests -v
+
 # The shim runs target/tools/installed/aios, a copy at a path cargo never writes
 # (cargo removes and re-creates release/aios on its builds). The copy is written
 # under a temporary name and renamed into place, so a concurrent shim call finds
