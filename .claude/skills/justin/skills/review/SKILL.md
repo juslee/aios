@@ -22,7 +22,7 @@ Run it only for PR numbers the user named, or after the user accepted a `/justin
    .claude/hooks/aios loop review <PR...>
    ```
 
-   Several numbers review in the order given, one round each. Use this spelling, the shim: it runs only a binary built from the main checkout's merged inputs and rebuilds a missing or stale one first. Never set `AIOS_TOOLS_BIN`, never call the binary directly, never pass `--tree` or `--budget-usd` unless the user asks for them. Permission settings decide whether a prompt appears for the call; if one is refused, report the refusal and stop. Do not reword the command to get past it.
+   Several numbers review in the order given, one round each. Use this spelling, the shim: it runs only a binary built from the main checkout's merged inputs and rebuilds a missing or stale one first. Never set `AIOS_TOOLS_BIN`, never call the binary directly, never pass `--tree` or `--budget-usd` unless the user asks for them. The call prompts once per run (the `ask` rules on every `aios loop` spelling in `.claude/settings.json`), and a background-only or `-p` session with nobody to answer is refused. If it is refused, report the refusal and stop; never reword the command to get past it.
 
 2. **Wait** for the background task's completion notification. Do not poll, do not sleep, and do not start another run for the same PR (a second run is refused while the first holds the PR's lock).
 

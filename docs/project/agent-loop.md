@@ -116,7 +116,7 @@ The first two are checked before the first stage, before verify and again before
 
 ## PR loop (R2a)
 
-`aios loop review <PR>... [--tree DIR] [--budget-usd N]` ([source](../../tools/src/cmd/loop/)) is the first part of the PR loop. It is read-only and advisory. Run it as `.claude/hooks/aios loop review <PR>...` from the main checkout, or through `/justin:review`. R2b adds fixing, pushing, thread replies and `aios loop merge`; R2c adds the evals.
+`aios loop review <PR>... [--tree DIR] [--budget-usd N]` ([source](../../tools/src/cmd/loop/)) is the first part of the PR loop. It is read-only and advisory. Run it as `.claude/hooks/aios loop review <PR>...` from the main checkout, or through `/justin:review`. It spends model budget (up to `per_pr_usd` per PR), so the settings carry an `ask` rule on every `aios loop` spelling (the shim, the installed binary, `cargo run … loop`): every run prompts once, and a background-only or `-p` run with nobody to answer is refused. R2b adds fixing, pushing, thread replies and `aios loop merge`; R2c adds the evals.
 
 For each PR, in the order given, it does one round:
 

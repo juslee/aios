@@ -20,7 +20,7 @@ On 2026-10-27 the owner chose to cut R2 into three PRs, each with its own short 
 | PR | Scope |
 |---|---|
 | **R2a** (this plan) | `aios loop review`, read-only: one review round (gather, three lenses, verify), the findings report, a merge verdict (`ready` / `pending` / `needs-human`, reported only), the Option-A gate, the shim's strict `loop)` arm, prompts and config, `/justin:review`, the ≤ $0.50 probe. **No GitHub writes, no git push, no commits, no fix stage.** |
-| R2b | The write side: fix and sync stages, rounds until convergence, push, thread replies and resolves, the needs-human label and comment, pre-existing issue filing, CI and reviewer waits, `aios loop merge`, `/justin:merge`, narrowing `/review-pr-comments`, the settings asks for every loop spelling. |
+| R2b | The write side: fix and sync stages, rounds until convergence, push, thread replies and resolves, the needs-human label and comment, pre-existing issue filing, CI and reviewer waits, `aios loop merge`, `/justin:merge`, narrowing `/review-pr-comments`. |
 | R2c | The eval suites (loop-stage and skill), `scores.json`, the eval gate on prompt, model and skill changes, first recorded scores (≤ $25, owner-approved cases). |
 
 R2a is useful on its own: an attended lead or the owner gets a reproducible, model-reviewed findings report and a merge verdict for any same-repo PR, before running `/review-pr-comments` or `/merge-and-cleanup`.
@@ -154,7 +154,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
   - The PR's own CLAUDE.md may load as instruction text, if Task 1 finds that no candidate prevents it.
   - #213 (the stamp follows local HEAD).
   - The shim arm's check-then-exec race.
-  - A direct `…/aios loop` call skips the shim. It still meets the self-location check, and R2b adds the settings asks.
+  - A direct `…/aios loop` call skips the shim. It still meets the self-location check, and the settings ask (D4) prompts on it.
   - `--tree` prompts steer only a run the owner started.
 
 ## Progress
@@ -494,7 +494,7 @@ Outside the state dir and the round worktree, nothing changes: no gh write, no c
       - 2: show the message and stop.
     - **Stopping a running review:** the `STOP` file, the `agent-stop` label, or stopping the background task. Esc does not stop it.
     - It never claims a merge. It says the verdict is advisory and that the owner merges with `/merge-and-cleanup`.
-    - It expects one permission prompt per run (the guard asks on the shim spelling).
+    - It expects one permission prompt per run (D4: the settings `ask` rules on every `aios loop` spelling).
   - [x] 8b: Skill wiring, in one commit with 8a (`harness-tables`):
     - `.claude/skills/justin/.claude-plugin/plugin.json`: bump the version and list `/justin:review`;
     - `.claude/CLAUDE.md`: a Skills-table row and the layout skills line;
@@ -602,6 +602,7 @@ None open for R2a. Deferred to R2b or later:
 - **D1 (final):** --restricted --disable-slash-commands, with --settings <stage settings>, --tools Read,Grep,Glob,Bash and --strict-mcp-config --mcp-config '{"mcpServers":{}}'. The project hooks and CLAUDE.md do not load; only Claude Code's three built-in plugins load; no MCP and no skills (Task 1c, 2026-10-27).
 - **D2 (final):** --permission-mode dontAsk. Writes outside --allowedTools are denied without a prompt and listed in permission_denials; Claude Code's built-in read-only auto-allow still runs read-only commands such as true (Task 1b).
 - **D3 (owner, 2026-10-28, amends D1):** the stage toolset is `Read,Grep,Glob`, without Bash. An automated security review found that the allowed `git diff`, `git log` and `git show` take `--output=<path>`, which writes a file. main's deny list covers `git diff` and `git log` with `--output`, and `git show` is only in `ask` (denied under `dontAsk`), but other write or exec forms of those commands would each need their own rule. Gather renders the commit list and the diff into `{{diff}}` instead. Task 1c's `init_restricted.json` was recorded with Bash in the toolset; Task 9's real run is the first stage call with the D3 toolset.
+- **D4 (owner, 2026-10-29):** the settings `ask` on every `aios loop` spelling lands in R2a (the nine rules), because a model-invoked `/justin:review` could otherwise spend up to `per_pr_usd` per PR without a prompt (found in Task 8: `Bash(.claude/hooks/aios *)` is allowed and nothing asked).
 - **ROUND_ROOT (final):** `<main>/.claude/worktrees`. A stage call there with real-shaped stage settings ran git diff and Read; the guard gives git diff/log/show there no decision (Task 1c).
 - **Copilot login (Task 1d):** copilot-pull-request-reviewer (GraphQL thread authors and gh reviews; REST shows Copilot). trusted_authors = juslee, copilot-pull-request-reviewer. Copilot's last review was on #144.
 - **Task 6 (worker, 2026-10-28):**
