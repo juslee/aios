@@ -17,6 +17,23 @@
 //! - a `cwd` that is truthy but not a string asks with a fixed `TypeError` text.
 //!   Python fails somewhere later with a `TypeError` whose text depends on the
 //!   command, or not at all (`ls`).
+//!
+//! The payload parser ([`pyjson`]) follows CPython 3.13. The Mac's
+//! `/usr/bin/python3` is 3.9, whose `json` reads malformed or deeply nested
+//! payloads differently (a nesting limit near 1,000 levels, and no `Illegal
+//! trailing comma` message); Claude Code sends neither.
+//!
+//! Two more divergences come from Python's recursion limit, and no real payload
+//! or command reaches them:
+//!
+//! - a payload nested too deeply for `json.loads` ([`Response::Crash`]) exits 1
+//!   with one `RecursionError: <message>` line on stderr, where Python prints a
+//!   full traceback ending in that line;
+//! - brace expansion nested more than `shell::BRACE_FRAMES` calls deep asks as a
+//!   parse failure, the bound Python 3.13 has for a word of the top-level
+//!   command. In a word parsed deeper (`$(...)`, `bash -c`), Python fails up to
+//!   9 groups earlier, and Python 3.9 fails one group earlier with
+//!   ` while calling a Python object` after the message.
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};

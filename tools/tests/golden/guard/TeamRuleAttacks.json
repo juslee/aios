@@ -786,79 +786,79 @@
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: writer is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: writer is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: writer is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     }
   ],
   "test_i4_unreadable_isolation_values_fail_closed": [
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u0's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u1's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u2's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u3's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u4's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u5's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"ask\", \"permissionDecisionReason\": \"git-push-guard: u6's frontmatter has an isolation key the guard cannot read as `isolation: worktree`; spawn it with isolation: \\\"worktree\\\" or fix the file (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 0,
@@ -885,112 +885,112 @@
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w0 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w0 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w0 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w1 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w1 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w1 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w2 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w2 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w2 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w3 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w3 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w3 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w4 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w4 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w4 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w5 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w5 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w5 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w6 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w6 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w6 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w7 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w7 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w7 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w8 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w8 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w8 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w9 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w9 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w9 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     },
     {
       "exit": 2,
       "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"git-push-guard: w10 is a writer or the verifier: spawn it with isolation: \\\"worktree\\\" (rule 11)\"}}\n",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\ngit-push-guard: w10 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
+      "stderr": "git-push-guard: w10 is a writer or the verifier: spawn it with isolation: \"worktree\" (rule 11)\n"
     },
     {
       "exit": 0,
       "stdout": "",
-      "stderr": "{REPO}/.claude/hooks/git-push-guard.py:3392: DeprecationWarning: 'maxsplit' is passed as positional argument\n  return re.split(r\"\\s#\", v, 1)[0].rstrip()\n"
+      "stderr": ""
     }
   ],
   "test_i5_agents_never_pattern_kill": [

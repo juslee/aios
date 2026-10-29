@@ -5,11 +5,17 @@
 //! - `goldens_match_python_tests`: every golden's decision (and, for raw hook
 //!   calls, its exit code) is the one the unit test saw. Runs no guard.
 //! - `python_reproduces_goldens`: the Python guard of this checkout, run as the
-//!   hook entry runs it, still prints the goldens byte for byte.
+//!   hook entry runs it, still prints the goldens byte for byte, once its stderr
+//!   drops the interpreter's own warning records (`PYTHON_WARNINGS`), which are
+//!   not guard output and depend on the Python version.
 //! - `aios_guard_reproduces_goldens`: the Rust port (`aios guard`) prints them
-//!   byte for byte too: the same exit code, stdout and stderr on every check,
-//!   once the golden stderr drops the Python interpreter's own warning records
-//!   (`PYTHON_WARNINGS`), which are not guard output.
+//!   byte for byte too: the same exit code, stdout and stderr on every check.
+//!
+//! The goldens are recorded with `/usr/bin/python3` (CPython 3.13 in CI and the
+//! cloud container) and reproduce on 3.9 (the Mac's `/usr/bin/python3`) as well:
+//! no committed check reaches the places where the two differ (the payload
+//! error texts of `guard::pyjson` and the recursion bounds, which the unit tests
+//! pin to 3.13).
 //! - `record` (ignored): `AIOS_BLESS_GOLDENS=1 cargo test -p aios-tools --test
 //!   guard_parity -- --ignored record` rewrites the goldens from the Python guard.
 //! - `python_parses_like_the_shell_table`: the Python guard's `parse_commands`
@@ -37,7 +43,18 @@ fn python_outcomes(all: &[Scenario]) -> Vec<Vec<Outcome>> {
         "{} is missing: the hook entry runs the guard with it",
         argv[0]
     );
-    common::parallel_map(all, |s| replay(s, &argv))
+    let outcomes = common::parallel_map(all, |s| replay(s, &argv));
+    outcomes
+        .into_iter()
+        .map(|list| {
+            list.into_iter()
+                .map(|o| Outcome {
+                    stderr: PYTHON_WARNINGS.replace_all(&o.stderr, "").into_owned(),
+                    ..o
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn by_class(all: &[Scenario]) -> BTreeMap<&str, Vec<usize>> {
@@ -154,7 +171,7 @@ fn goldens_match_python_tests() {
 fn python_reproduces_goldens() {
     let all = scenarios();
     let outcomes = python_outcomes(&all);
-    assert_reproduces_goldens("python", &all, &outcomes, |o| o);
+    assert_reproduces_goldens("python", &all, &outcomes);
 }
 
 #[test]
@@ -162,32 +179,24 @@ fn aios_guard_reproduces_goldens() {
     let all = scenarios();
     let argv = [env!("CARGO_BIN_EXE_aios"), "guard"];
     let outcomes = common::parallel_map(&all, |s| replay(s, &argv));
-    assert_reproduces_goldens("aios guard", &all, &outcomes, |o| Outcome {
-        stderr: PYTHON_WARNINGS.replace_all(&o.stderr, "").into_owned(),
-        ..o
-    });
+    assert_reproduces_goldens("aios guard", &all, &outcomes);
 }
 
 /// A warning record that CPython's `warnings` module prints on stderr for a
-/// line of the guard script: the location and message, then the source line.
-/// Python 3.13 prints a `DeprecationWarning` for `re.split`'s positional
-/// `maxsplit` in `yaml_scalar` on every frontmatter read; the interpreter
-/// writes it, not the guard, so the port has no such line.
+/// line of the guard script: the location, category and message, then the
+/// source line. Python 3.13 prints a `DeprecationWarning` for `re.split`'s
+/// positional `maxsplit` in `yaml_scalar` on every frontmatter read, and 3.9
+/// prints none; the interpreter writes them, not the guard, so the goldens and
+/// the port have no such lines.
 static PYTHON_WARNINGS: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(
-        r"(?m)^\{REPO\}/\.claude/hooks/git-push-guard\.py:[0-9]+: DeprecationWarning: [^\n]*\n  [^\n]*\n",
+        r"(?m)^\{REPO\}/\.claude/hooks/git-push-guard\.py:[0-9]+: [A-Za-z]*Warning: [^\n]*\n  [^\n]*\n",
     )
     .unwrap()
 });
 
-/// Every scenario's outcomes (`who` ran them) equal its goldens, each golden
-/// seen through `view`.
-fn assert_reproduces_goldens(
-    who: &str,
-    all: &[Scenario],
-    outcomes: &[Vec<Outcome>],
-    view: fn(Outcome) -> Outcome,
-) {
+/// Every scenario's outcomes (`who` ran them) equal its goldens.
+fn assert_reproduces_goldens(who: &str, all: &[Scenario], outcomes: &[Vec<Outcome>]) {
     let mut failures = Vec::new();
     for (class, idx) in by_class(all) {
         let goldens = match read_goldens(class) {
@@ -201,7 +210,7 @@ fn assert_reproduces_goldens(
             let s = &all[i];
             let want = goldens.get(s.method()).and_then(Value::as_array);
             let want: Vec<Outcome> = want
-                .map(|l| l.iter().map(|g| view(Outcome::from_json(g))).collect())
+                .map(|l| l.iter().map(Outcome::from_json).collect())
                 .unwrap_or_default();
             if want.len() != outcomes[i].len() {
                 failures.push(format!(

@@ -35,6 +35,19 @@ pub const RESERVED: [&str; 17] = [
 /// The longest word list brace expansion produces (`brace_expand`'s `limit`).
 const BRACE_LIMIT: usize = 64;
 
+/// How many `brace_expand` calls Python can nest before it raises
+/// `RecursionError`, which `decide` handles like a `ParseError`. Python's
+/// recursion limit (1000) counts every frame on the stack, so the bound depends
+/// on how deep the hook is when `ShellParser.end_word` calls `brace_expand`.
+/// This is the bound for a word of the hook's top-level Bash command, measured
+/// on CPython 3.13: `echo` + 992 `{a,b}` groups parses, and 993 groups raise.
+/// Words parsed deeper in the hook (`$(...)`, `bash -c`) hit Python's limit a
+/// few groups earlier (984 to 992 groups measured), and Python 3.9 fails one
+/// group earlier, with ` while calling a Python object` after the message.
+/// Those bands are accepted divergences (`guard::protocol`). The bound also
+/// keeps the recursion off the end of Rust's own stack.
+const BRACE_FRAMES: usize = 993;
+
 /// Text the guard cannot parse (`ParseError`). The message is Python's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError(pub &'static str);
@@ -211,9 +224,9 @@ impl<'s, 'o> Parser<'s, 'o> {
         self.quoted = self.quoted || quoted;
     }
 
-    fn end_word(&mut self) {
+    fn end_word(&mut self) -> Result<(), ParseError> {
         let Some(word) = self.word.take() else {
-            return;
+            return Ok(());
         };
         let brace = std::mem::take(&mut self.brace);
         let quoted = std::mem::take(&mut self.quoted);
@@ -229,7 +242,7 @@ impl<'s, 'o> Parser<'s, 'o> {
             self.cmd.heredocs.push(word);
         } else if !self.case_keyword(&word, quoted) {
             let words = if brace {
-                brace_expand(&word)
+                brace_expand(&word)?
             } else {
                 vec![word]
             };
@@ -238,6 +251,7 @@ impl<'s, 'o> Parser<'s, 'o> {
                 .extend(std::iter::repeat_n(expanded, words.len()));
             self.cmd.words.extend(words);
         }
+        Ok(())
     }
 
     /// Tracks `case WORD in PATTERN) BODY ;; ... esac`. True when the word
@@ -275,8 +289,8 @@ impl<'s, 'o> Parser<'s, 'o> {
         false
     }
 
-    fn end_command(&mut self) {
-        self.end_word();
+    fn end_command(&mut self) -> Result<(), ParseError> {
+        self.end_word()?;
         self.cmd.src = self.slice(self.start, self.i);
         self.start = self.i;
         let waiting = self.pending.iter().any(|p| p.2 == Owner::Current);
@@ -294,6 +308,7 @@ impl<'s, 'o> Parser<'s, 'o> {
             }
             self.out.push(cmd);
         }
+        Ok(())
     }
 
     fn read_heredocs(&mut self) {
@@ -525,13 +540,13 @@ impl<'s, 'o> Parser<'s, 'o> {
         if self.word.as_deref().is_some_and(crate::pystr::is_digit) {
             fd = self.word.take();
         } else {
-            self.end_word();
+            self.end_word()?;
         }
         let c = self.peek(0);
         if matches!(c, Some('<' | '>')) && self.peek(1) == Some('(') {
             let text = self.read_substitution(2)?;
             self.add(text, false);
-            self.end_word();
+            self.end_word()?;
             return Ok(());
         }
         if c == Some('&') {
@@ -559,14 +574,14 @@ impl<'s, 'o> Parser<'s, 'o> {
         while self.i < self.n() {
             let c = self.s[self.i];
             if "|()".contains(c) && self.case.last() == Some(&Case::Pattern) {
-                self.end_word(); // may be `esac`, which closes the case
+                self.end_word()?; // may be `esac`, which closes the case
             }
             let state = self.case.last().copied();
             if matches!(c, ' ' | '\t' | '\r') {
-                self.end_word();
+                self.end_word()?;
                 self.i += 1;
             } else if c == '\n' {
-                self.end_command();
+                self.end_command()?;
                 self.i += 1;
                 self.read_heredocs();
             } else if c == '\\' {
@@ -597,11 +612,11 @@ impl<'s, 'o> Parser<'s, 'o> {
             } else if c == '#' && self.word.is_none() {
                 self.i = self.find('\n', self.i).unwrap_or(self.n());
             } else if self.starts_with("<<<", self.i) {
-                self.end_word();
+                self.end_word()?;
                 self.i += 3;
                 self.herestring_next = true;
             } else if self.starts_with("<<", self.i) {
-                self.end_word();
+                self.end_word()?;
                 self.i += 2;
                 let strip_tabs = self.peek(0) == Some('-');
                 if strip_tabs {
@@ -619,12 +634,12 @@ impl<'s, 'o> Parser<'s, 'o> {
             } else if c == ';' || c == '&' || c == '|' {
                 let two = self.slice(self.i, self.i + 2);
                 if state == Some(Case::Body) && (two == ";;" || two == ";&") {
-                    self.end_command();
+                    self.end_command()?;
                     *self.case.last_mut().expect("a case") = Case::Pattern;
                     self.i += 2;
                     continue;
                 }
-                self.end_command();
+                self.end_command()?;
                 if c == '|' && two != "||" {
                     self.cmd.piped_in = true;
                 }
@@ -634,11 +649,11 @@ impl<'s, 'o> Parser<'s, 'o> {
                     1
                 };
             } else if c == '(' {
-                self.end_command();
+                self.end_command()?;
                 self.parens += 1;
                 self.i += 1;
             } else if c == ')' {
-                self.end_command();
+                self.end_command()?;
                 if self.parens == 0 && self.nested {
                     return Ok(self.i);
                 }
@@ -657,7 +672,7 @@ impl<'s, 'o> Parser<'s, 'o> {
         if self.nested {
             return Err(ParseError("unterminated $("));
         }
-        self.end_command();
+        self.end_command()?;
         Ok(self.i)
     }
 }
@@ -688,13 +703,19 @@ fn ansi_simple(esc: char) -> Option<char> {
 
 /// Bash brace expansion for comma lists (`pu{sh,ll}`), so that
 /// `git {push,origin,main}` is seen as `git push origin main` (`brace_expand`, at
-/// most 64 words).
-pub fn brace_expand(word: &str) -> Vec<String> {
+/// most 64 words). Nesting deeper than `BRACE_FRAMES` calls is Python's
+/// `RecursionError`.
+pub fn brace_expand(word: &str) -> Result<Vec<String>, ParseError> {
     let chars: Vec<char> = word.chars().collect();
-    expand(&chars, BRACE_LIMIT)
+    expand(&chars, BRACE_LIMIT, 1)
 }
 
-fn expand(word: &[char], limit: usize) -> Vec<String> {
+/// `brace_expand`'s body; `frames` counts the calls on the stack, this one
+/// included.
+fn expand(word: &[char], limit: usize, frames: usize) -> Result<Vec<String>, ParseError> {
+    if frames > BRACE_FRAMES {
+        return Err(ParseError("maximum recursion depth exceeded"));
+    }
     let mut depth = 0usize;
     let mut start = 0usize;
     let mut commas = Vec::new();
@@ -716,24 +737,24 @@ fn expand(word: &[char], limit: usize) -> Vec<String> {
                 let mut out = Vec::new();
                 for pair in bounds.windows(2) {
                     let (a, b) = (pair[0], pair[1]);
-                    for tail in expand(suffix, limit) {
+                    for tail in expand(suffix, limit, frames + 1)? {
                         let mut combined = prefix.to_vec();
                         combined.extend_from_slice(&word[a + 1..b]);
                         combined.extend(tail.chars());
-                        out.extend(expand(&combined, limit));
+                        out.extend(expand(&combined, limit, frames + 1)?);
                         if out.len() >= limit {
                             out.truncate(limit);
-                            return out;
+                            return Ok(out);
                         }
                     }
                 }
-                return out;
+                return Ok(out);
             }
         } else if c == ',' && depth == 1 {
             commas.push(i);
         }
     }
-    vec![word.iter().collect()]
+    Ok(vec![word.iter().collect()])
 }
 
 #[cfg(test)]
@@ -832,9 +853,9 @@ mod tests {
             ("a{b,c", &["a{b,c"]),
         ];
         for (word, want) in cases {
-            assert_eq!(brace_expand(word), want, "brace_expand({word:?})");
+            assert_eq!(brace_expand(word).unwrap(), want, "brace_expand({word:?})");
         }
         let many = "{a,b}".repeat(7);
-        assert_eq!(brace_expand(&many).len(), 64);
+        assert_eq!(brace_expand(&many).unwrap().len(), 64);
     }
 }

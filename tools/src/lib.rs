@@ -4,7 +4,8 @@
 //! `hook` runs the Claude Code hook programs (model routing); R4 `soak` is a
 //! port of `scripts/soak-qemu.sh`; and R3 `brief` is the session briefing behind
 //! `/justin:brief` and `checkpoint` the work-in-progress checkpoint behind
-//! `/justin:pause`. Later PRs add the agent-loop commands.
+//! `/justin:pause`. R5 `guard` is a port of `.claude/hooks/git-push-guard.py`.
+//! Later PRs add the agent-loop commands.
 //! The crate is host-only (`std`) and is a workspace member but never a default
 //! member, so `cargo build --target aarch64-unknown-none` never selects it.
 #![forbid(unsafe_code)]
