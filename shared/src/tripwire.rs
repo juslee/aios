@@ -12,9 +12,9 @@
 //! - [`write_line`]: the `[tripwire]` line. [`write_reentry_msg`]: the
 //!   `lock re-entry:` panic message.
 //! - [`classify_pc`]: where a saved PC points (N5).
-//! - [`classify_slot`], [`TwoStrike`], [`EdgeCounter`] and the mask helpers
-//!   ([`mask_set`], [`mask_test`], [`pop_lowest`], [`count_tids`]): the
-//!   heartbeat scans.
+//! - [`classify_slot`], [`wait_word_bad`], [`TwoStrike`], [`EdgeCounter`]
+//!   and the mask helpers ([`mask_set`], [`mask_test`], [`pop_lowest`],
+//!   [`count_tids`]): the heartbeat scans.
 //! - [`WakeSource`], [`UnblockOutcome`], [`ClearResult`], [`classify_reply`]
 //!   and [`classify_send`]: `unblock` attribution and the N2 counters.
 //!
@@ -33,10 +33,10 @@
 //! only its own [`CpuCounters`] row, with IRQs masked, and only CPU 0 writes
 //! the scan state, so no read-modify-write is needed.
 //!
-//! # The line (schema `v=1`)
+//! # The line (schema `v=2`)
 //!
 //! ```text
-//! [tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 ... twmax=94000 n=14
+//! [tripwire] v=2 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 ... twmax=94000 n=14
 //! ```
 //!
 //! - After `[tripwire]`, every token is `key=value`. The prefix `v`, `src`,
@@ -57,20 +57,35 @@
 //! Most keys count events and only grow, but gauges ([`Key::is_gauge`]) are
 //! levels or maxima, and the `*_now` gauges fall. A parser that keeps the last
 //! value seen per key across lines is wrong for them.
+//!
+//! **Versions.** The per-source and per-lock keys are positional, so the
+//! index sets are part of the schema. Appending a key to [`Key::ALL`], or an
+//! index at the end of a set, changes no earlier value's meaning (a missing
+//! key or trailing index reads 0) and needs no bump. Deleting or reordering a
+//! set entry shifts every later index and bumps [`SCHEMA_VERSION`]. `v=1`
+//! (crash-fix step 1b to capability-lifetime step 10): [`WakeSource`] was 16
+//! wide (`call`, `reply`, `send`, `selcall`, `selsend`, `selsig`, `sig`,
+//! `ndestroy`, `nto`, `nsto`, `pwait`, `to`, `chdestroy`, `pexit`, `cancel`,
+//! `selftest`) and [`LockClass`] 9 wide (the per-thread select table's
+//! lock between `NOTIFICATION_TABLE` and `BOOT_LOG`). `v=2`
+//! (capability-lifetime step 11) deletes the select wake path, with its
+//! sources `selcall`, `selsend`, `selsig` and `nsto` and that table's lock
+//! class, giving 12 and 8. A parser decodes each line with the catalogue of
+//! its own version.
 
 #![deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::lock::{LockClass, OwnerStamp, SCALAR_INDEX, TID_NONE};
-use crate::sched::{SchedulerClass, ThreadState};
+use crate::sched::{wake_action, SchedulerClass, ThreadState, WaitState, WakeAction};
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /// The schema version, printed as `v=`.
-pub const SCHEMA_VERSION: u64 = 1;
+pub const SCHEMA_VERSION: u64 = 2;
 
 /// The first token of every tripwire line.
 pub const LINE_PREFIX: &str = "[tripwire]";
@@ -142,32 +157,30 @@ const _: () = assert!(SchedulerClass::RealTime as usize + 1 == CLASS_COUNT);
 // Index sets: wake sources, N2 kinds, badchan sites
 // ---------------------------------------------------------------------------
 
-/// The caller of `unblock`, `wake_with_error` or `try_wake_select`.
+/// The caller of `unblock` or `wake_with_error`.
 ///
-/// The order is the index order of the 15-wide per-source keys.
+/// The order is the index order of the 12-wide per-source keys. New sources
+/// are appended at the end, so an older line, which lacks the trailing
+/// indices, still decodes: a missing index reads 0. A deletion shifts the
+/// later indices and bumps [`SCHEMA_VERSION`] (the module docs, "Versions").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum WakeSource {
-    /// `ipc_call` wakes the waiting receiver.
+    /// `ipc_call` wakes the waiting receiver (an `ipc_recv` or an
+    /// `ipc_select`), after a failed direct switch.
     Call,
     /// `ipc_reply` wakes the caller (fallback after a failed reply switch).
     Reply,
-    /// `ipc_send` wakes the waiting receiver.
+    /// `ipc_send` wakes the waiting receiver (an `ipc_recv` or an
+    /// `ipc_select`).
     Send,
-    /// `try_wake_select` from `ipc_call`.
-    SelCall,
-    /// `try_wake_select` from `ipc_send`.
-    SelSend,
-    /// `try_wake_select` from `notification_signal`.
-    SelSig,
-    /// `notification_signal` wakes a waiter.
+    /// `notification_signal` wakes a waiter (a `notification_wait` or an
+    /// `ipc_select`).
     Sig,
     /// `notification_destroy` wakes its waiters.
     NDestroy,
-    /// A notification wait deadline expired.
+    /// A notification or select wait deadline expired.
     Nto,
-    /// A select wait deadline expired (notification timeout scan).
-    Nsto,
     /// A process exit wakes a thread in `process_wait`.
     PWait,
     /// `wake_with_error` from `check_timeouts` (an IPC or sleep timeout).
@@ -176,34 +189,35 @@ pub enum WakeSource {
     ChDestroy,
     /// `wake_with_error` from a process exit (EPIPE to peers).
     PExit,
-    /// `wake_with_error` from `ipc_cancel`.
+    /// `unblock` from `ipc_cancel` (the call reads ECANCELED from its reply
+    /// slot).
     Cancel,
+    /// A self-test's deliberate wake: `sched::thread_probe` and the boot
+    /// self-tests' own `unblock` calls, kept apart from the real sources.
+    SelfTest,
 }
 
 impl WakeSource {
     /// Number of wake sources.
-    pub const COUNT: usize = 15;
+    pub const COUNT: usize = 12;
 
     /// Every source, in index order.
     pub const ALL: [WakeSource; Self::COUNT] = [
         WakeSource::Call,
         WakeSource::Reply,
         WakeSource::Send,
-        WakeSource::SelCall,
-        WakeSource::SelSend,
-        WakeSource::SelSig,
         WakeSource::Sig,
         WakeSource::NDestroy,
         WakeSource::Nto,
-        WakeSource::Nsto,
         WakeSource::PWait,
         WakeSource::To,
         WakeSource::ChDestroy,
         WakeSource::PExit,
         WakeSource::Cancel,
+        WakeSource::SelfTest,
     ];
 
-    /// Index into 15-wide per-source values.
+    /// Index into 12-wide per-source values.
     #[inline]
     pub const fn index(self) -> usize {
         self as usize
@@ -215,18 +229,15 @@ impl WakeSource {
             WakeSource::Call => "call",
             WakeSource::Reply => "reply",
             WakeSource::Send => "send",
-            WakeSource::SelCall => "selcall",
-            WakeSource::SelSend => "selsend",
-            WakeSource::SelSig => "selsig",
             WakeSource::Sig => "sig",
             WakeSource::NDestroy => "ndestroy",
             WakeSource::Nto => "nto",
-            WakeSource::Nsto => "nsto",
             WakeSource::PWait => "pwait",
             WakeSource::To => "to",
             WakeSource::ChDestroy => "chdestroy",
             WakeSource::PExit => "pexit",
             WakeSource::Cancel => "cancel",
+            WakeSource::SelfTest => "selftest",
         }
     }
 
@@ -341,9 +352,9 @@ pub enum Width {
     Cpu,
     /// A single value.
     One,
-    /// One per [`WakeSource`] (15).
+    /// One per [`WakeSource`] (12).
     Source,
-    /// One per [`LockClass`] (9).
+    /// One per [`LockClass`] (8).
     Lock,
     /// One per scheduler class (4), indexed by `SchedulerClass as usize`.
     Class,
@@ -424,6 +435,9 @@ pub enum Key {
     Spbad,
     /// Reply fallbacks that skipped a caller its timeout wakes: a caller no
     /// longer in that call, or armed with a timeout the reply did not remove.
+    /// Also replies that delivered nothing because the claimed call had
+    /// ended: its reply slot gone, or replaced by the caller's next call's
+    /// (another `seq`).
     Latereply,
     /// Replies that woke a thread not blocked in that call.
     Misrep,
@@ -437,11 +451,13 @@ pub enum Key {
     /// N2 phase counts, per [`N2Kind`].
     N2,
     // -- Per wake source ------------------------------------------------------
-    /// `unblock` skipped a Running target.
+    /// `unblock` skipped a Running target whose wait word was Idle
+    /// ([`WakeAction::Skip`]): a stale wake, outside any armed window.
     Ubrun,
-    /// `unblock` skipped a Runnable target.
+    /// `unblock` skipped a Runnable target whose wait word was Idle
+    /// ([`WakeAction::Skip`]).
     Ubrbl,
-    /// `unblock` revived a Dead, Suspended, BlockedTimer or BlockedIo thread.
+    /// `unblock` reached a Dead target and skipped it ([`UnblockKind::Dead`]).
     Ubdead,
     /// `unblock` found an empty slot or an out-of-range id.
     Ubnone,
@@ -491,7 +507,8 @@ pub enum Key {
     Dupcur,
     /// Thread ids queued twice.
     Dupq,
-    /// Queued threads that were not Runnable.
+    /// Queued threads that were neither Runnable nor Dead. A queued Dead
+    /// thread is expected: the scheduler's pick drops Dead threads lazily.
     Qbad,
     // -- Scans: gauges --------------------------------------------------------
     /// Gauge: threads in the confirmed-orphan set now.
@@ -518,11 +535,24 @@ pub enum Key {
     Twn,
     /// Gauge: the most CNTVCT ticks one tripwire line took.
     Twmax,
+    // -- Appended (capability-lifetime step 9) ---------------------------------
+    // New keys go at the end, so every earlier key keeps its position and an
+    // older line, which lacks them, still decodes: a missing key reads 0.
+    /// `unblock` found a Running or Runnable target Armed and left it the
+    /// wake token ([`WakeAction::LeaveToken`]), per [`WakeSource`].
+    Ubtok,
+    /// `unblock` found a Running or Runnable target with a token already
+    /// pending ([`WakeAction::TokenPending`]), per [`WakeSource`].
+    Ubpend,
+    /// Threads that entered the confirmed bad-wait-word set: flagged by two
+    /// consecutive scans A with a wait word that is not Idle while the
+    /// thread is blocked or Suspended ([`wait_word_bad`]). Expected 0.
+    Bw,
 }
 
 impl Key {
     /// Number of keys.
-    pub const COUNT: usize = 61;
+    pub const COUNT: usize = 64;
 
     /// Every key, in print order.
     pub const ALL: [Key; Self::COUNT] = [
@@ -587,6 +617,9 @@ impl Key {
         Key::Twc,
         Key::Twn,
         Key::Twmax,
+        Key::Ubtok,
+        Key::Ubpend,
+        Key::Bw,
     ];
 
     /// The key's position in [`Key::ALL`].
@@ -659,6 +692,9 @@ impl Key {
             Key::Twc => "twc",
             Key::Twn => "twn",
             Key::Twmax => "twmax",
+            Key::Ubtok => "ubtok",
+            Key::Ubpend => "ubpend",
+            Key::Bw => "bw",
         }
     }
 
@@ -676,7 +712,13 @@ impl Key {
             | Key::Rsthold
             | Key::Tpidrbad => Width::Cpu,
             Key::N2 => Width::N2,
-            Key::Ubrun | Key::Ubrbl | Key::Ubdead | Key::Ubnone | Key::Ubmove => Width::Source,
+            Key::Ubrun
+            | Key::Ubrbl
+            | Key::Ubdead
+            | Key::Ubnone
+            | Key::Ubmove
+            | Key::Ubtok
+            | Key::Ubpend => Width::Source,
             Key::Lkph
             | Key::Lkpho
             | Key::Lkphrun
@@ -1440,15 +1482,20 @@ pub enum SlotState {
     Runnable,
     /// `ThreadState::Running`.
     Running,
-    /// `ThreadState::BlockedIpc`, including sleep (`BlockedIpc { channel: u64::MAX }`,
-    /// whose waker is its timeout).
+    /// `ThreadState::BlockedIpc`.
     BlockedIpc,
     /// `ThreadState::BlockedNotification`.
     BlockedNotification,
     /// `ThreadState::BlockedSelect`.
     BlockedSelect,
-    /// A blocked state the no-waker scan does not check: `BlockedProcessWait`,
-    /// `BlockedTimer` or `BlockedIo`.
+    /// `ThreadState::BlockedProcessWait`, whose waker is its `PROCESS_WAITERS`
+    /// entry.
+    BlockedProcessWait,
+    /// `ThreadState::BlockedTimer` (`sleep_ticks`), whose waker is its
+    /// TIMEOUT_QUEUE entry.
+    BlockedTimer,
+    /// A blocked state the no-waker scan does not check: `BlockedIo`, which
+    /// nothing in the kernel writes.
     BlockedOther,
     /// `ThreadState::Suspended`.
     Suspended,
@@ -1466,11 +1513,9 @@ impl SlotState {
             Some(ThreadState::BlockedIpc { .. }) => SlotState::BlockedIpc,
             Some(ThreadState::BlockedNotification { .. }) => SlotState::BlockedNotification,
             Some(ThreadState::BlockedSelect) => SlotState::BlockedSelect,
-            Some(
-                ThreadState::BlockedProcessWait { .. }
-                | ThreadState::BlockedTimer { .. }
-                | ThreadState::BlockedIo,
-            ) => SlotState::BlockedOther,
+            Some(ThreadState::BlockedProcessWait { .. }) => SlotState::BlockedProcessWait,
+            Some(ThreadState::BlockedTimer { .. }) => SlotState::BlockedTimer,
+            Some(ThreadState::BlockedIo) => SlotState::BlockedOther,
             Some(ThreadState::Suspended) => SlotState::Suspended,
             Some(ThreadState::Dead) => SlotState::Dead,
         }
@@ -1499,6 +1544,8 @@ impl SlotFlags {
     /// `WAKE_PENDING[tid] != 0`: a waker took its reference and has not yet
     /// run `unblock` (scan B).
     pub const WAKE_PENDING: SlotFlags = SlotFlags(1 << 6);
+    /// Is a child's registered waiter in `PROCESS_WAITERS` (scan B).
+    pub const PROC_WAITER: SlotFlags = SlotFlags(1 << 7);
 
     /// These flags and `other`.
     #[inline]
@@ -1553,7 +1600,7 @@ pub enum SlotVerdict {
     /// Blocked with no waker, but a waker has taken its reference and not
     /// yet run `unblock` (scan B): starvation or N1(b), not a lost wakeup.
     WakeInFlight,
-    /// Queued but not Runnable (`qbad`).
+    /// Queued but neither Runnable nor Dead (`qbad`).
     QueuedBad,
 }
 
@@ -1572,11 +1619,16 @@ pub const fn is_starved(now: u64, last_run: u64) -> bool {
 /// - Runnable: `QUEUED` and `CURRENT`, and `now`/`last_run` when queued.
 ///   Not queued and not current is [`SlotVerdict::Orphan`], even when it
 ///   is also old; queued and old is [`SlotVerdict::Starved`].
+/// - Dead with `QUEUED`: [`SlotVerdict::Clear`]. The scheduler's pick drops
+///   a Dead thread lazily, so a thread killed while queued stays queued
+///   until its CPU picks it.
 /// - Any other state with `QUEUED`: [`SlotVerdict::QueuedBad`].
-/// - BlockedIpc, BlockedNotification and BlockedSelect, not current: the
-///   waker flags. BlockedIpc is woken by `TIMEOUT` or `CHAN_REF`;
-///   BlockedNotification by `NDL`, `NOTIF_REF` or `TIMEOUT`; BlockedSelect
-///   by any of the four. With none of them, `WAKE_PENDING` gives
+/// - BlockedIpc, BlockedNotification, BlockedSelect, BlockedProcessWait and
+///   BlockedTimer, not current: the waker flags. BlockedIpc is woken by
+///   `TIMEOUT` or `CHAN_REF`; BlockedNotification by `NDL`, `NOTIF_REF` or
+///   `TIMEOUT`; BlockedSelect by any of those four; BlockedProcessWait by
+///   `PROC_WAITER`; BlockedTimer by `TIMEOUT`. With none of them,
+///   `WAKE_PENDING` gives
 ///   [`SlotVerdict::WakeInFlight`], otherwise [`SlotVerdict::NoWaker`].
 /// - Everything else is [`SlotVerdict::Clear`]. A current thread that is
 ///   Blocked is between setting its state and switching away.
@@ -1602,7 +1654,11 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
         };
     }
     if queued {
-        return SlotVerdict::QueuedBad;
+        return if state == SlotState::Dead {
+            SlotVerdict::Clear
+        } else {
+            SlotVerdict::QueuedBad
+        };
     }
     if current {
         return SlotVerdict::Clear;
@@ -1616,6 +1672,8 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
             .with(SlotFlags::CHAN_REF)
             .with(SlotFlags::NOTIF_REF)
             .with(SlotFlags::TIMEOUT),
+        SlotState::BlockedProcessWait => SlotFlags::PROC_WAITER,
+        SlotState::BlockedTimer => SlotFlags::TIMEOUT,
         _ => return SlotVerdict::Clear,
     };
     if flags.intersects(wakers) {
@@ -1625,6 +1683,30 @@ pub fn classify_slot(state: SlotState, flags: SlotFlags, now: u64, last_run: u64
     } else {
         SlotVerdict::NoWaker
     }
+}
+
+/// Whether scan A flags a thread slot for `bw`: its wait word is not Idle
+/// while the thread is blocked (any Blocked state) or Suspended.
+///
+/// Every block site swaps the word to Idle in the same THREAD_TABLE critical
+/// section that blocks the thread, and scan A reads both under THREAD_TABLE,
+/// so a correct kernel never shows one. Running and Runnable threads arm by
+/// design, an empty slot holds no thread, and a Dead thread is left out until
+/// crash-fix step 8's exit safe point: a victim marked Dead while it runs may
+/// arm, and keeps that word until its next `block_current`.
+#[inline]
+pub const fn wait_word_bad(state: SlotState, word: WaitState) -> bool {
+    !matches!(word, WaitState::Idle)
+        && matches!(
+            state,
+            SlotState::BlockedIpc
+                | SlotState::BlockedNotification
+                | SlotState::BlockedSelect
+                | SlotState::BlockedProcessWait
+                | SlotState::BlockedTimer
+                | SlotState::BlockedOther
+                | SlotState::Suspended
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -1812,58 +1894,71 @@ impl Default for EdgeCounter {
 // Wake attribution and the N2 table
 // ---------------------------------------------------------------------------
 
-/// What `unblock` did with its target.
+/// What `unblock` did with its target: its [`WakeAction`], refined by the
+/// target's state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum UnblockKind {
-    /// Woke a thread in BlockedIpc, BlockedNotification, BlockedSelect or
-    /// BlockedProcessWait.
+    /// Woke a thread in a Blocked state or Suspended
+    /// ([`WakeAction::Enqueue`]).
     Woke,
-    /// Made a Dead, Suspended, BlockedTimer or BlockedIo thread Runnable
-    /// (`ubdead`).
-    Revived,
-    /// Skipped a Running target (`ubrun`).
+    /// Reached a Dead target and skipped it (`ubdead`): Dead is terminal.
+    /// Neither a skip of a live target nor a wake.
+    Dead,
+    /// Skipped a Running target whose wait word was Idle (`ubrun`).
     SkipRunning,
-    /// Skipped a Runnable target (`ubrbl`).
+    /// Skipped a Runnable target whose wait word was Idle (`ubrbl`).
     SkipRunnable,
+    /// Left the wake token for an Armed Running or Runnable target
+    /// (`ubtok`). Not a skip: the target's `block_current` consumes it.
+    LeaveToken,
+    /// Found a token already pending for a Running or Runnable target
+    /// (`ubpend`). Not a skip: the pending token wakes the target.
+    TokenPending,
     /// Found an empty slot or an out-of-range id (`ubnone`).
     NoThread,
 }
 
 impl UnblockKind {
     /// Every kind.
-    pub const ALL: [UnblockKind; 5] = [
+    pub const ALL: [UnblockKind; 7] = [
         UnblockKind::Woke,
-        UnblockKind::Revived,
+        UnblockKind::Dead,
         UnblockKind::SkipRunning,
         UnblockKind::SkipRunnable,
+        UnblockKind::LeaveToken,
+        UnblockKind::TokenPending,
         UnblockKind::NoThread,
     ];
 
-    /// `unblock`'s decision for a slot (`None` = empty or out of range).
-    /// Woke and Revived both make the thread Runnable and queue it; the
-    /// skips return without a change.
-    pub const fn of(state: Option<&ThreadState>) -> UnblockKind {
-        match state {
-            None => UnblockKind::NoThread,
-            Some(ThreadState::Running) => UnblockKind::SkipRunning,
-            Some(ThreadState::Runnable) => UnblockKind::SkipRunnable,
-            Some(
-                ThreadState::BlockedIpc { .. }
-                | ThreadState::BlockedNotification { .. }
-                | ThreadState::BlockedSelect
-                | ThreadState::BlockedProcessWait { .. },
-            ) => UnblockKind::Woke,
-            Some(
-                ThreadState::BlockedTimer { .. }
-                | ThreadState::BlockedIo
-                | ThreadState::Suspended
-                | ThreadState::Dead,
-            ) => UnblockKind::Revived,
+    /// `unblock`'s decision for a slot (`None` = empty or out of range)
+    /// whose wait word is `word`: [`wake_action`] mapped onto the outcome
+    /// keys. Woke makes the thread Runnable and queues it; the skips, the
+    /// token kinds and Dead return without a state change.
+    pub const fn of(state: Option<&ThreadState>, word: WaitState) -> UnblockKind {
+        let Some(state) = state else {
+            return UnblockKind::NoThread;
+        };
+        match wake_action(state, word) {
+            WakeAction::Dead => UnblockKind::Dead,
+            WakeAction::LeaveToken => UnblockKind::LeaveToken,
+            WakeAction::TokenPending => UnblockKind::TokenPending,
+            WakeAction::Skip => {
+                if matches!(state, ThreadState::Running) {
+                    UnblockKind::SkipRunning
+                } else {
+                    UnblockKind::SkipRunnable
+                }
+            }
+            WakeAction::Enqueue => UnblockKind::Woke,
         }
     }
 
-    /// Whether `unblock` left the target as it was.
+    /// Whether `unblock` skipped a live (Running or Runnable) target whose
+    /// word was Idle. A Dead target is not a skip, and neither is a token
+    /// left or already pending: [`UnblockKind::Dead`],
+    /// [`UnblockKind::LeaveToken`] and [`UnblockKind::TokenPending`] are
+    /// neither this nor [`UnblockKind::made_runnable`].
     #[inline]
     pub const fn skipped(self) -> bool {
         matches!(self, UnblockKind::SkipRunning | UnblockKind::SkipRunnable)
@@ -1872,16 +1967,18 @@ impl UnblockKind {
     /// Whether `unblock` made the target Runnable.
     #[inline]
     pub const fn made_runnable(self) -> bool {
-        matches!(self, UnblockKind::Woke | UnblockKind::Revived)
+        matches!(self, UnblockKind::Woke)
     }
 
     /// The per-source outcome key; `None` for [`UnblockKind::Woke`].
     pub const fn key(self) -> Option<Key> {
         match self {
             UnblockKind::Woke => None,
-            UnblockKind::Revived => Some(Key::Ubdead),
+            UnblockKind::Dead => Some(Key::Ubdead),
             UnblockKind::SkipRunning => Some(Key::Ubrun),
             UnblockKind::SkipRunnable => Some(Key::Ubrbl),
+            UnblockKind::LeaveToken => Some(Key::Ubtok),
+            UnblockKind::TokenPending => Some(Key::Ubpend),
             UnblockKind::NoThread => Some(Key::Ubnone),
         }
     }
@@ -1996,7 +2093,10 @@ const fn skip_fate(outcome: UnblockOutcome, channel: u64, clear: ClearResult) ->
 ///   timeout (fired, registered after the reply's clear, or left by a busy
 ///   clear) wakes it.
 /// - Made Runnable, unless the caller was armed in this call: `misrep`.
-/// - Anything else: not counted.
+/// - Anything else: not counted. That includes a token left for the caller
+///   or already pending ([`UnblockKind::LeaveToken`],
+///   [`UnblockKind::TokenPending`]): the caller's `block_current` consumes
+///   it, so the wake is not lost.
 pub const fn classify_reply(
     outcome: UnblockOutcome,
     channel: u64,
@@ -2283,6 +2383,9 @@ mod tests {
             "twc",
             "twn",
             "twmax",
+            "ubtok",
+            "ubpend",
+            "bw",
         ];
         assert_eq!(order, expected);
 
@@ -2302,7 +2405,7 @@ mod tests {
         );
         assert_eq!(
             widths(Width::Source),
-            ["ubrun", "ubrbl", "ubdead", "ubnone", "ubmove"]
+            ["ubrun", "ubrbl", "ubdead", "ubnone", "ubmove", "ubtok", "ubpend"]
         );
         assert_eq!(
             widths(Width::Lock),
@@ -2338,8 +2441,8 @@ mod tests {
         assert_eq!(Width::Cpu.slots(), 1);
         assert_eq!(Width::Cpu.values(4), 4);
         assert_eq!(Width::One.values(4), 1);
-        assert_eq!(Width::Source.slots(), 15);
-        assert_eq!(Width::Lock.slots(), 9);
+        assert_eq!(Width::Source.slots(), 12);
+        assert_eq!(Width::Lock.slots(), 8);
         assert_eq!(Width::Class.slots(), 4);
         assert_eq!(Width::N2.slots(), 4);
         assert_eq!(Width::Badchan.slots(), 3);
@@ -2358,11 +2461,21 @@ mod tests {
             next += slots;
         }
         assert_eq!(next, SLOTS);
-        assert_eq!(SLOTS, 10 + 12 + 4 + 5 * 15 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3);
+        // ... + the closing 3, then the appended ubtok and ubpend (12 each)
+        // and bw.
+        assert_eq!(
+            SLOTS,
+            10 + 12 + 4 + 5 * 12 + 8 * 8 + 13 + 4 + 5 + 2 + 3 + 3 + 2 * 12 + 1
+        );
     }
 
     #[test]
     fn index_sets_have_fixed_names_and_order() {
+        // Schema v=2 (capability-lifetime step 11): the select wake path's
+        // sources and lock class are gone; v=1 lines carry 16 and 9.
+        assert_eq!(SCHEMA_VERSION, 2);
+        assert_eq!(WakeSource::COUNT, 12);
+        assert_eq!(LockClass::COUNT, 8);
         let sources: Vec<&str> = WakeSource::ALL.iter().map(|s| s.name()).collect();
         assert_eq!(
             sources,
@@ -2370,18 +2483,15 @@ mod tests {
                 "call",
                 "reply",
                 "send",
-                "selcall",
-                "selsend",
-                "selsig",
                 "sig",
                 "ndestroy",
                 "nto",
-                "nsto",
                 "pwait",
                 "to",
                 "chdestroy",
                 "pexit",
-                "cancel"
+                "cancel",
+                "selftest"
             ]
         );
         for (i, s) in WakeSource::ALL.iter().enumerate() {
@@ -2390,7 +2500,8 @@ mod tests {
             assert_eq!(WakeSource::from_marker(s.marker()), Some(*s));
         }
         assert_eq!(WakeSource::from_marker(0), None);
-        assert_eq!(WakeSource::from_marker(16), None);
+        assert_eq!(WakeSource::from_marker(12), Some(WakeSource::SelfTest));
+        assert_eq!(WakeSource::from_marker(13), None);
         assert_eq!(WakeSource::from_marker(u8::MAX), None);
 
         let n2: Vec<&str> = N2Kind::ALL.iter().map(|k| k.name()).collect();
@@ -2471,29 +2582,32 @@ mod tests {
     // -- The line ------------------------------------------------------------
 
     const GOLDEN_FULL: &str =
-        "[tripwire] v=1 src=g1 cpu=0 t=12000 ncpu=4 tick=100,101,102,103 irqsw=200,201,202,203 \
+        "[tripwire] v=2 src=g1 cpu=0 t=12000 ncpu=4 tick=100,101,102,103 irqsw=200,201,202,203 \
          irqsw0=300,301,302,303 nest=400,401,402,403 elrmm=500,501,502,503 spsrmm=600,601,602,603 \
          n4=700,701,702,703 insched=800,801,802,803 rsthold=900,901,902,903 \
          tpidrbad=1000,1001,1002,1003 xdir=1100 xrep=1200 xnever=1300 n1=1400 pcnull=1500 \
          pcphys=1600 pcother=1700 spbad=1800 latereply=1900 misrep=2000 ctbusy=2100 badtid=2200 \
          n2=2300,2301,2302,2303 \
-         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411,2412,2413,2414 \
-         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511,2512,2513,2514 \
-         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614 \
-         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711,2712,2713,2714 \
-         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811,2812,2813,2814 \
-         lkph=2900,2901,2902,2903,2904,2905,2906,2907,2908 \
-         lkpho=3000,3001,3002,3003,3004,3005,3006,3007,3008 \
-         lkphrun=3100,3101,3102,3103,3104,3105,3106,3107,3108 \
-         lkoxp=3200,3201,3202,3203,3204,3205,3206,3207,3208 \
-         lkself=3300,3301,3302,3303,3304,3305,3306,3307,3308 \
-         lktry=3400,3401,3402,3403,3404,3405,3406,3407,3408 \
-         lktph=3500,3501,3502,3503,3504,3505,3506,3507,3508 \
-         lkstk=3600,3601,3602,3603,3604,3605,3606,3607,3608 scana=3700 skipa=3800 skipaself=3900 \
+         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411 \
+         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511 \
+         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611 \
+         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711 \
+         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811 \
+         lkph=2900,2901,2902,2903,2904,2905,2906,2907 \
+         lkpho=3000,3001,3002,3003,3004,3005,3006,3007 \
+         lkphrun=3100,3101,3102,3103,3104,3105,3106,3107 \
+         lkoxp=3200,3201,3202,3203,3204,3205,3206,3207 \
+         lkself=3300,3301,3302,3303,3304,3305,3306,3307 \
+         lktry=3400,3401,3402,3403,3404,3405,3406,3407 \
+         lktph=3500,3501,3502,3503,3504,3505,3506,3507 \
+         lkstk=3600,3601,3602,3603,3604,3605,3606,3607 scana=3700 skipa=3800 skipaself=3900 \
          scanb=4000 skipb=4100 scanstall=4200 hbdefer=4300 orphan=4400 nowaker=4500 wakefl=4600 \
          starved=4700,4701,4702,4703 dupcur=4800 dupq=4900 qbad=5000 orphan_now=5100 \
          nowaker_now=5200 wakefl_now=5300 scanhold1=5400 scanhold2=5500 lb=5600 enqfull=5700 \
-         badchan=5800,5801,5802 twc=5900 twn=6000 twmax=6100 n=66\n";
+         badchan=5800,5801,5802 twc=5900 twn=6000 twmax=6100 \
+         ubtok=6200,6201,6202,6203,6204,6205,6206,6207,6208,6209,6210,6211 \
+         ubpend=6300,6301,6302,6303,6304,6305,6306,6307,6308,6309,6310,6311 \
+         bw=6400 n=69\n";
 
     #[test]
     fn full_line_golden() {
@@ -2514,7 +2628,7 @@ mod tests {
         assert_eq!(
             prefix,
             [
-                ("v", "1"),
+                ("v", "2"),
                 ("src", "g1"),
                 ("cpu", "0"),
                 ("t", "12000"),
@@ -2532,8 +2646,8 @@ mod tests {
     }
 
     const GOLDEN_NONZERO: &str =
-        "[tripwire] v=1 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 \
-         irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0,0 \
+        "[tripwire] v=2 src=hb cpu=0 t=12000 ncpu=4 tick=12001,11890,11875,11902 \
+         irqsw=812,799,801,790 ubrun=0,3,0,0,0,0,0,0,0,0,0,0 lkph=2,0,0,0,0,0,0,0 \
          starved=1,0,0,0 badchan=4,0,6 twc=812345 twn=12 twmax=94000 n=14\n";
 
     fn nonzero_value(key: Key, idx: usize) -> u64 {
@@ -2571,7 +2685,7 @@ mod tests {
         let line = render(LineSrc::Hb, LineMode::NonZero, 2, 0, 4, |_, _| 0);
         assert_eq!(
             line,
-            "[tripwire] v=1 src=hb cpu=2 t=0 ncpu=4 twc=0 twn=0 twmax=0 n=8\n"
+            "[tripwire] v=2 src=hb cpu=2 t=0 ncpu=4 twc=0 twn=0 twmax=0 n=8\n"
         );
         parse(&line);
     }
@@ -2617,7 +2731,10 @@ mod tests {
         // Values are digits, so a hazard could only come from the fixed text:
         // the prefix, the names and the separators.
         for src in LineSrc::ALL {
-            assert_no_hazards(&format!("{LINE_PREFIX} v=1 src={} ", src.name()));
+            assert_no_hazards(&format!(
+                "{LINE_PREFIX} v={SCHEMA_VERSION} src={} ",
+                src.name()
+            ));
         }
         for key in Key::ALL {
             assert_no_hazards(&format!(" {}=", key.name()));
@@ -3020,11 +3137,11 @@ mod tests {
             (Some(S::BlockedSelect), SlotState::BlockedSelect),
             (
                 Some(S::BlockedProcessWait { child_pid: 2 }),
-                SlotState::BlockedOther,
+                SlotState::BlockedProcessWait,
             ),
             (
                 Some(S::BlockedTimer { wake_at: 9 }),
-                SlotState::BlockedOther,
+                SlotState::BlockedTimer,
             ),
             (Some(S::BlockedIo), SlotState::BlockedOther),
             (Some(S::Suspended), SlotState::Suspended),
@@ -3087,12 +3204,29 @@ mod tests {
             (S::BlockedSelect, F::TIMEOUT, fresh, V::Clear),
             (S::BlockedSelect, wp, fresh, V::WakeInFlight),
             (S::BlockedSelect, cur, fresh, V::Clear),
+            (S::BlockedProcessWait, F::NONE, fresh, V::NoWaker),
+            (S::BlockedProcessWait, F::PROC_WAITER, fresh, V::Clear),
+            (S::BlockedProcessWait, F::TIMEOUT, fresh, V::NoWaker),
+            (S::BlockedProcessWait, F::CHAN_REF, fresh, V::NoWaker),
+            (S::BlockedProcessWait, wp, fresh, V::WakeInFlight),
+            (S::BlockedProcessWait, cur, fresh, V::Clear),
+            (S::BlockedProcessWait, q, fresh, V::QueuedBad),
+            (S::BlockedIpc, F::PROC_WAITER, fresh, V::NoWaker),
+            (S::BlockedTimer, F::NONE, fresh, V::NoWaker),
+            (S::BlockedTimer, F::TIMEOUT, fresh, V::Clear),
+            (S::BlockedTimer, F::CHAN_REF, fresh, V::NoWaker),
+            (S::BlockedTimer, F::NDL, fresh, V::NoWaker),
+            (S::BlockedTimer, wp, fresh, V::WakeInFlight),
+            (S::BlockedTimer, cur, fresh, V::Clear),
+            (S::BlockedTimer, q, fresh, V::QueuedBad),
             (S::BlockedOther, F::NONE, old, V::Clear),
             (S::BlockedOther, q, fresh, V::QueuedBad),
             (S::Suspended, F::NONE, old, V::Clear),
             (S::Dead, F::NONE, old, V::Clear),
             (S::Dead, cur, old, V::Clear),
-            (S::Dead, q, old, V::QueuedBad),
+            (S::Suspended, q, fresh, V::QueuedBad),
+            (S::Dead, q, old, V::Clear),
+            (S::Dead, q | cur, old, V::Clear),
         ];
         for (state, flags, (now, last_run), want) in rows {
             assert_eq!(
@@ -3102,8 +3236,8 @@ mod tests {
             );
         }
 
-        // Sleep: BlockedIpc { channel: u64::MAX } is woken by its timeout.
-        let sleep = SlotState::of(Some(&ThreadState::BlockedIpc { channel: u64::MAX }));
+        // Sleep: BlockedTimer is woken by its timeout.
+        let sleep = SlotState::of(Some(&ThreadState::BlockedTimer { wake_at: 9 }));
         assert_eq!(classify_slot(sleep, F::TIMEOUT, 0, 0), V::Clear);
         assert_eq!(classify_slot(sleep, F::NONE, 0, 0), V::NoWaker);
 
@@ -3351,27 +3485,79 @@ mod tests {
         assert_eq!(e.confirmed(), T2);
     }
 
+    #[test]
+    fn wait_word_bad_only_for_blocked_or_suspended() {
+        use SlotState as St;
+        let states = [
+            St::Empty,
+            St::Runnable,
+            St::Running,
+            St::BlockedIpc,
+            St::BlockedNotification,
+            St::BlockedSelect,
+            St::BlockedProcessWait,
+            St::BlockedTimer,
+            St::BlockedOther,
+            St::Suspended,
+            St::Dead,
+        ];
+        for state in states {
+            let blocked = matches!(
+                state,
+                St::BlockedIpc
+                    | St::BlockedNotification
+                    | St::BlockedSelect
+                    | St::BlockedProcessWait
+                    | St::BlockedTimer
+                    | St::BlockedOther
+                    | St::Suspended
+            );
+            for word in WaitState::ALL {
+                let want = blocked && word != WaitState::Idle;
+                assert_eq!(wait_word_bad(state, word), want, "{state:?} {word:?}");
+            }
+        }
+    }
+
     // -- Wake attribution ----------------------------------------------------
 
     #[test]
     fn unblock_kind_of_thread_states() {
         use ThreadState as S;
         use UnblockKind as K;
+        use WaitState as W;
+        // (state, kind with an Idle, an Armed and a Woken word). The word
+        // matters only for a Running or Runnable target.
         let cases = [
-            (None, K::NoThread),
-            (Some(S::Running), K::SkipRunning),
-            (Some(S::Runnable), K::SkipRunnable),
-            (Some(S::BlockedIpc { channel: 1 }), K::Woke),
-            (Some(S::BlockedNotification { notification: 1 }), K::Woke),
-            (Some(S::BlockedSelect), K::Woke),
-            (Some(S::BlockedProcessWait { child_pid: 1 }), K::Woke),
-            (Some(S::BlockedTimer { wake_at: 1 }), K::Revived),
-            (Some(S::BlockedIo), K::Revived),
-            (Some(S::Suspended), K::Revived),
-            (Some(S::Dead), K::Revived),
+            (None, [K::NoThread; 3]),
+            (
+                Some(S::Running),
+                [K::SkipRunning, K::LeaveToken, K::TokenPending],
+            ),
+            (
+                Some(S::Runnable),
+                [K::SkipRunnable, K::LeaveToken, K::TokenPending],
+            ),
+            (Some(S::BlockedIpc { channel: 1 }), [K::Woke; 3]),
+            (
+                Some(S::BlockedNotification { notification: 1 }),
+                [K::Woke; 3],
+            ),
+            (Some(S::BlockedSelect), [K::Woke; 3]),
+            (Some(S::BlockedProcessWait { child_pid: 1 }), [K::Woke; 3]),
+            (Some(S::BlockedTimer { wake_at: 1 }), [K::Woke; 3]),
+            (Some(S::BlockedIo), [K::Woke; 3]),
+            (Some(S::Suspended), [K::Woke; 3]),
+            (Some(S::Dead), [K::Dead; 3]),
         ];
         for (state, want) in cases {
-            assert_eq!(UnblockKind::of(state.as_ref()), want, "{state:?}");
+            for (word, kind) in [W::Idle, W::Armed, W::Woken].into_iter().zip(want) {
+                assert_eq!(
+                    UnblockKind::of(state.as_ref(), word),
+                    kind,
+                    "{state:?} {word:?}"
+                );
+            }
         }
         let keys: Vec<Option<Key>> = K::ALL.iter().map(|k| k.key()).collect();
         assert_eq!(
@@ -3381,12 +3567,14 @@ mod tests {
                 Some(Key::Ubdead),
                 Some(Key::Ubrun),
                 Some(Key::Ubrbl),
+                Some(Key::Ubtok),
+                Some(Key::Ubpend),
                 Some(Key::Ubnone)
             ]
         );
         for k in K::ALL {
             assert_eq!(k.skipped(), matches!(k, K::SkipRunning | K::SkipRunnable));
-            assert_eq!(k.made_runnable(), matches!(k, K::Woke | K::Revived));
+            assert_eq!(k.made_runnable(), matches!(k, K::Woke));
         }
     }
 
@@ -3485,12 +3673,12 @@ mod tests {
                     row.unwrap().2
                 }
                 (K::SkipRunning | K::SkipRunnable, false) => [LATE; 4],
-                (K::Woke | K::Revived, true) => [MIS, MIS, NC, MIS],
-                (K::Woke | K::Revived, false) => [MIS; 4],
-                (K::NoThread, _) => [NC; 4],
+                (K::Woke, true) => [MIS, MIS, NC, MIS],
+                (K::Woke, false) => [MIS; 4],
+                (K::Dead | K::NoThread | K::LeaveToken | K::TokenPending, _) => [NC; 4],
             }
         });
-        assert_eq!(cells, 5 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 7 * 2 * 2 * 3 * 4);
     }
 
     #[test]
@@ -3520,7 +3708,7 @@ mod tests {
                 [NC; 4]
             }
         });
-        assert_eq!(cells, 5 * 2 * 2 * 3 * 4);
+        assert_eq!(cells, 7 * 2 * 2 * 3 * 4);
     }
 
     /// The kernel interleavings the N2 table has to separate (S3 review).
@@ -3570,6 +3758,12 @@ mod tests {
         // The normal reply wake of an untimed caller is not misdirected.
         let untimed_armed = wait_phase(PHASE_ARMED, false);
         assert_eq!(reply(K::Woke, untimed_armed, C::Absent), W::NotCounted);
+        // With the wake token, the N2 reply finds the caller Armed and
+        // leaves it the token: no N2 count, the caller consumes it.
+        for kind in [K::LeaveToken, K::TokenPending] {
+            assert_eq!(reply(kind, armed, C::Removed), W::NotCounted);
+            assert_eq!(send(kind, armed, C::Removed), W::NotCounted);
+        }
 
         // Receive side: the send removes a receiver's registered timeout
         // before it blocks.

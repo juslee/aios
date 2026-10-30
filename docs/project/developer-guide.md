@@ -606,13 +606,15 @@ AIOS uses three distinct error handling patterns, each suited to a different sit
 **Pattern 1: Syscall results** -- `Result<T, i64>` with numeric error code
 
 ```rust
-pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
-    let mut table = CHANNEL_TABLE.lock();
-    // Find free slot...
-    match free_slot {
-        Some(id) => Ok(ChannelId(id as u32)),
-        None => Err(IpcError::Enomem as i64),
-    }
+pub fn channel_create(creator: ThreadId) -> Result<(ChannelId, CapabilityHandle), i64> {
+    let pid = crate::cap::process_of_thread(creator).ok_or(IpcError::Eperm as i64)?;
+    // One PROCESS_TABLE hold: check ChannelCreate, publish the channel
+    // (`channel_alloc` returns ChannelId::new(slot, generation) or ENOSPC)
+    // and mint ChannelAccess(id) as a child of the authorising token.
+    crate::cap::create_with_access(pid, Capability::ChannelCreate, |auth| {
+        let id = channel_alloc(pid, Some(auth))?;
+        Ok((id, Capability::ChannelAccess(id)))
+    })
 }
 ```
 
@@ -642,7 +644,7 @@ fn halt() -> ! {
 
 Why `wfe` and not `loop {}`? `wfe` (Wait For Event) puts the core in a low-power state. A bare `loop {}` burns full CPU cycles doing nothing. On real hardware, this matters for power consumption and thermal management.
 
-The handler masks IRQs before it prints, so the timer tick cannot preempt the report or run the scheduler on top of the broken state; it takes no lock and calls no `klog!`. After the unchanged `PANIC: ` lines (the soak harness keys on them and captures the message on the next line) it prints a `[panic] cpu=N tid=T|? ctx=<label> irq_was=on|off t=<secs.micros>` line, with `irq_elr=0x…` (the PC the IRQ interrupted) when it panicked in IRQ context, then a full `[tripwire] v=1 src=panic` line. On CPU 0 it then drains the log rings in a bounded loop, unless CPU 0 was already inside a drain. A synchronous exception's report likewise adds `  regs:` (SP, SPSR, TTBR0, VBAR) and `  ctx:` (CPU, thread, IRQ context, in-scheduler) lines and a `src=exc` tripwire line after its unchanged head and Abort lines. `free_pages`, `free_dma_pages` and the compositor's `release_buffer` are `#[track_caller]`, so a bad free's `[mm] BUG: free_pages(` assertion names the caller, not `frame.rs`.
+The handler masks IRQs before it prints, so the timer tick cannot preempt the report or run the scheduler on top of the broken state; it takes no lock and calls no `klog!`. After the unchanged `PANIC: ` lines (the soak harness keys on them and captures the message on the next line) it prints a `[panic] cpu=N tid=T|? ctx=<label> irq_was=on|off t=<secs.micros>` line, with `irq_elr=0x…` (the PC the IRQ interrupted) when it panicked in IRQ context, then a full `[tripwire] v=2 src=panic` line. On CPU 0 it then drains the log rings in a bounded loop, unless CPU 0 was already inside a drain. A synchronous exception's report likewise adds `  regs:` (SP, SPSR, TTBR0, VBAR) and `  ctx:` (CPU, thread, IRQ context, in-scheduler) lines and a `src=exc` tripwire line after its unchanged head and Abort lines. `free_pages`, `free_dma_pages` and the compositor's `release_buffer` are `#[track_caller]`, so a bad free's `[mm] BUG: free_pages(` assertion names the caller, not `frame.rs`.
 
 **Pattern 3: Boot validation** -- structured log then explicit halt
 
@@ -1028,9 +1030,9 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
-| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423), `service/mod.rs` (~414) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `cap/mod.rs` (~599), `bench.rs` (~586), `sched/scheduler.rs` (~759), `block_engine.rs` (~783) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests), `syscall/mod.rs` (~802), `ipc/shmem.rs` (~1301) |
 
 **Guidelines:**
 
@@ -1042,30 +1044,39 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (607)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
-  channel.rs      (577)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel, timeout arming
-  timeout.rs      (227)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs       (364)  # Direct switch fast path, priority inheritance, reply switch
-  scan.rs         (114)  # Read-only waker-table accessors for the tripwire's heartbeat scan B
+  mod.rs          (747)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  channel.rs      (780)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel, timeout arming
+  timeout.rs      (400)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs       (405)  # Direct switch fast path, priority inheritance, reply switch
+  scan.rs         (138)  # Read-only waker-table accessors for the tripwire's heartbeat scan B
   tests/
-    mod.rs        (772)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (186)  # IpcSelect capability self-test
-    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
-    timeout_args.rs (72) # IpcCall/IpcRecv timeouts near u64::MAX through syscall_dispatch, on the PI pair (#217) self-test
-  notify.rs       (413)  # Notification objects (signal/wait)
-  select.rs       (364)  # IPC select (multi-wait)
-  shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
+    mod.rs        (791)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (172)  # Out-of-range pid self-test on the SharedMemoryShare path
+    select_cap.rs (187)  # IpcSelect capability self-test
+    syscall_args.rs (361) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (281)  # IPC Kit error variants through KernelIpc (#190) self-test
+    timeout_args.rs (77) # IpcCall/IpcRecv timeouts near u64::MAX through syscall_dispatch, on the PI pair (#217) self-test
+    create_abi.rs (204)  # SVC 6 / SVC 20 return the new id and the creator's access handle (#163) self-test
+    stale_id.rs   (376)  # Stale channel and region ids fail with EPIPE (#185); Shm cascade and borrow self-tests
+    share.rs      (179)  # SharedMemoryShare delegation and Kit shmem_destroy self-test
+    dead_thread.rs (124) # A thread that exits stays Dead self-test
+    wake_token.rs (117)  # A wake between arm and block is kept as a token self-test
+    wake_helper.rs (316) # The pid-1 helper thread that acts on a wait for the loop tests
+    wait_loops.rs (667)  # Loop tests of the converted waits (outcome-only)
+    lifecycle.rs  (577)  # Process exit, wait and reap, cascade, endpoint walk self-tests
+  notify.rs       (640)  # Notification objects (signal/wait)
+  select.rs       (258)  # IPC select (multi-wait)
+  shmem.rs        (1301) # Shared memory regions, borrow and release, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
 
 ```text
 sched/
-  mod.rs         (154)  # RunQueue, globals, thread allocation helpers, re-exports
-  scheduler.rs   (432)  # schedule(), enter_scheduler(), timer_tick(), block/unblock
-  init.rs        (277)  # Scheduler init, idle/test threads, load balancer
+  mod.rs         (293)  # RunQueue, globals, thread allocation helpers, re-exports
+  scheduler.rs   (759)  # schedule(), enter_scheduler(), timer_tick(), block/unblock
+  wake.rs        (183)  # Wake token: prepare_block, cancel_block, wait_state
+  init.rs        (286)  # Scheduler init, idle/test threads, load balancer
 ```
 
 ### 3.2 Module Structure Patterns
@@ -1645,7 +1656,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 712 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
+Currently 793 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1738,23 +1749,23 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (712 tests):**
+**Current test distribution (793 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
-| `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
+| `cap` | 96 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list, attenuation (no Create to Access, expiry inheritance), `mint_child`, `revoke_all`, `share_decision` (foreign reserve, delegatable rule, failure order) |
+| `ipc` | 82 | Channel and shared-memory ids (slot and generation layout, `next_generation`, retirement), `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
-| `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |
+| `tripwire` | 43 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows, `wait_word_bad` |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
 | `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
 | `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `gic` | 28 | GICv3 timer PPI setup: register offsets, `PpiConfig` INTID and priority rules (non-zero, below the 0xF0 mask floor, low nibble clear), the per-flag readback check under `DS` = 1 and `DS` = 0, the `GICR_WAKER` wake steps, `GICD_CTLR.DS`, the `[smp]` field values and failed-flag names |
-| `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
+| `sched` | 61 | Thread state and transitions, scheduler class, CpuSet, resource limits, priority, `ProcessId::index`, the wake token (`WaitState`, `wake_action`, `block_action`) checked over every state, word and interleaving, process state and `process_wait_action` |
 | `collections` | 23 | FixedQueue (including `iter`/`contains`), RingBuffer edge cases |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
 | `lock` | 19 | Owner-stamp codec, the re-entry `classify` table, `read_stamp` and waiter-side models (exhaustive CPU switches), `StampedLock` CAS/release and the consistent holder snapshot, a threaded test (Miri-sized) |
@@ -1784,8 +1795,8 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 | File | Contents |
 |---|---|
 | `run-NN.log` | Raw serial output of boot NN, plus a trailing `[soak] meta` line with QEMU's exit status (`qemu_rc`), `elapsed` seconds, and the harness timing: seconds into the boot at which the kernel started (`kstart`), the first heartbeat (`hb_first`), the Gate 1 bench header (`bench_start`) and `=== Gate 1 Complete ===` (`g1done`) appeared, and the heartbeat last advanced (`hb_last_advance`); -1 means never. `hb_max_gap` is the longest wait between two heartbeat advances after the bench completed (-1 if it never did) |
-| `summary.tsv` | One row per boot, with a header line; read it by column name. The first 22 columns predate crash-fix step 1a: class, last heartbeat tick, stall, the timing above (`g1done_s`, `hb_max_gap_s`, ...), markers, `lb_last`, detail, first fatal line, last three kernel INFO lines, log. Then the Gate 1 IPC line's `ipc_avg_us` and `ipc_iters`; a `PANIC-LOCK`'s `reentry_lock`, `reentry_ctx` and `reentry_holder_irqs`; the `[tripwire-ev]` lock event counts `ev_ph`, `ev_self`, `ev_self_irq` (`kind=self` with `ctx=irq` or `irq-exit`) and `ev_stuck`; from the last complete `[tripwire]` line ([observability.md §6.5](../kernel/observability.md)), `tw_v`, `tw_src`, `tw_cpu`, `tw_t`, `tw_ncpu` and one `tw_<key>` per key in `Key::ALL` order (the comma list as printed, `0` for a key the line leaves out); `g1_elrmm` from the last complete `src=g1` line; and last the two whole lines, `g1_line` and `tw_line`. `-` means unreadable or no such line; a line of another schema version fills only `tw_v` and `tw_line`. `tw_t` beside `last_tick` shows a stale line |
-| `summary.md` | Host/commit metadata, class counts, 95% Wilson interval for the CLEAN rate, the mean of `ipc_avg_us` over CLEAN boots, the tripwire counters by class (per class, "boots with a non-zero value / sum", or "/ max" for a gauge; a per-CPU key also gets a row summing its CPUs), per-boot table (with each boot's tripwire `src`) |
+| `summary.tsv` | One row per boot, with a header line; read it by column name. The first 22 columns predate crash-fix step 1a: class, last heartbeat tick, stall, the timing above (`g1done_s`, `hb_max_gap_s`, ...), markers, `lb_last`, detail, first fatal line, last three kernel INFO lines, log. Then the Gate 1 IPC line's `ipc_avg_us` and `ipc_iters`; a `PANIC-LOCK`'s `reentry_lock`, `reentry_ctx` and `reentry_holder_irqs`; the `[tripwire-ev]` lock event counts `ev_ph`, `ev_self`, `ev_self_irq` (`kind=self` with `ctx=irq` or `irq-exit`) and `ev_stuck`; from the last complete `[tripwire]` line ([observability.md §6.5](../kernel/observability.md)), `tw_v`, `tw_src`, `tw_cpu`, `tw_t`, `tw_ncpu` and one `tw_<key>` per key of the `v=1` and `v=2` catalogues joined by name (the same list as `Key::ALL` today; the comma list as printed, `0` for a key the line leaves out); `g1_elrmm` from the last complete `src=g1` line; and last the two whole lines, `g1_line` and `tw_line`. A `v=1` line is decoded with the frozen step-10 catalogue (`tools/src/cmd/soak/schema_v1.rs`) and a `v=2` line with `shared`'s, so logs from before capability-lifetime step 11 still read. `-` means unreadable or no such line; a line of any other schema version fills only `tw_v` and `tw_line`. `tw_t` beside `last_tick` shows a stale line |
+| `summary.md` | Host/commit metadata, class counts, 95% Wilson interval for the CLEAN rate, the mean of `ipc_avg_us` over CLEAN boots, the tripwire counters by class (per class, "boots with a non-zero value / sum", or "/ max" for a gauge; a per-CPU key also gets a row summing its CPUs; `v=1` and `v=2` boots share rows joined by key and index name, so `ubrun[cancel]` is one row for both), per-boot table (with each boot's tripwire `src`) |
 | `build.log` | Output of `just disk` |
 
 **Classes.** Every boot gets exactly one class. The precedence is: UEFI stub never ran (`INCONCLUSIVE`) > `PCZERO` / `PANIC-LOCK` / `PANIC` / `EXCEPTION` > QEMU killed by a signal (`INCONCLUSIVE`) > `WEDGE-STUCK` / `WEDGE-ALIVE` / cut short (`INCONCLUSIVE`) > `DEGRADED` > `CLEAN`. So fatal reports take precedence over heartbeat state. If a log holds several fatal reports, the earliest decides the class, because later reports (for example a data abort after a panic) are usually fallout. `WEDGE-STUCK` and `WEDGE-ALIVE` split the former `WEDGE`, `PANIC-LOCK` splits off `PANIC`, and `DEGRADED` splits off `CLEAN` (crash-fix step 1a); soaks from before that report the old names, and a subclass folded to its base class gives exactly the old class.
@@ -1809,7 +1820,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock times at which the kernel started, the first heartbeat, the bench header and `=== Gate 1 Complete ===` appeared, and a new heartbeat last appeared. A boot is `CLEAN` only if all of these hold:
 
-1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs on, on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, the usual cause is CPU 0's timer IRQ spinning forever, IRQs masked, on a lock that the thread it interrupted holds, such as `THREAD_TABLE` during the bench's IPC ("heartbeat stuck at tick 0 after the Gate 1 bench started"; [crash-fix ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) H3). From crash-fix step 1b that re-entry panics with `lock re-entry:` instead of spinning. A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
+1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs on, on whichever CPU runs the bench main and server threads (enqueued on and pinned to CPU 0, capability-lifetime step 4). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, the usual cause is CPU 0's timer IRQ spinning forever, IRQs masked, on a lock that the thread it interrupted holds, such as `THREAD_TABLE` during the bench's IPC ("heartbeat stuck at tick 0 after the Gate 1 bench started"; [crash-fix ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md) H3). From crash-fix step 1b that re-entry panics with `lock re-entry:` instead of spinning. A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
 2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the harness's SIGTERM by about 1 s (up to 10 s if SIGKILL is needed). A QEMU process that exits early counts as silent for the rest of the planned time.
 3. The log contains `=== Gate 1 Complete ===`. The bench can hang while the timer keeps running (seen under TCG in CI, with heartbeats reaching tick 79000), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". A completed bench must also have done all its round trips (rule 5).
 4. In gpu mode, the log contains `GpuReady`, `InputReady` and `display handoff complete` (all printed before the bench); otherwise "gpu markers missing".
@@ -1817,7 +1828,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Wedge or cut short.** A boot that misses rule 1 or 2 is a `WEDGE-STUCK`, and one that misses rule 3 a `WEDGE-ALIVE`, only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE-ALIVE`, since they only matter once the bench has completed. The harness warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
-**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess(S.G)`, 8 per boot, where `S.G` is the slot and generation of the channel id, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
 **Re-classifying saved logs.** `just soak --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE-STUCK` or `WEDGE-ALIVE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge. With `--out DIR` (`out=DIR`; new or empty, as for a soak), it also writes `summary.tsv` and `summary.md` for those logs through the soak's own report code: the boots are numbered in the order given, the `log` column holds each path as given, the timing columns come from each log's `[soak] meta` line (`-` without one), and the settings a set of logs cannot tell (commit, QEMU, firmware, host, load before and after) read `-`. Over the logs of a soak that finished, given in boot order by their bare `run-NN.log` names from the soak's directory (the `log` column copies the path as given, and a soak writes the bare name), it reproduces that soak's `summary.tsv` row for row when the soak's `runs` value had no leading zeros: a soak numbers its boots to the width of `runs` as typed (`runs=010` gives `001`…`010`), `--classify --out` to the width of the number of logs given (`01`…`10`).
 
@@ -2086,8 +2097,9 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Thread blocks and never wakes | Notification waiter not registered before signal | Ensure register-then-block ordering with table lock held across both |
-| IPC timeout never fires | `NOTIFY_DEADLINES` lock contention in timer IRQ | Use `try_lock()` in IRQ context, never blocking lock |
+| Thread blocks and never wakes | A wake landed between the waiter's publish and its block, or the site did not arm | Three rules for a waiting site: (1) `sched::prepare_block(tid)` inside, or before, the critical section that publishes the first record any waker can find the thread by (timeout entry, notification deadline, `pending_caller`, `waiting_receiver`, notification or select waiter record, `PROCESS_WAITERS` entry), with `tid` the caller's own, read with IRQs masked (`current_tid()`, or `current_thread_and_pid()` for SVC 25); (2) once armed, call `block_current` or `cancel_block`; (3) after `block_current` returns, re-check the condition under its own lock and loop, re-arming before each re-publish |
+| IPC timeout never fires | `NOTIFY_DEADLINES` lock contention in timer IRQ | Use `try_lock()` in IRQ context, never blocking lock; call `unblock` only after releasing the lock |
+| Use-after-free of region memory | A kernel thread read a shared region through the direct map after the region was destroyed | Read region memory only between `region_borrow` and `region_release`, never release under `PROCESS_TABLE` |
 | Double context switch corruption | `IN_SCHEDULER` guard not set | Set per-CPU `IN_SCHEDULER` AtomicBool before schedule(), clear after |
 | Direct switch to wrong thread | CURRENT_THREAD stale after save_context return | Re-read core ID from hardware (`MPIDR_EL1`) after save_context |
 

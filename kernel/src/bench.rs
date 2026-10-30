@@ -15,7 +15,7 @@ use crate::cap;
 use crate::ipc::{self, ChannelId};
 use crate::observability::tripwire;
 use crate::sched;
-use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
+use crate::task::process::{process_install, KernelResourceLimits, ProcessId};
 use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ fn bench_server_entry() -> ! {
     let ch = loop {
         let val = BENCH_CHANNEL.load(Ordering::Acquire);
         if val != u32::MAX {
-            break ChannelId(val);
+            break ChannelId::from_raw(val);
         }
         sched::thread_yield();
     };
@@ -281,8 +281,9 @@ fn bench_shmem_throughput() -> (u64, u64) {
     let pid = ProcessId(8);
     let flags = crate::mm::pgtable::VmFlags::READ | crate::mm::pgtable::VmFlags::WRITE;
 
+    // The creator's minted SharedMemoryAccess authorises the map below.
     let region = match crate::ipc::shmem::shared_memory_create(pid, SHM_SIZE, flags) {
-        Ok(id) => id,
+        Ok((id, _access)) => id,
         Err(_) => return (0, 0),
     };
 
@@ -292,19 +293,34 @@ fn bench_shmem_throughput() -> (u64, u64) {
         return (0, 0);
     }
 
-    // Phase 3: kernel threads access shared memory via the direct map.
-    let dmap_va = match crate::ipc::shmem::region_dmap_addr(region) {
-        Some(va) => va,
-        None => {
+    // Phase 3: kernel threads access shared memory via the direct map, and
+    // only under a borrow, which keeps the frames allocated even if the
+    // region is destroyed during the loops.
+    let borrow = match crate::ipc::shmem::region_borrow(pid, region) {
+        Ok(b) if b.len() >= SHM_SIZE => b,
+        Ok(b) => {
+            crate::ipc::shmem::region_release(b);
+            let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
+            return (0, 0);
+        }
+        Err(_) => {
             let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
             return (0, 0);
         }
     };
+    let dmap_va = borrow.addr();
 
     // Write benchmark.
     let start = timer::read_counter();
-    // SAFETY: dmap_va points to the shared region's backing pages via the
-    // kernel direct map. The region is at least SHM_SIZE bytes.
+    // SAFETY: dmap_va is the direct-map address of the region's frames, and
+    // `borrow` (from region_borrow, released only after both loops) keeps
+    // those frames allocated: a region destroyed while borrowed drains
+    // instead of being freed. The borrow's len is at least SHM_SIZE (checked
+    // above), and the direct map covers all RAM read-write.
+    // region_borrow/region_release maintain the borrow count under
+    // SHARED_REGION_TABLE; kmap.rs maintains the direct map.
+    // Without the borrow, a cascade during the loops could free the frames
+    // and these writes would corrupt pages handed to another owner.
     unsafe {
         let ptr = dmap_va as *mut u8;
         for i in 0..SHM_SIZE {
@@ -316,7 +332,12 @@ fn bench_shmem_throughput() -> (u64, u64) {
 
     // Read benchmark.
     let start = timer::read_counter();
-    // SAFETY: Same direct-map VA, just reading.
+    // SAFETY: the same borrowed range as the write loop: `borrow` is still
+    // held, so the region's frames stay allocated, and the range is at least
+    // SHM_SIZE bytes.
+    // region_borrow/region_release maintain the borrow count under
+    // SHARED_REGION_TABLE; kmap.rs maintains the direct map.
+    // Reading freed frames would return another owner's data.
     unsafe {
         let ptr = dmap_va as *const u8;
         let mut sum: u64 = 0;
@@ -329,7 +350,8 @@ fn bench_shmem_throughput() -> (u64, u64) {
     let end = timer::read_counter();
     let read_ns = ticks_to_ns(end.wrapping_sub(start));
 
-    // Clean up.
+    // Clean up: release the borrow, then unmap, which frees the region.
+    crate::ipc::shmem::region_release(borrow);
     let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
 
     // Calculate MB/s: size_bytes / time_ns * 1000 = MB/s
@@ -366,25 +388,37 @@ pub fn bench_main_entry() -> ! {
     let _ = writeln!(w, "\n[bench] === Gate 1 Benchmark ===");
 
     // --- Setup: Create bench channel and server ---
-    // Both endpoints belong to process 8 (bench main and the bench server).
-    let bench_ch = ipc::channel_create_unchecked(ProcessId(8));
-
-    // Grant ChannelAccess to process 8 (bench process).
-    let _ = cap::grant_to_process(
-        ProcessId(8),
-        shared::Capability::ChannelAccess(bench_ch),
-        false,
-    );
+    // A checked create from this pid-8 thread, under process 8's
+    // ChannelCreate: it mints ChannelAccess(bench_ch) for process 8, which
+    // covers both endpoints (bench main and the bench server).
+    let created = ipc::current_thread_id()
+        .ok_or(crate::syscall::IpcError::Eperm as i64)
+        .and_then(ipc::channel_create);
+    let bench_ch = match created {
+        Ok((ch, _access)) => ch,
+        Err(e) => {
+            let _ = writeln!(w, "[bench] channel_create failed: {}", e);
+            tripwire::set_console_busy(false);
+            loop {
+                // SAFETY: wfe is a hint instruction: it touches no memory and
+                // no register state, and is always permitted at EL1, where
+                // this kernel thread runs (the scheduler starts every kernel
+                // thread at EL1). The worst case is a wakeup by an event,
+                // after which the loop waits again.
+                unsafe { core::arch::asm!("wfe") };
+            }
+        }
+    };
 
     // Set peer for the channel.
     let _ = ipc::channel_set_peer(bench_ch, ProcessId(8));
 
-    BENCH_CHANNEL.store(bench_ch.0, Ordering::Release);
+    BENCH_CHANNEL.store(bench_ch.raw(), Ordering::Release);
 
     crate::kinfo!(
         Ipc,
         "Bench main: channel {} created, waiting for server",
-        bench_ch.0
+        bench_ch
     );
 
     // Wait for server ready (yield to let server thread run).
@@ -472,19 +506,8 @@ pub fn bench_main_entry() -> ! {
 /// Create bench process, threads, and enqueue them.
 pub fn init() {
     // Create Process 8: bench.
-    {
-        let mut procs = PROCESS_TABLE.lock();
-        let mut name = [0u8; 32];
-        name[..5].copy_from_slice(b"bench");
-        procs[8] = Some(ProcessControl {
-            pid: ProcessId(8),
-            address_space: None,
-            resource_limits: KernelResourceLimits::native(),
-            cap_table: cap::CapabilityTable::new(),
-            thread_ids: [None; 16],
-            name,
-        });
-    }
+    process_install(ProcessId(8), None, b"bench", KernelResourceLimits::native())
+        .expect("process 8 install");
     let _ = cap::grant_to_process(ProcessId(8), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(8), shared::Capability::SharedMemoryCreate, true);
     let _ = cap::grant_to_process(ProcessId(8), shared::Capability::DebugPrint, false);
@@ -502,7 +525,12 @@ pub fn init() {
         );
         thread.sched.class = SchedulerClass::Interactive;
         thread.sched.effective_class = SchedulerClass::Interactive;
-        thread.sched.affinity = CpuSet::all();
+        // Pinned to CPU 0: its last wake is a timeout, which check_timeouts
+        // may deliver from any ticking CPU, and unblock queues it on the
+        // waking CPU when affinity allows. Parked in its wfe loop there, an
+        // Interactive thread would run ahead of every Normal thread on that
+        // CPU for the rest of the boot.
+        thread.sched.affinity = CpuSet::single(0);
         thread.context.sp = stack_virt_top as u64;
         thread.owner_pid = Some(ProcessId(8));
 
@@ -544,7 +572,9 @@ pub fn init() {
         );
         thread.sched.class = SchedulerClass::Interactive;
         thread.sched.effective_class = SchedulerClass::Interactive;
-        thread.sched.affinity = CpuSet::all();
+        // Pinned to CPU 0, as the bench server and for the same reason: a
+        // fired ipc_call timeout must not park it on another CPU.
+        thread.sched.affinity = CpuSet::single(0);
         thread.context.sp = stack_virt_top as u64;
         thread.owner_pid = Some(ProcessId(8));
 

@@ -426,7 +426,7 @@ static PANICKING: [AtomicBool; smp::MAX_CORES] = [const { AtomicBool::new(false)
 /// 2. A panic inside the handler on the same CPU halts at once.
 /// 3. `PANIC: <info>`, unchanged: the soak harness keys on it and captures
 ///    the message on the next line.
-/// 4. The `[panic]` line and a full `[tripwire] v=1 src=panic` line
+/// 4. The `[panic]` line and a full `[tripwire] v=2 src=panic` line
 ///    (`tripwire::print_panic_report`).
 /// 5. On CPU 0, drain the log rings (`observability::drain_logs_after_panic`).
 /// 6. Halt with `wfe`.

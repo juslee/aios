@@ -2,7 +2,7 @@
 //!
 //! Architecture reference: `docs/kits/kernel/ipc.md`
 
-use crate::cap::Capability;
+use crate::cap::{Capability, CapabilityHandle};
 use crate::ipc::{ChannelId, NotificationId, RawMessage, SelectEntry, SharedMemoryId};
 use crate::syscall::IpcError;
 use crate::VirtAddr;
@@ -43,8 +43,10 @@ pub enum IpcKitError {
     /// The caller lacks the required capability.
     CapabilityDenied { required: Capability },
     /// A shared memory operation failed: the region does not exist, the
-    /// caller has no mapping of it, it is already mapped, or the calling
-    /// thread has no process.
+    /// caller has no mapping of it, it is already mapped, the caller is not
+    /// its creator holding a live access token (`shmem_destroy`), the region
+    /// id names a malformed slot (`shmem_destroy`'s EINVAL, "invalid region
+    /// id"), or the calling thread has no process.
     SharedMemoryError { reason: &'static str },
     /// The message payload exceeds the maximum size.
     MessageTooLarge { size: usize, max: usize },
@@ -135,9 +137,9 @@ impl From<IpcError> for IpcKitError {
     ///   or dead endpoint on the channel paths, a missing region on the
     ///   shared memory paths (SharedMemoryMap, SharedMemoryShare, MemoryUnmap
     ///   of a shared window address, and the in-kernel shared_memory_unmap
-    ///   behind `shmem_unmap`). It maps
-    ///   to `ObjectGone`, which names no id; channel wrappers override it to
-    ///   `InvalidChannel { id }`, shared memory wrappers to
+    ///   and shared_memory_destroy behind `shmem_unmap` and `shmem_destroy`).
+    ///   It maps to `ObjectGone`, which names no id; channel wrappers
+    ///   override it to `InvalidChannel { id }`, shared memory wrappers to
     ///   `SharedMemoryError`.
     /// - EEXIST maps to `SharedMemoryError`: among IPC Kit paths only
     ///   `shared_memory_map` returns it.
@@ -155,17 +157,25 @@ impl From<IpcError> for IpcKitError {
     ///   DebugPrint and TimeGet look up no thread or process, nor do
     ///   CapabilityTransfer and the other syscalls not implemented yet,
     ///   which return ENOTSUP to every caller; TimeSleep with no current
-    ///   thread returns 0 without sleeping, and NotificationWait returns
-    ///   EINVAL without one.) Some of them also
-    ///   return it for other reasons: an unmap of a region the caller has
-    ///   not mapped (MemoryUnmap of a shared window address, or the
-    ///   in-kernel shared_memory_unmap behind `shmem_unmap`),
-    ///   SharedMemoryShare from a caller that is not the region's creator or
-    ///   to a target pid with no process, and ProcessWait for a child pid
-    ///   with no process or after a wake that finds no exit code. `reply`,
-    ///   `notification_create` and `shmem_unmap` override it; the other
-    ///   EPERM paths listed above have no Kit wrapper, so a plain decode of
-    ///   their EPERM reads as `CapabilityDenied`.
+    ///   thread returns 0 without sleeping, and IpcSelect and
+    ///   NotificationWait, which only in-kernel callers can reach with no
+    ///   current thread, return EPERM then too.) Some of them also return it
+    ///   for other reasons: an unmap of a region the caller has not mapped
+    ///   (MemoryUnmap of a shared window address, or the in-kernel
+    ///   shared_memory_unmap behind `shmem_unmap`), SharedMemoryShare from a
+    ///   caller that is not the region's creator, with a token that is not
+    ///   delegatable for another target, or to a target pid whose slot holds
+    ///   no live process, and ProcessWait for a child pid whose slot is Empty
+    ///   or that is not the caller's child. `reply`, `notification_create`
+    ///   and `shmem_unmap` override it, and so does `shmem_destroy`, whose
+    ///   EPERM (not the creator, or no live access token) names no single
+    ///   capability. `select` and `wait` with no current thread report
+    ///   `CapabilityDenied` too: `select` names its first channel entry (or
+    ///   reports `InvalidArgument` for a set with none), and `wait` overrides
+    ///   nothing (for an in-range id: an id at or above the notification
+    ///   limit fails with EINVAL first). The other EPERM paths listed above
+    ///   have no Kit wrapper, so a plain decode of their EPERM reads as
+    ///   `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
@@ -220,19 +230,27 @@ impl From<IpcError> for IpcKitError {
 ///
 /// Covers synchronous call/reply, asynchronous send, and blocking receive.
 pub trait ChannelOps {
-    /// Create a new IPC channel. Returns the channel ID.
-    fn channel_create(&mut self) -> Result<ChannelId, IpcKitError>;
+    /// Create a new IPC channel. Returns the channel ID and the handle of the
+    /// caller's `ChannelAccess(id)` token, minted as a child of the
+    /// authorising `ChannelCreate` token.
+    fn channel_create(&mut self) -> Result<(ChannelId, CapabilityHandle), IpcKitError>;
 
-    /// Destroy an IPC channel. Wakes any blocked threads with an error.
+    /// Destroy an IPC channel; the caller needs `ChannelAccess(id)`. Wakes
+    /// every thread blocked on it; a receive or call on it then fails with
+    /// EPIPE (`InvalidChannel` through the Kit).
     fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError>;
 
     /// Fire-and-forget send of a message on a channel.
     fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError>;
 
-    /// Blocking receive on a channel. Returns the received message.
+    /// Receive a message on a channel, waiting up to `timeout_ticks`: 0 polls
+    /// without blocking, and `u64::MAX` waits with no timeout. Returns the
+    /// received message.
     fn recv(&self, id: ChannelId, timeout_ticks: u64) -> Result<RawMessage, IpcKitError>;
 
-    /// Synchronous call: send a request and block until a reply arrives.
+    /// Synchronous call: send a request and block until a reply arrives, the
+    /// call fails, or `timeout_ticks` pass. 0 and `u64::MAX` both mean no
+    /// timeout (docs/kernel/ipc.md §3.1).
     fn call(
         &self,
         id: ChannelId,
@@ -252,7 +270,8 @@ pub trait NotificationOps {
     /// Atomically OR `bits` into the notification word, waking matched waiters.
     fn signal(&self, id: NotificationId, bits: u64) -> Result<(), IpcKitError>;
 
-    /// Wait for masked bits on a notification. Returns the matched bits.
+    /// Wait for masked bits on a notification. Returns the matched bits,
+    /// which the wait clears.
     fn wait(&self, id: NotificationId, mask: u64, timeout_ticks: u64) -> Result<u64, IpcKitError>;
 }
 
@@ -260,8 +279,8 @@ pub trait NotificationOps {
 pub trait SelectOps {
     /// Block until one of the entries is ready, or timeout expires.
     ///
-    /// Returns `(ready_index, matched_bits)`. For channel entries,
-    /// `matched_bits` is 0.
+    /// Returns `(ready_index, matched_bits)` for the lowest-index ready
+    /// entry. For channel entries, `matched_bits` is 0.
     fn select(
         &self,
         entries: &[SelectEntry],
@@ -277,7 +296,15 @@ pub trait SharedMemoryOps {
     /// bit 1 = write, bit 2 = execute (`crate::syscall::MEMORY_FLAGS_MASK`).
     /// Any other bit is an error, including bit 3 (user), which the kernel
     /// sets itself on every user mapping. W^X is enforced.
-    fn shmem_create(&mut self, size: usize, flags: u64) -> Result<SharedMemoryId, IpcKitError>;
+    ///
+    /// Returns the region ID and the handle of the caller's
+    /// `SharedMemoryAccess(id)` token, minted as a child of the authorising
+    /// `SharedMemoryCreate` token.
+    fn shmem_create(
+        &mut self,
+        size: usize,
+        flags: u64,
+    ) -> Result<(SharedMemoryId, CapabilityHandle), IpcKitError>;
 
     /// Map a shared memory region into the caller's address space.
     ///
@@ -294,7 +321,12 @@ pub trait SharedMemoryOps {
     /// Unmap a shared memory region from the caller's address space.
     fn shmem_unmap(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>;
 
-    /// Destroy a shared memory region, unmapping all mappings.
+    /// Destroy a shared memory region. The caller must be its creator and
+    /// hold a live `SharedMemoryAccess(id)` token (otherwise
+    /// `SharedMemoryError`, "not creator or no access"). It destroys the
+    /// region even while other agents map it, removing their mappings; their
+    /// next map or unmap of it fails with EPIPE (`SharedMemoryError` through
+    /// the Kit).
     fn shmem_destroy(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>;
 }
 
@@ -305,6 +337,7 @@ pub trait SharedMemoryOps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::ID_GEN_FIRST;
     use alloc::format;
 
     // -- IpcKitError --
@@ -312,9 +345,11 @@ mod tests {
     /// One value of every variant.
     fn all_variants() -> [IpcKitError; 14] {
         [
-            IpcKitError::InvalidChannel { id: ChannelId(0) },
+            IpcKitError::InvalidChannel {
+                id: ChannelId::new(0, ID_GEN_FIRST),
+            },
             IpcKitError::ChannelFull {
-                id: ChannelId(1),
+                id: ChannelId::new(1, ID_GEN_FIRST),
                 capacity: 16,
             },
             IpcKitError::Timeout { elapsed_ticks: 100 },
@@ -360,13 +395,15 @@ mod tests {
     #[test]
     fn ipc_kit_error_to_ipc_error() {
         assert_eq!(
-            IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(5) }),
+            IpcError::from(IpcKitError::InvalidChannel {
+                id: ChannelId::new(5, ID_GEN_FIRST)
+            }),
             IpcError::Epipe
         );
         assert_eq!(IpcError::from(IpcKitError::ObjectGone), IpcError::Epipe);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
-                id: ChannelId(0),
+                id: ChannelId::new(0, ID_GEN_FIRST),
                 capacity: 16
             }),
             IpcError::Eagain
@@ -538,12 +575,14 @@ mod tests {
         // is what the errno decodes to. A wrapper with context restores them.
         let back = |v: IpcKitError| IpcKitError::from(IpcError::from(v));
         assert_eq!(
-            back(IpcKitError::InvalidChannel { id: ChannelId(42) }),
+            back(IpcKitError::InvalidChannel {
+                id: ChannelId::new(42, ID_GEN_FIRST)
+            }),
             IpcKitError::ObjectGone
         );
         assert!(matches!(
             back(IpcKitError::ChannelFull {
-                id: ChannelId(7),
+                id: ChannelId::new(7, ID_GEN_FIRST),
                 capacity: 16
             }),
             IpcKitError::WouldBlock
@@ -599,13 +638,15 @@ mod tests {
     #[test]
     fn ipc_kit_error_to_i64_via_ipc_error() {
         assert_eq!(
-            IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(0) }) as i64,
+            IpcError::from(IpcKitError::InvalidChannel {
+                id: ChannelId::new(0, ID_GEN_FIRST)
+            }) as i64,
             -2
         );
         assert_eq!(IpcError::from(IpcKitError::ObjectGone) as i64, -2);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
-                id: ChannelId(0),
+                id: ChannelId::new(0, ID_GEN_FIRST),
                 capacity: 16
             }) as i64,
             -3
@@ -638,7 +679,7 @@ mod tests {
     #[test]
     fn backward_compat_ipc_types() {
         // Verify types used in trait signatures are the same as shared::ipc types.
-        let ch = ChannelId(42);
+        let ch = ChannelId::new(42, ID_GEN_FIRST);
         let ch2: crate::ipc::ChannelId = ch;
         assert_eq!(ch, ch2);
 
@@ -646,7 +687,7 @@ mod tests {
         let nid2: crate::ipc::NotificationId = nid;
         assert_eq!(nid, nid2);
 
-        let sid = SharedMemoryId(3);
+        let sid = SharedMemoryId::new(3, ID_GEN_FIRST);
         let sid2: crate::ipc::SharedMemoryId = sid;
         assert_eq!(sid, sid2);
     }

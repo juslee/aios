@@ -27,10 +27,10 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::bytes::Regex;
-use shared::lock::LockClass;
 use shared::tripwire::Ctx;
 
 use super::awk::{clip, contains, fields, find, num_str, to_num, trim};
+use super::catalogue::is_lock_class;
 use super::tripwire::{EventCounts, LastLines};
 
 /// A boot's class. The declaration order is the summary order ([`Class::ALL`]),
@@ -291,8 +291,9 @@ const CTX_NAMES: [Ctx; 5] = [
 /// The fields of the `lock re-entry:` message in a PANIC's joined first fatal
 /// line, or `None` when the line has no such message. A lock or ctx is read
 /// only when its token is whole (its follower is there) and names one of the
-/// kernel's lock statics or contexts, so a token cut short is `None`, never a
-/// different value.
+/// kernel's lock statics (of either tripwire schema version, so a `v=1`
+/// kernel's `SELECT_WAITERS` reads too) or contexts, so a token cut short is
+/// `None`, never a different value.
 fn reentry_of(first: &[u8]) -> Option<Reentry> {
     let after = &first[find(first, REENTRY)? + REENTRY.len()..];
     let msg = &after[after.iter().take_while(|&&b| b == b' ').count()..];
@@ -304,10 +305,7 @@ fn reentry_of(first: &[u8]) -> Option<Reentry> {
     let lock = REENTRY_LOCK.captures(msg).and_then(|c| {
         let name = c.get(1)?.as_bytes();
         let index = c.get(2).map_or(&b""[..], |m| m.as_bytes());
-        LockClass::ALL
-            .iter()
-            .any(|l| l.name().as_bytes() == name)
-            .then(|| [name, index].concat())
+        is_lock_class(name).then(|| [name, index].concat())
     });
     let ctx = group(&REENTRY_CTX).filter(|t| {
         CTX_NAMES
@@ -1331,12 +1329,12 @@ mod tests {
             "[tripwire] v=1 src=hb cpu=0 t=1000 ncpu=4 elrmm=0,1,0,0 twc=9 twn=1 twmax=9 n=9\r\n";
         let g1 =
             "[tripwire] v=1 src=g1 cpu=0 t=1200 ncpu=4 elrmm=0,2,0,0 twc=9 twn=2 twmax=9 n=9\r\n";
-        let v2 = "[tripwire] v=2 src=hb cpu=0 t=1500 ncpu=4 newkey=1 n=6\r\n";
+        let other = "[tripwire] v=99 src=hb cpu=0 t=1500 ncpu=4 newkey=1 n=6\r\n";
         let ev = "[tripwire-ev] kind=self cpu=0 lock=THREAD_TABLE idx=- ctx=irq-exit owner_cpu=0 \
                   owner_gen=1 holder_tid=3 cur_tid=3 holder_running=0 holder=kernel/src/cap/mod.rs:39\r\n";
         let with = plain.replacen(
             "[heartbeat] tick=1000\n",
-            &format!("{hb}{ev}{g1}[heartbeat] tick=1000\n{v2}"),
+            &format!("{hb}{ev}{g1}[heartbeat] tick=1000\n{other}"),
             1,
         );
         assert_ne!(with, plain);
@@ -1347,15 +1345,15 @@ mod tests {
         assert_eq!((b.class, b.line()), (a.class, a.line()));
         assert_eq!(a.tripwire, LastLines::default());
         assert_eq!(a.events, EventCounts::default());
-        // The last complete line is the v=2 one, kept whole and not decoded.
+        // The last complete line is the v=99 one, kept whole and not decoded.
         let last = b.tripwire.last.expect("a complete line");
-        assert_eq!(last.text, v2.trim_end().as_bytes());
-        assert_eq!((last.version, last.v1), (Some(b"2".to_vec()), None));
+        assert_eq!(last.text, other.trim_end().as_bytes());
+        assert_eq!((last.version, last.decoded), (Some(b"99".to_vec()), None));
         let g1_line = b.tripwire.g1.expect("the g1 line");
         assert_eq!(g1_line.text, g1.trim_end().as_bytes());
         assert_eq!(
             g1_line
-                .v1
+                .decoded
                 .expect("decoded")
                 .value(shared::tripwire::Key::Elrmm),
             b"0,2,0,0"

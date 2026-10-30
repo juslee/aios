@@ -30,7 +30,12 @@ const TIMEOUTS: [u64; 2] = [u64::MAX - 1, u64::MAX];
 /// Logs one line: the success text, or the two results.
 pub(super) fn call_side(ch: ChannelId) {
     let user = USER_VA_MIN as u64;
-    let results = TIMEOUTS.map(|t| svc(Syscall::IpcCall, &[u64::from(ch.0), user, 0, user, 0, t]));
+    let results = TIMEOUTS.map(|t| {
+        svc(
+            Syscall::IpcCall,
+            &[u64::from(ch.raw()), user, 0, user, 0, t],
+        )
+    });
     // A log message keeps at most 96 bytes (two ring entries); longer text
     // is cut and marked with `~`, so keep these lines short.
     if results == [0, 0] {
@@ -59,7 +64,7 @@ pub(super) fn call_side(ch: ChannelId) {
 pub(super) fn server_side(ch: ChannelId) {
     let user = USER_VA_MIN as u64;
     for (i, t) in TIMEOUTS.into_iter().enumerate() {
-        let received = svc(Syscall::IpcRecv, &[u64::from(ch.0), user, 0, t]);
+        let received = svc(Syscall::IpcRecv, &[u64::from(ch.raw()), user, 0, t]);
         if received != 0 {
             crate::kwarn!(Ipc, "Timeout-arg test: recv #{} got {}", i, received);
             continue;
