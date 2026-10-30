@@ -20,15 +20,12 @@ use std::process::Command;
 /// The external commands of the fake `gh` script (`fake_gh::SCRIPT`).
 pub const FAKE_GH_TOOLS: &[&str] = &["cat", "cp", "dirname", "grep", "mkdir", "tr"];
 
-/// The external commands of R2's `FAKE_CLAUDE` script (R2 owns the script; contract
-/// A1 fixes this list).
-pub const FAKE_CLAUDE_TOOLS: [&str; 8] = [
-    "cat", "dirname", "env", "git", "grep", "mkdir", "sleep", "sort",
-];
+/// The external commands of the loop's fake `claude` script (`loop_fake::FAKE_CLAUDE`).
+pub const FAKE_CLAUDE_TOOLS: [&str; 4] = ["cat", "env", "mkdir", "sleep"];
 
 /// `FAKE_GH_TOOLS` and `FAKE_CLAUDE_TOOLS` together; [`bin`] always links them.
 pub const FAKE_TOOLS: &[&str] = &[
-    "cat", "cp", "dirname", "env", "git", "grep", "mkdir", "sleep", "sort", "tr",
+    "cat", "cp", "dirname", "env", "grep", "mkdir", "sleep", "tr",
 ];
 
 /// The external commands of the former `scripts/agent/brief.sh` (blob at `2d4a9f7`),

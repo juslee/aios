@@ -1,0 +1,1578 @@
+{
+  "author": {
+    "id": "MDQ6VXNlcjE2OTY1OTg=",
+    "is_bot": false,
+    "login": "juslee",
+    "name": "Justin Lee"
+  },
+  "baseRefName": "main",
+  "changedFiles": 835,
+  "commits": [
+    {
+      "authoredDate": "2026-10-12T01:07:10Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Opus 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T01:07:10Z",
+      "messageBody": "The owner-approved R3 plan (Fable plan gate: pass 1/2, 2026-10-12) with\nTask 0a-0e results, and the R2/R3 contract with amendments A1-A12 (A9\nextended: anchors re-read on 2d4a9f7). The contract copy is the one R2\ncommits unchanged.\n\nCo-Authored-By: Claude Opus 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 0: working plan and the R2/R3 contract",
+      "oid": "03eddee96ba843d9617d9d6bf75060e3675fa5f7"
+    },
+    {
+      "authoredDate": "2026-10-12T01:49:00Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T01:49:00Z",
+      "messageBody": "tools/src/gh.rs runs one gh read (contract §2): GhOutcome, GhEnv with apply,\nGhRunner, GhCli, run_program and the fail-closed is_read allowlist; it forces\nno environment and refuses every write before spawning. tools/src/git.rs is\ngit as the scripts ran it (contract §4): the inherited environment, with out,\ntext, ok, output, worktrees and branch. tests/common/jail.rs is the PATH jail\n(bin, hermetic, the tool lists, SH_WORDS and the script_commands lexer that\nchecks each list against its script); tests/common/fake_gh.rs is the one fake\ngh with label-regex fixtures, ordinals and a call log (contract §5);\ntests/common/agent.rs loads the oracles from git history and builds the twin\nrepositories, runners and parity assertions; parallel_map moves into common.\ntests/agent_support.rs holds the 14 self-tests.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 1: shared test harness, gh.rs, git.rs and agent support",
+      "oid": "ecef063ca925e918f9089beca846b8cf723bc1e5"
+    },
+    {
+      "authoredDate": "2026-10-12T01:53:16Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T01:53:16Z",
+      "messageBody": "… (lead review fixes)\n\nFake gh ordinals follow contract §5: with no file for call K, serve the\nhighest K present, then the unsuffixed file.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 1: shared test harness, gh.rs, git.rs and agent support…",
+      "oid": "59afd73a81191cb4669fad45143d560f2104c992"
+    },
+    {
+      "authoredDate": "2026-10-12T02:09:52Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T02:09:52Z",
+      "messageBody": "merge_ready.rs is contract section 3: pure functions on serde_json values that\nport brief's merge-ready jq (PR_FIELDS, NEEDS_HUMAN_ISSUES_ARGS, clean, refs,\nalt, check_name, check_state, gates, labelled_needs_human, blockers and\npr_lines), with the D10 labelled needs-human blocker in position 4 and exact\nu64 references (D4). With gh.rs, git.rs and the harness from Task 1 it\ncompletes the frozen API. Also ticks the 1h, 5a and 5b checkboxes.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 5: merge_ready.rs, the shared merge-ready verdict",
+      "oid": "5c24fab1bf80efc404067ef4dbb1df81b927a4bf"
+    },
+    {
+      "authoredDate": "2026-10-12T02:18:18Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        }
+      ],
+      "committedDate": "2026-10-12T02:18:18Z",
+      "messageBody": "…62ec7ecc06c",
+      "messageHeadline": "Merge remote-tracking branch 'origin/main' into worktree-agent-a3e0da…",
+      "oid": "3296e1d2fb8f7538c2fe292ca6d80699cd001068"
+    },
+    {
+      "authoredDate": "2026-10-12T02:48:04Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T02:48:04Z",
+      "messageBody": "Co-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 5: record the API freeze (R3_API_FREEZE = 3296e1d)",
+      "oid": "c8be32b72080eacd699c1a7a06117ea0693f7ef5"
+    },
+    {
+      "authoredDate": "2026-10-12T03:09:04Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T03:09:04Z",
+      "messageBody": "tools/tests/checkpoint_parity.rs holds a scenario table of 52 entries (15 from\n#166, its 5 round-1 extras, 24 gaps, 6 CLI and the 2 D9 fail-closed scenarios),\neach declared by a column-0 scenario! entry. The 49 differential scenarios have\ngoldens in tools/tests/golden/checkpoint/ with the sections exit, stdout,\nstderr, origin refs, HEAD message, index (write-tree before and after),\nupstream and gh calls. They are recorded from scripts/agent/checkpoint.sh at\nfaf6d20 through oracle_renames() and normalize(), and\noracle_reproduces_checkpoint_goldens replays them. cli_help and the two D9\nscenarios are aios-only and get their goldens with the port. There is no port\ncode yet.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 2: checkpoint scenarios and goldens from the oracle",
+      "oid": "4dfa551c2dac5fb826b039f2b3d19a45dda8d84b"
+    },
+    {
+      "authoredDate": "2026-10-12T05:11:20Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T05:11:20Z",
+      "messageBody": "aios checkpoint lives in tools/src/cmd/checkpoint/ (mod.rs: parser, gate, commit, push, output; scan.rs: the secret scan; others.rs: the other worktrees), wired as a raw-args subcommand like soak. It matches the oracle on the 49 differential scenarios, under bash and under /bin/bash 3.2, plus the aios-only goldens (cli_help and the two D9 scenarios). D9 fails closed: a git failure in any of the four scan calls restores the index, commits and pushes nothing, never prints Safe to /clear and exits 1. The push refspec comes only from a ClaudeBranch. The tests add Scenario::fake_tool, the one way to put a fake tool on the jail PATH (the real tools are found through AIOS_TEST_REAL_BIN), and the three fake-git scenarios use it.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 3: aios checkpoint (port of checkpoint.sh)",
+      "oid": "9d3a25bfd0b3271e039600cfcd206fe5f8263ed3"
+    },
+    {
+      "authoredDate": "2026-10-12T08:53:30Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T08:53:30Z",
+      "messageBody": "…acle\n\nThe 76-scenario table of tools/tests/brief_parity.rs (a scenario! macro at column 0, as in checkpoint_parity), the synthetic gh and docs-check fixtures under tools/tests/fixtures/brief/<scenario>/{gh,docs}/ (shapes copied from the Task 0d capture, never its values) and 74 goldens in tools/tests/golden/brief/, recorded from brief.sh at 2d4a9f7 (exit, stdout, stderr, gh calls, docs calls, marker touched, remote refs). The two aios-only scenarios (cli_help, pr_labelled_needs_human) get their goldens with the port. No port code yet: oracle_reproduces_brief_goldens and brief_fixtures_label_needs_human_only_in_d10 run, record_brief_goldens and the network-bound capture_real_gh_shapes are ignored. agent.rs gains EPOCH_BASE as pub and Scenario::file_revs for soak summaries that name a commit.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 4: brief scenarios, gh fixtures and goldens from the or…",
+      "oid": "eaf4a64d1049799f3459f547a084951f5db87281"
+    },
+    {
+      "authoredDate": "2026-10-12T09:37:54Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T09:37:54Z",
+      "messageBody": "`aios brief [--no-fetch]` lives in tools/src/cmd/brief/ (mod, clock, git_section,\nsoak, local, phase, docs) and is wired as the first Command variant. It ports the\nGit, Soak, Host QEMU lock, Routing log, Handoffs, Knowledge notes, Next phase-doc\nstep and Docs drift sections, and each matches the 74 goldens section by section\n(brief_local_sections_match_goldens, with the three GitHub headings and the phase\nsection's pull-request lookup left out). The clock seam is cmd/brief/clock.rs: time\ncomes from the host's date (-r, then -d @, then the raw epoch) and from file\nmodification times, knowledge is bounded by --since=@<epoch>, and the marker is\ntouched last. docs-check runs as a child of current_exe() on a thread, with only its\nprogram replaceable in debug builds (AIOS_BRIEF_DOCS_CHECK). The GitHub sections\n(Open pull requests, Main CI, Needs human and the phase lookup) follow in Task 7;\nuntil then their headings are printed empty. The plan ticks 6a-6f and 4e, rewords\n3f's refspec mutation, and records the Task 10f grep hits.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 6: aios brief, the local sections",
+      "oid": "d2774c8255454283c0b29074b5f23e716bbc92cc"
+    },
+    {
+      "authoredDate": "2026-10-12T10:01:35Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T10:01:35Z",
+      "messageBody": "github.rs reads the probe, the needs-human issues, the review threads, the PR list, the tip's check suites, the run list and the queue counts through the frozen gh and merge_ready API, with the oracle's argv, cwd and env, and renders the Open pull requests, Main CI and Needs human sections and the phase section's open-PR lookup. All 76 scenarios now match their goldens: one #[test] per scenario (the interim local-sections test and NOT_YET_PORTED are gone), the two aios-only goldens (cli_help, pr_labelled_needs_human) blessed and reviewed, and a differential against brief.sh over the 74 oracle scenarios comparing stdout, exit, gh calls, docs calls, the marker and remote refs.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 7: aios brief, the GitHub sections and full parity",
+      "oid": "b260a0c96653df19d607e0689734f5cf91676da3"
+    },
+    {
+      "authoredDate": "2026-10-12T11:26:10Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T11:26:10Z",
+      "messageBody": "…ailed stale rebuild\n\nPer contract section 6: the shim clears AIOS_SHIM_STALE right after reading the\nsubcommand, so every path starts without a value inherited from a parent stale\nrun. When the foreground rebuild of a stale binary fails, aios checkpoint now\nexits 3 naming just tools and never runs the stale binary; every other\nsubcommand keeps its warning, runs the stale binary and gets AIOS_SHIM_STALE=1,\nwhich aios brief reports as its stale note. Per owner decision 5, checkpoint\nstill runs a dirty build and an AIOS_TOOLS_BIN override, and joins no strict\narm. The header documents both. Six new shim tests pin the flag, the exit 3\nand the three controls; the plan's Task 7c mutation and Review focus 6 grep are\ncorrected to match the code.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 8: shim AIOS_SHIM_STALE, and checkpoint's exit 3 on a f…",
+      "oid": "81bb7a69967e9edc5d3dc9b8f0d9b76dce5a5289"
+    },
+    {
+      "authoredDate": "2026-10-12T11:49:38Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T11:49:38Z",
+      "messageBody": "Add the positional-arguments recipes `brief` and `checkpoint` after\n`docs-check-all`; each runs the shim of the justfile's own checkout by an\nabsolute quoted path, so `just --justfile <main>/justfile --working-directory .`\nfrom a worktree runs main's shim. A shim test dry-runs both recipes from a\ndirectory outside every checkout. The README (Build Commands and the tools\nline) and developer-guide section 5.1 list both recipes, which the just-recipes\ncheck requires. Ticks Task 9 in the plan.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 9: just brief and just checkpoint recipes, build tables",
+      "oid": "1abaf92f16fcc0d4aa9b3763dd0f4b2873bcf02c"
+    },
+    {
+      "authoredDate": "2026-10-12T11:55:34Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T11:55:34Z",
+      "messageBody": "brief_lists_an_interleaved_run_once_and_never_as_main_soak now runs the branch-built aios brief --no-fetch (CARGO_BIN_EXE_aios) instead of bash scripts/agent/brief.sh, with the same fake gh and PATH. AIOS_BRIEF_DOCS_CHECK points at a #!/bin/sh stub in its bin dir, so no real docs-check runs over the fixture. The module doc names aios brief. The assertions are unchanged, so scripts/agent/brief.sh can be deleted later (10d) without turning cargo test red.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10h: soak_interleave's brief test runs aios brief",
+      "oid": "e0b25f04fe639c5710fa1e93f1c66b5d96ebf260"
+    },
+    {
+      "authoredDate": "2026-10-12T12:07:31Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T12:07:31Z",
+      "messageBody": "The brief, pause, merge-and-cleanup and start skills run `just brief` and\n`just checkpoint` (fallbacks through the main checkout's justfile), name the\ntwo exit-3 meanings, the fail-closed scan and the labelled needs-human stop,\nand the CLAUDE.md Skills rows name the binary subcommands.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10a: skills run aios brief and aios checkpoint",
+      "oid": "f3195c2c100061819628c8635707d870286be4d5"
+    },
+    {
+      "authoredDate": "2026-10-12T12:16:27Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T12:16:27Z",
+      "messageBody": "…ef and aios checkpoint\n\nRule 03 gets the general Guard Rails bullet for compiled aios subcommands,\nrule 11 and agent-loop.md hold a PR labelled needs-human, the spec records\nthe R3 order, rows, shared modules, freshness cell and \"R3 as built\"\nparagraph, and the docs_check comments and R3's own test comments no longer\nname the deleted scripts.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10b: rules, agent-loop, spec and comments name aios bri…",
+      "oid": "055d206848c708f8c964411c87a9cfe0427ad292"
+    },
+    {
+      "authoredDate": "2026-10-12T12:22:11Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T12:22:11Z",
+      "messageBody": "The everyday-commands guard test no longer copies scripts/agent/brief.sh.\nIt expects no guard decision for just brief, just brief --no-fetch and just\ncheckpoint --handoff saved: the owner's settings asks are the control.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10c: guard test expects just brief and just checkpoint",
+      "oid": "0d88b93e2bdebf34ae01b7eedc0dc6ffb47f57a3"
+    },
+    {
+      "authoredDate": "2026-10-12T13:12:06Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T13:12:06Z",
+      "messageBody": "tools/tests/skill_contract.rs holds the skills' prose against the binary. The merge skill's awk line is extracted from SKILL.md and run through sh -c on aios brief output for prs_every_blocker and pr_labelled_needs_human, asserting each PR's merge-ready line. The pause skill's command, first-line format, both last-line forms and checkpoint-it command are matched against handoff_saved and other_worktree_dirty_from_main. Its two exit-3 cues are matched against sensitive_name_new_doc, the shim's refusal text and the shim test that pins the refusal's empty stdout.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10g: skill contract tests for merge-and-cleanup and pause",
+      "oid": "3182507e67670b69b02e0daf7143093d35ade486"
+    },
+    {
+      "authoredDate": "2026-10-12T13:20:10Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T13:20:10Z",
+      "messageBody": "aios brief and aios checkpoint replace them (Tasks 3, 6, 7); every caller\nmoved in Tasks 10a-10c, 10g and 10h.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10d: delete scripts/agent/brief.sh and checkpoint.sh",
+      "oid": "6c0257594200e0eeed4fbfe70d906c43413621d4"
+    },
+    {
+      "authoredDate": "2026-10-12T14:44:40Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        }
+      ],
+      "committedDate": "2026-10-12T14:44:40Z",
+      "messageBody": "",
+      "messageHeadline": "owner-approved settings: aios checkpoint asks",
+      "oid": "7ced3e981087dfd67817424445634b88b0d5f496"
+    },
+    {
+      "authoredDate": "2026-10-12T15:07:02Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T15:07:02Z",
+      "messageBody": "Comment-only: no code or signature change in the frozen gh/git/jail API.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10f: provenance form in the frozen files' doc comments",
+      "oid": "006ef1bbc6faff667615cc76be2f06ff40b1f8e5"
+    },
+    {
+      "authoredDate": "2026-10-12T15:27:04Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Opus 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T15:27:04Z",
+      "messageBody": "- main.rs: brief(), checkpoint() and soak() were one body three times; they\n  are now raw_command(prefix, run), with the same messages and exit codes.\n- brief/github.rs: the pr list argv is one array; the empty-reason fallback\n  in unavailable() is gone (probe never returns an empty reason).\n- brief/soak.rs: the interleaved soak's Status line uses phase::status_of\n  (the same grep|sed parse, now pub); on_main reads soak_relation's flag\n  directly.\n- brief/docs.rs: each check's `new` is looked up once (filter_map); the\n  checker-error test is matches!(code, Some(0 | 1)).\n- checkpoint/scan.rs (test): drop a vector the first loop never read.\n- tests/common/agent.rs: the scenario builders brief_base (was brief_parity's\n  base), on_x, sensitive_name_new_doc and other_worktree_dirty_from_main,\n  brief_fixtures_dir and BRIEF_SECTIONS now exist once; skill_contract.rs\n  drops its copies. The golden helpers is_divergent, probe, golden_section,\n  gh_calls_text and first_difference, identical in both parity tests, move\n  there too.\n- Plan: tick Task 10, 10f and 11a.\n\nNo golden, fixture, frozen API (gh.rs, git.rs, merge_ready.rs, fake_gh.rs,\njail.rs) or .claude/ file changed.\n\nCo-Authored-By: Claude Opus 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 11a: simplify the PR range",
+      "oid": "2ee1341446064a24173c75ccc9c61e1c91df4765"
+    },
+    {
+      "authoredDate": "2026-10-12T15:33:00Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T15:33:00Z",
+      "messageBody": "…-agent-aae99d58044dd702e\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Merge commit '67e0a96a48f33e29869f2ff3330837bf4659b75d' into worktree…",
+      "oid": "a66c6b8d7680d774d95a660d99a70e084cc4f0ff"
+    },
+    {
+      "authoredDate": "2026-10-12T15:33:14Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T15:33:14Z",
+      "messageBody": "Co-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Tools R3 Task 10e: record the owner settings commit",
+      "oid": "b13207c4f634c8ed28c11b3b2b34fdbb6608310c"
+    },
+    {
+      "authoredDate": "2026-10-12T16:06:45Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T16:06:45Z",
+      "messageBody": "…lease-mode docs-check stub\n\n- Plan: SETTINGS_BASE pinned to 0e7b4437de8e6718242eafafb526fef99be1f2e9, the owner settings commit 7ced3e9 recorded, and the EXPECTED_GUARD and permission-probe placeholders point at the Task 0 results.\n- README and developer guide: the `just checkpoint` row says the shim rebuilds a stale binary and exits 3 only when that rebuild fails.\n- README, developer guide and the justfile brief/checkpoint comments: the recipes run the checkout's shim, which runs the main checkout's build.\n- Tests: the brief tests that rely on AIOS_BRIEF_DOCS_CHECK (debug-only) print a skip line and return in release builds, through agent::skip_brief_in_release (brief_parity, skill_contract, soak_interleave).\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Audit round 1: fix the plan placeholders, recipe and shim wording, re…",
+      "oid": "dce16a35e69f133d51527de5413972827f044cba"
+    },
+    {
+      "authoredDate": "2026-10-12T16:09:56Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        }
+      ],
+      "committedDate": "2026-10-12T16:09:56Z",
+      "messageBody": "",
+      "messageHeadline": "owner-approved settings: aios checkpoint ask for any binary path",
+      "oid": "2a666394894cf3b1ee80407f5aa0e4331e0ef2e2"
+    },
+    {
+      "authoredDate": "2026-10-12T16:24:48Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T16:24:48Z",
+      "messageBody": "…ler check, record both owner settings commits\n\nNo call site is exactly equivalent to git::branch (different argv, and the\ncallers keep bytes), so no code change: the plan records the gap and drops it\nfrom the 12d loop, whose PR_FIELDS and NEEDS_HUMAN_ISSUES_ARGS probes are now\nthe bare names. BRIEF_ORACLE and R3_API_FREEZE are filled in, the second owner\nsettings commit 2a66639 is recorded, the owner's provenance-wording ruling is\nadded, and the pause skill's exit-3 bullet says the shim tried to rebuild first.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Audit round 2: record that git::branch has no caller, fix the 12d cal…",
+      "oid": "22a677e0d068ed603927b84acd78aa17927fed3c"
+    },
+    {
+      "authoredDate": "2026-10-12T23:21:07Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-12T23:21:07Z",
+      "messageBody": "Plan: Owner settings commits cross-reference, Task 0 and 0f ticked, the\nindirect-spelling gap and the read-tree oracle match recorded. Rule 03:\nthe Option-A gate wording names R2's changed-paths gate and decision #204.\ncheckpoint: module doc records that a failed read-tree is unchecked, as in\nthe oracle. brief: unreadable needs-human issues now say \"unreadable gh\noutput\", with a unit test.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Audit round 3: wording, records and the unreadable-issues reason",
+      "oid": "8095ce0f78f780bf0bd000f38aa9a92c21d3328e"
+    },
+    {
+      "authoredDate": "2026-10-13T00:43:54Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-13T00:43:54Z",
+      "messageBody": "…racle did\n\nThe branch gate went through str::from_utf8, so a claude/ branch whose name is not UTF-8 was refused; the script matched raw bytes (case claude/?*) and would commit and push it. ClaudeBranch now holds bytes, the push refspec, the wip subject and the gh --head argument are built from bytes (GhCli::run_os), and the other-worktrees hint uses the same type. New scenario non_utf8_claude_branch (golden recorded from the oracle; reftable repositories, since APFS refuses such file names; Scenario::reftable in agent.rs; the recorder writes the golden lossily, as the readers compare).\n\nPlan: Task 5c's freeze grep prints 2; the Task 2 and Task 5 headers are ticked; the scenario and golden counts are 53 and 50 (spec and plan).\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Audit round 4: checkpoint matches claude/ branches on bytes, as the o…",
+      "oid": "b4c34596de0325e018cea460eccf01bfe3c98ad8"
+    },
+    {
+      "authoredDate": "2026-10-13T01:23:53Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-13T01:23:53Z",
+      "messageBody": "…s to b4c3459)\n\nOwner ruling 2026-10-13 on gate #271. gh::run_program is generic over its\nargument type and GhCli gains run_os, so a non-UTF-8 branch name reaches\ngh exactly (aios checkpoint matches claude/ branches on bytes, as the\nscript did). Existing &[&str] callers compile unchanged. R3_API_FREEZE\nmoves from 3296e1d to b4c34596de0325e018cea460eccf01bfe3c98ad8. The\ncontract (section 2, section 14) and the R3 plan (amendments list,\nDecisions Made, Issues Encountered) record it.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3: contract amendment A13 (gh.rs takes OsStr args; freeze move…",
+      "oid": "df37a73063852a9cb4253a44358ffe32178b1f51"
+    },
+    {
+      "authoredDate": "2026-10-13T02:24:32Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        }
+      ],
+      "committedDate": "2026-10-13T02:24:32Z",
+      "messageBody": "…le-aware origin invariants; A13 wording\n\nunpushed_desc built refs/remotes/origin/<b>, origin/<b>..HEAD and HEAD..origin/<b> from a lossy copy of the branch name, so a non-UTF-8 claude/ branch on origin printed 'not on origin'; the oracle used the raw bytes. The three refs now reach git as OsStr bytes. New brief scenario non_utf8_claude_branch (reftable, pushed twice, one commit ahead), recorded from the oracle; the brief recorder writes goldens lossily, as the readers compare.\n\nassert_origin_invariants read reflogs by walking <origin>/logs, which a reftable origin lacks; it now lists refs and reads each reflog through git, and fails if the run changed origin's refs yet no entry was found. Counts: 77 brief scenarios, 75 differential goldens, 80 brief_parity tests. A13 wording: R2 re-vendors the five frozen files; the contract quotes the A1-A13 title.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>\n\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Audit round 5: brief queries origin with the raw branch bytes; reftab…",
+      "oid": "a860853a66512cf04a0df2d98b736cf4c20d4ae8"
+    },
+    {
+      "authoredDate": "2026-10-20T00:27:48Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T00:27:48Z",
+      "messageBody": "…-agent-a6556b5a65c2bf04e\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Merge commit '8c5c72937cd21cfae4fb6979331736a9cf377d54' into worktree…",
+      "oid": "a874ee8a046691fade33687c7a3b45ce2a8631dd"
+    },
+    {
+      "authoredDate": "2026-10-20T00:53:38Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T00:53:38Z",
+      "messageBody": "…-UTF-8 sweep of brief and checkpoint\n\nThe rebase/bisect gate of checkpoint read `git rev-parse --git-path` as text, so\na non-UTF-8 worktree path hid a rebase or bisect in progress; it is bytes now\n(git_path_exists, with a unit test). The brief and checkpoint differentials\ncompare render_golden's bytes, and the two non-UTF-8 scenario checks assert the\nraw 0xE9 byte. Sweep of every git::text, from_utf8, from_utf8_lossy,\nto_string_lossy and to_str in brief and checkpoint: the phase-doc names, the\ngit common dir normalisation (paths::normpath_bytes) and the soak commit text\nnow stay bytes; the module docs list the conversions that remain and why each\nis safe.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Audit round 6: byte-exact differentials, git-path check on bytes, non…",
+      "oid": "fa53130c9d66658bd7c373a43608822438cf1881"
+    },
+    {
+      "authoredDate": "2026-10-20T01:20:06Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T01:20:06Z",
+      "messageBody": "…th tests, comment and plan record\n\nbrief::phase takes the phase-doc listing and reader as seams, so the non-UTF-8\nname test runs on every host and asserts the printed bytes. The soak relation\ntest panics when reftable is missing instead of returning. The brief_parity\ncomment and the plan record are corrected.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Audit round 7: phase-doc listing seam, no silent skips in the byte-pa…",
+      "oid": "ef000a8d8e7be4381b6f4d75e4de56d86daa6b0c"
+    },
+    {
+      "authoredDate": "2026-10-20T01:36:26Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Sonnet 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T01:36:26Z",
+      "messageBody": "… header\n\nThe shim exports GIT_NO_REPLACE_OBJECTS=1 and GIT_GRAFT_FILE=/dev/null/no-grafts,\nso replace refs and grafts are off through the just recipes; the plan's kept-bug\nitem and the brief and checkpoint module docs now say so. paths.rs header names\nnormpath_bytes. Comments and docs only.\n\nCo-Authored-By: Claude Sonnet 5.5 <user@example.invalid>",
+      "messageHeadline": "Audit round 8: record the shim's git env on the recipe path; paths.rs…",
+      "oid": "814464b7ac481d93f7b0a66d0a2b39ff5642f5cd"
+    },
+    {
+      "authoredDate": "2026-10-20T03:10:45Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Opus 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T03:10:45Z",
+      "messageBody": "…on Linux\n\nOn Linux current_exe() reads /proc/self/exe and returns '<path> (deleted)'\nonce just tools renamed a new binary over the running one, so the docs-check\nchild failed with ENOENT (reported as exit 127). Spawn the link itself on\nLinux, which reaches the running inode; keep current_exe() elsewhere.\n\nCo-Authored-By: Claude Opus 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Audit round 9: spawn brief's docs-check child through /proc/self/exe …",
+      "oid": "b9c2b0084c991e298e9ee76149569381709fc973"
+    },
+    {
+      "authoredDate": "2026-10-20T03:25:57Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Opus 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T03:25:57Z",
+      "messageBody": "The self_exe() test now spawns the returned path with --list, so a host\nwith no /proc or a mistyped path fails it. The plan's three docs-check\nchild lines name self_exe() (/proc/self/exe on Linux, current_exe()\nelsewhere), and Issues Encountered records audit rounds 8-10.\n\nCo-Authored-By: Claude Opus 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Audit round 10: spawn self_exe() in its test; plan names self_exe()",
+      "oid": "62c1cd6efe694ecbf094d19f1ccf463976d48b20"
+    },
+    {
+      "authoredDate": "2026-10-20T05:34:22Z",
+      "authors": [
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjE2OTY1OTg=",
+          "login": "juslee",
+          "name": "Justin Lee"
+        },
+        {
+          "email": "user@example.invalid",
+          "id": "MDQ6VXNlcjgxODQ3",
+          "login": "claude",
+          "name": "Claude Opus 5.5"
+        }
+      ],
+      "committedDate": "2026-10-20T05:34:22Z",
+      "messageBody": "Workspace Layout gains aios brief/checkpoint and the shared gh, git and\nmerge_ready modules; scripts/agent keeps only qemu-lock. Lesson\n2026-10-20-jl-r3-brief-checkpoint-port.md distils the plan; the plan and\nR3's contract copy are deleted. Follow-ups: #275, #276, #277, #278.\n\nCo-Authored-By: Claude Opus 5.5 <user@example.invalid>\nClaude-Session: https://claude.ai/code/session_01MSEzZHDCPF2brZ9QFa9Din",
+      "messageHeadline": "Tools R3 Task 12d: ship pass and distil",
+      "oid": "601422926e1db59063d7c85f37758ee9b7ed4c78"
+    }
+  ],
+  "files": [
+    {
+      "path": ".claude/CLAUDE.md",
+      "additions": 7,
+      "deletions": 4,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/hooks/aios",
+      "additions": 22,
+      "deletions": 4,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/hooks/tests/test_git_push_guard.py",
+      "additions": 4,
+      "deletions": 4,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/rules/03-git-workflow.md",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/rules/11-teams.md",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/settings.json",
+      "additions": 14,
+      "deletions": 3,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/skills/justin/skills/brief/SKILL.md",
+      "additions": 9,
+      "deletions": 9,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/skills/justin/skills/pause/SKILL.md",
+      "additions": 15,
+      "deletions": 11,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/skills/justin/skills/start/SKILL.md",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": ".claude/skills/merge-and-cleanup/SKILL.md",
+      "additions": 3,
+      "deletions": 2,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "README.md",
+      "additions": 3,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md",
+      "additions": 21,
+      "deletions": 9,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "docs/knowledge/lessons/2026-10-06-jl-model-routing-wiring-checks.md",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "docs/knowledge/lessons/2026-10-20-jl-r3-brief-checkpoint-port.md",
+      "additions": 53,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "docs/project/agent-loop.md",
+      "additions": 6,
+      "deletions": 6,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "docs/project/developer-guide.md",
+      "additions": 2,
+      "deletions": 0,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "justfile",
+      "additions": 10,
+      "deletions": 0,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "scripts/agent/brief.sh",
+      "additions": 0,
+      "deletions": 649,
+      "changeType": "DELETED"
+    },
+    {
+      "path": "scripts/agent/checkpoint.sh",
+      "additions": 0,
+      "deletions": 285,
+      "changeType": "DELETED"
+    },
+    {
+      "path": "tools/Cargo.toml",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/src/cmd/brief/clock.rs",
+      "additions": 102,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/docs.rs",
+      "additions": 342,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/git_section.rs",
+      "additions": 203,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/github.rs",
+      "additions": 698,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/local.rs",
+      "additions": 287,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/mod.rs",
+      "additions": 361,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/phase.rs",
+      "additions": 256,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/brief/soak.rs",
+      "additions": 658,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/checkpoint/mod.rs",
+      "additions": 893,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/checkpoint/others.rs",
+      "additions": 149,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/checkpoint/scan.rs",
+      "additions": 560,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/cmd/docs_check/checks/milestones.rs",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/src/cmd/docs_check/mod.rs",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/src/cmd/mod.rs",
+      "additions": 2,
+      "deletions": 0,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/src/gh.rs",
+      "additions": 594,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/git.rs",
+      "additions": 228,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/lib.rs",
+      "additions": 7,
+      "deletions": 2,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/src/main.rs",
+      "additions": 23,
+      "deletions": 10,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/src/merge_ready.rs",
+      "additions": 833,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/src/paths.rs",
+      "additions": 28,
+      "deletions": 10,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/tests/agent_support.rs",
+      "additions": 991,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/brief_parity.rs",
+      "additions": 1466,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/checkpoint_parity.rs",
+      "additions": 800,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/common/agent.rs",
+      "additions": 1709,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/common/fake_gh.rs",
+      "additions": 392,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/common/jail.rs",
+      "additions": 726,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/common/mod.rs",
+      "additions": 39,
+      "deletions": 0,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/tests/docs_check_parity.rs",
+      "additions": 1,
+      "deletions": 38,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/docs/out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/graphql-suites.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/graphql-threads.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/issues-agent-ready.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/issues-agent-working.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/issues-needs-human.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/pr-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/rate-limit.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_clean/gh/run-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/docs/out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/docs/rc",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/graphql-suites.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/graphql-threads.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/issues-agent-ready.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/issues-agent-working.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/issues-needs-human.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/pr-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/rate-limit.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_new_drift_key_order/gh/run-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/docs/err",
+      "additions": 2,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/docs/out",
+      "additions": 0,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/docs/rc",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/graphql-suites.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/graphql-threads.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/issues-agent-ready.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/issues-agent-working.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/issues-needs-human.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/pr-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/rate-limit.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_other_rc_last_line/gh/run-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/docs/err",
+      "additions": 3,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/docs/out",
+      "additions": 0,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/docs/rc",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/graphql-suites.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/graphql-threads.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/issues-agent-ready.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/issues-agent-working.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/issues-needs-human.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/pr-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/rate-limit.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_panic101/gh/run-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/docs/out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/graphql-suites.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/graphql-threads.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/issues-agent-ready.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/issues-agent-working.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/issues-needs-human.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/pr-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/rate-limit.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_prune_hint/gh/run-list.out",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_rc2/docs/err",
+      "additions": 3,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "tools/tests/fixtures/brief/docs_rc2/docs/out",
+      "additions": 0,
+      "deletions": 0,
+      "changeType": "ADDED"
+    }
+  ],
+  "headRefName": "claude/tools-r3-scripts",
+  "headRefOid": "601422926e1db59063d7c85f37758ee9b7ed4c78",
+  "isCrossRepository": false,
+  "isDraft": false,
+  "labels": [
+    {
+      "id": "LA_kwDORPWS0c8AAAAC7978aw",
+      "name": "team-build",
+      "description": "Owned by the team-build lead (harness, tools, CI, features)",
+      "color": "1d76db"
+    }
+  ],
+  "mergeStateStatus": "UNKNOWN",
+  "mergeable": "UNKNOWN",
+  "number": 257,
+  "reviewDecision": "",
+  "reviews": [],
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:53:33Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049514/job/118496336963",
+      "name": "claude-review",
+      "startedAt": "2026-10-20T06:53:34Z",
+      "status": "COMPLETED",
+      "workflowName": "Claude Code Review"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:55:33Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335301",
+      "name": "Check (fmt + clippy + build)",
+      "startedAt": "2026-10-20T06:54:12Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:35Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320507",
+      "name": "Check (fmt + clippy + build)",
+      "startedAt": "2026-10-20T06:53:33Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T07:05:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39384126399/job/118499795424",
+      "name": "claude-review",
+      "startedAt": "2026-10-20T07:04:03Z",
+      "status": "COMPLETED",
+      "workflowName": "Claude Code Review"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:55:10Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049503/job/118496335413",
+      "name": "Docs drift (report-only)",
+      "startedAt": "2026-10-20T06:54:17Z",
+      "status": "COMPLETED",
+      "workflowName": "Docs"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:55Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335390",
+      "name": "Build (release)",
+      "startedAt": "2026-10-20T06:54:16Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:14Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320460",
+      "name": "Build (release)",
+      "startedAt": "2026-10-20T06:53:32Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:52Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335286",
+      "name": "Test (host)",
+      "startedAt": "2026-10-20T06:54:16Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320539",
+      "name": "Test (host)",
+      "startedAt": "2026-10-20T06:53:32Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:57:28Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335109",
+      "name": "Tools (host)",
+      "startedAt": "2026-10-20T06:54:09Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:57:03Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320287",
+      "name": "Tools (host)",
+      "startedAt": "2026-10-20T06:53:32Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:50Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335249",
+      "name": "Security (audit + deny)",
+      "startedAt": "2026-10-20T06:54:09Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:54:19Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320492",
+      "name": "Security (audit + deny)",
+      "startedAt": "2026-10-20T06:53:33Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:57:18Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335592",
+      "name": "Miri (unsafe UB detection)",
+      "startedAt": "2026-10-20T06:54:18Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:56:57Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320423",
+      "name": "Miri (unsafe UB detection)",
+      "startedAt": "2026-10-20T06:53:32Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T06:53:33Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496336898",
+      "name": "QEMU boot soak (report-only)",
+      "startedAt": "2026-10-20T06:53:34Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-20T07:03:02Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320597",
+      "name": "QEMU boot soak (report-only)",
+      "startedAt": "2026-10-20T06:54:08Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    }
+  ],
+  "title": "Tools R3: aios brief and aios checkpoint (port of brief.sh and checkpoint.sh)"
+}

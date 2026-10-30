@@ -1594,6 +1594,21 @@ just run
 # Exit QEMU with: Ctrl-A X
 ```
 
+#### PR review (`aios loop review`)
+
+`aios loop review` reviews open pull requests with `claude -p` stages and reports findings and an advisory merge verdict. It is read-only: it writes nothing to GitHub or git. Run it from the main checkout through the shim (a run spends model budget and can take more than 10 minutes), or use `/justin:review <PR>` in a session:
+
+```bash
+.claude/hooks/aios loop review 280 149    # one round per PR, in this order
+```
+
+- **Needs:** `CLAUDE_CONFIG_DIR` set (the loop refuses the default account config), `gh` authenticated, and a fresh `target/tools/installed/aios` built from merged inputs. The shim builds a missing or stale binary in the foreground and exits 3 if it cannot, if the build is dirty, or if `AIOS_TOOLS_BIN` is set.
+- **Output:** one block per PR, then the paths of `report.json` and `report.md` under `$(git rev-parse --git-common-dir)/aios-agent/loop/pr-<n>/run-<epoch>/`. Exit 0 means every PR is clean and ready, 1 any finding, `pending`, `needs-human` or refusal, 2 a usage or internal error, 4 a stop (the `STOP` file, an `agent-stop` issue or label problem, or a QEMU quiet window).
+- **Prompts and config** are `scripts/agent/prompts/*.md` and `scripts/agent/loop-config.json`. The loop reads them from `origin/main`; to try a change before it merges, build the branch (`cargo build --release --locked -p aios-tools --target-dir <dir>`) and run that binary directly with `--tree <worktree>`. A binary other than `<main>/target/tools/installed/aios` runs only with `--tree`.
+- **Tests:** `cargo test -p aios-tools --test loop_scenarios` runs the scenarios against fake `gh` and `claude` executables, and each scenario asserts the read-only invariant. Never point a test at the real `gh` or `claude`.
+
+The runbook section is [agent-loop.md](agent-loop.md#pr-loop-r2a).
+
 ### 5.2 Quality Gates
 
 Every milestone must pass the gates in [rule 02](../../.claude/rules/02-quality-gates.md), which holds the one gate table: Compile, Check, Test, Tools (when `tools/` changed), QEMU (a one-boot soak through the host QEMU lock, rule 11), CI, Objdump and EL, each with its command and pass condition. Rule 02 also defines the audit loop that runs before a PR is marked ready.

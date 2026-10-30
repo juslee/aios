@@ -1,0 +1,200 @@
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:17.8651164Z ^[[1m^[[92m   Compiling^[[0m libc v0.2.186
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:17.9261250Z ^[[1m^[[92m   Compiling^[[0m stable_deref_trait v1.2.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:17.9601281Z ^[[1m^[[92m   Compiling^[[0m serde_core v1.0.228
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:18.0048456Z ^[[1m^[[92m   Compiling^[[0m find-msvc-tools v0.1.9
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:18.1398709Z ^[[1m^[[92m   Compiling^[[0m smallvec v1.15.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:18.1511160Z ^[[1m^[[92m   Compiling^[[0m shlex v1.3.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:18.3561520Z ^[[1m^[[92m   Compiling^[[0m crossbeam-utils v0.8.21
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:18.6403667Z ^[[1m^[[92m   Compiling^[[0m syn v2.0.117
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:18.6811739Z ^[[1m^[[92m   Compiling^[[0m memchr v2.8.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:19.0201256Z ^[[1m^[[92m   Compiling^[[0m jobserver v0.1.34
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:19.3001216Z ^[[1m^[[92m   Compiling^[[0m cc v1.2.62
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.0881396Z ^[[1m^[[92m   Compiling^[[0m version_check v0.9.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.2861657Z ^[[1m^[[92m   Compiling^[[0m serde v1.0.228
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.4523254Z ^[[1m^[[92m   Compiling^[[0m generic-array v0.14.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.5621153Z ^[[1m^[[92m   Compiling^[[0m litemap v0.8.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.7327046Z ^[[1m^[[92m   Compiling^[[0m crossbeam-epoch v0.9.20
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.7961281Z ^[[1m^[[92m   Compiling^[[0m writeable v0.6.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.8521272Z ^[[1m^[[92m   Compiling^[[0m pkg-config v0.3.33
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:20.9581254Z ^[[1m^[[92m   Compiling^[[0m synstructure v0.13.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.3122230Z ^[[1m^[[92m   Compiling^[[0m zstd-sys v2.0.16+zstd.1.5.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.4087488Z ^[[1m^[[92m   Compiling^[[0m cfg-if v1.0.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.4415387Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer_data v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.5142374Z ^[[1m^[[92m   Compiling^[[0m typenum v1.20.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.5301299Z ^[[1m^[[92m   Compiling^[[0m icu_properties_data v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.6161223Z ^[[1m^[[92m   Compiling^[[0m utf8_iter v1.0.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:21.8002541Z ^[[1m^[[92m   Compiling^[[0m zerofrom-derive v0.1.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:22.0031321Z ^[[1m^[[92m   Compiling^[[0m yoke-derive v0.8.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:22.3754684Z ^[[1m^[[92m   Compiling^[[0m zerofrom v0.1.8
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:22.4521376Z ^[[1m^[[92m   Compiling^[[0m zerovec-derive v0.11.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:22.5791704Z ^[[1m^[[92m   Compiling^[[0m yoke v0.8.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:22.7408666Z ^[[1m^[[92m   Compiling^[[0m displaydoc v0.2.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:22.7463344Z ^[[1m^[[92m   Compiling^[[0m serde_derive v1.0.228
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:23.1678033Z ^[[1m^[[92m   Compiling^[[0m zerotrie v0.2.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:23.3021184Z ^[[1m^[[92m   Compiling^[[0m zerovec v0.11.6
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:23.9306849Z ^[[1m^[[92m   Compiling^[[0m tinystr v0.8.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:23.9721386Z ^[[1m^[[92m   Compiling^[[0m potential_utf v0.1.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:24.0591368Z ^[[1m^[[92m   Compiling^[[0m icu_collections v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:24.0771005Z ^[[1m^[[92m   Compiling^[[0m icu_locale_core v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:24.9391189Z ^[[1m^[[92m   Compiling^[[0m zmij v1.0.21
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:25.0871531Z ^[[1m^[[92m   Compiling^[[0m crossbeam-deque v0.8.6
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:25.2621285Z ^[[1m^[[92m   Compiling^[[0m icu_provider v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:25.8221443Z ^[[1m^[[92m   Compiling^[[0m aho-corasick v1.1.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.0351763Z ^[[1m^[[92m   Compiling^[[0m rayon-core v1.13.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.1261228Z ^[[1m^[[92m   Compiling^[[0m itoa v1.0.18
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.2701253Z ^[[1m^[[92m   Compiling^[[0m termcolor v1.4.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.5511273Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.150
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.6121889Z ^[[1m^[[92m   Compiling^[[0m target-lexicon v0.13.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.6431083Z ^[[1m^[[92m   Compiling^[[0m equivalent v1.0.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.6771046Z ^[[1m^[[92m   Compiling^[[0m utf8parse v0.2.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.7251065Z ^[[1m^[[92m   Compiling^[[0m unicode-width v0.2.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.9261416Z ^[[1m^[[92m   Compiling^[[0m regex-syntax v0.8.10
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:26.9391205Z ^[[1m^[[92m   Compiling^[[0m camino v1.2.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:27.0871115Z ^[[1m^[[92m   Compiling^[[0m zstd-safe v7.2.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:27.2251254Z ^[[1m^[[92m   Compiling^[[0m codespan-reporting v0.13.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:28.2161256Z ^[[1m^[[92m   Compiling^[[0m anstyle-parse v1.0.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:28.3811322Z ^[[1m^[[92m   Compiling^[[0m icu_properties v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:29.1991712Z ^[[1m^[[92m   Compiling^[[0m regex-automata v0.4.14
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:29.8071535Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer v2.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:30.9623737Z ^[[1m^[[92m   Compiling^[[0m block-buffer v0.10.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.0570912Z ^[[1m^[[92m   Compiling^[[0m crypto-common v0.1.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.1261103Z ^[[1m^[[92m   Compiling^[[0m parking_lot_core v0.9.12
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.2441195Z ^[[1m^[[92m   Compiling^[[0m foldhash v0.1.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.3731626Z ^[[1m^[[92m   Compiling^[[0m tinyvec_macros v0.1.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.4000527Z ^[[1m^[[92m   Compiling^[[0m anstyle-query v1.1.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.4457900Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.17.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.4512131Z ^[[1m^[[92m   Compiling^[[0m thiserror v2.0.18
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.6200965Z ^[[1m^[[92m   Compiling^[[0m radium v0.7.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:31.7371068Z ^[[1m^[[92m   Compiling^[[0m allocator-api2 v0.2.21
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.1301832Z ^[[1m^[[92m   Compiling^[[0m colorchoice v1.0.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.1791116Z ^[[1m^[[92m   Compiling^[[0m log v0.4.29
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.3026021Z ^[[1m^[[92m   Compiling^[[0m is_terminal_polyfill v1.70.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.3251955Z ^[[1m^[[92m   Compiling^[[0m anstyle v1.0.14
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.3471185Z ^[[1m^[[92m   Compiling^[[0m indexmap v2.14.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.4960977Z ^[[1m^[[92m   Compiling^[[0m anstream v1.0.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:32.8261857Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.15.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:33.4751027Z ^[[1m^[[92m   Compiling^[[0m tinyvec v1.11.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:33.7101183Z ^[[1m^[[92m   Compiling^[[0m digest v0.10.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:33.9871244Z ^[[1m^[[92m   Compiling^[[0m idna_adapter v1.2.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:35.6711706Z ^[[1m^[[92m   Compiling^[[0m thiserror-impl v2.0.18
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:35.9321163Z ^[[1m^[[92m   Compiling^[[0m scroll_derive v0.13.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.3141333Z ^[[1m^[[92m   Compiling^[[0m semver v1.0.28
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.5508598Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.7356449Z ^[[1m^[[92m   Compiling^[[0m anyhow v1.0.103
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.7562088Z ^[[1m^[[92m   Compiling^[[0m fixedbitset v0.5.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.8927799Z ^[[1m^[[92m   Compiling^[[0m scopeguard v1.2.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.9001644Z ^[[1m^[[92m   Compiling^[[0m strsim v0.11.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:36.9371594Z ^[[1m^[[92m   Compiling^[[0m heck v0.5.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.0689856Z ^[[1m^[[92m   Compiling^[[0m cpufeatures v0.2.17
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.0971239Z ^[[1m^[[92m   Compiling^[[0m bytes v1.11.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.1051315Z ^[[1m^[[92m   Compiling^[[0m either v1.16.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.2871816Z ^[[1m^[[92m   Compiling^[[0m percent-encoding v2.3.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.4231126Z ^[[1m^[[92m   Compiling^[[0m tap v1.0.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.4341086Z ^[[1m^[[92m   Compiling^[[0m clap_lex v1.1.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.4921152Z ^[[1m^[[92m   Compiling^[[0m wyz v0.5.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.6201252Z ^[[1m^[[92m   Compiling^[[0m clap_builder v4.6.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.6728589Z ^[[1m^[[92m   Compiling^[[0m http v1.4.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.7738431Z ^[[1m^[[92m   Compiling^[[0m form_urlencoded v1.2.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:37.9063073Z ^[[1m^[[92m   Compiling^[[0m rayon v1.12.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:39.0021197Z ^[[1m^[[92m   Compiling^[[0m sha2 v0.10.9
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:39.7961247Z ^[[1m^[[92m   Compiling^[[0m strum_macros v0.28.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:40.9901555Z ^[[1m^[[92m   Compiling^[[0m petgraph v0.8.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:41.7331765Z ^[[1m^[[92m   Compiling^[[0m lock_api v0.4.14
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:43.2491145Z ^[[1m^[[92m   Compiling^[[0m scroll v0.13.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:43.4621234Z ^[[1m^[[92m   Compiling^[[0m cfg-expr v0.20.7
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:44.1641104Z ^[[1m^[[92m   Compiling^[[0m idna v1.1.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:44.9511905Z ^[[1m^[[92m   Compiling^[[0m unicode-normalization v0.1.25
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:45.6121894Z ^[[1m^[[92m   Compiling^[[0m regex v1.12.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:45.6331093Z ^[[1m^[[92m   Compiling^[[0m toml-span v0.7.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:46.3101412Z ^[[1m^[[92m   Compiling^[[0m smol_str v0.3.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:46.5064568Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.2.17
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:46.6398959Z ^[[1m^[[92m   Compiling^[[0m crossbeam-queue v0.3.12
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:46.7482251Z ^[[1m^[[92m   Compiling^[[0m crossbeam-channel v0.5.15
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.2896087Z ^[[1m^[[92m   Compiling^[[0m bstr v1.12.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.4880103Z ^[[1m^[[92m   Compiling^[[0m plain v0.2.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.5421679Z ^[[1m^[[92m   Compiling^[[0m untrusted v0.9.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.6008975Z ^[[1m^[[92m   Compiling^[[0m funty v2.0.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.8069696Z ^[[1m^[[92m   Compiling^[[0m same-file v1.0.6
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.8641630Z ^[[1m^[[92m   Compiling^[[0m twox-hash v2.1.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:47.9407574Z ^[[1m^[[92m   Compiling^[[0m rustc-stable-hash v0.1.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:48.0431011Z ^[[1m^[[92m   Compiling^[[0m tame-index v0.26.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:48.2721385Z ^[[1m^[[92m   Compiling^[[0m bitvec v1.0.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:50.7911227Z ^[[1m^[[92m   Compiling^[[0m walkdir v2.5.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:51.1067985Z ^[[1m^[[92m   Compiling^[[0m globset v0.4.18
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:51.6200155Z ^[[1m^[[92m   Compiling^[[0m goblin v0.10.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:52.6604333Z ^[[1m^[[92m   Compiling^[[0m crossbeam v0.8.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:52.6877255Z ^[[1m^[[92m   Compiling^[[0m parking_lot v0.12.5
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:53.0548275Z ^[[1m^[[92m   Compiling^[[0m url v2.5.8
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:54.4470975Z ^[[1m^[[92m   Compiling^[[0m krates v0.21.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:57.3094398Z ^[[1m^[[92m   Compiling^[[0m strum v0.28.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:57.3534955Z ^[[1m^[[92m   Compiling^[[0m clap v4.6.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:57.3867483Z ^[[1m^[[92m   Compiling^[[0m fern v0.7.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:58.1488962Z ^[[1m^[[92m   Compiling^[[0m codespan v0.13.1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:58.4581020Z ^[[1m^[[92m   Compiling^[[0m memmap2 v0.9.11
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:58.6370893Z ^[[1m^[[92m   Compiling^[[0m jiff v0.2.24
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:20:58.9581210Z ^[[1m^[[92m   Compiling^[[0m nu-ansi-term v0.50.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:21:05.6647404Z ^[[1m^[[92m   Compiling^[[0m zstd v0.13.3
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:21:05.8135013Z ^[[1m^[[92m   Compiling^[[0m spdx v0.13.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:21:06.3171431Z ^[[1m^[[92m   Compiling^[[0m cargo-deny v0.20.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:13.9455750Z ^[[1m^[[92m    Finished^[[0m `release` profile [optimized] target(s) in 4m 43s
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:13.9633554Z ^[[1m^[[92m  Installing^[[0m <ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:13.9636601Z ^[[1m^[[92m   Installed^[[0m package `cargo-deny v0.20.2` (executable `cargo-deny`)
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1231205Z ^[[1m^[[92m     Summary^[[0m Successfully installed cargo-audit, cargo-deny!
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1459029Z ##[group]Run just audit
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1459355Z ^[[36;1mjust audit^[[0m
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1530624Z shell: /usr/bin/bash -e {0}
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1530889Z env:
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1531105Z   CARGO_TERM_COLOR: always
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1531618Z   CARGO_HOME: <ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1531914Z   CARGO_INCREMENTAL: 0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1532147Z   CACHE_ON_FAILURE: false
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1532378Z ##[endgroup]
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.1705773Z cargo audit
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:14.2100059Z ^[[0m^[[0m^[[1m^[[32m    Fetching^[[0m advisory database from `https://github.com/RustSec/advisory-db.git`
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.6251591Z ^[[0m^[[0m^[[1m^[[32m      Loaded^[[0m 1378 security advisories (from <ROOT>)
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.6252192Z ^[[0m^[[0m^[[1m^[[32m    Updating^[[0m crates.io index
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.6408252Z ^[[0m^[[0m^[[1m^[[32m    Scanning^[[0m Cargo.lock for vulnerabilities (86 crate dependencies)
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8455904Z ^[[0m^[[0m^[[1m^[[31merror:^[[0m 1 vulnerability found!
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8456363Z ^[[0m^[[0m^[[1m^[[31mCrate:    ^[[0m ctutils
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8456688Z ^[[0m^[[0m^[[1m^[[31mVersion:  ^[[0m 0.4.2
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8457321Z ^[[0m^[[0m^[[1m^[[31mTitle:    ^[[0m Non-constant-time mask generation and `u128` comparisons
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8458028Z ^[[0m^[[0m^[[1m^[[31mDate:     ^[[0m 2026-10-23
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8458581Z ^[[0m^[[0m^[[1m^[[31mID:       ^[[0m RUSTSEC-2026-0385
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8459186Z ^[[0m^[[0m^[[1m^[[31mURL:      ^[[0m https://github.com/RustCrypto/utils/pull/1569
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8459956Z ^[[0m^[[0m^[[1m^[[31mSolution: ^[[0m Upgrade to >=0.4.4
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8460274Z 
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8496400Z error: recipe `audit` failed on line 313 with exit code 1
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8515701Z ##[error]Process completed with exit code 1.
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.8644937Z Post job cleanup.
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9555597Z [command]/usr/bin/git version
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9600944Z git version 2.55.0
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9636797Z Temporarily overriding HOME='<ROOT>' before making global git config changes
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9638152Z Adding repository directory to the temporary git global config as a safe directory
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9642660Z [command]/usr/bin/git config --global --add safe.directory <ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9680580Z Removing SSH command configuration
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9686640Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:17.9731276Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0090954Z Removing HTTP extra header
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0102911Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0154480Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0451889Z Removing includeIf entries pointing to credentials config files
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0461359Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0504691Z includeif.gitdir:<ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0505689Z includeif.gitdir:<ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0506483Z includeif.gitdir:/github/workspace/.git.path
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0507165Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0516334Z [command]/usr/bin/git config --local --get-all includeif.gitdir:<ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0556721Z <ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0569317Z [command]/usr/bin/git config --local --unset includeif.gitdir:<ROOT> \/home\/runner\/work\/_temp\/git\-credentials\-de590f65\-2560\-4610\-82bb\-4b1779ca8169\.config
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0622845Z [command]/usr/bin/git config --local --get-all includeif.gitdir:<ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0670415Z <ROOT>
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0680787Z [command]/usr/bin/git config --local --unset includeif.gitdir:<ROOT> \/home\/runner\/work\/_temp\/git\-credentials\-de590f65\-2560\-4610\-82bb\-4b1779ca8169\.config
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0727008Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0762571Z /github/runner_temp/git-credentials-de590f65-2560-4610-82bb-4b1779ca8169.config
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0772025Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-de590f65\-2560\-4610\-82bb\-4b1779ca8169\.config
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0816892Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0851044Z /github/runner_temp/git-credentials-de590f65-2560-4610-82bb-4b1779ca8169.config
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0859086Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-de590f65\-2560\-4610\-82bb\-4b1779ca8169\.config
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.0907033Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.1183397Z Removing credentials config '<ROOT>'
+Security (audit + deny)	UNKNOWN STEP	2026-10-27T04:22:18.1356426Z Cleaning up orphan processes

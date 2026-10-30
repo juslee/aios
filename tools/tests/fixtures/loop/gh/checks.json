@@ -1,0 +1,98 @@
+[
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39384126399/job/118499795424",
+    "name": "claude-review",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335592",
+    "name": "Miri (unsafe UB detection)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049503/job/118496335413",
+    "name": "Docs drift (report-only)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335390",
+    "name": "Build (release)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335286",
+    "name": "Test (host)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335301",
+    "name": "Check (fmt + clippy + build)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335249",
+    "name": "Security (audit + deny)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496335109",
+    "name": "Tools (host)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320597",
+    "name": "QEMU boot soak (report-only)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "skipping",
+    "link": "https://github.com/juslee/aios/actions/runs/39383049516/job/118496336898",
+    "name": "QEMU boot soak (report-only)",
+    "state": "SKIPPED"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320492",
+    "name": "Security (audit + deny)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320507",
+    "name": "Check (fmt + clippy + build)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320287",
+    "name": "Tools (host)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320539",
+    "name": "Test (host)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320423",
+    "name": "Miri (unsafe UB detection)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/juslee/aios/actions/runs/39383044584/job/118496320460",
+    "name": "Build (release)",
+    "state": "SUCCESS"
+  }
+]

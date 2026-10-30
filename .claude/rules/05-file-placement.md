@@ -18,6 +18,9 @@ kernel/src/                    Platform-agnostic kernel logic
 shared/src/                    Types crossing kernel/stub boundary
 uefi-stub/src/                 UEFI stub code
 tools/                         Host tooling crate aios-tools (binary aios): src/cmd/<subcommand>/, tests/ (goldens, fixtures)
+tools/src/cmd/loop/            The PR loop (aios loop review): preflight, gather, review stages, verdict
+scripts/agent/prompts/         The loop's stage prompts (read from origin/main)
+scripts/agent/loop-config.json The loop's models, budgets, trusted authors and path tags
 docs/phases/                   Phase implementation docs (NN-name.md, flat, no subdirs)
 docs/knowledge/decisions/      Architecture Decision Records
 docs/knowledge/lessons/        Hard-won lessons and gotchas

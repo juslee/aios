@@ -2434,3 +2434,172 @@ fn justfile_recipes_run_mains_shim_from_another_directory() {
     }
     std::fs::remove_dir_all(&dir).expect("remove the working directory");
 }
+
+/// A binary that leaves `ran.marker` in the sandbox when it runs, so the `loop`
+/// tests see whether the shim ran it: an exit 3 must not.
+const MARKER_BIN: &str = "#!/bin/sh\n: > ran.marker\necho binary-ran\n";
+
+fn ran(sandbox: &Sandbox) -> bool {
+    sandbox.repo.path().join("ran.marker").exists()
+}
+
+/// Every `loop` stop is exit 3 with an empty stdout (the binary's own output
+/// would be a report) and no binary run.
+fn assert_loop_refused(sandbox: &Sandbox, out: &Output) {
+    assert_eq!(code(out), 3, "{}", stderr(out));
+    assert!(stdout(out).is_empty(), "{}", stdout(out));
+    assert!(!ran(sandbox), "the binary must not run");
+}
+
+/// `aios loop` ignores `AIOS_TOOLS_BIN`: it refuses it, even for a fresh main
+/// binary, and runs neither the override nor the main checkout's binary.
+#[test]
+fn loop_refuses_aios_tools_bin_with_exit_3() {
+    let sandbox = Sandbox::new("shim-loop-override");
+    sandbox.install(Some(MARKER_BIN), true);
+    let other = sandbox.bin_dir.path().join("other-aios");
+    write_executable(
+        &other,
+        &format!("{MARKER_BIN}printf 'override:%s\\n' \"$*\"\n"),
+    );
+    let other = other.to_str().expect("a UTF-8 path");
+    let out = sandbox.run_env(&["loop", "review", "1"], &[("AIOS_TOOLS_BIN", other)]);
+    assert_loop_refused(&sandbox, &out);
+    assert!(
+        stderr(&out).contains("aios: AIOS_TOOLS_BIN is not used for loop;"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!sandbox.built(), "a refusal must not build");
+}
+
+/// A stale binary whose foreground rebuild fails is not run.
+#[test]
+fn loop_with_a_failing_stale_rebuild_exits_3() {
+    let sandbox = Sandbox::new("shim-loop-stale-fails");
+    sandbox.install(Some(MARKER_BIN), false);
+    let out = sandbox.run_env(&["loop", "review", "1"], &[("FAKE_CARGO_FAIL", "1")]);
+    assert_loop_refused(&sandbox, &out);
+    let err = stderr(&out);
+    assert!(
+        err.lines().any(|line| line.starts_with("aios: rebuilding ")
+            && line.ends_with(
+                "failed; aios loop never runs a stale or unverified binary (run: just tools)"
+            )),
+        "missing the refusal: {err}"
+    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+}
+
+/// A dirty build is not rebuilt and not run: exit 3 naming the cause.
+#[test]
+fn loop_with_a_dirty_binary_exits_3_naming_the_cause() {
+    let sandbox = Sandbox::new("shim-loop-dirty");
+    sandbox
+        .repo
+        .write("tools/src/lib.rs", "// an uncommitted edit\n");
+    sandbox.install(Some(MARKER_BIN), true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    let out = sandbox.run(&["loop", "review", "1"]);
+    assert_loop_refused(&sandbox, &out);
+    let err = stderr(&out);
+    assert!(
+        err.contains("aios loop never runs a dirty binary") && err.contains("(changes:"),
+        "missing the cause: {err}"
+    );
+    assert!(!sandbox.built(), "a dirty build is not rebuilt");
+}
+
+/// A rebuild that succeeds but leaves the binary stale (an input newer than
+/// the binary, as when an input changes during the build) is not run.
+#[test]
+fn loop_rebuilt_but_still_not_fresh_exits_3() {
+    let sandbox = Sandbox::new("shim-loop-not-fresh");
+    sandbox.install_bin(false);
+    // The wrapper builds, then touches an input past the new binary's mtime.
+    write_executable(&sandbox.bin_dir.path().join("cargo-real"), FAKE_CARGO);
+    write_executable(
+        &sandbox.bin_dir.path().join("cargo"),
+        &format!(
+            "#!/bin/sh\n\"{}/cargo-real\" \"$@\" || exit $?\ntouch -t {NEWER_STAMP} tools/src/lib.rs\n",
+            sandbox.bin_dir.path().display()
+        ),
+    );
+    let out = sandbox.run(&["loop", "review", "1"]);
+    assert_eq!(code(&out), 3, "{}", stderr(&out));
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("is still not fresh after the rebuild"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+}
+
+/// A missing binary whose build fails exits 3, like the other subcommands, with
+/// the loop's wording.
+#[test]
+fn loop_with_a_missing_binary_and_failing_build_exits_3() {
+    let sandbox = Sandbox::new("shim-loop-missing");
+    let out = sandbox.run_env(&["loop", "review", "1"], &[("FAKE_CARGO_FAIL", "1")]);
+    assert_loop_refused(&sandbox, &out);
+    assert!(
+        stderr(&out).contains(
+            "is missing and the build failed; aios loop never runs an unverified binary (run: just tools)"
+        ),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// A fresh binary runs with the arguments and its own status, without a build,
+/// and `AIOS_SHIM_STALE` stays unset.
+#[test]
+fn loop_with_a_fresh_binary_runs_it() {
+    let sandbox = Sandbox::new("shim-loop-fresh");
+    sandbox.install(
+        Some(
+            "#!/bin/sh\nprintf 'stale=%s args=%s\\n' \"${AIOS_SHIM_STALE-unset}\" \"$*\"\nexit 5\n",
+        ),
+        true,
+    );
+    let out = sandbox.run_env(&["loop", "review", "7"], &[("AIOS_SHIM_STALE", "1")]);
+    assert_eq!(code(&out), 5);
+    assert_eq!(stdout(&out), "stale=unset args=loop review 7\n");
+    assert!(!sandbox.built(), "a fresh binary must not build");
+}
+
+/// A stale binary whose rebuild succeeds is verified again, then run.
+#[test]
+fn loop_stale_rebuild_succeeds_then_runs() {
+    let sandbox = Sandbox::new("shim-loop-rebuild");
+    sandbox.install_bin(false);
+    let out = sandbox.run(&["loop", "review", "1"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), "fake:loop review 1\n");
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+}
+
+/// Only the exact name `loop` takes the strict arm: `loopx` is any other
+/// subcommand, so a failed rebuild still runs the stale binary and an
+/// `AIOS_TOOLS_BIN` override still runs.
+#[test]
+fn a_subcommand_named_loopx_is_other() {
+    let sandbox = Sandbox::new("shim-loopx");
+    sandbox.install_bin(false);
+    let out = sandbox.run_env(&["loopx", "review"], &[("FAKE_CARGO_FAIL", "1")]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), "fake:loopx review\n");
+    assert!(
+        stderr(&out).contains("failed; running the stale binary (run: just tools)"),
+        "{}",
+        stderr(&out)
+    );
+
+    let other = sandbox.bin_dir.path().join("other-aios");
+    write_executable(&other, "#!/bin/sh\nprintf 'override:%s\\n' \"$*\"\n");
+    let other = other.to_str().expect("a UTF-8 path");
+    let out = sandbox.run_env(&["loopx"], &[("AIOS_TOOLS_BIN", other)]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), "override:loopx\n");
+}

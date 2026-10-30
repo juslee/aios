@@ -140,7 +140,7 @@ Work on at most two branches at a time. Start only owner-approved work: an `agen
    - run docs-check.
 
    Then run Placement.
-8. **Ready.** Run `gh pr ready <n>`, then `/review-pr-comments`. Route each fix to a fresh writer spawn and run Placement; reply and resolve after the fix sha is pushed.
+8. **Ready.** Run `gh pr ready <n>`, then `/justin:review <n>` (a read-only report of findings and an advisory merge verdict, run from the main checkout; it fixes nothing), then `/review-pr-comments`. Route each fix to a fresh writer spawn and run Placement; reply and resolve after the fix sha is pushed.
 9. **Hand off to the owner.** Report the PR URL and `gh pr checks <n>`, and ask the owner to run `/merge-and-cleanup <n>`. Never merge.
 10. **After every merge to `main`** (a `MAIN-MOVED` message, or `git fetch` showing a new `origin/main`): list owned branches whose changed files overlap the merged diff, and schedule their merges of `main` (step 3). If the message says the harness changed, finish the current step, then ask the owner to restart this lead.
 

@@ -95,6 +95,19 @@
 #                     override. missing: build, then run; exit 3 naming `just
 #                     tools` if the build fails. Exit 3 when the shim cannot
 #                     find its own directory or the main checkout.
+#   aios loop ...     The PR review loop. Only a binary the stamp shows fresh
+#                     runs (exec). Missing or stale: build in the foreground,
+#                     then take the verdict again; exit 3 naming `just tools`
+#                     when the build fails, when the binary is dirty (the
+#                     message names the cause), or when it is still not fresh
+#                     after the build. AIOS_TOOLS_BIN is refused with exit 3,
+#                     ahead of the override handling. Two residuals stay: the
+#                     stamp follows the main checkout's local HEAD, not what
+#                     merged (#213), and the verdict and the exec are two steps,
+#                     so a `just tools` rename between them swaps the binary
+#                     (check-then-exec race; guard and hook run a hard link to
+#                     close it, this arm does not). Calling the binary directly
+#                     skips the shim: it carries its own self-location check.
 #   aios --prebuild   (SessionStart) start a background build when the binary
 #                     is missing or stale; always exits 0.
 #
@@ -488,6 +501,11 @@ build_bg() {
     return 0
 }
 
+# `aios loop` never takes an override (see the header).
+[ "$sub" = loop ] && [ -n "${AIOS_TOOLS_BIN:-}" ] &&
+    stop "AIOS_TOOLS_BIN is not used for loop" \
+        "AIOS_TOOLS_BIN is not used for loop; aios loop runs only the verified binary built from the main checkout (unset it, or run: just tools)"
+
 if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
     [ "$sub" = --prebuild ] && exit 0
     # `[ -x ]` tests a bare name relative to the cwd but exec searches PATH:
@@ -579,6 +597,44 @@ hook)
     esac
     build_bg
     hook_fallback "the aios binary is stale or unverified; a background build was requested"
+    ;;
+loop)
+    # Strict: only a binary the stamp shows fresh runs. A missing or stale one
+    # is built in the foreground, the verdict is taken again after any build,
+    # and a failed build, a dirty build or one still not fresh is exit 3.
+    built=
+    if ! runnable "$bin"; then
+        if ! build_fg || ! runnable "$bin"; then
+            echo "aios: $bin is missing and the build failed; aios loop never runs an unverified binary (run: just tools)" >&2
+            exit 3
+        fi
+        built=1
+    fi
+    state=$(verdict "$bin")
+    if [ "$state" = stale ] && [ -z "$built" ]; then
+        if ! build_fg; then
+            echo "aios: rebuilding $bin failed; aios loop never runs a stale or unverified binary (run: just tools)" >&2
+            exit 3
+        fi
+        state=$(verdict "$bin")
+    fi
+    case $state in
+    fresh) exec "$bin" "$@" ;;
+    dirty-*)
+        cause=${state#dirty-}
+        case $cause in
+        changes) what="uncommitted, untracked or gitignored input files" ;;
+        hidden) what="input files hidden by assume-unchanged or skip-worktree index flags" ;;
+        no-origin) what="no origin/main to check the inputs against" ;;
+        unmerged) what="input commits that are not on origin/main" ;;
+        *) what="inputs not merged on origin/main" ;;
+        esac
+        echo "aios: $bin was built from dirty inputs ($cause: $what); aios loop never runs a dirty binary (clear the cause, then run: just tools)" >&2
+        exit 3
+        ;;
+    esac
+    echo "aios: $bin is still not fresh after the rebuild; aios loop never runs a stale or unverified binary (run: just tools)" >&2
+    exit 3
     ;;
 esac
 

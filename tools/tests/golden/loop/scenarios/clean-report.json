@@ -1,0 +1,59 @@
+{
+  "pr": 1,
+  "head": "<SHA>",
+  "base": "<SHA>",
+  "review": {
+    "status": "clean",
+    "incomplete": [],
+    "cost_usd": 0.15,
+    "findings": [],
+    "stages": [
+      {
+        "stage": "correctness",
+        "model": "sonnet",
+        "fallback": false,
+        "attempts": 1,
+        "cost_usd": 0.05,
+        "result": "ok",
+        "denials": []
+      },
+      {
+        "stage": "security",
+        "model": "sonnet",
+        "fallback": false,
+        "attempts": 1,
+        "cost_usd": 0.05,
+        "result": "ok",
+        "denials": []
+      },
+      {
+        "stage": "conventions",
+        "model": "sonnet",
+        "fallback": false,
+        "attempts": 1,
+        "cost_usd": 0.05,
+        "result": "ok",
+        "denials": []
+      }
+    ]
+  },
+  "merge": {
+    "verdict": "ready",
+    "reasons": []
+  },
+  "gated": [],
+  "cross_check": null,
+  "plan_present": false,
+  "notes": [],
+  "lessons": {
+    "tags": [],
+    "notes": [],
+    "dropped": []
+  },
+  "prompt_versions": {
+    "correctness": 1,
+    "security": 1,
+    "conventions": 1,
+    "verify": 1
+  }
+}

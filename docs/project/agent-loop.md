@@ -2,13 +2,13 @@
 
 **Audience:** the owner, returning after a break
 **Current stage:** Stage 0 (no autonomy: Claude works only inside a session you are attending)
-**Last updated:** 2026-10-11
+**Last updated:** 2026-10-29
 
 -----
 
 ## Session skills today
 
-Five skills in the `justin` plugin, one per job. The plugin is a project-scope skills-dir plugin: [plugin.json](../../.claude/skills/justin/.claude-plugin/plugin.json) plus `.claude/skills/justin/skills/<name>/SKILL.md`. Claude Code loads it in place as `justin@skills-dir` in a trusted workspace, with no marketplace or install step, so edits apply on the next run; `claude plugin list` shows it. The shared logic lives in the `aios` binary, not in the skill text.
+Six skills in the `justin` plugin, one per job. The plugin is a project-scope skills-dir plugin: [plugin.json](../../.claude/skills/justin/.claude-plugin/plugin.json) plus `.claude/skills/justin/skills/<name>/SKILL.md`. Claude Code loads it in place as `justin@skills-dir` in a trusted workspace, with no marketplace or install step, so edits apply on the next run; `claude plugin list` shows it. The shared logic lives in the `aios` binary, not in the skill text.
 
 | Command | What happens | Writes | Who invokes |
 |---|---|---|---|
@@ -17,6 +17,7 @@ Five skills in the `justin` plugin, one per job. The plugin is a project-scope s
 | `/justin:doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing, except that foreground `just tools` build of `target/tools/` in the main checkout when the `aios` binary is missing or stale | you or Claude (read-only) |
 | `/justin:pause` | Writes this session's handoff, `.remember/handoff-<key>.md`: `team-build` or `team-fix` for a lead, `solo-<name>` for any other session (`AIOS_SESSION`, or a name pause asks for). Then runs `just checkpoint`, the `aios checkpoint` subcommand ([source](../../tools/src/cmd/checkpoint/)): a `wip:` commit on the current `claude/*` branch and a push of anything not on origin (never `main`, never forced), then a checkpoint line | `.remember/handoff-<key>.md`, at most one `wip:` commit | you only |
 | `/justin:team <build\|fix>` | Makes this session the team-build or team-fix lead: preflight, state from its handoff file, team labels and worktrees, HELLO to the peer, then the loop (see Teams) | as `/justin:brief`, plus PR labels, PR comments and pushes of its own `claude/*` branches | you only |
+| `/justin:review <PR...>` | Runs `.claude/hooks/aios loop review <PR...>` from the main checkout in the background (see PR loop (R2a)), waits for it and reports each PR's findings block, the report paths and the advisory merge verdict; fixes and merges nothing | `<git-common-dir>/aios-agent/loop/` (state, reports, findings log) and a detached round worktree under `.claude/worktrees/` that is removed at the end; nothing on GitHub, no commit, no push | you or Claude |
 
 A bare name such as `/pause` also resolves while no other skill or command shares it, but a built-in command wins a clash (bare `/doctor` is Claude Code's own health check) and another installed plugin can make a bare name ambiguous. Use the `/justin:` names.
 
@@ -31,7 +32,7 @@ The brief covers: branch and worktree state (dirty, unpushed), open PRs with che
 
 **Other worktrees.** Pause commits and pushes only in the checkout the session runs in, which is usually the main checkout on `main`, where it commits nothing. It lists every other worktree with uncommitted files or commits not on origin and never touches them, because a background agent may be working there; each `claude/*` one gets a `checkpoint it:` command you can ask Claude to run. `Safe to /clear` appears only when no worktree holds unsaved work.
 
-Work, loop, retro and setup skills belong to later stages and do not exist yet.
+Work, retro and setup skills belong to later stages and do not exist yet. Of the loop, only the read-only review exists (`/justin:review`); the fixing and merging parts come in R2b.
 
 -----
 
@@ -66,6 +67,7 @@ Work, loop, retro and setup skills belong to later stages and do not exist yet.
 | Host QEMU lock | `<git-common-dir>/aios-agent/qemu.lock/owner` (`scripts/agent/qemu-lock.sh status`); cleared stale locks in `<git-common-dir>/aios-agent/qemu-lock.log` | this Mac |
 | Audit ledgers | `<git-common-dir>/aios-agent/audit/<branch>/<head>.json` | this Mac |
 | Hook state | `<git-common-dir>/aios-agent/hooks/`: `route-shadow.jsonl` (Jev's answer per Agent dispatch), `route-outcome.jsonl` (`launched`, `launch_failed`, `stopped`, `error` records), `repeat-error/` (per-session failure counters, deleted after 7 days). `AIOS_HOOK_STATE_DIR` overrides the directory. | this Mac |
+| PR loop state | `<git-common-dir>/aios-agent/loop/`: `pr-<n>/lock/pid` (one review per PR at a time), `pr-<n>/stage-settings.json`, `pr-<n>/run-<epoch>/` (`round-01-<stage>.json` per model stage, `report.json`, `report.md`), `findings.jsonl` (one record per verified finding), and `STOP` (the kill-switch file). Prompts and settings come from `scripts/agent/prompts/` and `scripts/agent/loop-config.json`. | this Mac |
 
 GitHub labels: `needs-human` (waiting for an owner decision; agents do not claim it or change the files it names), `agent-ready` (owner-approved and claimable; only the owner applies it), `agent-working` (claimed by an agent session), `agent` (opened by an agent, so agent work can be counted), `team-build`, `team-fix` (which team owns a PR or issue; see Teams).
 
@@ -100,7 +102,41 @@ Later (not enabled): GitHub auto-merge behind required status checks on a `main`
 
 ## Stop
 
-Press Esc to interrupt the current turn; close the terminal to end the session. Solo sessions run no agent work in the background (no `/loop`, no scheduled routines, no launchd job). In team mode, writers, reviewers and the verifier run as subagents inside the two attended lead sessions, in the background except for `.claude/**` edits, which run in the foreground so their prompts reach you. Verifier boots stay in the background: a per-team allow covers their `qemu-lock.sh run` call. Esc and `/exit` in a lead stop them, and closing its terminal ends them. A verifier's QEMU run stops with its lock wrapper, which releases the lock; a wrapper killed with SIGKILL leaves a lock that `qemu-lock.sh clear-stale` removes. The other background process is the `just tools` build of the `aios` binary, which the SessionStart hook starts when the binary is missing or stale. It can outlive Esc, ends on its own and logs to `target/tools/build.log`. A stop file and a label-based kill switch come with the loops.
+Press Esc to interrupt the current turn; close the terminal to end the session. Solo sessions run no agent work in the background (no `/loop`, no scheduled routines, no launchd job). In team mode, writers, reviewers and the verifier run as subagents inside the two attended lead sessions, in the background except for `.claude/**` edits, which run in the foreground so their prompts reach you. Verifier boots stay in the background: a per-team allow covers their `qemu-lock.sh run` call. Esc and `/exit` in a lead stop them, and closing its terminal ends them. A verifier's QEMU run stops with its lock wrapper, which releases the lock; a wrapper killed with SIGKILL leaves a lock that `qemu-lock.sh clear-stale` removes. The other background process is the `just tools` build of the `aios` binary, which the SessionStart hook starts when the binary is missing or stale. It can outlive Esc, ends on its own and logs to `target/tools/build.log`.
+
+`/justin:review` starts `aios loop review` as a background task, because a run can take more than 10 minutes. Esc does not stop it; closing the terminal ends it with the session. Three things stop it, all read by the run itself:
+
+- the `STOP` file, `<git-common-dir>/aios-agent/loop/STOP` (create it to stop, remove it to allow runs again);
+- an open issue labelled `agent-stop`; the run also stops when that label does not exist or the lookup fails, because the switch fails closed;
+- stopping the background task (TaskStop), which stops the model stages' process groups, ends the run with a signal exit code and keeps its run directory.
+
+The first two are checked before the first stage, before verify and again before the verdict, so they take effect at the next of those points, not in the middle of a model call; the run then exits 4. A quiet window on the QEMU lock (`mode=quiet`) also ends it with exit 4. No unattended runner exists yet: the scheduled and auto-merge parts of the loop are later stages.
+
+-----
+
+## PR loop (R2a)
+
+`aios loop review <PR>... [--tree DIR] [--budget-usd N]` ([source](../../tools/src/cmd/loop/)) is the first part of the PR loop. It is read-only and advisory. Run it as `.claude/hooks/aios loop review <PR>...` from the main checkout, or through `/justin:review`. It spends model budget (up to `per_pr_usd` per PR), so the settings carry an `ask` rule on every `aios loop` spelling (the shim, the installed binary, `cargo run … loop`): every run prompts once, and a background-only or `-p` run with nobody to answer is refused. R2b adds fixing, pushing, thread replies and `aios loop merge`; R2c adds the evals.
+
+For each PR, in the order given, it does one round:
+
+1. **Preflight**, before any model call: the kill switch (see Stop), the team owner (with `AIOS_TEAM` set, another team's PR is refused), a fork PR (reported `needs-human`), a quiet window on the QEMU lock, and the per-PR lock.
+2. **Gather**, with no model: a detached round worktree of the PR head, the change against its merge-base with `origin/main`, failing checks with log tails, new docs drift, unresolved review threads (comment text from authors outside `trusted_authors` is fenced as data), open `needs-human` issues, knowledge notes picked by path tags, and earlier dismissals.
+3. **Review**: three read-only `claude -p` lenses (correctness, security, conventions), then one verify stage that confirms or refutes each finding and scopes it `in-diff` or `pre-existing`. The stages have `Read`, `Grep` and `Glob` only, and run under settings pinned to `origin/main`. Failing checks, new docs drift and unresolved threads from trusted authors are confirmed without verify.
+4. **Verdict**: the review is `clean`, `findings` or `incomplete` (a stage failed twice, the budget ran out, or the change was too large to show whole). The merge verdict is `ready` only when the review is clean, brief's merge-ready blockers are empty, the changed-paths gate is empty (it covers every input of the `aios` binary: `tools/**`, `shared/**`, `Cargo.toml`, `Cargo.lock`, the toolchain files, `.cargo/**` and `justfile`; a gated PR is never `ready`) and GitHub's file list agrees with git's. Otherwise it is `pending` (checks or merge state still settling) or `needs-human`.
+
+**Outputs.** One block per PR on stdout, then the paths of `report.json` and `report.md`; the run directory and `findings.jsonl` are under `aios-agent/loop/` (Where state lives). Nothing is written to GitHub, and nothing is committed or pushed: every `gh` call goes through the read-only runner, and the stages have no write tool.
+
+| Exit | Meaning |
+|---|---|
+| 0 | every PR is `clean` and `ready` |
+| 1 | any finding, `incomplete`, `pending`, `needs-human` or refusal |
+| 2 | a usage or internal error (for example `CLAUDE_CONFIG_DIR` unset: the loop refuses the default config) |
+| 3 | from the shim only: the binary could not be built, was built from dirty inputs, or `AIOS_TOOLS_BIN` is set; `aios loop` never runs a stale or unverified binary |
+| 4 | stopped: the kill switch or a quiet window |
+| 129, 130, 131, 143 | a signal; the stages' process groups are stopped and the run directory is kept |
+
+Models and budgets (`per_call_usd`, `per_pr_usd`, `stage_timeout_seconds`), the trusted authors and the path tags are in `scripts/agent/loop-config.json`; the stage prompts are `scripts/agent/prompts/`. Both are read from `origin/main`, so a PR cannot change its own reviewer; `--tree DIR` reads them from DIR instead and also lets the run use a build other than the installed one (prompt work and the pre-merge check). The verdict is advisory: you merge with `/merge-and-cleanup`.
 
 -----
 
@@ -249,7 +285,7 @@ Jev routes only if its answers predict the outcomes; the evaluation decides what
 
 | Stage | What runs | Exit criteria | Status |
 |---|---|---|---|
-| 0 | `/justin:start`, `/justin:brief`, `/justin:doctor`, `/justin:pause`, `/justin:team` (team mode: two attended lead sessions; see Teams); docs-check (report-only CI); guard rails on permissions and `main`; `needs-human` issues for open decisions | `/justin:start` gives an accurate brief | **current** |
+| 0 | `/justin:start`, `/justin:brief`, `/justin:doctor`, `/justin:pause`, `/justin:team` (team mode: two attended lead sessions; see Teams), `/justin:review` (the read-only PR review, R2a); docs-check (report-only CI); guard rails on permissions and `main`; `needs-human` issues for open decisions | `/justin:start` gives an accurate brief | **current** |
 | 1 | A `/justin:work` skill: attended single item, one issue = one milestone = one PR, docs and low-risk tiers | about 5 attended items merged with no guard-rail violations | planned |
 | 2 | Local tend-only loop on this Mac (own PRs: CI fixes, review replies); nightly soak of `main` | 2 weeks with no out-of-policy actions and stable spend | planned |
 | 3 | The loop may claim `agent-ready` docs and low-risk items (WIP = 1); kernel-core work stays attended. Requires the boot-crash fix and a required soak check | rework and escalation rates stable over 2 retros | planned |

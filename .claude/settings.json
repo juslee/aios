@@ -345,7 +345,16 @@
       "Bash(sh */.claude/hooks/aios checkpoint*)",
       "Bash(target/tools/installed/aios checkpoint*)",
       "Bash(*/target/tools/installed/aios checkpoint*)",
-      "Bash(*/aios checkpoint*)"
+      "Bash(*/aios checkpoint*)",
+      "Bash(.claude/hooks/aios loop*)",
+      "Bash(*/.claude/hooks/aios loop*)",
+      "Bash(sh .claude/hooks/aios loop*)",
+      "Bash(sh */.claude/hooks/aios loop*)",
+      "Bash(target/tools/installed/aios loop*)",
+      "Bash(*/target/tools/installed/aios loop*)",
+      "Bash(*/aios loop*)",
+      "Bash(cargo run *loop*)",
+      "Bash(cargo r *loop*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
