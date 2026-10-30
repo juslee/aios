@@ -1030,9 +1030,9 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546), `service/mod.rs` (~507) |
-| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423), `service/mod.rs` (~414) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `cap/mod.rs` (~599), `bench.rs` (~586), `sched/scheduler.rs` (~759), `block_engine.rs` (~783) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests), `syscall/mod.rs` (~802), `ipc/shmem.rs` (~1301) |
 
 **Guidelines:**
 
@@ -1044,30 +1044,39 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (607)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
-  channel.rs      (577)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel, timeout arming
-  timeout.rs      (227)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs       (364)  # Direct switch fast path, priority inheritance, reply switch
-  scan.rs         (114)  # Read-only waker-table accessors for the tripwire's heartbeat scan B
+  mod.rs          (747)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  channel.rs      (780)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel, timeout arming
+  timeout.rs      (400)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs       (405)  # Direct switch fast path, priority inheritance, reply switch
+  scan.rs         (138)  # Read-only waker-table accessors for the tripwire's heartbeat scan B
   tests/
-    mod.rs        (772)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (186)  # IpcSelect capability self-test
-    syscall_args.rs (334) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (251)  # IPC Kit error variants through KernelIpc (#190) self-test
-    timeout_args.rs (72) # IpcCall/IpcRecv timeouts near u64::MAX through syscall_dispatch, on the PI pair (#217) self-test
-  notify.rs       (413)  # Notification objects (signal/wait)
-  select.rs       (364)  # IPC select (multi-wait)
-  shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
+    mod.rs        (791)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (172)  # Out-of-range pid self-test on the SharedMemoryShare path
+    select_cap.rs (187)  # IpcSelect capability self-test
+    syscall_args.rs (361) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (281)  # IPC Kit error variants through KernelIpc (#190) self-test
+    timeout_args.rs (77) # IpcCall/IpcRecv timeouts near u64::MAX through syscall_dispatch, on the PI pair (#217) self-test
+    create_abi.rs (204)  # SVC 6 / SVC 20 return the new id and the creator's access handle (#163) self-test
+    stale_id.rs   (376)  # Stale channel and region ids fail with EPIPE (#185); Shm cascade and borrow self-tests
+    share.rs      (179)  # SharedMemoryShare delegation and Kit shmem_destroy self-test
+    dead_thread.rs (124) # A thread that exits stays Dead self-test
+    wake_token.rs (117)  # A wake between arm and block is kept as a token self-test
+    wake_helper.rs (316) # The pid-1 helper thread that acts on a wait for the loop tests
+    wait_loops.rs (667)  # Loop tests of the converted waits (outcome-only)
+    lifecycle.rs  (577)  # Process exit, wait and reap, cascade, endpoint walk self-tests
+  notify.rs       (640)  # Notification objects (signal/wait)
+  select.rs       (258)  # IPC select (multi-wait)
+  shmem.rs        (1301) # Shared memory regions, borrow and release, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
 
 ```text
 sched/
-  mod.rs         (154)  # RunQueue, globals, thread allocation helpers, re-exports
-  scheduler.rs   (432)  # schedule(), enter_scheduler(), timer_tick(), block/unblock
-  init.rs        (277)  # Scheduler init, idle/test threads, load balancer
+  mod.rs         (293)  # RunQueue, globals, thread allocation helpers, re-exports
+  scheduler.rs   (759)  # schedule(), enter_scheduler(), timer_tick(), block/unblock
+  wake.rs        (183)  # Wake token: prepare_block, cancel_block, wait_state
+  init.rs        (286)  # Scheduler init, idle/test threads, load balancer
 ```
 
 ### 3.2 Module Structure Patterns
@@ -1647,7 +1656,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 712 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
+Currently 793 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gic`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `lock`, `memory`, `observability`, `sched`, `storage`, `syscall`, `tripwire`.
 
 **Adding a new test:**
 
@@ -1740,23 +1749,23 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (712 tests):**
+**Current test distribution (793 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
-| `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `ipc` | 67 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
+| `cap` | 96 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list, attenuation (no Create to Access, expiry inheritance), `mint_child`, `revoke_all`, `share_decision` (foreign reserve, delegatable rule, failure order) |
+| `ipc` | 82 | Channel and shared-memory ids (slot and generation layout, `next_generation`, retirement), `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected), timeout deadlines (`deadline_after`: `u64::MAX` and sums reaching it unbounded) |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
-| `tripwire` | 42 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows |
+| `tripwire` | 43 | Tripwire line writer (golden `Full` line, `NonZero` omission, token count, hazard strings, maximum length), key catalogue and widths, `put_dec`/`put_hex`, the lock re-entry message bound, `classify_pc`, scan masks and `classify_slot`, two strikes and edge counting, the N2 reply/send classification, per-CPU counter rows, `wait_word_bad` |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
 | `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
 | `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `gic` | 28 | GICv3 timer PPI setup: register offsets, `PpiConfig` INTID and priority rules (non-zero, below the 0xF0 mask floor, low nibble clear), the per-flag readback check under `DS` = 1 and `DS` = 0, the `GICR_WAKER` wake steps, `GICD_CTLR.DS`, the `[smp]` field values and failed-flag names |
-| `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
+| `sched` | 61 | Thread state and transitions, scheduler class, CpuSet, resource limits, priority, `ProcessId::index`, the wake token (`WaitState`, `wake_action`, `block_action`) checked over every state, word and interleaving, process state and `process_wait_action` |
 | `collections` | 23 | FixedQueue (including `iter`/`contains`), RingBuffer edge cases |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
 | `lock` | 19 | Owner-stamp codec, the re-entry `classify` table, `read_stamp` and waiter-side models (exhaustive CPU switches), `StampedLock` CAS/release and the consistent holder snapshot, a threaded test (Miri-sized) |
